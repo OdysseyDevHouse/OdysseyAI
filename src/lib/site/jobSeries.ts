@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { today } from './ledger'
 import { nextOccurrence, FREQUENCY_LABELS, type RecurringFrequency } from '../expenseModel'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
@@ -157,7 +158,12 @@ export type JobSeries = {
   headlineIds: number[]
 }
 
-const SELECT_SERIES = `
+/**
+ * A function rather than a constant: `customers` may live in the group
+ * primary's database when the customer file is shared. `cdb` names it, and is
+ * empty for a store that owns its own customers.
+ */
+const selectSeries = (cdb: string) => `
   SELECT s.id, s.name, s.customer_id, s.service_address_id, s.asset_id, s.title,
          s.description, s.priority, s.owner_user_id, s.owner_name, s.location_id,
          s.frequency, s.day_of_month, s.day_of_week, s.starts_on, s.ends_on,
@@ -165,7 +171,7 @@ const SELECT_SERIES = `
          c.name AS customer_name, sa.name AS address_name, a.description AS asset_description,
          (SELECT COUNT(*) FROM job_cards j WHERE j.series_id = s.id) AS job_count
     FROM job_series s
-    LEFT JOIN customers c          ON c.id = s.customer_id
+    LEFT JOIN ${cdb}customers c          ON c.id = s.customer_id
     LEFT JOIN service_addresses sa ON sa.id = s.service_address_id
     LEFT JOIN customer_assets a    ON a.id = s.asset_id`
 
@@ -233,6 +239,7 @@ export async function listJobSeries(
   siteId: number,
   opts: { customerId?: number; assetId?: number; includeInactive?: boolean } = {},
 ): Promise<JobSeries[]> {
+  const cdb = await customerDbPrefix(siteId)
   const where: string[] = []
   const params: unknown[] = []
   if (!opts.includeInactive) where.push('s.is_active = 1')
@@ -247,7 +254,7 @@ export async function listJobSeries(
 
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_SERIES}
+    `${selectSeries(cdb)}
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY s.name, s.id DESC`,
     params,
@@ -272,7 +279,8 @@ export async function listJobSeries(
 }
 
 export async function getJobSeries(siteId: number, id: number): Promise<JobSeries | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_SERIES} WHERE s.id = ?`, [id])
+  const cdb = await customerDbPrefix(siteId)
+  const row = await siteQueryOne<Row>(siteId, `${selectSeries(cdb)} WHERE s.id = ?`, [id])
   if (!row) return null
   const links = await siteQuery<Row>(
     siteId,

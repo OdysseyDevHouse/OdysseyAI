@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '@/lib/siteDb'
+import { customerDbPrefix } from './customerDb'
 import { toNum } from '@/lib/decimals'
 import { mainLocationId } from './stockLocations'
 import type { Actor } from './activityLog'
@@ -62,7 +63,12 @@ export type Serial = {
   note: string | null
 }
 
-const SELECT_SERIAL = `
+/**
+ * A function rather than a constant: `customers` may live in the group
+ * primary's database when the customer file is shared. `cdb` names it, and is
+ * empty for a store that owns its own customers.
+ */
+const selectSerial = (cdb: string) => `
   SELECT s.id, s.product_id, s.location_id, s.serial, s.status, s.cost_excl, s.received_at,
          s.sold_doc_id, s.sold_at, s.customer_id, s.warranty_until, s.note,
          p.code AS product_code, p.description AS product_description,
@@ -72,7 +78,7 @@ const SELECT_SERIAL = `
     FROM product_serials s
     JOIN products p            ON p.id = s.product_id
     LEFT JOIN sales_documents d ON d.id = s.sold_doc_id
-    LEFT JOIN customers c       ON c.id = s.customer_id
+    LEFT JOIN ${cdb}customers c       ON c.id = s.customer_id
     LEFT JOIN stock_locations l ON l.id = s.location_id
 `
 
@@ -110,6 +116,7 @@ export async function listSerials(
   siteId: number,
   options: SerialListOptions = {},
 ): Promise<{ items: Serial[]; total: number }> {
+  const cdb = await customerDbPrefix(siteId)
   const where: string[] = []
   const params: unknown[] = []
 
@@ -134,7 +141,7 @@ export async function listSerials(
   const [rows, countRow] = await Promise.all([
     siteQuery<Row>(
       siteId,
-      `${SELECT_SERIAL} ${clause} ORDER BY s.status, s.serial LIMIT ${limit} OFFSET ${offset}`,
+      `${selectSerial(cdb)} ${clause} ORDER BY s.status, s.serial LIMIT ${limit} OFFSET ${offset}`,
       params,
     ),
     siteQueryOne<Row>(
@@ -149,9 +156,10 @@ export async function listSerials(
 
 /** Look one up by number alone — what the warranty desk actually has. */
 export async function findSerial(siteId: number, serial: string): Promise<Serial[]> {
+  const cdb = await customerDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_SERIAL} WHERE s.serial = ? ORDER BY s.id DESC`,
+    `${selectSerial(cdb)} WHERE s.serial = ? ORDER BY s.id DESC`,
     [serial.trim()],
   )
   return rows.map(mapSerial)
@@ -174,10 +182,11 @@ export async function availableSerials(
   productId: number,
   locationId?: number | null,
 ): Promise<Serial[]> {
+  const cdb = await customerDbPrefix(siteId)
   if (locationId === null) {
     const rows = await siteQuery<Row>(
       siteId,
-      `${SELECT_SERIAL} WHERE s.product_id = ? AND s.status = 'in_stock' ORDER BY s.serial`,
+      `${selectSerial(cdb)} WHERE s.product_id = ? AND s.status = 'in_stock' ORDER BY s.serial`,
       [productId],
     )
     return rows.map(mapSerial)
@@ -186,7 +195,7 @@ export async function availableSerials(
   const target = locationId ?? (await mainLocationId(siteId))
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_SERIAL}
+    `${selectSerial(cdb)}
       WHERE s.product_id = ? AND s.status = 'in_stock' AND s.location_id = ?
       ORDER BY s.serial`,
     [productId, target],

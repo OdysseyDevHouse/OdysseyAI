@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
+import { customerQuery, customerQueryOne, supplierQuery } from './customerDb'
 import { round, toNum } from '../decimals'
 import { today } from './ledger'
 import { daysBetweenDates } from './interestRules'
@@ -81,7 +82,7 @@ export async function listUnallocatedCredits(
 
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000)
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT t.id, t.customer_id, t.doc_type, t.doc_number, t.doc_date,
             t.reference, t.description, t.amount_signed, t.amount_outstanding,
@@ -146,7 +147,7 @@ export type UnallocatedSummary = {
  * prompts neither.
  */
 export async function unallocatedSummary(siteId: number): Promise<UnallocatedSummary> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT
        COALESCE(SUM(ABS(t.amount_outstanding)), 0) AS total,
@@ -204,7 +205,7 @@ export async function listUnappliedSupplierCredits(
 > {
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000)
 
-  const rows = await siteQuery<Row>(
+  const rows = await supplierQuery<Row>(
     siteId,
     `SELECT t.id, t.supplier_id, t.doc_number, t.doc_date, t.amount_outstanding,
             s.code AS supplier_code, s.name AS supplier_name,

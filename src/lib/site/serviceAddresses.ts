@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { logActivity, type Actor } from './activityLog'
 
 /**
@@ -77,7 +78,12 @@ export type AddressSaveResult = { ok: true; id: number } | { ok: false; error: s
 
 type Row = RowDataPacket & Record<string, unknown>
 
-const SELECT_ADDRESS = `
+/**
+ * A function rather than a constant: `customers` may live in the group
+ * primary's database when the customer file is shared. `cdb` names it, and is
+ * empty for a store that owns its own customers.
+ */
+const selectAddress = (cdb: string) => `
   SELECT a.id, a.customer_id, a.location_id, a.code, a.name,
          a.address_line1, a.address_line2, a.city, a.postal_code,
          a.latitude, a.longitude, a.contact_id, a.access_notes, a.note,
@@ -88,7 +94,7 @@ const SELECT_ADDRESS = `
          ct.phone AS contact_phone,
          (SELECT COUNT(*) FROM job_cards j WHERE j.service_address_id = a.id) AS job_count
     FROM service_addresses a
-    JOIN customers c          ON c.id  = a.customer_id
+    JOIN ${cdb}customers c          ON c.id  = a.customer_id
     LEFT JOIN stock_locations l ON l.id = a.location_id
     LEFT JOIN customer_contacts ct ON ct.id = a.contact_id`
 
@@ -137,9 +143,10 @@ export async function listServiceAddresses(
   customerId: number,
   includeInactive = false,
 ): Promise<ServiceAddress[]> {
+  const cdb = await customerDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_ADDRESS}
+    `${selectAddress(cdb)}
       WHERE a.customer_id = ? ${includeInactive ? '' : 'AND a.is_active = 1'}
       ORDER BY a.is_default DESC, a.name`,
     [customerId],
@@ -148,7 +155,8 @@ export async function listServiceAddresses(
 }
 
 export async function getServiceAddress(siteId: number, id: number): Promise<ServiceAddress | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_ADDRESS} WHERE a.id = ?`, [id])
+  const cdb = await customerDbPrefix(siteId)
+  const row = await siteQueryOne<Row>(siteId, `${selectAddress(cdb)} WHERE a.id = ?`, [id])
   return row ? mapAddress(row) : null
 }
 
@@ -157,9 +165,10 @@ export async function defaultServiceAddress(
   siteId: number,
   customerId: number,
 ): Promise<ServiceAddress | null> {
+  const cdb = await customerDbPrefix(siteId)
   const row = await siteQueryOne<Row>(
     siteId,
-    `${SELECT_ADDRESS}
+    `${selectAddress(cdb)}
       WHERE a.customer_id = ? AND a.is_active = 1
       ORDER BY a.is_default DESC, a.name LIMIT 1`,
     [customerId],

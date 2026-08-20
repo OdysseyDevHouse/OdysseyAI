@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { customerQueryOne, supplierQueryOne } from './customerDb'
 import { toNum } from '../decimals'
 import { logActivity, type Actor } from './activityLog'
 import {
@@ -503,7 +504,25 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
 
     switch (account.controlType) {
       case 'debtors': {
-        const row = await siteQueryOne<Row>(
+        /*
+         * ── WHAT THIS COMPARES WHEN THE CUSTOMER FILE IS SHARED ───────────
+         *
+         * The sum comes from whichever database owns the customers, so in a
+         * group sharing one debtors book this is the GROUP's total — measured
+         * against ONE branch's debtors control account. Those will not agree,
+         * and that is not drift: the group has one debtors book and several
+         * sets of books, so the reconciliation belongs at group level.
+         *
+         * Deliberately not silently narrowed to this store's share. There is
+         * no honest way to split a shared balance per branch — a payment taken
+         * at store 3 settles an invoice raised at store 7 — and inventing a
+         * split would make this check pass while proving nothing.
+         *
+         * See docs/shared-customer-file-origin-site.md: the group-level
+         * reconciliation is stage 7 work, and until it lands a sharing group
+         * reads a difference here rather than a false clean bill.
+         */
+        const row = await customerQueryOne<Row>(
           siteId,
           'SELECT COALESCE(SUM(balance), 0) AS total FROM customers',
         )
@@ -511,7 +530,7 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
         break
       }
       case 'creditors': {
-        const row = await siteQueryOne<Row>(
+        const row = await supplierQueryOne<Row>(
           siteId,
           'SELECT COALESCE(SUM(balance), 0) AS total FROM suppliers',
         )

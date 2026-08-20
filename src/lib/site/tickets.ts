@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { nextDocumentNumber } from './sequences'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { getSettings } from './settings'
@@ -339,12 +340,17 @@ export type Ticket = {
   createdAt: string | null
 }
 
-const SELECT_TICKET = `
+/**
+ * A function rather than a constant: `customers` may live in the group
+ * primary's database when the customer file is shared. `cdb` names it, and is
+ * empty for a store that owns its own customers.
+ */
+const selectTicket = (cdb: string) => `
   SELECT t.*, s.name AS status_name, s.tone AS status_tone, s.clock,
          c.name AS customer_name, j.document_number AS job_number
     FROM tickets t
     JOIN ticket_statuses s ON s.id = t.status_id
-    LEFT JOIN customers c  ON c.id = t.customer_id
+    LEFT JOIN ${cdb}customers c  ON c.id = t.customer_id
     LEFT JOIN job_cards j  ON j.id = t.job_card_id`
 
 function mapTicket(r: Row, workedMinutes = 0, isRunning = false): Ticket {
@@ -428,7 +434,8 @@ async function workedFor(
 }
 
 export async function getTicket(siteId: number, id: number): Promise<Ticket | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_TICKET} WHERE t.id = ?`, [id])
+  const cdb = await customerDbPrefix(siteId)
+  const row = await siteQueryOne<Row>(siteId, `${selectTicket(cdb)} WHERE t.id = ?`, [id])
   if (!row) return null
   const hours = await tradingHours(siteId)
   const worked = await workedFor(siteId, [id], hours)
@@ -450,6 +457,7 @@ export async function listTickets(
   siteId: number,
   filter: TicketFilter = {},
 ): Promise<Ticket[]> {
+  const cdb = await customerDbPrefix(siteId)
   const where: string[] = []
   const params: unknown[] = []
 
@@ -482,7 +490,7 @@ export async function listTickets(
   const limit = Math.max(1, Math.min(1000, Math.floor(filter.limit ?? 500)))
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_TICKET}
+    `${selectTicket(cdb)}
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY FIELD(t.priority,'urgent','high','normal','low'), t.reported_at DESC, t.id DESC
       LIMIT ${limit}`,

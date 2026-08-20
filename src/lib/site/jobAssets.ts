@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { nextDocumentNumber } from './sequences'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { getSetting } from './settings'
@@ -237,6 +238,7 @@ export async function deleteAssetType(
   actor: Actor,
   id: number,
 ): Promise<AssetActionResult> {
+  const cdb = await customerDbPrefix(siteId)
   const row = await siteQueryOne<Row>(
     siteId,
     `SELECT t.name, (SELECT COUNT(*) FROM customer_assets a WHERE a.asset_type_id = t.id) AS n
@@ -292,7 +294,12 @@ export type CustomerAsset = {
   jobCount: number
 }
 
-const SELECT_ASSET = `
+/**
+ * A function rather than a constant: `customers` may live in the group
+ * primary's database. `cdb` names it, and is empty for a store that owns its
+ * own customers.
+ */
+const selectAsset = (cdb: string) => `
   SELECT a.id, a.document_number, a.asset_type_id, a.customer_id, a.service_address_id,
          a.description, a.make, a.model, a.serial_text, a.product_id, a.serial_id,
          a.installed_on, a.purchased_on, a.purchase_reference, a.warranty_until,
@@ -303,7 +310,7 @@ const SELECT_ASSET = `
          (${JOB_COUNT_FOR_ASSET}) AS job_count
     FROM customer_assets a
     LEFT JOIN asset_types t        ON t.id = a.asset_type_id
-    LEFT JOIN customers c          ON c.id = a.customer_id
+    LEFT JOIN ${cdb}customers c          ON c.id = a.customer_id
     LEFT JOIN service_addresses sa ON sa.id = a.service_address_id
     LEFT JOIN products p           ON p.id = a.product_id`
 
@@ -399,9 +406,10 @@ export async function listAssets(
   }
 
   const limit = Math.max(1, Math.min(500, Math.floor(filter.limit ?? 200)))
+  const cdb = await customerDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_ASSET}
+    `${selectAsset(cdb)}
       ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ${filter.dueOnly ? 'a.next_service_on ASC,' : ''} a.description, a.id DESC
       LIMIT ${limit}`,
@@ -411,7 +419,8 @@ export async function listAssets(
 }
 
 export async function getAsset(siteId: number, id: number): Promise<CustomerAsset | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_ASSET} WHERE a.id = ?`, [id])
+  const cdb = await customerDbPrefix(siteId)
+  const row = await siteQueryOne<Row>(siteId, `${selectAsset(cdb)} WHERE a.id = ?`, [id])
   return row ? mapAsset(row) : null
 }
 
@@ -486,6 +495,7 @@ export async function findDuplicateAssets(
   customerId: number | null,
   excludeId = 0,
 ): Promise<DuplicateWarning[]> {
+  const cdb = await customerDbPrefix(siteId)
   const key = (serialText ?? '').trim().toUpperCase().replace(/[\s-]/g, '')
   // No plate, nothing to match on. Section 18.3 is explicit that plenty of
   // equipment has none, so this is a normal outcome rather than a skipped check.
@@ -495,7 +505,7 @@ export async function findDuplicateAssets(
     siteId,
     `SELECT a.id, a.document_number, a.description, c.name AS customer_name
        FROM customer_assets a
-       LEFT JOIN customers c ON c.id = a.customer_id
+       LEFT JOIN ${cdb}customers c ON c.id = a.customer_id
       WHERE a.serial_key = ? AND a.id <> ?
         AND ${customerId === null ? 'a.customer_id IS NULL' : 'a.customer_id = ?'}
       LIMIT 5`,
@@ -821,6 +831,7 @@ export async function setJobAsset(
   jobId: number,
   assetId: number | null,
 ): Promise<AssetActionResult> {
+  const cdb = await customerDbPrefix(siteId)
   const job = await siteQueryOne<Row>(
     siteId,
     `SELECT id, status, customer_id, customer_name FROM job_cards WHERE id = ?`,
@@ -846,7 +857,7 @@ export async function setJobAsset(
     siteId,
     `SELECT a.id, a.description, a.is_active, a.customer_id, c.name AS customer_name
        FROM customer_assets a
-       LEFT JOIN customers c ON c.id = a.customer_id
+       LEFT JOIN ${cdb}customers c ON c.id = a.customer_id
       WHERE a.id = ?`,
     [assetId],
   )
@@ -942,6 +953,7 @@ export async function addJobAsset(
   assetId: number,
   note: string | null = null,
 ): Promise<AssetActionResult> {
+  const cdb = await customerDbPrefix(siteId)
   const job = await siteQueryOne<Row>(
     siteId,
     `SELECT id, status, customer_id, asset_id FROM job_cards WHERE id = ?`,
@@ -970,7 +982,7 @@ export async function addJobAsset(
     siteId,
     `SELECT a.id, a.description, a.customer_id, c.name AS customer_name
        FROM customer_assets a
-       LEFT JOIN customers c ON c.id = a.customer_id
+       LEFT JOIN ${cdb}customers c ON c.id = a.customer_id
       WHERE a.id = ?`,
     [assetId],
   )

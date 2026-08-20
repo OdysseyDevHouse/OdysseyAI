@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerDbPrefix, supplierDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { today } from './ledger'
@@ -867,6 +868,11 @@ export type LinkDetail = {
 
 /** What a bank line is matched to, for the detail panel. */
 export async function linksFor(siteId: number, bankTxnId: number): Promise<LinkDetail[]> {
+  // The four-way one. cashbook_links is this branch's own bank matching, but
+  // the two sub-ledgers it points at may each live elsewhere — and they are
+  // answered SEPARATELY, because a group can share its debtors book without
+  // sharing its creditors book. Both prefixes are empty for a single store.
+  const [cdb, sdb] = await Promise.all([customerDbPrefix(siteId), supplierDbPrefix(siteId)])
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT l.id, l.amount, l.match_type, l.confidence, l.user_name,
@@ -874,10 +880,10 @@ export async function linksFor(siteId: number, bankTxnId: number): Promise<LinkD
             ct.doc_number AS c_doc, ct.doc_date AS c_date, c.name AS c_name,
             st.doc_number AS s_doc, st.doc_date AS s_date, s.name AS s_name
        FROM cashbook_links l
-       LEFT JOIN customer_transactions ct ON ct.id = l.customer_txn_id
-       LEFT JOIN customers c             ON c.id = ct.customer_id
-       LEFT JOIN supplier_transactions st ON st.id = l.supplier_txn_id
-       LEFT JOIN suppliers s             ON s.id = st.supplier_id
+       LEFT JOIN ${cdb}customer_transactions ct ON ct.id = l.customer_txn_id
+       LEFT JOIN ${cdb}customers c             ON c.id = ct.customer_id
+       LEFT JOIN ${sdb}supplier_transactions st ON st.id = l.supplier_txn_id
+       LEFT JOIN ${sdb}suppliers s             ON s.id = st.supplier_id
       WHERE l.bank_txn_id = ?
       ORDER BY l.linked_at`,
     [bankTxnId],

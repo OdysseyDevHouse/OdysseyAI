@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 
 /**
@@ -344,6 +345,13 @@ export async function vatDocuments(
 ): Promise<VatDocument[]> {
   if (!validRange(range)) return []
 
+  // This feeds a STATUTORY return, so the join is qualified rather than left to
+  // resolve locally: reading the wrong database here would put the wrong party
+  // name against a document in a VAT201 working paper. The COALESCE onto
+  // d.customer_name means a miss would look like a cash sale rather than an
+  // error, which is exactly the kind of wrong that goes unnoticed.
+  const cdb = await customerDbPrefix(siteId)
+
   const rows =
     side === 'output'
       ? await siteQuery<Row>(
@@ -355,7 +363,7 @@ export async function vatDocuments(
                   SUM(CASE WHEN d.doc_type = 'credit_note' THEN -l.line_total_incl ELSE l.line_total_incl END) AS incl
              FROM sales_documents d
              JOIN sales_document_lines l ON l.document_id = d.id
-             LEFT JOIN customers c ON c.id = d.customer_id
+             LEFT JOIN ${cdb}customers c ON c.id = d.customer_id
             WHERE d.doc_type IN ('invoice','credit_note')
               AND d.status IN ('issued','finalised')
               AND d.document_date BETWEEN ? AND ?

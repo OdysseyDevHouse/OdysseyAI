@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket, PoolConnection } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { saveDraft, getDocument } from './salesDocuments'
@@ -214,10 +215,15 @@ function mapContract(r: Row, lines: ContractLine[] = [], asAt = today()): Contra
 
 /* ── Reads ───────────────────────────────────────────────────────────────── */
 
-const SELECT_CONTRACT = `
+/**
+ * A function rather than a constant: `customers` may live in the group
+ * primary's database when the customer file is shared. `cdb` names it, and is
+ * empty for a store that owns its own customers.
+ */
+const selectContract = (cdb: string) => `
   SELECT c.*, cu.code AS customer_code, cu.name AS customer_name, cu.email AS customer_email
     FROM contracts c
-    INNER JOIN customers cu ON cu.id = c.customer_id
+    INNER JOIN ${cdb}customers cu ON cu.id = c.customer_id
 `
 
 export type ContractListOptions = {
@@ -231,6 +237,7 @@ export async function listContracts(
   siteId: number,
   opts: ContractListOptions = {},
 ): Promise<Contract[]> {
+  const cdb = await customerDbPrefix(siteId)
   const where: string[] = []
   const params: unknown[] = []
 
@@ -242,7 +249,7 @@ export async function listContracts(
 
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_CONTRACT}
+    `${selectContract(cdb)}
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY c.is_active DESC, c.name`,
     params,
@@ -261,7 +268,8 @@ export async function listContracts(
 }
 
 export async function getContract(siteId: number, id: number): Promise<Contract | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_CONTRACT} WHERE c.id = ? LIMIT 1`, [id])
+  const cdb = await customerDbPrefix(siteId)
+  const row = await siteQueryOne<Row>(siteId, `${selectContract(cdb)} WHERE c.id = ? LIMIT 1`, [id])
   if (!row) return null
 
   const lines = await linesFor(siteId, [id])

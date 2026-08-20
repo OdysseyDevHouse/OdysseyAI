@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
+import { customerDbPrefix, customerQuery } from './customerDb'
 import { round, toNum } from '../decimals'
 import { getShift, shiftPosition } from './shifts'
 
@@ -174,6 +175,13 @@ export async function tenderBreakdown(
   const tender = position.tenders.find((t) => t.tenderTypeId === tenderTypeId)
   if (!tender) return null
 
+  // Two of the queries below cross the shared-file boundary, in OPPOSITE
+  // directions: the layby list is anchored on this branch's layby_payments and
+  // reaches out to the customer file, while the wallet list is anchored on the
+  // shared loyalty_wallet and reaches back for this branch's rows. Both
+  // prefixes are empty for a store that owns its own customers.
+  const cdb = await customerDbPrefix(siteId)
+
   const isCash = tender.countsAsDrawerCash
 
   const [sales, movements, laybys, deposits, loyalty] = await Promise.all([
@@ -229,7 +237,7 @@ export async function tenderBreakdown(
               l.document_number AS layby_number, c.name AS customer_name
          FROM layby_payments p
          LEFT JOIN laybys    l ON l.id = p.layby_id
-         LEFT JOIN customers c ON c.id = l.customer_id
+         LEFT JOIN ${cdb}customers c ON c.id = l.customer_id
         WHERE p.shift_id = ? AND p.tender_type_id = ?
           AND p.kind IN ('deposit', 'instalment')
         ORDER BY p.created_at, p.id`,
@@ -262,15 +270,21 @@ export async function tenderBreakdown(
      * sales_tenders row above; counting it here would report the same money
      * twice, which is the note offLedgerCash makes for the same reason.
      */
-    siteQuery<Row>(
+    // Anchored on the shared wallet, so it runs against the OWNER and needs no
+    // prefix for `customers`. But shift_id and tender_type_id are both BRANCH
+    // ids: without the origin scope this would pull in another store's shift
+    // that happens to share the number, into a figure a drawer is counted
+    // against.
+    customerQuery<Row>(
       siteId,
       `SELECT w.amount, w.note, w.user_name, w.created_at, w.document_number,
               c.name AS customer_name
          FROM loyalty_wallet w
          LEFT JOIN customers c ON c.id = w.customer_id
         WHERE w.shift_id = ? AND w.tender_type_id = ? AND w.entry_type = 'topup'
+          AND (w.origin_site_id IS NULL OR w.origin_site_id = ?)
         ORDER BY w.created_at, w.id`,
-      [shiftId, tenderTypeId],
+      [shiftId, tenderTypeId, siteId],
     ),
   ])
 
