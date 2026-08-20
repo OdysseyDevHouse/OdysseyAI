@@ -664,6 +664,46 @@ export async function deleteCustomer(
     }
   }
 
+  /* ── The guard the database used to provide ──────────────────────────────
+   *
+   * Until 197_shared_customer_file.sql, sales_documents, laybys and job_cards
+   * held a RESTRICT foreign key to customers, so the database itself refused
+   * to delete an account with history. Those keys had to go: the tables stay
+   * in the branch while a shared customer lives in the group's primary, and a
+   * foreign key cannot name a table in another database that the same schema
+   * must also work without.
+   *
+   * Losing the constraint does not mean losing the rule. It runs here instead,
+   * and it runs BEFORE the delete rather than as a failure during it — which
+   * is a better error either way: "3 invoices" tells someone what to do, and
+   * ER_ROW_IS_REFERENCED_2 does not.
+   *
+   * Counted in the CALLER's database on purpose. These are this branch's
+   * documents; another branch's history is its own business and must not stop
+   * a store tidying its list. Deleting a shared customer is refused by
+   * whichever store still has documents for them.
+   */
+  const history = await siteQueryOne<RowDataPacket & Record<string, number>>(
+    siteId,
+    `SELECT
+       (SELECT COUNT(*) FROM sales_documents WHERE customer_id = ?) AS documents,
+       (SELECT COUNT(*) FROM laybys          WHERE customer_id = ?) AS laybys,
+       (SELECT COUNT(*) FROM job_cards       WHERE customer_id = ?) AS jobs`,
+    [id, id, id],
+  )
+  const held: string[] = []
+  if (Number(history?.documents ?? 0) > 0) held.push(`${history?.documents} document(s)`)
+  if (Number(history?.laybys ?? 0) > 0) held.push(`${history?.laybys} lay-by(s)`)
+  if (Number(history?.jobs ?? 0) > 0) held.push(`${history?.jobs} job card(s)`)
+  if (held.length > 0) {
+    return {
+      ok: false,
+      error:
+        `${customer.name} has ${held.join(', ')} at this store. ` +
+        'Close the account instead of deleting it, so the history stays readable.',
+    }
+  }
+
   // Contacts go with the account through ON DELETE CASCADE, but documents and
   // comments hang off the loose (entity, entity_id) pair that has no foreign
   // key — so nothing removes them unless this does. See the header of
