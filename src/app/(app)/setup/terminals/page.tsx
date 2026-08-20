@@ -1,5 +1,6 @@
 import { requireCapability } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
+import { listLocations } from '@/lib/site/stockLocations'
 import { listLicences } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
 import { getNumericSetting, getSetting } from '@/lib/site/settings'
@@ -20,6 +21,11 @@ export default async function TerminalsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('setup.edit')
   const terminals = await listTerminals(siteId, true)
+  /* The rooms a till may be pointed at. Active only, and no transit pile — a
+     register cannot sell out of a truck, and setTerminalStockLocation refuses
+     both, so offering them would be a choice whose only outcome is a toast
+     saying no. (excludeTransit = true, includeInactive = false.) */
+  const locations = await listLocations(siteId, false, true)
   /* Licences come from the CONTROL database, not this shop's own. Read here
      rather than in the client so a manager sees them on first paint — this is
      the screen somebody opens when a till will not start. */
@@ -56,7 +62,10 @@ export default async function TerminalsPage() {
       />
       <PageBody>
         <div className="flex flex-col gap-4">
-          <TerminalsClient terminals={terminals} />
+          <TerminalsClient
+            terminals={terminals}
+            locations={locations.map((l) => ({ id: l.id, name: l.name, isMain: l.isMain }))}
+          />
           {/* How the tills BEHAVE, under the list of which tills there are. One
               field, so it sits between the registers and the licences rather than
               earning a screen of its own. */}

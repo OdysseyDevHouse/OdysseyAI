@@ -4,6 +4,17 @@ import { query, queryOne } from './db'
 
 export type SiteRole = 'owner' | 'manager' | 'staff'
 
+/**
+ * Where this site's back office finds its database. Set per site in the control
+ * panel, which is why it lives on cp2_sites rather than in any site database.
+ *
+ *  - `cloud`  — the back office connects to a server we run.
+ *  - `local`  — it connects to a server on the shop's own premises.
+ *  - `hybrid` — premises tills keep serving while the back office lives
+ *               elsewhere. Not built yet; no site is set to it in anger.
+ */
+export type ConnectionType = 'cloud' | 'local' | 'hybrid'
+
 export type Site = {
   id: number
   code: string
@@ -20,7 +31,7 @@ export type Site = {
   phone: string | null
   email: string | null
   contactName: string | null
-  backofficeType: 'windows' | 'cloud'
+  connectionType: ConnectionType
   isPaid: boolean
   status: 'active' | 'suspended' | 'archived'
   /** From cp2_user_sites — this user's role at this site. */
@@ -42,7 +53,7 @@ type SiteRow = RowDataPacket & {
   phone: string | null
   email: string | null
   contact_name: string | null
-  backoffice_type: 'windows' | 'cloud'
+  connection_type: ConnectionType
   is_paid: number
   status: 'active' | 'suspended' | 'archived'
   site_role: SiteRole
@@ -65,7 +76,7 @@ function mapSite(r: SiteRow): Site {
     phone: r.phone,
     email: r.email,
     contactName: r.contact_name,
-    backofficeType: r.backoffice_type,
+    connectionType: r.connection_type,
     isPaid: !!r.is_paid,
     status: r.status,
     role: r.site_role,
@@ -76,7 +87,7 @@ function mapSite(r: SiteRow): Site {
 const SELECT_SITE = `
   SELECT s.id, s.site_code, s.company_name, s.trading_name, s.registration_number,
          s.vat_number, s.address1, s.address2, s.address3, s.postal_code,
-         s.phone, s.email, s.contact_name, s.backoffice_type, s.is_paid, s.status,
+         s.phone, s.email, s.contact_name, s.connection_type, s.is_paid, s.status,
          us.site_role, us.is_default
     FROM cp2_user_sites us
     INNER JOIN cp2_sites s ON s.id = us.site_id

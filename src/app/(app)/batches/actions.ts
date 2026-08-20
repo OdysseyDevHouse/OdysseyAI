@@ -32,6 +32,7 @@ export async function batchTraceAction(
  */
 export async function writeOffBatchAction(
   batchId: number,
+  reasonId: number | null,
   note: string,
 ): Promise<{ ok: true; documentNumber: string } | { ok: false; error: string }> {
   const ctx = await actorForModule('inventory_advanced', 'stock.adjust')
@@ -43,10 +44,21 @@ export async function writeOffBatchAction(
   if (batch.qtyRemaining <= 0) {
     return { ok: false, error: 'The lot has nothing left to write off.' }
   }
-  if (!note.trim()) return { ok: false, error: 'Say why the lot is being written off.' }
+  /*
+   * The reason CODE and the free-text note answer different questions, and the
+   * adjustment needs both: the code is what "how much did we lose to recalls
+   * last quarter" totals, the note is what the person reading that line wants
+   * next. Refusing here rather than letting validateAdjustment refuse keeps the
+   * message pointed at the field the drawer actually shows.
+   */
+  if (!reasonId) return { ok: false, error: 'Choose a reason for the write-off.' }
+  if (!note.trim()) {
+    return { ok: false, error: 'Add the details — a notice or claim number the reason cannot carry.' }
+  }
 
   const posted = await postNewAdjustment(ctx.siteId, ctx.actor, {
     locationId: batch.locationId,
+    reasonId,
     note: note.trim(),
     lines: [
       {

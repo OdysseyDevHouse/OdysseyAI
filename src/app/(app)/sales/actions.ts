@@ -30,6 +30,7 @@ import { requireLicensedDevice } from '@/lib/control/requireDevice'
 import { finaliseDocument, voidDocument, recordPrint } from '@/lib/site/salesPosting'
 import { setOrderDetails } from '@/lib/site/salesOrders'
 import { searchForTill, browseForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
+import { terminalStockLocationId } from '@/lib/site/terminals'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
 import {
   searchCustomersForTill,
@@ -54,13 +55,37 @@ export type FinaliseSaleResult =
   | { ok: true; documentId: number; documentNumber: string; change: number; roundingAdj: number }
   | { ok: false; error: string }
 
+/**
+ * The room a till's screens should count, resolved from the terminal it claims.
+ *
+ * ── WHY THE TERMINAL ID COMES FROM THE CLIENT ─────────────────────────────
+ *
+ * The browser is the only thing that knows which register it is standing at —
+ * the claim lives in its device id, and `actorForOrThrow` resolves a USER, not
+ * a machine. So it is passed in, like `priceStructureId` beside it.
+ *
+ * That it is client-supplied is fine HERE and would not be on a posting path.
+ * The worst a wrong id can do is show the counter another room's quantity; it
+ * cannot move stock, and every write still resolves the room server-side from
+ * the document's own terminal. The sale itself is guarded by
+ * `validateTerminalClaim`, which is where a lie about which till this is
+ * actually matters.
+ *
+ * Null — no terminal, an unclaimed browser, a back-office caller — means main,
+ * which is what these screens have always counted.
+ */
+async function tillLocation(siteId: number, terminalId: number | null | undefined) {
+  return terminalStockLocationId(siteId, terminalId ?? null)
+}
+
 export async function searchProductsAction(
   term: string,
   priceStructureId: number | null,
+  terminalId?: number | null,
 ): Promise<TillProduct[]> {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
-  return searchForTill(siteId, term, priceStructureId)
+  return searchForTill(siteId, term, priceStructureId, 20, await tillLocation(siteId, terminalId))
 }
 
 /**
@@ -75,10 +100,14 @@ export async function browseProductsAction(options: {
   departmentId?: number | null
   priceStructureId?: number | null
   limit?: number
+  terminalId?: number | null
 }): Promise<TillProduct[]> {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
-  return browseForTill(siteId, options)
+  return browseForTill(siteId, {
+    ...options,
+    locationId: await tillLocation(siteId, options.terminalId),
+  })
 }
 
 /**
@@ -105,10 +134,11 @@ export async function listProductDepartmentsAction(): Promise<
 export async function scanAction(
   code: string,
   priceStructureId: number | null,
+  terminalId?: number | null,
 ): Promise<TillProduct | null> {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
-  return resolveScan(siteId, code, priceStructureId)
+  return resolveScan(siteId, code, priceStructureId, await tillLocation(siteId, terminalId))
 }
 
 export async function searchCustomersAction(term: string): Promise<TillCustomer[]> {

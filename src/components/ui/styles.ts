@@ -259,6 +259,34 @@ export const MODAL_SIZE: Record<ModalSize, string> = {
   full: 'max-w-[1600px]',
 }
 
+export type DrawerSize = 'sm' | 'md' | 'lg'
+
+/**
+ * A dialog anchored to an edge of the screen instead of centred.
+ *
+ * `h-dvh` and `max-h-none` override the UA stylesheet, which caps a <dialog>
+ * at calc(100% - 6px) of the viewport and would otherwise leave a hairline of
+ * page showing above and below a panel meant to run the full height. `dvh`
+ * rather than `vh` so a phone's collapsing address bar does not push the foot
+ * of the panel under itself.
+ *
+ * The rest matches MODAL_PANEL for the reasons documented there — `p-0` beats
+ * the UA padding, and `text-left` stops the panel inheriting alignment from
+ * whatever cell happened to open it.
+ */
+export const DRAWER_PANEL =
+  'my-0 h-dvh max-h-none w-[calc(100vw-2rem)] border border-border bg-surface p-0 text-left text-ink shadow-pop ' +
+  'backdrop:bg-ink/40'
+
+export const DRAWER_SIZE: Record<DrawerSize, string> = {
+  sm: 'max-w-sm',
+  /* Wide enough for a list of choices that each carry an icon, a name and a
+     line of explanation — the product type picker is what this was sized
+     against. */
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+}
+
 /* ── Form controls ───────────────────────────────────────────────────────── */
 
 /** The one skin every single-line control wears. Edit here, every form follows. */

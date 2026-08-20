@@ -34,6 +34,7 @@ export function TillStatusBar({
   onChangeTable,
   onOpenModules,
   onExit,
+  bare = false,
 }: {
   /**
    * What the screen under this bar IS — "Current Sale" on the till, or null on
@@ -121,6 +122,42 @@ export function TillStatusBar({
    */
   onOpenModules?: () => void
   onExit: () => void
+  /**
+   * Strip the bar back to the brand alone — no status, no operator, no way out.
+   *
+   * ── WHY ONE SCREEN GETS THIS AND THE OTHERS DO NOT ────────────────────────
+   *
+   * The chips answer questions a TRADING till raises: is the queue clear, whose
+   * shift is this, which machine am I standing at, can I still sell if the line
+   * drops. Opening the drawer raises none of them. The one job on that screen is
+   * to count what is physically in the till and type the figure, and every chip
+   * beside it is something else to read first — on the one screen where reading
+   * something else is exactly how the wrong number gets typed.
+   *
+   * It is also duplication. The gate's own card already names the till and its
+   * code, greets the operator by name, and carries the date and the connection
+   * state; the header was saying all four again, six inches above, in smaller
+   * type. Two statements of one fact is how they come to disagree.
+   *
+   * ── WHY A FLAG AND NOT SIX NULLED PROPS ──────────────────────────────────
+   *
+   * The call site already nulls `itemCount`, `tableLabel`, `onShift` and the
+   * rest per gate, and each one carries a comment explaining why. Extending
+   * that pattern to the operator, the clock, the queue and the logout would
+   * mean four more optional props whose only reader is one screen — and a
+   * seventh thing to remember the next time a chip is added here. One flag
+   * states the intent once: this screen's bar says nothing at all.
+   *
+   * Not even the brand. The logo sits at the head of that screen's own left
+   * column instead (see OpenTillGate), opening the welcome rather than floating
+   * in a bar with nothing beside it — so the bar here collapses to bare
+   * spacing, and the screen below is the whole screen.
+   *
+   * The logout goes with them because the gate offers its own way out (see the
+   * button beside its primary action), and two exits a hand's width apart is
+   * the sort of thing somebody taps by accident mid-count.
+   */
+  bare?: boolean
 }) {
   /* Past a few hours the prices on this till and the prices on the shelf edge may
      genuinely differ, and nothing about the screen would otherwise say so. Four
@@ -176,7 +213,15 @@ export function TillStatusBar({
 
           On the GATE there is no sale to name, and the card below already says
           "Tables" — so the slot carries the brand instead. */}
-      {screenTitle === null ? (
+      {/*
+       * NOTHING AT ALL on the stripped-back screen — not even the brand.
+       *
+       * The logo lives at the head of that screen's own left column instead
+       * (see OpenTillGate), where it opens the welcome rather than floating in a
+       * bar with nothing beside it. Repeating it here would put the same mark on
+       * screen twice, a hand's width apart.
+       */}
+      {bare ? null : screenTitle === null ? (
         <span className="flex items-center gap-2.5">
           {/* Decorative beside the wordmark text, so no alt of its own. */}
           <Image
@@ -215,6 +260,9 @@ export function TillStatusBar({
         </span>
       )}
 
+      {/* Everything that reports on a TRADING till — hidden whole on the screen
+          that is not trading yet. See the `bare` prop for the argument. */}
+      {!bare && (
       <div className="ml-auto flex flex-wrap items-center gap-2.5">
         {/* First in the row, because it answers "which bill am I on" — the question a
             waiter asks before any of the others. A BUTTON when there is a floor to go
@@ -408,6 +456,7 @@ export function TillStatusBar({
           Logout
         </button>
       </div>
+      )}
     </header>
   )
 }

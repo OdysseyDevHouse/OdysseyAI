@@ -10,6 +10,7 @@ import {
   releaseTerminal,
   claimTerminal,
   setTerminalPosMode,
+  setTerminalStockLocation,
   getTerminal,
   type TerminalInput,
 } from '@/lib/site/terminals'
@@ -219,6 +220,39 @@ export async function setTerminalPosModeAction(
   return {
     ok: true,
     message: `${terminal?.code ?? 'That till'} now runs the ${POS_MODE_LABELS[mode].toLowerCase()}.`,
+  }
+}
+
+/**
+ * Which stock room this till sells out of.
+ *
+ * Per till and on the row, for the same reasons the mode above is — see that
+ * docblock, and `setTerminalStockLocation` for why it is a narrow write rather
+ * than a field on the edit dialog.
+ *
+ * Revalidates /pos as well as this screen: the till reads its own location
+ * through its page render, so a register picks a correction up on the next
+ * refresh rather than needing somebody to restart it mid-trade.
+ */
+export async function setTerminalStockLocationAction(
+  terminalId: number,
+  locationId: number | null,
+): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setTerminalStockLocation(ctx.siteId, terminalId, locationId)
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  const terminal = await getTerminal(ctx.siteId, terminalId)
+
+  revalidatePath('/setup/terminals')
+  revalidatePath('/pos')
+  return {
+    ok: true,
+    message: terminal?.stockLocationName
+      ? `${terminal.code} now sells from ${terminal.stockLocationName}.`
+      : `${terminal?.code ?? 'That till'} now sells from the main location.`,
   }
 }
 

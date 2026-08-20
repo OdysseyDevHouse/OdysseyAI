@@ -238,7 +238,7 @@ function isProvisioned() {
  *
  * ── A BOOTSTRAP ORDERING PROBLEM ────────────────────────────────────────────
  *
- * cp2_sites.backoffice_type is the authority on cloud vs local, and it should
+ * cp2_sites.connection_type is the authority on cloud vs local, and it should
  * be: it is the same row support looks at, and changing a customer's mind
  * should not mean sending out a new installer.
  *
@@ -254,7 +254,7 @@ function isProvisioned() {
  *      says which kind of install this is. That is a fact known at download
  *      time, because the customer downloaded from a link we generated.
  *   2. On first successful sign-in the app compares that against
- *      backoffice_type and tells the control panel what it actually did.
+ *      connection_type and tells the control panel what it actually did.
  *   3. A mismatch is surfaced to support rather than silently corrected —
  *      switching a running shop between backends means moving its data, which
  *      is not something an app should do to itself at startup.

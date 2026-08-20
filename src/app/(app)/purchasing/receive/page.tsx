@@ -130,7 +130,13 @@ export default async function ReceivePage({
                     currentAverage: pos?.averageCost ?? 0,
                     lastCost: pos?.lastCost ?? 0,
                     currentStock: pos?.stockOnHand ?? 0,
-                    sellIncl: pos?.sellIncl ?? 0,
+                    // The price the buyer DECIDED on, where the draft holds
+                    // one (193) — otherwise the product's current price, so
+                    // the markup and GP columns still have their comparison.
+                    // Reopening a draft must not lose a pricing decision made
+                    // while the delivery note was in hand.
+                    sellIncl: l.sellingPriceIncl ?? pos?.sellIncl ?? 0,
+                    sellTouched: l.sellingPriceIncl !== null,
                   }
                 }),
                 charges: draftCharges.map((c) => ({

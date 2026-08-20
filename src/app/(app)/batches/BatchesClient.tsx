@@ -12,6 +12,7 @@ import {
   Input,
   Modal,
   SegmentedControl,
+  Select,
   TableToolbar,
   ToolbarSearch,
   useToast,
@@ -34,6 +35,9 @@ type BatchRow = {
   supplierName: string | null
 }
 
+/** The outward-facing adjustment reasons a write-off may be filed under. */
+type WriteOffReason = { id: number; name: string }
+
 const localToday = (): string => {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -55,12 +59,14 @@ export default function BatchesClient({
   days,
   q,
   canAdjust,
+  reasons,
 }: {
   batches: BatchRow[]
   filter: string
   days: number
   q: string
   canAdjust: boolean
+  reasons: WriteOffReason[]
 }) {
   const router = useRouter()
   const [open, setOpen] = useState<BatchRow | null>(null)
@@ -117,7 +123,7 @@ export default function BatchesClient({
 
   return (
     <Card>
-      <TableToolbar>
+      <TableToolbar inCard>
         <ToolbarSearch
           value={q}
           onChange={(value) => go({ q: value })}
@@ -157,6 +163,7 @@ export default function BatchesClient({
           batch={open}
           days={days}
           canAdjust={canAdjust}
+          reasons={reasons}
           onClose={() => setOpen(null)}
           onChanged={() => {
             setOpen(null)
@@ -174,18 +181,21 @@ function BatchDrawer({
   batch,
   days,
   canAdjust,
+  reasons,
   onClose,
   onChanged,
 }: {
   batch: BatchRow
   days: number
   canAdjust: boolean
+  reasons: WriteOffReason[]
   onClose: () => void
   onChanged: () => void
 }) {
   const toast = useToast()
   const [events, setEvents] = useState<BatchTraceEvent[] | null>(null)
   const [writeOff, setWriteOff] = useState(false)
+  const [reasonId, setReasonId] = useState<number | null>(null)
   const [note, setNote] = useState('')
   const [busy, start] = useTransition()
 
@@ -202,7 +212,7 @@ function BatchDrawer({
 
   function confirmWriteOff() {
     start(async () => {
-      const result = await writeOffBatchAction(batch.id, note)
+      const result = await writeOffBatchAction(batch.id, reasonId, note)
       if (!result.ok) {
         toast.error(result.error)
         return
@@ -226,7 +236,11 @@ function BatchDrawer({
             <Button variant="secondary" onClick={() => setWriteOff(false)} disabled={busy}>
               Back
             </Button>
-            <Button variant="danger" onClick={confirmWriteOff} disabled={busy || !note.trim()}>
+            <Button
+              variant="danger"
+              onClick={confirmWriteOff}
+              disabled={busy || !reasonId || !note.trim() || reasons.length === 0}
+            >
               {busy ? 'Posting…' : `Write off ${formatQty(batch.qtyRemaining)}`}
             </Button>
           </>
@@ -250,15 +264,49 @@ function BatchDrawer({
             Everything left of this lot comes off the shelf through an ordinary adjustment —
             the recall path. The movement and its reversal live where every adjustment does.
           </p>
-          <Field label="Why" hint="This goes on the adjustment, word for word.">
-            <Input
-              autoFocus
-              value={note}
-              maxLength={150}
-              placeholder="e.g. Supplier recall notice 2026-08"
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </Field>
+          {reasons.length === 0 ? (
+            /* No outward reason exists, so the adjustment could never post. Say
+               so here rather than letting the button sit dead: the fix is in
+               Setup, which is nowhere near this screen. */
+            <p className="text-sm text-danger-ink">
+              There are no active reasons for stock going out, so this cannot be posted yet.
+              Add one under Setup → Adjustment reasons, then come back.
+            </p>
+          ) : (
+            <>
+              {/* The reason CODE is what the shrinkage report totals; the note
+                  below is what the person reading that line wants next. Both,
+                  because neither answers the other's question. */}
+              <Field label="Reason" hint="What the write-off is counted as in reporting.">
+                <Select
+                  autoFocus
+                  value={reasonId === null ? '' : String(reasonId)}
+                  onChange={(e) =>
+                    setReasonId(e.target.value === '' ? null : Number(e.target.value))
+                  }
+                >
+                  <option value="">Choose a reason…</option>
+                  {reasons.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {/* Not a second "why" — the reason above is the CATEGORY that
+                  totals in reporting, and this is the specifics that category
+                  cannot carry. Labelled apart so the panel does not read as
+                  asking the same question twice. */}
+              <Field label="Details" hint="The specifics the reason cannot carry — a notice or claim number.">
+                <Input
+                  value={note}
+                  maxLength={150}
+                  placeholder="e.g. Supplier recall notice 2026-08"
+                  onChange={(e) => setNote(e.target.value)}
+                />
+              </Field>
+            </>
+          )}
         </div>
       ) : (
         <div className="space-y-4">

@@ -9,7 +9,9 @@ import type { AdjustmentLine } from '@/lib/site/stockAdjustments'
  *
  * The signed change is the column everything else supports: it is what moved,
  * and its sign is the whole story. `qtyBefore` sits beside it so the reader can
- * see what was being corrected without opening the product.
+ * see what was being corrected without opening the product. Reason and note
+ * come first, in that order: the code is what the shrinkage report totals, the
+ * note is what the person reading that total wants next.
  */
 export default function AdjustmentLinesTable({
   lines,
@@ -42,6 +44,24 @@ export default function AdjustmentLinesTable({
           <span className="text-muted">{documentReason ?? '—'}</span>
         ),
       sortValue: (l) => l.reasonName ?? documentReason ?? '',
+    },
+    /*
+     * The line's own note, which the reason code cannot carry: a lot number on
+     * a recall write-off, a claim reference, which shelf it came off. Sits next
+     * to the reason because it elaborates it — and it was being written to the
+     * database and shown on no screen, which made a batch write-off's lot
+     * identity invisible at exactly the moment someone audits it.
+     */
+    {
+      key: 'note',
+      header: 'Note',
+      cell: (l) =>
+        l.note ? (
+          <span className="text-ink-2">{l.note}</span>
+        ) : (
+          <span className="text-muted">—</span>
+        ),
+      sortValue: (l) => l.note ?? '',
     },
     {
       key: 'before',

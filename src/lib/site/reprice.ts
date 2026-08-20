@@ -180,7 +180,12 @@ export type PriceRow = { productId: number; priceStructureId: number; priceIncl:
 
 /** Who moved a price, and through which door — the history row's two facts. */
 export type PriceAudit = {
-  source: 'editor' | 'import' | 'reprice' | 'schedule' | 'revert' | 'fanout'
+  /**
+   * `grv` is a price the buyer set while receiving a delivery (193): the
+   * supplier's cost changed, so the shelf price was changed with it, and the
+   * receipt is the document that decided it. `sourceDocId` is that GRV.
+   */
+  source: 'editor' | 'import' | 'reprice' | 'schedule' | 'revert' | 'fanout' | 'grv'
   sourceDocId?: number | null
   userName: string
 }

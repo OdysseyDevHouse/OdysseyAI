@@ -105,6 +105,20 @@ export type GridLine = PurchaseLineValues & {
   /** Shelf price, VAT inclusive. Editable here so a delivery can be repriced. */
   sellIncl: number
   /**
+   * Whether the buyer MOVED that price on this screen (193).
+   *
+   * Needed because `sellIncl` is seeded with the product's current price so
+   * the Markup % and GP % columns have something to read against. Without the
+   * flag, "the price shown" and "the price the buyer decided on" are the same
+   * number, and a receipt could not tell a considered price from a default it
+   * was handed — so every delivery would rewrite the shelf.
+   *
+   * A flag rather than comparing against the seeded value: typing a price back
+   * to what it already was is a decision too, and diffing would silently
+   * discard it.
+   */
+  sellTouched?: boolean
+  /**
    * The job line this was bought for (163). Carried, never edited here.
    *
    * The grid does not show it and nobody sets it on this screen — it arrives on
@@ -178,12 +192,24 @@ export const PURCHASE_COLUMNS: readonly (ColumnOption & { id: GridColumnId })[] 
  * supplier invoice states the line rather than the unit, and one supplier
  * quotes it exclusive while the next quotes it inclusive. Whichever box matches
  * the paper in hand gets typed into, and the unit cost falls out of it.
+ *
+ * Selling and Markup %, because receiving is WHERE PRICES GET SET (193). A
+ * supplier's cost going up is the moment the shelf price is reconsidered, and
+ * posting the GRV is what makes the new price real — so the box that does it
+ * has to be on the screen by default. Behind the Columns picker it was a
+ * feature only the person who went looking for it ever found.
+ *
+ * Markup % rather than GP % beside it: both write the same selling price, and
+ * a buyer working from a supplier's invoice thinks in what they add to cost.
+ * GP % stays one click away for whoever measures the other way.
  */
 export const RECEIVE_DEFAULT_COLUMNS: GridColumnId[] = [
   'received',
   'costExcl',
   'supplierCode',
   'location',
+  'sellIncl',
+  'markup',
   'lineTotalExcl',
   'lineTotalIncl',
 ]
@@ -311,7 +337,9 @@ export default function PurchaseLineGrid({
             /** Writes a selling price back from a markup or GP the user typed. */
             const setSellFromExcl = (sellExcl: number | null) => {
               if (sellExcl === null) return
-              onPatch(line.key, { sellIncl: addVat(sellExcl, sellingVatPct) })
+              // Typing a markup or a GP IS setting the price — the buyer just
+              // said it in the units they think in.
+              onPatch(line.key, { sellIncl: addVat(sellExcl, sellingVatPct), sellTouched: true })
             }
 
             /**
@@ -449,7 +477,9 @@ export default function PurchaseLineGrid({
                     <CurrencyInput
                       value={line.sellIncl}
                       aria-label={`Selling price of ${line.description}, including VAT`}
-                      onChange={(e) => onPatch(line.key, { sellIncl: num(e.target.value) })}
+                      onChange={(e) =>
+                        onPatch(line.key, { sellIncl: num(e.target.value), sellTouched: true })
+                      }
                     />
                   )
 

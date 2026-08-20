@@ -77,6 +77,11 @@ export default async function PurchaseDocumentPage({
     locations.filter((l) => !l.isTransit).length > 1 &&
     doc.lines.some((l) => l.locationId !== null)
 
+  // The shelf prices this delivery decided (193). Shown only when it decided
+  // any — most GRVs re-price nothing, and a column of dashes on every one of
+  // them would push the figures that matter off a narrow screen.
+  const showNewPrice = doc.lines.some((l) => l.sellingPriceIncl !== null)
+
   // Local date, matching how the GRV was stamped — toISOString() is UTC and
   // hid the Void button in the hours after local midnight.
   const today = localToday()
@@ -250,6 +255,7 @@ export default async function PurchaseDocumentPage({
                     {showLocation && <th className={TABLE_TH}>Location</th>}
                     <th className={`${TABLE_TH} text-right`}>Unit cost</th>
                     {doc.chargesExcl > 0 && <th className={`${TABLE_TH} text-right`}>Landed</th>}
+                    {showNewPrice && <th className={`${TABLE_TH} text-right`}>New price</th>}
                     <th className={`${TABLE_TH} text-right`}>Total (excl.)</th>
                   </tr>
                 </thead>
@@ -297,6 +303,18 @@ export default async function PurchaseDocumentPage({
                       {doc.chargesExcl > 0 && (
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-ink`}>
                           {formatMoney(line.landedCostExcl)}
+                        </td>
+                      )}
+                      {showNewPrice && (
+                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                          {/* A dash, not a price: this line left the shelf
+                              where it was, which is different from pricing it
+                              at what it already cost. */}
+                          {line.sellingPriceIncl === null ? (
+                            <span className="text-muted">—</span>
+                          ) : (
+                            <span className="text-ink">{formatMoney(line.sellingPriceIncl)}</span>
+                          )}
                         </td>
                       )}
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-ink`}>
@@ -364,6 +382,9 @@ export default async function PurchaseDocumentPage({
               <p className="text-xs text-muted">
                 This receipt moved stock in and blended its landed cost into each product&apos;s
                 average. The supplier&apos;s account was credited by the VAT-inclusive total.
+                {/* Only said when it is true: a receipt that re-priced nothing
+                    must not claim it did, and most of them re-price nothing. */}
+                {showNewPrice && ' It also set the selling prices shown above.'}
               </p>
             </Card>
           )}

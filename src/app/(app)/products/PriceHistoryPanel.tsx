@@ -9,7 +9,8 @@ import type { PriceHistoryRow } from '@/lib/site/priceHistory'
  *
  * Read-only — the history is a record, not a control. Every door a price can
  * change through writes it (editor, import, reprice, schedule, revert,
- * fanout), so "why did this go out at R75 on Monday" finally has an answer.
+ * fanout, GRV), so "why did this go out at R75 on Monday" finally has an
+ * answer.
  */
 
 const SOURCE_TONE: Record<string, 'brand' | 'success' | 'warning' | 'danger' | 'neutral'> = {
@@ -19,6 +20,8 @@ const SOURCE_TONE: Record<string, 'brand' | 'success' | 'warning' | 'danger' | '
   schedule: 'success',
   revert: 'danger',
   fanout: 'neutral',
+  // A cost change from a supplier drove this one, so it reads like a receipt.
+  grv: 'brand',
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -28,6 +31,7 @@ const SOURCE_LABEL: Record<string, string> = {
   schedule: 'Schedule',
   revert: 'Put back',
   fanout: 'Linked store',
+  grv: 'Goods received',
 }
 
 export default function PriceHistoryPanel({ rows }: { rows: PriceHistoryRow[] }) {

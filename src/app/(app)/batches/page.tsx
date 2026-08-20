@@ -1,6 +1,7 @@
 import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listBatches, type BatchListOptions } from '@/lib/site/batches'
+import { listReasons } from '@/lib/site/stockAdjustments'
 import { PageHeader, PageBody } from '@/components/ui'
 import BatchesClient from './BatchesClient'
 
@@ -27,12 +28,22 @@ export default async function BatchesPage({
     : 'open'
   const days = Math.min(Math.max(Number(params.days) || 30, 1), 365)
 
-  const { items } = await listBatches(siteId, {
-    q: params.q,
-    filter,
-    expiringDays: days,
-    limit: 500,
-  })
+  /*
+   * The write-off posts an ordinary adjustment, and an adjustment refuses a
+   * blank reason — so the drawer has to offer the codes. Only the ones that
+   * can face outward: a lot write-off is always stock leaving, and offering an
+   * 'in' reason would let someone file a recall under "found on count".
+   */
+  const [{ items }, reasons] = await Promise.all([
+    listBatches(siteId, {
+      q: params.q,
+      filter,
+      expiringDays: days,
+      limit: 500,
+    }),
+    listReasons(siteId),
+  ])
+  const writeOffReasons = reasons.filter((r) => r.direction === 'out' || r.direction === 'both')
 
   return (
     <>
@@ -58,6 +69,7 @@ export default async function BatchesPage({
           days={days}
           q={params.q ?? ''}
           canAdjust={can(capabilities, 'stock.adjust')}
+          reasons={writeOffReasons.map((r) => ({ id: r.id, name: r.name }))}
         />
       </PageBody>
     </>

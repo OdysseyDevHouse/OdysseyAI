@@ -45,6 +45,7 @@ import {
   MenuItem,
   MenuSeparator,
   Modal,
+  Drawer,
   PinPad,
   TenderTile,
   SignaturePad,
@@ -187,6 +188,7 @@ export default function StyleGuidePage() {
         <DataTableSection />
         <SelectionSection />
         <ModalSection />
+        <DrawerSection />
         <PinPadSection />
         <SignaturePadSection />
         <LaneWeekSection />
@@ -1990,6 +1992,88 @@ function ModalSection() {
         message="Fresh Produce has no products and no sub-departments, so it can be removed. This cannot be undone."
         confirmLabel="Delete department"
       />
+    </Card>
+  )
+}
+
+function DrawerSection() {
+  const [open, setOpen] = useState(false)
+  const [left, setLeft] = useState(false)
+  const [picked, setPicked] = useState('Normal product')
+  const choices = [
+    'Normal product',
+    'Returnable product',
+    'Recipe product',
+    'Batch-tracked product',
+    'Service product',
+  ]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Drawer"
+        description="<Drawer /> — the same native <dialog> as Modal, anchored to an edge and run full height. For a LIST TO PICK FROM rather than a question: a tall column of choices reads better down the side than in a centred box that scrolls itself, and the screen behind stays visible so the choice keeps its context. Something needing Cancel/Save is a Modal"
+      />
+      <Row>
+        <Spec name="<Drawer>" note="Slides in from the right — the product type picker is the case it was built for" />
+        <Button variant="secondary" onClick={() => setOpen(true)}>
+          Open drawer
+        </Button>
+      </Row>
+      <Row>
+        <Spec name={'<Drawer side="left">'} note="The other edge, for a drawer that belongs to a left-hand rail" />
+        <Button variant="secondary" onClick={() => setLeft(true)}>
+          Open from the left
+        </Button>
+      </Row>
+
+      <Drawer
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Choose product type"
+        description="Picking commits and closes — no Save to press."
+      >
+        <div className="divide-y divide-border overflow-hidden rounded-card border border-border">
+          {choices.map((choice) => (
+            <button
+              key={choice}
+              type="button"
+              /* A whole row is the control here; the kit has no component for
+                 a full-width list row that commits on click. */
+              data-kit-ok
+              onClick={() => {
+                setPicked(choice)
+                setOpen(false)
+              }}
+              className={`flex w-full items-center gap-3 px-3 py-3 text-left text-sm transition ${
+                picked === choice
+                  ? 'bg-brand-soft font-medium text-ink'
+                  : 'bg-surface text-ink-2 hover:bg-surface-2'
+              }`}
+            >
+              {choice}
+            </button>
+          ))}
+        </div>
+      </Drawer>
+
+      <Drawer
+        open={left}
+        onClose={() => setLeft(false)}
+        side="left"
+        size="sm"
+        title="Filters"
+        description="Anchored to the left edge."
+        footer={
+          <Button variant="ghost" onClick={() => setLeft(false)}>
+            Done
+          </Button>
+        }
+      >
+        <p className="text-sm text-muted">
+          Currently showing: <span className="font-medium text-ink">{picked}</span>
+        </p>
+      </Drawer>
     </Card>
   )
 }

@@ -116,6 +116,22 @@ function mapProduct(r: Row): TillProduct {
  * `cost_excl` follows the site's cost basis so the GP report reflects what the
  * store actually values stock at, rather than always the last invoice.
  */
+/**
+ * The shared SELECT behind every till read — search, tiles, scan, one product.
+ *
+ * ── PARAMETER ORDER MATTERS AND IS EASY TO GET WRONG ─────────────────────
+ *
+ * It takes TWO bound parameters, in this order:
+ *
+ *   1. the stock location id, or null for "whichever is main"
+ *   2. the price structure id
+ *
+ * The location one is first because its subquery appears above the price join
+ * in the text, and mysql2 binds positionally. Every caller therefore starts its
+ * params array with `locationId, priceStructureId` before adding its own — get
+ * that pair the wrong way round and the query still runs, silently counting the
+ * wrong room and pricing off structure 0.
+ */
 function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
@@ -125,15 +141,25 @@ function selectProduct(costBasis: string): string {
            -- join would multiply the row per alias and break every other figure.
            (SELECT GROUP_CONCAT(pb.barcode SEPARATOR '\n')
               FROM product_barcodes pb WHERE pb.product_id = p.id) AS extra_barcodes,
-           -- Stock the counter can actually hand over: the MAIN pile, not the
+           -- Stock the counter can actually hand over: THIS TILL'S pile, not the
            -- site total. Goods in a back warehouse are owned but not sellable
            -- here until someone carries them across, and a till that offered
            -- them would promise what it cannot give.
+           --
+           -- Which pile that is comes from the till: a register assigned to the
+           -- storeroom counts the storeroom. The parameter is the location id or
+           -- NULL, and NULL falls back to whichever location is main — the same
+           -- answer this query always gave, and still the right one for a single
+           -- room shop or any caller with no till in hand.
+           --
+           -- The COALESCE is on the PARAMETER rather than on two branches of
+           -- SQL, so there is one query plan and one place the room is decided.
            COALESCE((
              SELECT pls.stock_on_hand
                FROM product_location_stock pls
-               JOIN stock_locations sl ON sl.id = pls.location_id AND sl.is_main = 1
               WHERE pls.product_id = p.id
+                AND pls.location_id = COALESCE(
+                      ?, (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1))
               LIMIT 1
            ), 0)                                                      AS stock_on_hand,
            COALESCE(pp.selling_price_incl, 0)                         AS price_incl,
@@ -179,6 +205,8 @@ export async function searchForTill(
   term: string,
   priceStructureId: number | null,
   limit = 20,
+  /** The room this till sells from. Null counts the main location, as before. */
+  locationId: number | null = null,
 ): Promise<TillProduct[]> {
   const needle = term.trim()
   if (needle.length < 2) return []
@@ -207,7 +235,7 @@ export async function searchForTill(
              THEN 0 ELSE 1 END,
         p.description ASC
       LIMIT ${capped}`,
-    [priceStructureId ?? 0, needle, like, like, needle, needle, needle, needle],
+    [locationId, priceStructureId ?? 0, needle, like, like, needle, needle, needle, needle],
   )
 
   return rows.map(mapProduct)
@@ -250,6 +278,8 @@ export async function browseForTill(
     departmentId?: number | null
     priceStructureId?: number | null
     limit?: number
+    /** The room this till sells from. Null counts the main location, as before. */
+    locationId?: number | null
   } = {},
 ): Promise<TillProduct[]> {
   const { cost_basis: costBasis } = await getSettings(siteId, ['cost_basis'])
@@ -272,7 +302,8 @@ export async function browseForTill(
        )`
     : ''
 
-  const params: unknown[] = [options.priceStructureId ?? 0]
+  // Location first, then price structure — see selectProduct's docblock.
+  const params: unknown[] = [options.locationId ?? null, options.priceStructureId ?? 0]
   if (options.departmentId) params.push(options.departmentId)
 
   /* Same matching rule as searchForTill: barcode exact, code and description
@@ -323,6 +354,8 @@ export async function resolveScan(
   siteId: number,
   scanned: string,
   priceStructureId: number | null,
+  /** The room this till sells from. Null counts the main location, as before. */
+  locationId: number | null = null,
 ): Promise<TillProduct | null> {
   const code = scanned.trim()
   if (!code) return null
@@ -341,7 +374,7 @@ export async function resolveScan(
         AND (p.barcode = ? OR p.code = ?
              OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
       LIMIT 1`,
-    [priceStructureId ?? 0, code, code, code],
+    [locationId, priceStructureId ?? 0, code, code, code],
   )
   if (exact) return mapProduct(exact)
 
@@ -361,7 +394,7 @@ export async function resolveScan(
         AND (p.code = ? OR p.barcode = ?
              OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
       LIMIT 1`,
-    [priceStructureId ?? 0, variable.plu, variable.plu, variable.plu],
+    [locationId, priceStructureId ?? 0, variable.plu, variable.plu, variable.plu],
   )
   if (!byPlu) return null
 
@@ -397,12 +430,14 @@ export async function getTillProduct(
   siteId: number,
   productId: number,
   priceStructureId: number | null,
+  /** The room this till sells from. Null counts the main location, as before. */
+  locationId: number | null = null,
 ): Promise<TillProduct | null> {
   const { cost_basis: costBasis } = await getSettings(siteId, ['cost_basis'])
   const row = await siteQueryOne<Row>(
     siteId,
     `${selectProduct(costBasis)} WHERE p.id = ? LIMIT 1`,
-    [priceStructureId ?? 0, productId],
+    [locationId, priceStructureId ?? 0, productId],
   )
   if (!row) return null
 

@@ -173,6 +173,7 @@ import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import { SplitBillModal, type SplitLine, type SplitDestination } from './SplitBillModal'
 import TransferTableModal from './TransferTableModal'
 import ShiftModal from './ShiftModal'
+import DrawerMovementModal, { type MovementType } from './DrawerMovementModal'
 import DeclarationModal from './DeclarationModal'
 import OpenTillGate from './OpenTillGate'
 import ClockInGate from './ClockInGate'
@@ -593,15 +594,23 @@ export default function PosShell({
      one. Declared here with the rest of the shell's state; the effect that
      seeds it and the gate derived from it stay beside the code they serve. */
 
-  /** The shift modal — float, payouts, and the blind cash-up count. */
+  /** The shift modal — the opening float, and the blind cash-up count. */
   const [managingShift, setManagingShift] = useState(false)
+  /**
+   * Which drawer movement is being recorded, or null for none.
+   *
+   * The kind IS the open flag: one dialog wears three faces, and a separate
+   * boolean beside it would be a second source of truth for "is this showing",
+   * free to disagree with the face it is showing. See DrawerMovementModal.
+   */
+  const [drawerMovement, setDrawerMovement] = useState<MovementType | null>(null)
   /**
    * The detailed cash-up — denominations, every tender, banking.
    *
    * Separate state from `managingShift` because they are different acts: that
-   * one is the drawer's controls (float in, payout, drop), this is the count a
-   * supervisor signs. The cashup quick key opens THIS; the drawer controls
-   * still reach it via their own button, so neither hides the other.
+   * one starts and ends a shift, this is the count a supervisor signs. The
+   * cashup quick key opens THIS; the shift dialog still reaches it via its own
+   * button, so neither hides the other.
    */
   const [declaringCashup, setDeclaringCashup] = useState(false)
   /** "Shift open · Ruth" for the header chip, or null when none is open. */
@@ -1235,7 +1244,9 @@ export default function PosShell({
          known-offline flag, because a search that dies mid-keystroke must show the
          stored catalog rather than an empty pane that reads as "no such product". */
       const lookup = till.online
-        ? searchProductsAction(term, priceStructureId).catch(() => searchOffline(siteId, term))
+        ? searchProductsAction(term, priceStructureId, terminal?.id ?? null).catch(() =>
+            searchOffline(siteId, term),
+          )
         : searchOffline(siteId, term)
       lookup
         .then(setResults)
@@ -1271,9 +1282,12 @@ export default function PosShell({
        the honest one: inventing a subtree walk here would be a second definition of
        "what is in this department" that could disagree with the server's. */
     const lookup = till.online
-      ? browseProductsAction({ departmentId: openDepartment, priceStructureId, limit: 200 }).catch(
-          () => browseOffline(siteId, openDepartment),
-        )
+      ? browseProductsAction({
+          departmentId: openDepartment,
+          priceStructureId,
+          limit: 200,
+          terminalId: terminal?.id ?? null,
+        }).catch(() => browseOffline(siteId, openDepartment))
       : browseOffline(siteId, openDepartment)
     lookup
       .then((products) => {
@@ -1360,7 +1374,9 @@ export default function PosShell({
       /* Offline, a scan resolves against the stored catalog. Same order — barcode
          then code — because that is what makes a scanner gun feel instant. */
       const product = till.online
-        ? await scanAction(code, priceStructureId).catch(() => findByCode(siteId, code))
+        ? await scanAction(code, priceStructureId, terminal?.id ?? null).catch(() =>
+            findByCode(siteId, code),
+          )
         : await findByCode(siteId, code)
       if (product) {
         add(product, product.scannedQty ?? 1)
@@ -3648,6 +3664,18 @@ export default function PosShell({
       setShiftLabel(shiftId ? `Shift · ${userName ?? 'open'}` : null)
       setShiftId(shiftId)
       setShiftStatus((s) => (s ? { ...s, open: shiftId !== null } : s))
+      /*
+        NO SHIFT MEANS NOTHING TO MANAGE.
+
+        The shift dialog is about a drawer, so once there is no drawer its
+        `open` flag is stale — and leaving it set is what put a second "Open a
+        shift" panel in front of the gate after a quick cash-up. Cleared HERE,
+        at the one place that learns the shift is gone, rather than at each of
+        the callers that might have caused it. The mount also refuses to render
+        in front of a gate; that guard covers the frame between this and the
+        gate appearing, and this covers the state afterwards.
+      */
+      if (shiftId === null) setManagingShift(false)
       void kvPut(siteId, KV.shift, shiftId ? { id: shiftId } : null).catch(() => {})
     },
     [siteId],
@@ -3734,6 +3762,29 @@ export default function PosShell({
     !shiftStatus.clock.clockedIn
       ? shiftStatus.clock
       : null
+
+  /**
+   * Is it settled yet WHICH gate this is — and therefore safe to draw one?
+   *
+   * `closedGate` reads null both when the till is open and when the answer has
+   * not come back, and those two are indistinguishable from the render below.
+   * On a hospitality till `choosingTable` seeds true, so during that gap the
+   * floor is the first branch that matches and the table gate paints in full —
+   * then the status lands, the closed gate takes precedence, and the screen
+   * swaps under the waiter. That is the flash somebody sees on every sign-in:
+   * a fully drawn floor for one round trip, on a till that was never open.
+   *
+   * Re-ordering the branches could not fix it, because both were reading a
+   * fact that did not exist yet. So the floor now waits for the same answer
+   * the closed gate already waits for, and the one frame in between is the bar
+   * on its own rather than the wrong screen.
+   *
+   * ONLINE ONLY, matching the gates themselves. An offline till never resolves
+   * a status at all, and gating on it there would leave a waiter looking at an
+   * empty screen for the whole outage — the exact failure the offline path
+   * exists to prevent.
+   */
+  const gateUndecided = till.online && shiftStatus === null
 
   /** Re-reads the status, so clearing a gate takes the gate down. */
   const refreshShiftStatus = useCallback(() => {
@@ -4321,7 +4372,9 @@ export default function PosShell({
           }
           startTransition(async () => {
             const found = till.online
-              ? await scanAction(String(productId), priceStructureId).catch(() => null)
+              ? await scanAction(String(productId), priceStructureId, terminal?.id ?? null).catch(
+                  () => null,
+                )
               : null
             const offline = found ?? (await findByCode(siteId, String(productId)))
             if (offline) add(offline)
@@ -4330,6 +4383,7 @@ export default function PosShell({
         },
         showOutbox: () => setShowingOutbox(true),
         showShift: () => setManagingShift(true),
+        showDrawerMovement: (type: MovementType) => setDrawerMovement(type),
         showDeclaration: () => setDeclaringCashup(true),
         docDiscount: () => setDiscountingDoc(true),
         sendToKitchen,
@@ -4478,6 +4532,18 @@ export default function PosShell({
            that, "offline unavailable" would flash on every load and mean nothing. */
         offlineReason={device !== undefined && !shell.ready ? shell.reason : null}
         online={till.online}
+        /* ── THE OPENING SCREEN WEARS THE BRAND AND NOTHING ELSE ────────────
+           Every chip on the right reports on a till that is TRADING, and this
+           one is not open yet. The gate's own card already names the till, its
+           code, the operator and the day — so the row above was repeating all
+           of it in smaller type, beside the one figure on the screen that has
+           to be typed carefully. It is stripped here rather than nulled prop by
+           prop; see `bare` in TillStatusBar for why.
+
+           Only the closed gate, not the clock gate: clocking on happens on an
+           OPEN till, where the queue and the shift are live facts somebody may
+           legitimately need mid-shift. */
+        bare={closedGate !== null}
         pendingSales={till.pending}
         failedSales={till.failed}
         catalogAgeHours={till.catalogAgeHours}
@@ -4632,7 +4698,18 @@ export default function PosShell({
         there is a basket to put anything in, so nothing below this needs to know
         whether one was picked.
       */
-      choosingTable ? (
+      /*
+        ── WHICH GATE IS THIS? NOT KNOWN YET ─────────────────────────────────
+        Nothing, for the one round trip it takes to find out. `choosingTable`
+        seeds true on a hospitality till, so without this the floor would paint
+        first and be replaced the instant the shift status said the till was
+        shut — see gateUndecided for why that read as a flash on every sign-in.
+
+        Blank rather than a spinner, the same call PosEntry makes above: it
+        resolves in milliseconds, and a spinner that appears on every single
+        sign-in is more noticeable than the pause it is describing.
+      */
+      gateUndecided ? null : choosingTable ? (
         <TableGate
           bookings={bookings}
           /* Seating is a floor act, so the person on the floor does it. The
@@ -4803,7 +4880,7 @@ export default function PosShell({
               busy={pending}
               onLookup={async (code) =>
                 till.online
-                  ? await scanAction(code, priceStructureId).catch(() =>
+                  ? await scanAction(code, priceStructureId, terminal?.id ?? null).catch(() =>
                       findByCode(siteId, code),
                     )
                   : await findByCode(siteId, code)
@@ -5218,10 +5295,27 @@ export default function PosShell({
         onConfirm={confirmSplit}
       />
 
-      {/* The drawer: open a shift, move money, cash up blind. Online only —
-          the modal itself says so when the line is down. */}
+      {/* The shift: open one, or cash up blind. Online only — the modal itself
+          says so when the line is down. The three drawer movements used to live
+          in here too; they are their own quick keys now, below. */}
       <ShiftModal
-        open={managingShift}
+        /*
+          NEVER IN FRONT OF THE GATE.
+
+          `closedGate` IS a full-screen "Open your till" panel with its own
+          float pad. This dialog's no-shift face is a second one, and stacking
+          them showed a cashier two panels asking for the same float — the top
+          one covering the real gate behind it.
+
+          The status bar already refuses to open this while a gate stands (see
+          `onShift` above). This is the same rule at the mount, because that
+          only guards the ONE way in: cashing up from the quick count closes the
+          shift while this dialog is already open, which raises the gate under a
+          dialog nobody re-opened. The quick count now dismisses itself too, so
+          this is the belt to that pair of braces — a guard on the STATE rather
+          than on each route into it.
+        */
+        open={managingShift && !closedGate}
         online={till.online}
         terminalId={terminal?.id ?? null}
         pendingSales={till.pending}
@@ -5231,6 +5325,22 @@ export default function PosShell({
           setManagingShift(false)
           setDeclaringCashup(true)
         }}
+      />
+
+      {/* Money in or out of the drawer that is not a sale — one dialog, three
+          faces, reached by the payout / pay-in / drop quick keys. It resolves
+          the open shift itself rather than trusting this shell's cached id;
+          see the note in DrawerMovementModal for why that matters. */}
+      <DrawerMovementModal
+        open={drawerMovement !== null}
+        type={drawerMovement}
+        online={till.online}
+        terminalId={terminal?.id ?? null}
+        onClose={() => setDrawerMovement(null)}
+        /* The status bar shows the shift's sale count and float; a movement
+           changes what the drawer holds, so it is re-read rather than left
+           showing the figure from before the payout. */
+        onRecorded={() => noteShift(shiftId, operatorName)}
       />
 
       {/* The detailed cash-up the "Cash up" key opens: notes and coin counted

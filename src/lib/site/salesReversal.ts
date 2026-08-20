@@ -5,6 +5,7 @@ import { round, toNum } from '../decimals'
 import { assertBalanced, documentTotals, lineTotals } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement, stockDirectionFor } from './stockMovements'
+import { terminalStockLocationId } from './terminals'
 import { getTenderType } from './tenderTypes'
 import { guardPosting } from './periodLocks'
 import { getDocument, todayIso, type SalesDocument } from './salesDocuments'
@@ -287,6 +288,27 @@ export async function createCreditNote(
     composed.set(index, resolved.components)
   }
 
+  /*
+   * Which room the goods come back INTO: the one the returning till sells from.
+   *
+   * ── WHY THIS IS THE TILL'S ROOM AND NOT THE ORIGINAL SALE'S ──────────────
+   *
+   * A void takes the opposite rule — it reverses into the room the goods LEFT,
+   * because a void says the sale never happened and the stock never moved. A
+   * credit note is the other thing entirely: the customer is standing at a
+   * counter physically handing goods over, and those goods are now in THAT
+   * room. Putting them back where they were sold from would credit the shop
+   * floor for a box the trade hatch is holding, and no transfer would ever say
+   * how it crossed.
+   *
+   * It also has to work for a no-receipt return, where there is no original
+   * sale to read a room off at all.
+   *
+   * Null — a back-office credit with no till — falls through to main, exactly
+   * as it always has.
+   */
+  const returnLocationId = await terminalStockLocationId(siteId, input.terminalId)
+
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
       const [res] = await tx.execute(
@@ -371,6 +393,7 @@ export async function createCreditNote(
                 source: 'credit_sale',
                 sourceDocId: documentId,
                 terminalId: input.terminalId ?? null,
+                locationId: returnLocationId,
                 note: `${line.productCode ?? line.description} × ${component.qtyPerUnit}`.slice(0, 190),
               })
             }
@@ -393,6 +416,7 @@ export async function createCreditNote(
                 source: 'credit_sale',
                 sourceDocId: documentId,
                 terminalId: input.terminalId ?? null,
+                locationId: returnLocationId,
                 note: invoice ? `Credit of ${invoice.documentNumber}` : 'No-receipt return',
                 // A receipted batch return goes back to the lots the ORIGINAL
                 // line took (148); a no-receipt return falls to the newest lot.

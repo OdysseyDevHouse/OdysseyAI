@@ -151,7 +151,7 @@ export async function GET(req: NextRequest) {
     operators,
     instructions,
   ] = await Promise.all([
-      productsSince(siteId, cutoff, priceStructure?.id ?? null),
+    productsSince(siteId, cutoff, priceStructure?.id ?? null, terminal?.stockLocationId ?? null),
     wantsDelta ? removedSince(siteId, cutoff!) : Promise.resolve<number[]>([]),
     wantsDelta ? pricesChangedSince(siteId, cutoff!) : Promise.resolve(false),
     listDepartments(siteId, true),
@@ -396,9 +396,20 @@ async function productsSince(
   siteId: number,
   cutoff: string | null,
   priceStructureId: number | null,
+  /*
+   * The room THIS till sells from, so the cached catalog carries the same
+   * quantity the online screen would show. Without it a till assigned to the
+   * storeroom would count the storeroom while online and main the moment it
+   * dropped offline — the one situation where nobody can check the figure
+   * against the server.
+   *
+   * Null for a machine matching no terminal, which counts main exactly as
+   * before.
+   */
+  locationId: number | null,
 ) {
   if (!cutoff) {
-    return browseForTill(siteId, { priceStructureId, limit: PRODUCT_LIMIT })
+    return browseForTill(siteId, { priceStructureId, limit: PRODUCT_LIMIT, locationId })
   }
   // A delta still goes through browseForTill, filtered afterwards by id: the
   // alternative is duplicating its 60-line SELECT with one extra WHERE, and the
@@ -410,7 +421,7 @@ async function productsSince(
   )
   if (changed.length === 0) return []
   const ids = new Set(changed.map((r) => Number(r.id)))
-  const all = await browseForTill(siteId, { priceStructureId, limit: PRODUCT_LIMIT })
+  const all = await browseForTill(siteId, { priceStructureId, limit: PRODUCT_LIMIT, locationId })
   return all.filter((p) => ids.has(p.id))
 }
 

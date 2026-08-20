@@ -124,8 +124,16 @@ export type QuickKeyHandlers = {
   addProduct: (productId: number) => void
   /** Opens the outbox, which is also where a cash-up warning lives. */
   showOutbox: () => void
-  /** Opens the shift modal — float, payouts, and the blind cash-up count. */
+  /** Opens the shift modal — the float, and the blind cash-up count. */
   showShift: () => void
+  /**
+   * Opens one of the three drawer movements — money out, in, or to the safe.
+   *
+   * One handler taking the kind, rather than three: they are one dialog with
+   * three sets of words (see DrawerMovementModal), and three handlers would be
+   * three lines in the shell doing the identical thing.
+   */
+  showDrawerMovement: (type: 'payout' | 'payin' | 'drop') => void
   /** Opens the DETAILED cash-up: denominations, every tender, banking. */
   showDeclaration: () => void
   /** Opens the whole-sale discount dialog. */
@@ -362,6 +370,33 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
     online
       ? handlers.showDeclaration()
       : handlers.showOutbox(),
+
+  /*
+   * The three drawer movements, each one press.
+   *
+   * Online only, and refused with the REASON rather than silently: a movement
+   * has to land on the shift it belongs to, and the shift lives on the server.
+   * Queueing one offline would bank it into whichever shift happened to be open
+   * when the line came back — which could be the next day's.
+   *
+   * The dialog says the same thing when it is opened offline. Both, because
+   * this is the cheaper refusal (no dialog to dismiss) and that one is the
+   * backstop for every other way in.
+   */
+  payout: ({ handlers, online }) =>
+    online
+      ? handlers.showDrawerMovement('payout')
+      : handlers.say('A payout has to land on a shift, and that needs the connection.', 'info'),
+
+  payin: ({ handlers, online }) =>
+    online
+      ? handlers.showDrawerMovement('payin')
+      : handlers.say('A pay-in has to land on a shift, and that needs the connection.', 'info'),
+
+  'drop-to-safe': ({ handlers, online }) =>
+    online
+      ? handlers.showDrawerMovement('drop')
+      : handlers.say('A drop has to land on a shift, and that needs the connection.', 'info'),
 
   /* Reprints THIS machine's last slip — no hunting through the invoicing
      list. The reprint counts through recordPrint, so the paper says COPY. */

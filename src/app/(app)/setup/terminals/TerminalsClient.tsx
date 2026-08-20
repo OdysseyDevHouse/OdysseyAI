@@ -26,7 +26,11 @@ import {
   saveTerminalAction,
   deleteTerminalAction,
   setTerminalPosModeAction,
+  setTerminalStockLocationAction,
 } from './actions'
+
+/** A room a till can be pointed at. Trimmed on the server — see page.tsx. */
+export type LocationOption = { id: number; name: string; isMain: boolean }
 
 /**
  * Till setup.
@@ -36,7 +40,13 @@ import {
  * TILL01 through TILL04 from the back office, and each machine then claims its
  * own, rather than a till having to be set up at the counter it will live on.
  */
-export default function TerminalsClient({ terminals }: { terminals: Terminal[] }) {
+export default function TerminalsClient({
+  terminals,
+  locations,
+}: {
+  terminals: Terminal[]
+  locations: LocationOption[]
+}) {
   const [editing, setEditing] = useState<Terminal | null>(null)
   const [adding, setAdding] = useState(false)
   const [deleting, setDeleting] = useState<Terminal | null>(null)
@@ -173,6 +183,46 @@ export default function TerminalsClient({ terminals }: { terminals: Terminal[] }
                       </option>
                     ))}
                   </Select>
+
+                  {/* ── WHICH ROOM THIS TILL SELLS OUT OF ──────────────────
+                      Beside the mode and on the row for the same reason: the
+                      question is comparative. "Which of my tills sells from
+                      where" is a column a manager reads down, and getting it
+                      wrong is the kind of mistake you spot by seeing two rows
+                      disagree.
+
+                      Hidden entirely on a single-room shop. With one location
+                      there is nothing to choose, and a select whose only option
+                      is the one already in force is a control that asks a
+                      question the shop does not have — which is how somebody
+                      ends up believing it matters. */}
+                  {locations.length > 1 && (
+                    <Select
+                      aria-label={`Which stock location ${terminal.code} sells from`}
+                      value={terminal.stockLocationId === null ? '' : String(terminal.stockLocationId)}
+                      disabled={pending}
+                      onChange={(e) => {
+                        const raw = e.target.value
+                        const next = raw === '' ? null : Number(raw)
+                        if (next === terminal.stockLocationId) return
+                        run(() => setTerminalStockLocationAction(terminal.id, next))
+                      }}
+                      className="h-8 w-[150px] text-[13px]"
+                    >
+                      {/* Empty value, not the main location's id. Choosing this
+                          stores NULL, which means "whichever room is main" and
+                          keeps following it if the shop later moves main
+                          elsewhere. Storing today's main id would freeze that
+                          answer and quietly stop tracking. */}
+                      <option value="">Main location</option>
+                      {locations.map((l) => (
+                        <option key={l.id} value={String(l.id)}>
+                          {l.name}
+                          {l.isMain ? ' (main)' : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
 
                   <Button
                     variant="ghost"

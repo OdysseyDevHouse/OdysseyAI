@@ -765,8 +765,45 @@ input[type='range'] {
   animation: pin-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97);
 }
 
+/* Drawer: slide in from the edge it is anchored to.
+
+   A drawer is the one dialog whose ARRIVAL carries meaning — it says "this came
+   from the side, and the screen you were on is still there behind it". A panel
+   that simply appears reads as a modal that forgot to centre itself.
+
+   Animated on the <dialog> itself rather than a wrapper: the element is in the
+   top layer, so there is no wrapper to animate. Reduced motion keeps the panel
+   and drops only the travel. */
+@keyframes drawer-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes drawer-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.drawer-from-right[open] {
+  animation: drawer-in-right 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.drawer-from-left[open] {
+  animation: drawer-in-left 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pin-shake {
+  .pin-shake,
+  .drawer-from-right[open],
+  .drawer-from-left[open] {
     animation: none;
   }
 }

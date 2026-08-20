@@ -38,8 +38,11 @@ import {
   tillRevealTenderAction,
   tillSaveDeclarationAction,
   tillFinalizeDeclarationAction,
+  tillTenderBreakdownAction,
 } from './shiftActions'
 import type { VisibleDeclaration } from '@/app/(app)/sales/cashup/[shiftId]/declare/visible'
+import type { TenderBreakdown } from '@/lib/site/cashupBreakdown'
+import TenderBreakdownView from './TenderBreakdownView'
 
 /**
  * The detailed cash-up, at the till.
@@ -189,6 +192,18 @@ export default function DeclarationModal({
   const [bankReference, setBankReference] = useState('')
   const [varianceNote, setVarianceNote] = useState('')
   const [note, setNote] = useState('')
+
+  /* ── The drill-down ───────────────────────────────────────────────────────
+     Which tender's arithmetic is being read, if any. Non-null REPLACES the
+     board with the breakdown rather than covering it — a second dialog over
+     this one would put a half-finished count behind a scrim, and on a till
+     screen the inner one has nowhere left to be.
+
+     The count's own state is untouched while this is open, which is what makes
+     Back free: nothing is re-fetched, nothing is re-seeded, and a supervisor
+     can go in and out mid-count without losing a keystroke. */
+  const [breakdown, setBreakdown] = useState<TenderBreakdown | null>(null)
+  const [breakdownFor, setBreakdownFor] = useState<number | null>(null)
 
   /* ── The numpad's target ──────────────────────────────────────────────────
      The pad types into whichever box was last focused, and `entry` is that
@@ -671,6 +686,50 @@ export default function DeclarationModal({
     })
   }
 
+  /**
+   * Whether the arithmetic behind a figure may be read.
+   *
+   * The server's own answer, published by visibleFor, not a guess made here.
+   * A blind count is shown no target, and this view IS the target itemised —
+   * so it is offered only where nothing is being withheld: a reconciler with
+   * `sales.cashup_expected`, or anybody reading a cash-up that is already
+   * signed off and has nothing left to leak.
+   *
+   * Deliberately NOT `sighted`, which is derived from whether every expected
+   * figure has arrived. That is true of a reconciler and also true of a cashier
+   * who has just finished counting — indistinguishable exactly when it matters.
+   */
+  const canDrillDown = view !== null && !view.blind
+
+  /**
+   * Opens one tender's breakdown, fetching it on demand.
+   *
+   * Fetched per click rather than loaded with the view: this is five queries
+   * per tender and a shift can have eight of them, most never opened. The
+   * dialog already costs a round trip to open; making it cost forty would be
+   * paid by every cashier for a screen only a supervisor reads.
+   */
+  function openBreakdown(tenderTypeId: number) {
+    if (shiftId === null || !canDrillDown) return
+    setBreakdownFor(tenderTypeId)
+    startTransition(async () => {
+      const result = await tillTenderBreakdownAction(shiftId, tenderTypeId)
+      if ('ok' in result) {
+        toast.error(result.error)
+        setBreakdownFor(null)
+        return
+      }
+      setBreakdown(result)
+    })
+  }
+
+  /* Both cleared together, or a second open flashes the previous tender's
+     figures under the new tender's name while its own fetch is in flight. */
+  function closeBreakdown() {
+    setBreakdown(null)
+    setBreakdownFor(null)
+  }
+
   return (
     <Modal
       open={open}
@@ -693,32 +752,58 @@ export default function DeclarationModal({
           ? `${view.ownerLabel} · trading since ${new Date(view.openedAt).toLocaleString('en-ZA')}`
           : undefined
       }
+      /* The dialog says where you ARE. Drilled into a tender, the header names
+         it — otherwise the only thing on screen saying which of eight tenders
+         this is would be the figure at the top right of a scrolling table. */
+      subheader={
+        breakdownFor !== null ? (
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <Icons.Calculator size={15} />
+            <span>Cash-up</span>
+            <Icons.ChevronRight size={14} className="text-faint" />
+            <span className="font-medium text-ink">
+              {breakdown?.tenderName ?? 'Reading the transactions…'}
+            </span>
+          </div>
+        ) : undefined
+      }
       /* Half-counted work behind a stray click is exactly what this must not
          lose — the draft is saved per tender, but the grid is not. */
       closeOnBackdrop={false}
       footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
-            Close
+        /* Reading a breakdown, the only action is BACK.
+           Save and Finalize belong to the count, and leaving them under a table
+           of transactions would let somebody sign a cash-up off from a screen
+           that is not showing them what they are signing. */
+        breakdownFor !== null ? (
+          <Button variant="secondary" onClick={closeBreakdown}>
+            <Icons.ChevronLeft size={16} />
+            Back to the count
           </Button>
-          {view && !signed && (
-            <>
-              <Button variant="ghost" onClick={saveNow} disabled={pending}>
-                Save count
-              </Button>
-              <Button
-                variant="success"
-                disabled={
-                  pending || !everyTenderDeclared || !supervisorId || (outside && !varianceNote.trim())
-                }
-                onClick={finalizeNow}
-              >
-                {!pending && <Icons.Check size={16} />}
-                {pending ? 'Signing off…' : 'Finalize cash-up'}
-              </Button>
-            </>
-          )}
-        </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={pending}>
+              Close
+            </Button>
+            {view && !signed && (
+              <>
+                <Button variant="ghost" onClick={saveNow} disabled={pending}>
+                  Save count
+                </Button>
+                <Button
+                  variant="success"
+                  disabled={
+                    pending || !everyTenderDeclared || !supervisorId || (outside && !varianceNote.trim())
+                  }
+                  onClick={finalizeNow}
+                >
+                  {!pending && <Icons.Check size={16} />}
+                  {pending ? 'Signing off…' : 'Finalize cash-up'}
+                </Button>
+              </>
+            )}
+          </>
+        )
       }
     >
       {shiftId === null ? (
@@ -727,7 +812,18 @@ export default function DeclarationModal({
         </Callout>
       ) : loading && !view ? (
         <p className="py-8 text-center text-sm text-muted">Reading the shift…</p>
-      ) : !view ? null : (
+      ) : !view ? null : /* ── The drill-down, IN PLACE OF the board ──────────────────────────
+             The count's state is left exactly as it stands: this returns to a
+             half-typed drawer with every figure where it was, because nothing
+             below has unmounted anything — the board is simply not rendered
+             while the breakdown is. */
+      breakdownFor !== null ? (
+        breakdown ? (
+          <TenderBreakdownView breakdown={breakdown} onBack={closeBreakdown} />
+        ) : (
+          <p className="py-8 text-center text-sm text-muted">Reading the transactions…</p>
+        )
+      ) : (
         /* `min-h-0` and NOT `overflow-y-auto`: the body no longer scrolls as
            one piece. Panel 1 pins its pad to its own bottom, and a pad inside a
            scrolling parent slides away with everything else however it is
@@ -813,7 +909,15 @@ export default function DeclarationModal({
                   this is read at arm's length and dragged with a finger. The
                   app's 8px default is both invisible and unhittable on a
                   counter screen. */}
-              <div className="till-pane min-w-0 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+              {/* `overflow-x-hidden` is deliberate and not a papering-over.
+                  The columns below are shares now, so nothing here is WIDER
+                  than the pane at any size — but `overflow-y-auto` alone
+                  computes overflow-x to `auto` as well, so a single stray
+                  pixel from a future badge or a long tender name would put a
+                  12px scrollbar (see .till-pane) across the bottom of the
+                  count, right where the pad begins. This pane scrolls DOWN.
+                  Saying so is cheaper than rediscovering it. */}
+              <div className="till-pane min-w-0 flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto">
                 {/*
                   "Nothing was taken" is only true if nothing was taken.
 
@@ -861,10 +965,32 @@ export default function DeclarationModal({
                   <table className={`${TABLE} table-fixed`}>
                     <thead>
                       <tr className={TABLE_HEAD_ROW}>
-                        <th className={TABLE_TH}>Tender</th>
-                        <th className={`${TABLE_TH} w-24 text-right`}>Expected</th>
-                        <th className={`${TABLE_TH} w-32 text-right`}>Declared</th>
-                        <th className={`${TABLE_TH} w-24 text-right`}>Difference</th>
+                        {/* `pl-14`, because the names below no longer start at
+                            the cell's own edge — a 40px view key and its gap
+                            come first. Left at `px-4` the heading sat over the
+                            keys instead of over the column it names. */}
+                        <th className={`${TABLE_TH} ${canDrillDown ? 'pl-14' : ''}`}>Tender</th>
+                        {/*
+                          ── PERCENTAGES, NOT FIXED WIDTHS ──────────────────
+
+                          These were `w-24 / w-32 / w-24`: 96 + 128 + 96 = 320px
+                          of column that CANNOT shrink. Panel 1's grid track is
+                          `minmax(0, 38rem)`, so on a narrower till the track
+                          drops below that floor, the Tender column is squeezed
+                          to literally zero, and the table STILL does not fit —
+                          which is the horizontal scrollbar that appeared above
+                          the pad, on a pane that should only ever scroll down.
+
+                          A percentage on a `table-fixed` table divides the
+                          width that EXISTS instead of demanding a width that
+                          may not. The proportions are the same ones the fixed
+                          values gave at full size, so nothing moves on a wide
+                          screen; on a narrow one every column gives up a little
+                          rather than one column giving up everything.
+                        */}
+                        <th className={`${TABLE_TH} w-[19%] text-right`}>Expected</th>
+                        <th className={`${TABLE_TH} w-[25%] text-right`}>Declared</th>
+                        <th className={`${TABLE_TH} w-[19%] text-right`}>Difference</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -890,25 +1016,88 @@ export default function DeclarationModal({
                         return (
                           <Fragment key={t.tenderTypeId}>
                             <tr className={TABLE_ROW}>
-                              <td className={TABLE_TD}>
-                                {/* The cash row carries the fold for its own
-                                    breakdown. A tender with nothing to break
-                                    down gets no chevron rather than a dead one. */}
-                                {isCash ? (
-                                  <RowDisclosure
-                                    label={t.tenderName}
-                                    hint={
-                                      countingCash
-                                        ? 'counted by denomination'
-                                        : 'count it out'
-                                    }
-                                    open={countingCash}
-                                    onToggle={toggleCounting}
-                                    disabled={signed}
-                                  />
-                                ) : (
-                                  t.tenderName
-                                )}
+                              {/* `pl-1.5` overrides TABLE_TD's `px-4` ONLY while
+                                  the key is there to lead the cell: a 40px
+                                  control behind 16px of text padding sits
+                                  visibly inboard of the header above it. Same
+                                  instinct as RowDisclosure's own negative
+                                  margin — a control at the start of a column
+                                  belongs on the column's edge. With no key the
+                                  cell is plain text again and keeps the kit's
+                                  padding, matching the header's. */}
+                              <td className={`${TABLE_TD} ${canDrillDown ? 'pl-1.5' : ''}`}>
+                                {/*
+                                  ── THE VIEW KEY, THEN THE NAME ─────────────
+
+                                  A real key in its own column-edge slot, not a
+                                  line of text under the row. This is read on a
+                                  TOUCH SCREEN: a 12px link under a label is
+                                  something you aim at, and aiming is what a
+                                  counter screen has no patience for. It also
+                                  cost every row a second line, which on eight
+                                  tenders is eight rows of height taken from the
+                                  count itself.
+
+                                  Left of the name, so the keys form ONE column
+                                  a thumb can run down without reading — the
+                                  same reason row actions live hard right
+                                  everywhere else in the app. Cash's name is
+                                  already a control (it folds the denomination
+                                  grid open), and this being a separate key is
+                                  what stops one label doing two different jobs
+                                  depending on where in the word you land.
+
+                                  ABSENT, not disabled, for a blind count: a
+                                  greyed key advertises there is something here
+                                  to be had, which is the conversation a blind
+                                  count exists to avoid. `canDrillDown` is a
+                                  property of the READER, not of the row, so the
+                                  whole column goes at once and the names simply
+                                  return to the cell edge — no empty slot to
+                                  reserve, because there is never a mixed table.
+                                */}
+                                <div className="flex items-center gap-2">
+                                  {canDrillDown && (
+                                    /* `md`, not `sm`. The row already carries a
+                                       40px Declared box, so a 32px key beside it
+                                       reads as an afterthought AND is the one
+                                       thing on the row a finger can miss. Same
+                                       height as the input it sits level with,
+                                       which costs the row no height at all. */
+                                    <Button
+                                      variant="ghost"
+                                      size="md"
+                                      iconOnly
+                                      className="shrink-0"
+                                      aria-label={`How ${t.tenderName} was worked out`}
+                                      title={`How ${t.tenderName} was worked out`}
+                                      onClick={() => openBreakdown(t.tenderTypeId)}
+                                      disabled={pending}
+                                    >
+                                      <Icons.Eye size={18} />
+                                    </Button>
+                                  )}
+                                  {/* The cash row carries the fold for its own
+                                      breakdown. A tender with nothing to break
+                                      down gets no chevron rather than a dead one. */}
+                                  <div className="min-w-0 flex-1">
+                                    {isCash ? (
+                                      <RowDisclosure
+                                        label={t.tenderName}
+                                        hint={
+                                          countingCash
+                                            ? 'counted by denomination'
+                                            : 'count it out'
+                                        }
+                                        open={countingCash}
+                                        onToggle={toggleCounting}
+                                        disabled={signed}
+                                      />
+                                    ) : (
+                                      t.tenderName
+                                    )}
+                                  </div>
+                                </div>
                               </td>
                               <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                                 {/* An em dash: this browser has not been told
@@ -1005,11 +1194,15 @@ export default function DeclarationModal({
                                     <thead>
                                       <tr className={TABLE_HEAD_ROW}>
                                         <th className={TABLE_TH}>Denomination</th>
-                                        {/* Fixed, or the qty inputs are the
-                                            first thing the browser squeezes
-                                            when the pad takes its width. */}
-                                        <th className={`${TABLE_TH} w-24 text-right`}>Qty</th>
-                                        <th className={`${TABLE_TH} text-right`}>Amount</th>
+                                        {/* A SHARE, not a fixed width. The qty
+                                            box still gets the room it needs —
+                                            that is what the old `w-24` was for
+                                            — but taking it as a proportion means
+                                            a narrow till shrinks the grid
+                                            instead of overflowing it. Same
+                                            reasoning as the outer table above. */}
+                                        <th className={`${TABLE_TH} w-[28%] text-right`}>Qty</th>
+                                        <th className={`${TABLE_TH} w-[32%] text-right`}>Amount</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -1033,7 +1226,15 @@ export default function DeclarationModal({
                                                 their taps do nothing.
                                               */}
                                               <Input
-                                                className="numeric w-full min-w-14 text-right"
+                                                /* `w-full` alone — the `min-w-14`
+                                                   that used to be here was a
+                                                   56px floor per row, and a
+                                                   floor inside a cell is what
+                                                   makes a table refuse to fit
+                                                   the pane it is in. The
+                                                   column's own share now sets
+                                                   the width. */
+                                                className="numeric w-full text-right"
                                                 inputMode="numeric"
                                                 autoComplete="off"
                                                 data-1p-ignore

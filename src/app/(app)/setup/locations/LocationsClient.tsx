@@ -97,6 +97,7 @@ export default function LocationsClient({ locations }: { locations: StockLocatio
                 <div className="flex items-center gap-1.5">
                   {location.isMain && <Badge tone="success">Main</Badge>}
                   {location.isMobile && <Badge tone="brand">Vehicle</Badge>}
+                  {location.isTransit && <Badge tone="neutral">System</Badge>}
                   {!location.isActive && <Badge tone="neutral">Off</Badge>}
 
                   {/* Not offered for a vehicle or the transit pile: setMainLocation
@@ -118,25 +119,36 @@ export default function LocationsClient({ locations }: { locations: StockLocatio
                       </Button>
                     )}
 
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    iconOnly
-                    aria-label={`Edit ${location.name}`}
-                    onClick={() => setEditing(location)}
-                  >
-                    <Icons.Pencil size={15} />
-                  </Button>
-                  <Button
-                    variant="danger-ghost"
-                    size="sm"
-                    iconOnly
-                    aria-label={`Delete ${location.name}`}
-                    disabled={pending || location.isMain}
-                    onClick={() => setDeleting(location)}
-                  >
-                    <Icons.Trash size={15} />
-                  </Button>
+                  {/* The transit pile is created by the store-transfer migration and
+                      written only by storeTransfers.ts. There is nothing on it a
+                      user should set: its code and name are what the dispatch and
+                      receipt screens say, and deleteLocation refuses it outright —
+                      so both buttons would only ever produce a toast saying no, or
+                      (in the edit case) let it be deactivated, which hides a pile
+                      that still fills. Same reasoning as "Make main" above. */}
+                  {!location.isTransit && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label={`Edit ${location.name}`}
+                        onClick={() => setEditing(location)}
+                      >
+                        <Icons.Pencil size={15} />
+                      </Button>
+                      <Button
+                        variant="danger-ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label={`Delete ${location.name}`}
+                        disabled={pending || location.isMain}
+                        onClick={() => setDeleting(location)}
+                      >
+                        <Icons.Trash size={15} />
+                      </Button>
+                    </>
+                  )}
                 </div>
               </SettingRow>
             ))}
@@ -179,6 +191,20 @@ export default function LocationsClient({ locations }: { locations: StockLocatio
 }
 
 function describe(location: StockLocation): string {
+  /*
+   * Transit says what it is and nothing else.
+   *
+   * The other facts below — an address, a product count, "empty" — read as
+   * things a user might act on, and for this row every one of them is a dead
+   * end: it has no address to set, and its pile being empty is the normal
+   * state rather than something to go and fix. Explaining what it is for is
+   * the only useful sentence, because seeing it in the list and finding no way
+   * to put stock in it is exactly the confusion this row causes.
+   */
+  if (location.isTransit) {
+    return 'Created and maintained by the system — goods that have left this store for another one, and have not been received yet. Stock arrives and leaves on its own; it cannot be transferred into by hand.'
+  }
+
   const parts: string[] = []
   if (location.isMain) parts.push('sales come from here')
   if (location.address) parts.push(location.address)

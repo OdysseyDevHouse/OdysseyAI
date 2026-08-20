@@ -301,6 +301,47 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     noTables: true,
     hint: 'Counts the drawer and closes the shift.',
   },
+  /*
+   * ── THE THREE DRAWER MOVEMENTS ────────────────────────────────────────────
+   *
+   * They used to live two taps inside the shift dialog. That was the wrong
+   * depth: opening a shift happens once a day, but a payout happens whenever
+   * the milk arrives — and it happens while somebody waits at the counter. A
+   * key that is two taps and a dialog away is a key a cashier postpones, and a
+   * postponed payout is a drawer short at close with nobody able to say why.
+   *
+   * Three separate slugs rather than one "drawer movement" key that asks which
+   * kind. The shop arranges its own board, and a shop that only ever pays out
+   * should be able to put THAT on the bar without carrying a menu for two
+   * things it never does. It also makes each key one press instead of two.
+   *
+   * `noTables` for the reason `cashup` has it: money in and out of the drawer
+   * is a till-level act, and a waiter with a bill open is not at the drawer.
+   */
+  {
+    slug: 'payout',
+    label: 'Payout',
+    icon: 'Banknote',
+    capability: 'sales.cashup',
+    noTables: true,
+    hint: 'Records money out of the drawer that is not a sale.',
+  },
+  {
+    slug: 'payin',
+    label: 'Pay in',
+    icon: 'Wallet',
+    capability: 'sales.cashup',
+    noTables: true,
+    hint: 'Records money put into the drawer that is not a sale.',
+  },
+  {
+    slug: 'drop-to-safe',
+    label: 'Drop to safe',
+    icon: 'Lock',
+    capability: 'sales.cashup',
+    noTables: true,
+    hint: 'Records cash skimmed out to the safe mid-shift.',
+  },
   {
     slug: 'refund',
     label: 'Refund',
@@ -554,7 +595,24 @@ export const SUPERVISOR_GROUP_SIG = 'g:supervisor'
 export const QUICK_KEY_ICONS: readonly { group: string; names: readonly string[] }[] = [
   {
     group: 'Money',
-    names: ['Coins', 'HandCoins', 'CreditCard', 'Percent', 'Tag', 'Gem', 'Ticket', 'Gift'],
+    /* `Banknote`, `Wallet` and `Lock` are the three drawer movements' defaults —
+       money out, money in, money to the safe. Every icon an action ships with
+       must appear here, or validation rejects the very name the server itself
+       wrote when the key was created. Verified against icons.tsx: a name that
+       module does not export draws nothing at all. */
+    names: [
+      'Coins',
+      'HandCoins',
+      'CreditCard',
+      'Percent',
+      'Tag',
+      'Gem',
+      'Ticket',
+      'Gift',
+      'Banknote',
+      'Wallet',
+      'Lock',
+    ],
   },
   {
     group: 'The sale',

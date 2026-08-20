@@ -41,6 +41,20 @@ export type Terminal = {
    * wrong screen. See sql/site/180_terminal_pos_mode.sql.
    */
   posMode: PosMode
+  /**
+   * The stock room this till sells OUT of. Null means the main location.
+   *
+   * NOT `location` above, which is free text naming where the machine stands.
+   * This one is a real reference to `stock_locations`, and it decides which
+   * pile a sale comes off and which pile the sell screen counts.
+   *
+   * Null is the ordinary single-room shop rather than a missing value: it is
+   * resolved to main at the moment of the sale, by the same fallback
+   * recordMovement has always applied. See sql/site/194_terminal_stock_location.sql.
+   */
+  stockLocationId: number | null
+  /** That room's name, for a screen that has to say which one. Null when unset. */
+  stockLocationName: string | null
   deviceId: string | null
   deviceLabel: string | null
   isActive: boolean
@@ -65,6 +79,11 @@ function mapTerminal(r: Row): Terminal {
        cast to PosMode is a value every switch silently mishandles. This turns
        it into 'retail', which is a till that trades. */
     posMode: toPosMode(r.pos_mode),
+    /* Null-checked rather than `Number(x) || null`: location id 0 does not
+       exist, but the coercion would also swallow a genuine id if one ever did,
+       and the explicit form says which state is being represented. */
+    stockLocationId: r.stock_location_id === null ? null : Number(r.stock_location_id),
+    stockLocationName: (r.stock_location_name as string | null) ?? null,
     deviceId: (r.device_id as string | null) ?? null,
     deviceLabel: (r.device_label as string | null) ?? null,
     isActive: !!r.is_active,
@@ -76,9 +95,11 @@ function mapTerminal(r: Row): Terminal {
 
 const SELECT_TERMINAL = `
   SELECT t.id, t.code, t.till_number, t.name, t.location, t.pos_mode, t.device_id, t.device_label,
+         t.stock_location_id, sl.name AS stock_location_name,
          t.is_active, t.claimed_at, t.last_seen_at,
          (SELECT COUNT(*) FROM sales_documents d WHERE d.terminal_id = t.id) AS document_count
     FROM terminals t
+    LEFT JOIN stock_locations sl ON sl.id = t.stock_location_id
 `
 
 export async function listTerminals(
@@ -279,6 +300,96 @@ export async function setTerminalPosMode(
 
   await siteExecute(siteId, 'UPDATE terminals SET pos_mode = ? WHERE id = ?', [safe, id])
   return { ok: true, id }
+}
+
+/**
+ * Which stock room this till sells out of.
+ *
+ * Its own narrow write for the same two reasons `setTerminalPosMode` above is
+ * one: it is set from the till's ROW rather than the edit dialog, because the
+ * question is comparative — "which of my four tills sells from where" is a
+ * column you read down — and because a partial save through `updateTerminal`
+ * would carry the OTHER fields with it from a screen that is holding only part
+ * of the record.
+ *
+ * `null` clears it back to "the main location", which is a real answer and the
+ * one most shops want. See sql/site/194_terminal_stock_location.sql.
+ */
+export async function setTerminalStockLocation(
+  siteId: number,
+  id: number,
+  locationId: number | null,
+): Promise<SaveResult> {
+  const existing = await getTerminal(siteId, id)
+  if (!existing) return { ok: false, error: 'Till not found.' }
+
+  if (locationId !== null) {
+    /*
+     * Checked rather than left to the FK.
+     *
+     * The constraint would refuse a bad id anyway, but as a driver error with a
+     * constraint name in it — and these two cases have things worth SAYING. A
+     * transit pile in particular is the one a person is most likely to pick by
+     * accident, because it is the one that shows up in a list of locations and
+     * looks like a room.
+     */
+    const row = await siteQueryOne<Row>(
+      siteId,
+      'SELECT id, name, is_transit, is_active FROM stock_locations WHERE id = ? LIMIT 1',
+      [locationId],
+    )
+    if (!row) return { ok: false, error: 'That stock location no longer exists.' }
+
+    /* A till selling out of the in-transit pile would be ringing up goods that
+       are on a motorway between two branches — the same refusal, and the same
+       reasoning, that setMainLocation applies to it. */
+    if (row.is_transit) {
+      return {
+        ok: false,
+        error: `${String(row.name)} holds goods on their way to another store, so a till cannot sell from it.`,
+      }
+    }
+    if (!row.is_active) {
+      return { ok: false, error: `${String(row.name)} is deactivated, so a till cannot sell from it.` }
+    }
+  }
+
+  await siteExecute(siteId, 'UPDATE terminals SET stock_location_id = ? WHERE id = ?', [
+    locationId,
+    id,
+  ])
+  return { ok: true, id }
+}
+
+/**
+ * The location a given till sells out of, as an id — or null for "use main".
+ *
+ * ── WHY THIS RETURNS NULL RATHER THAN RESOLVING MAIN ITSELF ───────────────
+ *
+ * Because `recordMovement` already resolves main, INSIDE the caller's open
+ * transaction, precisely so a movement cannot straddle a change of which room
+ * is main. Resolving it here — one query earlier, outside that transaction —
+ * would reintroduce exactly the race that fallback exists to close.
+ *
+ * So null is passed onward as null and the existing fallback does its job. The
+ * only thing this function decides is whether the till OVERRIDES it.
+ *
+ * Tolerant of a terminal that has gone: a sale must not fail because the till
+ * row was deleted mid-transaction, and main is the right answer when nothing
+ * says otherwise.
+ */
+export async function terminalStockLocationId(
+  siteId: number,
+  terminalId: number | null | undefined,
+): Promise<number | null> {
+  if (!terminalId) return null
+  const row = await siteQueryOne<Row>(
+    siteId,
+    'SELECT stock_location_id FROM terminals WHERE id = ? LIMIT 1',
+    [terminalId],
+  ).catch(() => null)
+  if (!row || row.stock_location_id === null) return null
+  return Number(row.stock_location_id)
 }
 
 /**

@@ -55,6 +55,16 @@ export type PurchaseLine = {
   lineTotalIncl: number
   chargeExcl: number
   landedCostExcl: number
+  /**
+   * The shelf price this line SET, VAT inclusive (193). Null on every line
+   * whose buyer left the price alone — which is most of them.
+   *
+   * On a draft it is the decision waiting to be applied; on a posted GRV it is
+   * the record of what the delivery re-priced, beside the cost that justified
+   * it. Null also on every line predating the column, which is the truth: they
+   * moved no price.
+   */
+  sellingPriceIncl: number | null
   /** Which pile the goods went into. A return must leave the same one. */
   locationId: number | null
   /** On a supplier_return line: the GRV line it sends back. Null elsewhere. */
@@ -138,6 +148,13 @@ function mapLine(r: Row): PurchaseLine {
     lineTotalIncl: toNum(r.line_total_incl),
     chargeExcl: toNum(r.charge_excl),
     landedCostExcl: toNum(r.landed_cost_excl),
+    // NOT toNum: null must survive as null (193). Coalescing it to 0 would
+    // turn "this line left the price alone" into "this line priced it at
+    // zero", and a reopened draft would offer to give the goods away.
+    sellingPriceIncl:
+      r.selling_price_incl === null || r.selling_price_incl === undefined
+        ? null
+        : toNum(r.selling_price_incl),
     locationId: r.location_id === null || r.location_id === undefined ? null : Number(r.location_id),
     sourceLineId:
       r.source_line_id === null || r.source_line_id === undefined ? null : Number(r.source_line_id),

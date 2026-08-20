@@ -11,6 +11,7 @@ import {
   type ResolvedComponent,
 } from './productComposition'
 import { mainLocationIdTx } from './stockLocations'
+import { writePriceRows, type PriceRow } from './reprice'
 import { receiveSerialsTx, removeReceivedSerialsTx } from './serials'
 import { getSetting } from './settings'
 import { guardPosting } from './periodLocks'
@@ -72,6 +73,21 @@ export type ReceiveLineInput = {
   qtyBonus?: number
   /** Per unit, EXCLUSIVE of VAT — how a supplier invoice is written. */
   unitCostExcl: number
+  /**
+   * What the shelf price should BECOME, INCLUSIVE of VAT (193).
+   *
+   * The buyer prices the delivery while the supplier's invoice is in their
+   * hand — that is what the Selling, Markup % and GP % columns on the
+   * receiving grid have always been for. Applied to the default price
+   * structure when the receipt POSTS, and never when a draft is saved: a
+   * delivery still being keyed must not move a price the till is charging.
+   *
+   * NULL means LEAVE THE PRICE ALONE, which is not the same as 0. The grid
+   * seeds every line with the product's current price, so treating
+   * "unchanged" as an instruction would have every delivery rewrite the shelf
+   * from a figure that was only ever a starting point.
+   */
+  sellingPriceIncl?: number | null
   discountPct?: number
   /** An absolute discount on this line, which wins over the percentage. See 087. */
   discountAmount?: number
@@ -196,6 +212,17 @@ export function chargesTotalFor(input: ReceiveInput): number {
   return round(input.chargesExcl ?? 0, 2)
 }
 
+/**
+ * The shelf price a line carries, ready for the column — or NULL (193).
+ *
+ * The NULL is the whole point and is preserved rather than coalesced to 0:
+ * "the buyer did not touch this price" and "the buyer set this price to zero"
+ * are different instructions, and only the second should move a shelf.
+ */
+function sellingPriceParam(line: ReceiveLineInput): string | null {
+  return line.sellingPriceIncl == null ? null : round(line.sellingPriceIncl, 4).toFixed(4)
+}
+
 export function validateReceive(input: ReceiveInput): string | null {
   if (input.lines.length === 0) return 'Add at least one line.'
   if ((input.chargesExcl ?? 0) < 0) return 'Charges cannot be negative.'
@@ -231,6 +258,14 @@ export function validateReceive(input: ReceiveInput): string | null {
     }
     if (!Number.isFinite(line.qtyBonus ?? 0) || (line.qtyBonus ?? 0) < 0) {
       return `${where}: free units cannot be negative.`
+    }
+    // A shelf price, when the buyer set one (193). NULL is the ordinary case
+    // and means "leave it alone" — only a value present is checked, so a
+    // delivery nobody re-priced cannot be refused by a pricing rule.
+    if (line.sellingPriceIncl != null) {
+      if (!Number.isFinite(line.sellingPriceIncl) || line.sellingPriceIncl < 0) {
+        return `${where}: the selling price cannot be negative.`
+      }
     }
 
     // Checked here as well as inside the transaction. This catches the mistake
@@ -366,6 +401,13 @@ export async function saveDraftReceipt(
       'purchase_document_lines',
       'discount_amount',
     )
+    // 193. Guarded like the two above: a site that has not reached the
+    // migration yet must still be able to put a delivery down.
+    const hasSellingPrice = await columnExistsTx(
+      tx,
+      'purchase_document_lines',
+      'selling_price_incl',
+    )
 
     let id = documentId
 
@@ -436,10 +478,10 @@ export async function saveDraftReceipt(
             description, product_type, department_id, qty_ordered, qty_received,
             ${hasBonus ? 'qty_bonus, ' : ''}unit_cost_excl, discount_pct,
             ${hasLineDiscountAmount ? 'discount_amount, ' : ''}vat_rate_pct,
-            line_total_excl, line_vat, line_total_incl)
+            line_total_excl, line_vat, line_total_incl${hasSellingPrice ? ', selling_price_incl' : ''})
          VALUES (?,?,?,?,?,?,?,?,?,?,?,${hasBonus ? '?,' : ''}?,?,${
            hasLineDiscountAmount ? '?,' : ''
-         }?,?,?,?)`,
+         }?,?,?,?${hasSellingPrice ? ',?' : ''})`,
         [
           id,
           index + 1,
@@ -460,6 +502,10 @@ export async function saveDraftReceipt(
           lineValues[index].toFixed(4),
           round(lineValues[index] * (line.vatRatePct / 100), 2).toFixed(4),
           round(lineValues[index] * (1 + line.vatRatePct / 100), 2).toFixed(4),
+          // Held, NOT applied: a draft moves no stock, no cost and no price.
+          // Keeping it means a delivery keyed on Friday and posted on Monday
+          // does not lose the pricing decisions made with the note in hand.
+          ...(hasSellingPrice ? [sellingPriceParam(line)] : []),
         ] as never,
       )
     }
@@ -845,6 +891,45 @@ export async function receiveGoods(
         'purchase_document_lines',
         'discount_amount',
       )
+      // 193, the shelf price the buyer set while pricing the delivery. Same
+      // reasoning again: a site the migration has not reached still receives
+      // goods, it just does not re-price them.
+      const hasSellingPrice = await columnExistsTx(
+        tx,
+        'purchase_document_lines',
+        'selling_price_incl',
+      )
+
+      /*
+       * The shelf prices this receipt will move, collected as the lines post.
+       *
+       * Gathered rather than written per line so the whole set goes through
+       * writePriceRows ONCE — that helper is the single definition of a price
+       * write (144), it batches, and it is what records the before/after in
+       * product_price_history. Writing prices here by hand would be the one
+       * path in the app whose price changes left no trace.
+       */
+      const priceRows: PriceRow[] = []
+
+      /*
+       * Which price the GRV moves: the DEFAULT structure, resolved once.
+       *
+       * The same one the receiving grid displays and prices against (see
+       * productPositions), so the figure written back is the figure the buyer
+       * was looking at. A shop with Wholesale and Online price types keeps
+       * those where they are — a delivery re-prices the shelf, and deciding
+       * what it does to the other structures is the repricing screen's job,
+       * where the rule between them is stated.
+       *
+       * NULL when a site has no default structure at all. Prices simply do
+       * not move then: a GRV must not invent one, and must not fail to receive
+       * goods over a pricing setup question.
+       */
+      const [structureRows] = await tx.query(
+        'SELECT id FROM price_structures WHERE is_default = 1 ORDER BY position, id LIMIT 1',
+      )
+      const defaultPriceStructureId =
+        ((structureRows as RowDataPacket[])[0]?.id as number | undefined) ?? null
 
       for (const [index, line] of input.lines.entries()) {
         const c = computed[index]
@@ -859,8 +944,12 @@ export async function receiveGoods(
              (document_id, line_number, product_id, location_id, product_code, supplier_code, description,
               product_type, department_id, qty_ordered, qty_received, ${hasBonus ? 'qty_bonus, ' : ''}unit_cost_excl,
               discount_pct, ${hasLineDiscountAmount ? 'discount_amount, ' : ''}vat_rate_pct,
-              line_total_excl, line_vat, line_total_incl, charge_excl, landed_cost_excl)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,${hasBonus ? '?,' : ''}?,?,${hasLineDiscountAmount ? '?,' : ''}?,?,?,?,?,?)`,
+              line_total_excl, line_vat, line_total_incl, charge_excl, landed_cost_excl${
+                hasSellingPrice ? ', selling_price_incl' : ''
+              })
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,${hasBonus ? '?,' : ''}?,?,${hasLineDiscountAmount ? '?,' : ''}?,?,?,?,?,?${
+             hasSellingPrice ? ',?' : ''
+           })`,
           [
             documentId,
             index + 1,
@@ -885,6 +974,9 @@ export async function receiveGoods(
             c.incl.toFixed(4),
             c.chargeExcl.toFixed(4),
             c.landedUnitCost.toFixed(4),
+            // What this line decided the shelf price should be, so the posted
+            // GRV can show it beside the cost that justified it.
+            ...(hasSellingPrice ? [sellingPriceParam(line)] : []),
           ] as never,
         )
 
@@ -943,6 +1035,17 @@ export async function receiveGoods(
               [componentAverage.toFixed(4), unitCost.toFixed(4), component.productId] as never,
             )
           }
+
+          /*
+           * NO PRICE MOVE for a pack line, deliberately (193).
+           *
+           * The line prices the CASE, but the case never reaches a shelf —
+           * its singles do. Pushing a case price onto the single would
+           * multiply every shelf price by the pack size, and pushing it onto
+           * the case would price a product the till cannot sell. Re-pricing
+           * the single from a pack cost is a decision for the pricing screen,
+           * where the divisor is visible.
+           */
 
           // Close off the order line this fulfils, then skip the single-product
           // path below — the pack itself holds nothing.
@@ -1027,6 +1130,29 @@ export async function receiveGoods(
           [newAverage.toFixed(4), c.landedUnitCost.toFixed(4), line.productId] as never,
         )
 
+        /*
+         * THE PRICE MOVE (193) — queued here, written once after the loop.
+         *
+         * Only when the buyer actually set a price. The receiving grid seeds
+         * every line with the product's CURRENT shelf price so the markup and
+         * GP columns have something to read against, which means a line nobody
+         * touched arrives here carrying a figure — treating that as an
+         * instruction would have every delivery rewrite the shelf from a value
+         * that was only ever a starting point, and quietly undo a price change
+         * made between the order going out and the goods arriving.
+         *
+         * The client sends NULL for an untouched line; this is the server-side
+         * half of the same rule, so a caller that skips the screen cannot move
+         * a price by accident either.
+         */
+        if (line.sellingPriceIncl != null && defaultPriceStructureId !== null) {
+          priceRows.push({
+            productId: line.productId,
+            priceStructureId: defaultPriceStructureId,
+            priceIncl: round(line.sellingPriceIncl, 4),
+          })
+        }
+
         // Keep the supplier's own code and cost for this product, so the next
         // order goes out with their reference on it.
         if (line.supplierCode || c.landedUnitCost > 0) {
@@ -1058,6 +1184,26 @@ export async function receiveGoods(
             [round(line.qtyReceived, 3).toFixed(3), line.orderLineId] as never,
           )
         }
+      }
+
+      /*
+       * THE PRICES, once, through the one definition of a price write (193).
+       *
+       * Inside the receipt's transaction on purpose: a shelf price that moved
+       * for a delivery that then failed to post would be charging customers
+       * for goods the system says never arrived. Either both land or neither
+       * does — the same rule the stock movement and the cost blend follow.
+       *
+       * writePriceRows takes the transaction rather than opening its own, and
+       * writes a product_price_history row per GENUINE change, so a line
+       * re-stating the price it already had records nothing.
+       */
+      if (priceRows.length > 0) {
+        await writePriceRows(tx, priceRows, {
+          source: 'grv',
+          sourceDocId: documentId,
+          userName: actor.userName,
+        })
       }
 
       // The number, LAST. See the module comment on lock ordering.

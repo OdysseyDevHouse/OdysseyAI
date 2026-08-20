@@ -128,7 +128,7 @@ const control = await mysql.createConnection({
 })
 
 const [siteRows] = await control.query(
-  `SELECT id, site_code, company_name, trading_name, backoffice_type
+  `SELECT id, site_code, company_name, trading_name, connection_type
      FROM cp2_sites WHERE id = ? LIMIT 1`,
   [siteId],
 )
@@ -139,12 +139,13 @@ if (siteRows.length === 0) {
 }
 const site = siteRows[0]
 
-/* A cloud site's data is already on our servers and reports read it directly.
-   Provisioning a replica for one would create a second copy nothing reads, and
-   an operator would later have to work out which was authoritative. */
-if (String(site.backoffice_type) !== 'windows') {
+/* Only a `local` site has anything to replicate. A cloud site's data is already
+   on our servers and reports read it directly, and hybrid is not built yet;
+   provisioning a replica for either would create a second copy nothing reads,
+   and an operator would later have to work out which was authoritative. */
+if (String(site.connection_type) !== 'local') {
   console.error(
-    `Site ${siteId} (${site.company_name}) is a CLOUD site — its data is already here, so it has no replica.`,
+    `Site ${siteId} (${site.company_name}) is a ${site.connection_type} site — its data is already here, so it has no replica.`,
   )
   await control.end()
   process.exit(1)

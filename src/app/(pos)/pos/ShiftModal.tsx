@@ -18,13 +18,24 @@ import { formatMoney } from '@/lib/decimals'
 import {
   tillShiftStatusAction,
   tillOpenShiftAction,
-  tillDrawerMovementAction,
   tillCloseShiftAction,
   type TillShiftStatus,
 } from './shiftActions'
 
 /**
- * The drawer, from the till: open a shift, move money, cash up.
+ * The shift, from the till: start one, or cash up.
+ *
+ * ── WHAT LEFT, AND WHY ────────────────────────────────────────────────────
+ *
+ * Payout, Pay in and Drop to safe used to be three keys on this dialog's home
+ * face. They are quick keys now — see DrawerMovementModal and the three slugs
+ * in QUICK_KEY_ACTIONS — because they were at the wrong depth: opening a shift
+ * happens once a day, while a payout happens whenever the milk arrives, with
+ * somebody waiting at the counter. Two taps and a dialog is enough friction
+ * that a cashier postpones it, and a postponed payout is a drawer short at
+ * close with nobody able to say why.
+ *
+ * What is left is the pair of acts that genuinely bracket a day's trading.
  *
  * ── THE COUNT IS BLIND ────────────────────────────────────────────────────
  *
@@ -74,15 +85,12 @@ export default function ShiftModal({
   const [status, setStatus] = useState<TillShiftStatus | null>(null)
   const [loading, setLoading] = useState(false)
 
-  type Face =
-    | { kind: 'home' }
-    | { kind: 'movement'; type: 'payout' | 'payin' | 'drop' }
-    | { kind: 'count' }
+  /* Two faces since the drawer movements left for their own keys: the home
+     board, and the quick count. */
+  type Face = { kind: 'home' } | { kind: 'count' }
   const [face, setFace] = useState<Face>({ kind: 'home' })
 
   const [floatEntry, setFloatEntry] = useState('')
-  const [amountEntry, setAmountEntry] = useState('')
-  const [reason, setReason] = useState('')
   const [counts, setCounts] = useState<Record<number, number>>({})
   const [varianceNote, setVarianceNote] = useState('')
   /** The server's out-of-tolerance refusal — shown, then explained. */
@@ -106,8 +114,6 @@ export default function ShiftModal({
     if (!open || !online) return
     setFace({ kind: 'home' })
     setFloatEntry('')
-    setAmountEntry('')
-    setReason('')
     setCounts({})
     setVarianceNote('')
     setCloseRefusal(null)
@@ -124,28 +130,6 @@ export default function ShiftModal({
       }
       toast.success('Shift opened.')
       setFloatEntry('')
-      reload()
-    })
-  }
-
-  function recordMovement(type: 'payout' | 'payin' | 'drop') {
-    const shiftId = status?.shift?.id
-    if (!shiftId) return
-    startTransition(async () => {
-      const result = await tillDrawerMovementAction(shiftId, {
-        type,
-        amount: numPadValue(amountEntry),
-        reason,
-        terminalId,
-      })
-      if (!result.ok) {
-        toast.error(result.error)
-        return
-      }
-      toast.success(MOVEMENT_DONE[type])
-      setAmountEntry('')
-      setReason('')
-      setFace({ kind: 'home' })
       reload()
     })
   }
@@ -174,9 +158,30 @@ export default function ShiftModal({
           ? 'Cashed up exactly.'
           : `Cashed up ${result.variance < 0 ? 'short' : 'over'} by ${Math.abs(result.variance).toFixed(2)}.`,
       )
-      onShiftChanged(null)
+      /*
+        ── CASHING UP ENDS THIS DIALOG ─────────────────────────────────────
+
+        `onShiftChanged(null)` tells the shell there is no shift, which raises
+        OpenTillGate — the full-screen "Open your till" panel with its own float
+        pad. This dialog used to stay up in front of it and, having just been
+        told the shift is gone, re-render as its OWN no-shift face: two panels
+        stacked, both asking for the same float, the top one covering the real
+        gate behind it.
+
+        Nothing was broken underneath — either pad opens the shift correctly —
+        but a cashier who has just cashed up was shown what looked like a screen
+        that had not registered it. The detailed cash-up never had this, because
+        it closes itself on sign-off. This is that same ending.
+
+        Closed FIRST, then the shell is told. The other order renders the
+        no-shift face for a frame before unmounting, which is the flash this
+        exists to remove. The shell clears the flag too (see noteShift) — that
+        catches every other route to a closed shift; this one keeps the
+        transition clean on the route we know about.
+      */
       setFace({ kind: 'home' })
-      reload()
+      onClose()
+      onShiftChanged(null)
     })
   }
 
@@ -189,13 +194,11 @@ export default function ShiftModal({
       open={open}
       onClose={onClose}
       title={
-        face.kind === 'movement'
-          ? MOVEMENT_TITLES[face.type]
-          : face.kind === 'count'
-            ? 'Cash up — count the drawer'
-            : shift
-              ? 'Shift'
-              : 'Open a shift'
+        face.kind === 'count'
+          ? 'Cash up — count the drawer'
+          : shift
+            ? 'Shift'
+            : 'Open a shift'
       }
       footer={
         <Button variant="secondary" onClick={onClose} disabled={pending}>
@@ -229,36 +232,6 @@ export default function ShiftModal({
           <Button variant="primary" disabled={pending} onClick={openShiftNow}>
             {pending ? 'Opening…' : 'Open the shift'}
           </Button>
-        </div>
-      ) : face.kind === 'movement' ? (
-        /* ── Money in or out, with the reason the variance report will show ── */
-        <div className="flex flex-col items-center gap-4">
-          <p className="text-sm text-muted">{MOVEMENT_HINTS[face.type]}</p>
-          <div className="w-64">
-            <NumPadDisplay label="Amount" value={amountEntry} />
-            <NumPad value={amountEntry} onChange={setAmountEntry} />
-          </div>
-          <Field label="Reason" className="w-full">
-            <Input
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder={MOVEMENT_PLACEHOLDERS[face.type]}
-            />
-          </Field>
-          {/* Said before the server refuses it: a movement with no reason is a
-              variance nobody can explain at close. */}
-          <div className="flex w-full justify-between gap-2">
-            <Button variant="secondary" disabled={pending} onClick={() => setFace({ kind: 'home' })}>
-              Back
-            </Button>
-            <Button
-              variant="primary"
-              disabled={pending || !reason.trim() || numPadValue(amountEntry) <= 0}
-              onClick={() => recordMovement(face.type)}
-            >
-              {pending ? 'Recording…' : 'Record it'}
-            </Button>
-          </div>
         </div>
       ) : face.kind === 'count' ? (
         /* ── The blind count ────────────────────────────────────────────── */
@@ -341,32 +314,13 @@ export default function ShiftModal({
               {shift.salesCount} sale{shift.salesCount === 1 ? '' : 's'}
             </span>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <Button
-              variant="secondary"
-              size="touch"
-              disabled={pending}
-              onClick={() => setFace({ kind: 'movement', type: 'payout' })}
-            >
-              Payout
-            </Button>
-            <Button
-              variant="secondary"
-              size="touch"
-              disabled={pending}
-              onClick={() => setFace({ kind: 'movement', type: 'payin' })}
-            >
-              Pay in
-            </Button>
-            <Button
-              variant="secondary"
-              size="touch"
-              disabled={pending}
-              onClick={() => setFace({ kind: 'movement', type: 'drop' })}
-            >
-              Drop to safe
-            </Button>
-          </div>
+          {/* Payout / Pay in / Drop to safe used to sit here as three keys.
+              They are quick keys now — arranged on the shop's own board, one
+              press from the sale rather than two taps inside this dialog. See
+              DrawerMovementModal and the three slugs in QUICK_KEY_ACTIONS.
+
+              What is left is what this dialog is actually for: starting a
+              shift and ending one. */}
           <div className="flex flex-col gap-2">
             <Button variant="danger" disabled={pending} onClick={onDeclare}>
               Cash up this shift
@@ -388,26 +342,7 @@ export default function ShiftModal({
   )
 }
 
-const MOVEMENT_TITLES = {
-  payout: 'Payout — money out of the drawer',
-  payin: 'Pay in — money into the drawer',
-  drop: 'Drop — cash to the safe',
-} as const
-
-const MOVEMENT_HINTS = {
-  payout: 'Milk, the window cleaner, a COD delivery — money out that is not a sale.',
-  payin: 'Extra change from the safe, or money returned to the drawer.',
-  drop: 'Skimming excess cash to the safe mid-shift. It still counts toward the shift.',
-} as const
-
-const MOVEMENT_PLACEHOLDERS = {
-  payout: 'e.g. milk for the kitchen',
-  payin: 'e.g. change from the safe',
-  drop: 'e.g. lunchtime skim',
-} as const
-
-const MOVEMENT_DONE = {
-  payout: 'Payout recorded.',
-  payin: 'Pay-in recorded.',
-  drop: 'Drop recorded.',
-} as const
+/* The MOVEMENT_* word tables moved to DrawerMovementModal with the form they
+   label. Deliberately moved rather than copied: two sets of the same sentences
+   is how the payout key and the payout dialog come to describe a payout
+   differently. */

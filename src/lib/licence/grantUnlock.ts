@@ -119,9 +119,9 @@ export async function grantUnlock(
  * Does this site run at least one local backend?
  *
  * Decides whether the telephone-unlock panel is worth showing at all. Reads the
- * registration table rather than cp2_sites.backoffice_type deliberately: the
+ * registration table rather than cp2_sites.connection_type deliberately: the
  * column records what somebody INTENDED, and this asks whether a machine has
- * actually reported in with a database of its own. A site switched to 'windows'
+ * actually reported in with a database of its own. A site switched to 'local'
  * last week but not yet installed has nothing to unlock.
  *
  * Fails to false: a panel that failed to appear is a support call, a panel that

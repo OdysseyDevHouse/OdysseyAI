@@ -389,6 +389,29 @@ export async function updateLocation(
     if (clash) return { ok: false, error: `A location with code "${code}" already exists.` }
   }
 
+  /*
+   * The transit pile is not a setting.
+   *
+   * It is created by 101_store_transfers.sql and written only by
+   * storeTransfers.ts, and deleteLocation() already refuses it for the reason
+   * its own comment gives. Editing was the hole left in that: the setup screen
+   * hides the button now, but a hidden button is not a boundary and this is the
+   * action every path goes through.
+   *
+   * Deactivating is the one that actually bites. transitLocationIdTx() resolves
+   * on is_transit alone and never reads is_active, so a dispatch would keep
+   * filling this pile while the row itself dropped out of every active list —
+   * goods accumulating somewhere the setup screen says is switched off. A
+   * rename is milder but still wrong: this name is what the dispatch and
+   * receipt screens call the place, so it is the system's word, not the site's.
+   */
+  if (existing.isTransit) {
+    return {
+      ok: false,
+      error: `${existing.name} is where goods sit while they travel between stores. It is managed by the system and cannot be edited.`,
+    }
+  }
+
   // Deactivating the main location would leave every sale and every
   // unallocated receipt pointing at a place the UI refuses to offer. Moving
   // main elsewhere first is the deliberate order of operations.

@@ -21,6 +21,7 @@ import {
   finalizeDeclaration,
   type DeclarationInput,
 } from '@/lib/site/cashupDeclaration'
+import { tenderBreakdown, type TenderBreakdown } from '@/lib/site/cashupBreakdown'
 import {
   visibleFor,
   type VisibleDeclaration,
@@ -260,6 +261,52 @@ export async function tillDeclarationViewAction(
      person counting is whoever's PIN is in. cashupOperator resolves the
      latter, which is the one this question is about. */
   return visibleFor(view, !can(ctx.capabilities, 'sales.cashup_expected'))
+}
+
+/**
+ * One tender's expected figure, itemised — every transaction behind it.
+ *
+ * ── THE GATE IS THE SAME ONE THAT DECIDES A BLIND COUNT ─────────────────────
+ *
+ * This is the expected figure written out longhand, so anybody who may not see
+ * that figure may not see this either. `sales.cashup_expected` is the whole
+ * test, and it is asked of the PIN OPERATOR for the reason the view action
+ * gives — at a till the person counting is not whoever unlocked the browser.
+ *
+ * A SIGNED cash-up is exempt, exactly as visibleFor exempts it: the count is
+ * over, the record is being read back, and there is no longer a target to leak.
+ * Reading it out of `finalizedAt` rather than trusting an argument, so a client
+ * cannot claim the exemption for a shift that has not earned it.
+ *
+ * The `declared` figure is threaded through from the same view rather than
+ * accepted from the caller, so the difference printed at the foot of the
+ * evidence is the one the board is showing and not a number the browser made up.
+ */
+export async function tillTenderBreakdownAction(
+  shiftId: number,
+  tenderTypeId: number,
+): Promise<TenderBreakdown | Denied> {
+  const ctx = await cashupOperator()
+  if ('ok' in ctx) return ctx
+
+  const view = await declarationView(ctx.siteId, shiftId)
+  if (!view) return { ok: false, error: 'That shift no longer exists.' }
+
+  const signed = view.finalizedAt !== null
+  if (!signed && !can(ctx.capabilities, 'sales.cashup_expected')) {
+    return {
+      ok: false,
+      error:
+        'Seeing how a figure was reached needs the right to see expected figures. Count the drawer first — a manager can open this afterwards.',
+    }
+  }
+
+  const tender = view.tenders.find((t) => t.tenderTypeId === tenderTypeId)
+  if (!tender) return { ok: false, error: 'That tender is not on this shift.' }
+
+  const result = await tenderBreakdown(ctx.siteId, shiftId, tenderTypeId, tender.declared)
+  if (!result) return { ok: false, error: 'That tender is not on this shift.' }
+  return result
 }
 
 /**

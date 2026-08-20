@@ -26,6 +26,9 @@ export {
   MODAL_PANEL,
   MODAL_SIZE,
   type ModalSize,
+  DRAWER_PANEL,
+  DRAWER_SIZE,
+  type DrawerSize,
 } from './styles'
 export {
   TABLE,
@@ -129,6 +132,7 @@ export { Tabs, LinkTabs, type TabItem } from './Tabs'
 export { Menu, MenuItem, MenuSeparator } from './Menu'
 export { HtmlEditor, type InsertToken } from './HtmlEditor'
 export { Modal, ConfirmModal } from './Modal'
+export { Drawer } from './Drawer'
 export { PinPad } from './PinPad'
 export { SignaturePad } from './SignaturePad'
 export {

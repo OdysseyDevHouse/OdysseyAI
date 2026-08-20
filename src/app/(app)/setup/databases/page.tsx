@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { requireCapability, requireSession } from '@/lib/auth'
-import { getSiteForUser } from '@/lib/sites'
+import { getSiteForUser, type ConnectionType } from '@/lib/sites'
 import { listSiteDatabases, probeSiteDatabase } from '@/lib/siteDb'
 import {
   PageHeader,
@@ -33,6 +33,13 @@ import { daysSinceCheck } from '@/lib/licence/leaseRules'
  */
 
 export const dynamic = 'force-dynamic'
+
+/** cp2_sites.connection_type, as a person would say it. */
+const CONNECTION_LABEL: Record<ConnectionType, string> = {
+  cloud: 'Cloud server',
+  local: 'Local server (on site)',
+  hybrid: 'Hybrid',
+}
 
 /** cp2_site_databases purposes, as a person would say them. */
 function purposeLabel(purpose: string): string {
@@ -140,7 +147,7 @@ export default async function SiteDatabasesPage() {
       [site.address1, site.address2, site.address3, site.postalCode].filter(Boolean).join(', ') ||
         null,
     ],
-    ['Back office', site.backofficeType],
+    ['Connection', CONNECTION_LABEL[site.connectionType] ?? site.connectionType],
     ['Your role', site.role],
   ]
 

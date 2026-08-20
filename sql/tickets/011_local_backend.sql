@@ -33,10 +33,13 @@
 -- agreement, and none of it needs it: this is all new, Odyssey-only state, so
 -- it goes in Odyssey-only tables and v2 never sees a schema it did not expect.
 --
--- cp2_sites.backoffice_type already carries 'windows' | 'cloud' and is read in
--- src/lib/sites.ts. It is currently displayed and never acted upon. That column
--- stays the switch — this migration adds the state a 'windows' site needs, not
--- another flag deciding the same thing.
+-- cp2_sites.connection_type already carries 'cloud' | 'local' | 'hybrid' and is
+-- read in src/lib/sites.ts. It is currently displayed and never acted upon.
+-- That column stays the switch — this migration adds the state a 'local' site
+-- needs, not another flag deciding the same thing.
+--
+-- (It was named backoffice_type, 'windows' | 'cloud', when this ran. The column
+-- was renamed and widened later; the tables below are unaffected.)
 
 -- ── The shop's own database, as the control panel knows it ──────────────────
 --

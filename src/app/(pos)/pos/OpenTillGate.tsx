@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useMemo, useState, useTransition } from 'react'
 import {
   Badge,
@@ -198,6 +199,37 @@ export default function OpenTillGate({
             has to be the first thing under the status bar, because it is the
             only part of this screen anybody came here to use. */}
         <div className="order-2 min-w-0 lg:order-1 lg:pr-4">
+          {/*
+           * THE FULL LOGO, at the head of the column that is about the person.
+           *
+           * The status bar above is stripped bare on this screen — see `bare` in
+           * TillStatusBar — which left the till with no brand on it at all. It
+           * belongs HERE rather than back in that bar: this half of the screen
+           * is the welcome, read top to bottom as logo → day → name → quote, and
+           * a mark in the bar would be a fourth thing competing with a greeting
+           * that is already the largest text on the screen.
+           *
+           * The real artwork rather than the typeset lockup the crowded rows
+           * use, because this column has the room for it and nothing to squeeze
+           * it. `.logo-plate` is the same fix PosGate makes: the wordmark inside
+           * the PNG is dark navy and would all but vanish on the dark canvas, so
+           * it gets a white backing in dark mode and nothing in light.
+           *
+           * `mb-8`, deliberately wider than the 4-unit rhythm below it: the gap
+           * separates the BRAND from the greeting, and at the same spacing as
+           * the greeting's own parts the logo read as the first line of the
+           * sentence rather than the mark above it.
+           */}
+          <Image
+            src="/logo-full.png"
+            alt="Odyssey Point of Sale"
+            width={1109}
+            height={304}
+            priority
+            unoptimized
+            className="logo-plate mb-8 h-16 w-auto object-contain"
+          />
+
           {/* The rule and the day. A weekday matters more at a till than it
               looks — a rota that changes by day gets checked on the way in. */}
           <div className="flex items-center gap-3">

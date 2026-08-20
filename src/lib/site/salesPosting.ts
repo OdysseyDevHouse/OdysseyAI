@@ -16,7 +16,7 @@ import { numberSegmentsFor } from './numbering'
 import { recordMovement, stockDirectionFor, canSellNow } from './stockMovements'
 import { ensureStock } from './referBreakdown'
 import { getTenderType, getTenderByCode, checkTenders, type TenderType } from './tenderTypes'
-import { validateTerminalClaim } from './terminals'
+import { validateTerminalClaim, terminalStockLocationId } from './terminals'
 import { shiftToBankInto } from './shifts'
 import { writeTips } from './tips'
 /* The PURE planner, not the server module's re-export — same function either way, but
@@ -596,6 +596,22 @@ export async function finaliseDocument(
     document.origin,
   )
 
+  /*
+   * Which room this sale comes off.
+   *
+   * Null means the till names none — or there is no till, which is every
+   * back-office invoice, paid online order and contract run — and null is
+   * carried onward as null so `recordMovement` applies the main-location
+   * fallback it has always applied, inside the transaction. Resolving main
+   * here instead would move that read outside the transaction and reopen the
+   * race the fallback exists to close. See terminalStockLocationId().
+   *
+   * Read BEFORE the transaction, like the numbering above and for the same
+   * reason: this is one more query that has no business running while the
+   * stock rows are locked.
+   */
+  const saleLocationId = await terminalStockLocationId(siteId, document.terminalId)
+
   // Rand of this basket paid for by a value voucher. Set inside the
   // transaction, read after it commits to keep that slice out of the earn
   // basis. Declared out here because a closure cannot return it and the
@@ -635,6 +651,7 @@ export async function finaliseDocument(
             sourceDocId: document.id,
             sourceLineId: line.id,
             terminalId: document.terminalId,
+            locationId: saleLocationId,
             shiftId,
             // Names the parent AND the answer, so the bacon's history reads
             // "the burger on invoice 1042 asked for two of these" rather than
@@ -662,6 +679,7 @@ export async function finaliseDocument(
               sourceDocId: document.id,
               sourceLineId: line.id,
               terminalId: document.terminalId,
+              locationId: saleLocationId,
               shiftId,
               // Names the parent, so the component's history reads "used by"
               // rather than looking like an unexplained deduction.
@@ -707,6 +725,11 @@ export async function finaliseDocument(
             sourceDocId: document.id,
             sourceLineId: line.id,
             terminalId: document.terminalId,
+            // The case is broken open IN THE ROOM THIS TILL SELLS FROM, so both
+            // halves of the unpack — the case out, the singles in — land where
+            // the goods physically are. Sending them to main would move a pack
+            // the storeroom is holding.
+            locationId: saleLocationId,
             shiftId,
           })
         }
@@ -722,6 +745,7 @@ export async function finaliseDocument(
           sourceDocId: document.id,
           sourceLineId: line.id,
           terminalId: document.terminalId,
+          locationId: saleLocationId,
           shiftId,
           note: line.productCode ?? undefined,
         })
@@ -1531,6 +1555,44 @@ export async function voidDocument(
   }
 
   await siteTransaction(siteId, async (tx) => {
+    /*
+     * Where the goods GO BACK TO: the room they actually left.
+     *
+     * Read off the original movements rather than from the till's current
+     * setting, and that distinction is the whole point. A till can be
+     * re-pointed at another room between the sale and the void — it is a
+     * dropdown in setup, and a manager fixing a mis-set till mid-morning is the
+     * ordinary case — and a void that honoured the NEW setting would put the
+     * goods somewhere they never came from, leaving the original room short by
+     * exactly the amount the void was supposed to give it back.
+     *
+     * This is the same rule the serial restore below already follows, in as
+     * many words: "The room it LEFT is on its own 'sold' movement." Keeping the
+     * quantity and the units on one rule means they cannot disagree about which
+     * shelf a voided sale went back to.
+     *
+     * Keyed by line, because one document's lines can genuinely differ — an
+     * unpack writes into the sale's room while a line captured before this
+     * feature landed carries main.
+     */
+    const [originRows] = await tx.query<(RowDataPacket & Record<string, unknown>)[]>(
+      `SELECT source_line_id, product_id, location_id
+         FROM stock_movements
+        WHERE source_doc_id = ? AND source = ? AND source_line_id IS NOT NULL`,
+      [document.id, document.docType] as never,
+    )
+    const soldFrom = new Map<string, number>()
+    for (const r of originRows) {
+      if (r.location_id === null || r.source_line_id === null) continue
+      soldFrom.set(`${Number(r.source_line_id)}:${Number(r.product_id)}`, Number(r.location_id))
+    }
+    /* Null when the original movement cannot be found — a document posted
+       before this column existed. Null is carried onward as null so
+       recordMovement falls back to main, which is exactly where such a sale
+       took its stock from. */
+    const returnTo = (lineId: number, productId: number): number | null =>
+      soldFrom.get(`${lineId}:${productId}`) ?? null
+
     // Reversing movements. The originals stay — an audit row is never deleted.
     for (const line of document.lines) {
       if (!line.productId) continue
@@ -1549,6 +1611,7 @@ export async function voidDocument(
             sourceDocId: document.id,
             sourceLineId: line.id,
             terminalId: document.terminalId,
+            locationId: returnTo(line.id, component.productId),
             note: `Void of ${document.documentNumber}`,
           })
         }
@@ -1571,6 +1634,7 @@ export async function voidDocument(
         sourceDocId: document.id,
         sourceLineId: line.id,
         terminalId: document.terminalId,
+        locationId: returnTo(line.id, line.productId),
         note: `Void of ${document.documentNumber}`,
         // A voided batch line returns to the lots IT took (148).
         batch: { returnOfLineId: line.id },

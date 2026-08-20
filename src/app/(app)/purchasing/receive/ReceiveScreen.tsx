@@ -570,6 +570,15 @@ export default function ReceiveScreen({
         discountPct: l.discountPct,
         discountAmount: l.discountAmount,
         vatRatePct: l.vatRatePct,
+        // The shelf price, but ONLY where the buyer actually set one (193).
+        //
+        // Every line arrives carrying the product's current price so the
+        // Markup % and GP % columns have something to read against. Sending
+        // that back untouched would have a delivery nobody re-priced rewrite
+        // the shelf with a figure it was merely shown — and overwrite any
+        // price changed between the order going out and the goods arriving.
+        // null is the instruction to leave it alone.
+        sellingPriceIncl: l.sellTouched ? l.sellIncl : null,
         serials: l.productType === 'serial' ? l.serials : undefined,
         warrantyUntil: l.productType === 'serial' ? l.warrantyUntil || null : undefined,
         batchNo: l.productType === 'batch' ? l.batchNo || null : undefined,
@@ -1003,6 +1012,10 @@ export default function ReceiveScreen({
               and credits the supplier&apos;s account.
             </p>
             <p>It is the only thing in the system that changes average cost.</p>
+            <p>
+              Any selling price you change here moves the shelf price too — but only when
+              you post. Lines you leave alone keep the price they already have.
+            </p>
           </div>
         </Card>
 

@@ -1,6 +1,7 @@
 import 'server-only'
 
 import { getTillProduct } from '@/lib/site/tillSearch'
+import { terminalStockLocationId } from '@/lib/site/terminals'
 import type { getDocument } from '@/lib/site/salesDocuments'
 import type { BasketLine } from '@/lib/basket'
 
@@ -108,8 +109,13 @@ export async function basketLinesForDocument(
   const productIds = [
     ...new Set(doc.lines.map((l) => l.productId).filter((id): id is number => id !== null)),
   ]
+  /* The stock figure comes back in the room the recalling till sells from, so a
+     parked basket reopened at the storeroom counter reads that counter's shelf
+     rather than the shop floor's. Read from the DOCUMENT's terminal, which is
+     the till that is holding it. */
+  const locationId = await terminalStockLocationId(siteId, doc.terminalId)
   const products = await Promise.all(
-    productIds.map((id) => getTillProduct(siteId, id, priceStructureId)),
+    productIds.map((id) => getTillProduct(siteId, id, priceStructureId, locationId)),
   )
   const byId = new Map(
     products.filter((p): p is NonNullable<typeof p> => p !== null).map((p) => [p.id, p]),

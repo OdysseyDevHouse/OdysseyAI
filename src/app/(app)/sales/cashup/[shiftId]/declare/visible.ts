@@ -60,6 +60,22 @@ export type VisibleDeclaration = Omit<
   /** Only once every tender is declared — the headline is a total or nothing. */
   totalVariance: number | null
   expectedCashVisible: number | null
+  /**
+   * Whether figures are being WITHHELD from this reader.
+   *
+   * Published rather than inferred. The screen used to work it out by watching
+   * whether every tender arrived with an expected figure, which is true of a
+   * reconciler and also true of a cashier who has finished counting — the two
+   * are indistinguishable from the outside once the last box is filled in, and
+   * a feature that must be closed to one of them cannot be gated on a signal
+   * that stops telling them apart.
+   *
+   * Which is exactly the case for the tender drill-down: it is the expected
+   * figure itemised, so it is offered only where nothing is being withheld.
+   * Saying so here keeps that decision in the ONE place this file exists to
+   * hold it, beside the stripping it belongs to.
+   */
+  blind: boolean
 }
 
 /**
@@ -122,5 +138,8 @@ export function visibleFor(view: DeclarationView, blind = true): VisibleDeclarat
     finalizedAt: view.finalizedAt ? view.finalizedAt.toISOString() : null,
     totalVariance,
     expectedCashVisible: cashRevealed ? view.expectedCash : null,
+    /* `showAll` is the whole answer: a signed record and a reconciler both have
+       everything, and everybody else is being kept from something. */
+    blind: !showAll,
   }
 }
