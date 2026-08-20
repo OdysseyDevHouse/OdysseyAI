@@ -87,6 +87,15 @@ const TAB_TABLES = [
      shop's own 878 rows of history stay in the cloud where the back office
      reads them. */
   'document_audit',
+  /* The licence lease — the SAME table the local backend uses, derived like
+     every other rather than a second shape meaning the same thing.
+     lib/licence/lease.ts reads `licence_lease WHERE id = 1`, so giving the box
+     its own would have meant two lease shapes, two readers, and two places for
+     the seven-day rule to drift.
+
+     Rows are never mirrored: a lease belongs to the machine holding it, and
+     readLease already refuses one whose site_id is not its own. */
+  'licence_lease',
 ]
 
 /**

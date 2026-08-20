@@ -33,7 +33,6 @@ import { decryptSecret } from '../src/lib/crypto/secrets'
  */
 const EXPECTED = [
   'box_identity',
-  'box_lease',
   'box_migrations',
   'box_outbox',
   /* The floor a waiter looks at: rooms, the furniture in them, and how a table
@@ -54,6 +53,10 @@ const EXPECTED = [
   /* Written INSIDE the routed transaction when a tab moves table, so a hybrid
      site's transfers fail without it — after the pointer has already moved. */
   'document_audit',
+  /* The licence lease — the SAME table the local backend uses, not a second
+     shape meaning the same thing. Read from the box because a till with the
+     line down can reach exactly one thing. */
+  'licence_lease',
 ]
 
 /**

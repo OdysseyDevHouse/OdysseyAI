@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2'
-import { siteQueryOne, siteExecute } from '@/lib/siteDb'
+import { siteQueryOne, siteExecute, MASTER, type SitePurpose } from '@/lib/siteDb'
 import { encryptSecret, tryDecryptSecret } from '@/lib/crypto/secrets'
 import type { ModuleKey, AccountStatus } from '@/lib/control/modules'
 import type { LicenceRefusal } from '@/lib/control/devices'
@@ -45,6 +45,33 @@ import {
  */
 
 type Row = RowDataPacket & Record<string, unknown>
+
+/**
+ * Which database this site's lease lives in.
+ *
+ * ── WHY A HYBRID SITE READS ITS LEASE FROM THE BOX ────────────────────────
+ *
+ * The lease answers "has this shop been offline too long?", so it must be
+ * readable WHILE offline. A hybrid till's control database and site database
+ * are both in the cloud; the one thing it can reach with the line down is the
+ * box in the building. A lease in the cloud would be unreadable in exactly the
+ * situation it exists for.
+ *
+ * ── AND WHY THAT MEANS ONE LEASE PER SITE, NOT TEN ────────────────────────
+ *
+ * Ten tills each keeping their own would drift: three locking on Tuesday and
+ * the rest on Thursday is confusing to support and worse to explain to a
+ * customer. The box renews once for the shop and all ten read the same row.
+ *
+ * Everything else is unchanged. The table is the same `licence_lease` the local
+ * backend uses, `checked_at` and `expires_at` stay separate columns, and the
+ * telephone unlock works exactly as it does today — an agent unlocks the site,
+ * the box holds it, and every till sees it.
+ */
+async function leasePurpose(siteId: number): Promise<SitePurpose> {
+  const { tabsAreLocal, HYBRID } = await import('@/lib/site/tabRouting')
+  return (await tabsAreLocal(siteId)) ? HYBRID : MASTER
+}
 
 export type { Lease } from './leaseRules'
 export {
@@ -95,7 +122,12 @@ function rowToLease(row: Row): Lease {
  */
 export async function readLease(siteId: number): Promise<Lease | null> {
   try {
-    const row = await siteQueryOne<Row>(siteId, `SELECT * FROM licence_lease WHERE id = 1 LIMIT 1`)
+    const row = await siteQueryOne<Row>(
+      siteId,
+      `SELECT * FROM licence_lease WHERE id = 1 LIMIT 1`,
+      [],
+      await leasePurpose(siteId),
+    )
     if (!row) return null
     const lease = rowToLease(row)
     /* A lease belongs to the site it was issued to. A database restored onto
@@ -166,6 +198,7 @@ export async function writeLease(w: LeaseWrite, now: Date = new Date()): Promise
         leaseExpiryFrom(now),
         secretEnc,
       ],
+      await leasePurpose(w.siteId),
     )
     return true
   } catch (err) {
@@ -180,6 +213,8 @@ export async function leaseUnlockSecret(siteId: number): Promise<string | null> 
     const row = await siteQueryOne<Row>(
       siteId,
       `SELECT unlock_secret_enc FROM licence_lease WHERE id = 1 LIMIT 1`,
+      [],
+      await leasePurpose(siteId),
     )
     if (!row?.unlock_secret_enc) return null
     return tryDecryptSecret(String(row.unlock_secret_enc))
@@ -213,6 +248,7 @@ export async function applyUnlock(
               last_unlock_at = ?
         WHERE id = 1`,
       [unlockExpiryFrom(now, grantDays), now],
+      await leasePurpose(siteId),
     )
     return res.affectedRows > 0
   } catch (err) {

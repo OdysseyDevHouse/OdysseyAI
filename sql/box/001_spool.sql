@@ -96,44 +96,18 @@ CREATE TABLE IF NOT EXISTS box_outbox (
 
 -- ── The licence lease ───────────────────────────────────────────────────────
 --
--- Whether this shop may still trade, readable with the line down.
+-- NOT created here. The box uses `licence_lease` — the SAME table the local
+-- backend uses — derived from the site by box-migrate.mjs like every other
+-- shop table.
 --
--- ── WHY ONE ROW FOR THE SITE, NOT ONE PER TILL ──────────────────────────────
+-- An earlier draft of this file created its own `box_lease` with a narrower
+-- shape, and that was a mistake worth naming: lib/licence/lease.ts reads
+-- `licence_lease WHERE id = 1`, so a second table meant a second reader and a
+-- second place for the seven-day rule to drift. One lease shape, one reader.
 --
--- Ten tills would drift: three locking on Tuesday and the rest on Thursday is
--- confusing to support and worse to explain to a customer. The box renews once
--- for the shop and all ten read the same answer.
---
--- ── WHY checked_at AND expires_at ARE SEPARATE ──────────────────────────────
---
--- Carried over from the local backend's lease, and the distinction is the whole
--- point: an unlock extends how long a machine may RUN without claiming a
--- conversation happened. A shop silent for three weeks still reads as silent
--- for three weeks, however many times support extended it. Collapsing these
--- into one column launders a non-payer clean.
-CREATE TABLE IF NOT EXISTS box_lease (
-  -- Exactly one row. The constant makes that a constraint rather than a
-  -- convention, so a second lease cannot quietly appear and disagree.
-  id           TINYINT UNSIGNED NOT NULL DEFAULT 1,
-
-  site_id      INT UNSIGNED NOT NULL,
-
-  -- When the control panel was last actually reached. Never moved by an unlock.
-  checked_at   DATETIME     NOT NULL,
-
-  -- When trading stops without a further check. Moved by a renewal OR a
-  -- telephone unlock.
-  expires_at   DATETIME     NOT NULL,
-
-  -- What the control panel said when it was last reached, for the lock screen.
-  licence_status VARCHAR(40) NOT NULL DEFAULT '',
-
-  updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-
-  PRIMARY KEY (id),
-  CONSTRAINT ck_box_lease_singleton CHECK (id = 1)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- What a hybrid site changes is only WHERE that table is read from — the box
+-- rather than the cloud — because a till with the line down can reach exactly
+-- one thing, and it is the box.
 
 -- ── What this box is ────────────────────────────────────────────────────────
 --
