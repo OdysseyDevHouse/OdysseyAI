@@ -84,6 +84,8 @@ const stamp = Date.now().toString().slice(-6)
 const docs: number[] = []
 let customerId = 0
 let productId = 0
+// A card is defined in product CODES, not local ids — see loyaltyCards.ts.
+let productCode = ''
 let departmentId: number | null = null
 let cardId = 0
 let originalSettings: LoyaltySettings | null = null
@@ -268,6 +270,7 @@ async function main() {
     [`LP${stamp}`, `Loyalty product ${stamp}`, departmentId],
   )
   productId = prod.insertId
+  productCode = `LP${stamp}`
 
   const cust = await siteExecute(
     SITE,
@@ -394,15 +397,18 @@ async function main() {
     isActive: true,
     requiredStamps: 3,
     rewardType: 'value',
-    rewardProductId: null,
+    rewardProductCode: null,
     rewardValue: 25,
     oneStampPerSale: true,
     minLineAmount: 0,
     voucherValidDays: 30,
     startsOn: null,
     endsOn: null,
-    productIds: [productId],
-    departmentIds: [],
+    // Scoped by CODE, because a card belongs to the whole group and a row id
+    // means nothing at another branch. listCards resolves it back to this
+    // store's id, which is what the assertion below checks.
+    productCodes: [productCode],
+    departmentNames: [],
   })
   ok('a punch card is created', card.ok, card.ok ? '' : card.error)
   if (card.ok) cardId = card.id

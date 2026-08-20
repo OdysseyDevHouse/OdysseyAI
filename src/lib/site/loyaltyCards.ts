@@ -38,14 +38,16 @@ type Row = RowDataPacket & Record<string, unknown>
 
 /* ── Cards ───────────────────────────────────────────────────────────────── */
 
-function mapCard(r: Row): Omit<LoyaltyCard, 'productIds' | 'departmentIds'> {
+function mapCard(
+  r: Row,
+): Omit<LoyaltyCard, 'productIds' | 'departmentIds' | 'productCodes' | 'departmentNames'> {
   return {
     id: Number(r.id),
     name: String(r.name),
     isActive: !!r.is_active,
     requiredStamps: Number(r.required_stamps),
     rewardType: String(r.reward_type) as LoyaltyCard['rewardType'],
-    rewardProductId: r.reward_product_id === null ? null : Number(r.reward_product_id),
+    rewardProductCode: (r.reward_product_code as string | null) ?? null,
     rewardProductName: (r.reward_product_name as string | null) ?? null,
     rewardValue: toNum(r.reward_value),
     oneStampPerSale: !!r.one_stamp_per_sale,
@@ -56,63 +58,148 @@ function mapCard(r: Row): Omit<LoyaltyCard, 'productIds' | 'departmentIds'> {
   }
 }
 
-const SELECT_CARD = `
-  SELECT c.id, c.name, c.is_active, c.required_stamps, c.reward_type, c.reward_product_id,
+/**
+ * A card, with the reward product's name resolved against THIS store.
+ *
+ * The name is a label, so a branch that does not carry the code simply shows
+ * nothing rather than failing — the reward is still defined, it is just not
+ * something this shop stocks.
+ */
+const selectCard = (bdb: string) => `
+  SELECT c.id, c.name, c.is_active, c.required_stamps, c.reward_type, c.reward_product_code,
          c.reward_value, c.one_stamp_per_sale, c.min_line_amount, c.voucher_valid_days,
          c.starts_on, c.ends_on, p.description AS reward_product_name
     FROM loyalty_cards c
-    LEFT JOIN products p ON p.id = c.reward_product_id
+    LEFT JOIN ${bdb}products p ON p.code = c.reward_product_code AND p.is_archived = 0
 `
 
-/** Cards with their scope rows attached. */
+/**
+ * Cards with their scope attached, twice over.
+ *
+ * ── WHY BOTH CODES AND IDS ───────────────────────────────────────────────
+ *
+ * A card belongs to the GROUP, so it is defined in product codes and
+ * department names — the only identifiers that mean the same thing at every
+ * branch. But matching a basket line is an id comparison on the till's hot
+ * path, and re-resolving a code per line would be absurd.
+ *
+ * So the codes are resolved ONCE here, against the caller's own product and
+ * department tables, and both forms travel on the card: the definition and this
+ * store's reading of it.
+ *
+ * A code this branch does not stock resolves to nothing and the card earns no
+ * stamps here. That is the honest answer rather than a gap to paper over — a
+ * shop that does not sell the item cannot award a stamp for buying it.
+ */
 export async function listCards(siteId: number, activeOnly = false): Promise<LoyaltyCard[]> {
-  const rows = await siteQuery<Row>(
+  const bdb = await branchDbPrefix(siteId)
+  const rows = await customerQuery<Row>(
     siteId,
-    `${SELECT_CARD} ${activeOnly ? 'WHERE c.is_active = 1' : ''} ORDER BY c.name ASC`,
+    `${selectCard(bdb)} ${activeOnly ? 'WHERE c.is_active = 1' : ''} ORDER BY c.name ASC`,
   )
   if (rows.length === 0) return []
 
   const ids = rows.map((r) => Number(r.id))
-  const items = await siteQuery<Row>(
+  const items = await customerQuery<Row>(
     siteId,
-    `SELECT card_id, product_id, department_id
+    `SELECT card_id, product_code, department_name
        FROM loyalty_card_items WHERE card_id IN (${ids.map(() => '?').join(',')})`,
     ids,
   )
 
-  const products = new Map<number, number[]>()
-  const departments = new Map<number, number[]>()
+  const codes = new Map<number, string[]>()
+  const names = new Map<number, string[]>()
   for (const item of items) {
     const cardId = Number(item.card_id)
-    if (item.product_id !== null) {
-      products.set(cardId, [...(products.get(cardId) ?? []), Number(item.product_id)])
+    if (item.product_code !== null) {
+      codes.set(cardId, [...(codes.get(cardId) ?? []), String(item.product_code)])
     }
-    if (item.department_id !== null) {
-      departments.set(cardId, [...(departments.get(cardId) ?? []), Number(item.department_id)])
+    if (item.department_name !== null) {
+      names.set(cardId, [...(names.get(cardId) ?? []), String(item.department_name)])
     }
   }
 
-  return rows.map((r) => ({
-    ...mapCard(r),
-    productIds: products.get(Number(r.id)) ?? [],
-    departmentIds: departments.get(Number(r.id)) ?? [],
-  }))
+  const local = await resolveScope(
+    siteId,
+    [...new Set([...codes.values()].flat())],
+    [...new Set([...names.values()].flat())],
+  )
+
+  return rows.map((r) => {
+    const cardId = Number(r.id)
+    const cardCodes = codes.get(cardId) ?? []
+    const cardNames = names.get(cardId) ?? []
+    return {
+      ...mapCard(r),
+      productCodes: cardCodes,
+      departmentNames: cardNames,
+      productIds: cardCodes.map((c) => local.products.get(c)).filter((id): id is number => !!id),
+      departmentIds: cardNames.map((n) => local.departments.get(n)).filter((id): id is number => !!id),
+    }
+  })
 }
 
+/**
+ * Turns the group's product codes and department names into this store's ids.
+ *
+ * One query each rather than one per card: a shop with a dozen cards scoped to
+ * overlapping products would otherwise run a dozen lookups for the same code.
+ *
+ * Reads the CALLER's own tables, never the owner's — the whole point is what
+ * this branch calls these things.
+ */
+async function resolveScope(
+  siteId: number,
+  productCodes: string[],
+  departmentNames: string[],
+): Promise<{ products: Map<string, number>; departments: Map<string, number> }> {
+  const products = new Map<string, number>()
+  const departments = new Map<string, number>()
+
+  if (productCodes.length > 0) {
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT id, code FROM products
+        WHERE code IN (${productCodes.map(() => '?').join(',')}) AND is_archived = 0`,
+      productCodes,
+    )
+    for (const r of rows) products.set(String(r.code), Number(r.id))
+  }
+
+  if (departmentNames.length > 0) {
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT id, name FROM departments
+        WHERE name IN (${departmentNames.map(() => '?').join(',')})`,
+      departmentNames,
+    )
+    for (const r of rows) departments.set(String(r.name), Number(r.id))
+  }
+
+  return { products, departments }
+}
+
+/**
+ * A card as somebody defines it.
+ *
+ * Codes and names rather than ids, because a card is the GROUP's — see the
+ * header of listCards. A screen that offers a product picker resolves the
+ * chosen row to its code before saving.
+ */
 export type CardInput = {
   name: string
   isActive: boolean
   requiredStamps: number
   rewardType: LoyaltyCard['rewardType']
-  rewardProductId: number | null
+  rewardProductCode: string | null
   rewardValue: number
   oneStampPerSale: boolean
   minLineAmount: number
   voucherValidDays: number
   startsOn: string | null
   endsOn: string | null
-  productIds: number[]
-  departmentIds: number[]
+  productCodes: string[]
+  departmentNames: string[]
 }
 
 export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
@@ -126,7 +213,7 @@ export function validateCard(input: CardInput): string | null {
   }
   if (input.requiredStamps > 100) return 'A hundred stamps is the most a card can ask for.'
 
-  if (input.rewardType === 'free_item' && !input.rewardProductId) {
+  if (input.rewardType === 'free_item' && !input.rewardProductCode?.trim()) {
     return 'Choose the product the customer gets free.'
   }
   if (input.rewardType !== 'free_item' && input.rewardValue <= 0) {
@@ -149,16 +236,16 @@ async function writeItems(tx: PoolConnection, cardId: number, input: CardInput):
   // De-duplicated before insert: the unique keys would refuse a repeat anyway,
   // and a picker that let someone add the same product twice should not surface
   // a constraint error.
-  for (const productId of [...new Set(input.productIds)]) {
+  for (const code of [...new Set(input.productCodes.map((c) => c.trim()).filter(Boolean))]) {
     await tx.execute(
-      'INSERT INTO loyalty_card_items (card_id, product_id) VALUES (?,?)',
-      [cardId, productId] as never,
+      'INSERT INTO loyalty_card_items (card_id, product_code) VALUES (?,?)',
+      [cardId, code] as never,
     )
   }
-  for (const departmentId of [...new Set(input.departmentIds)]) {
+  for (const name of [...new Set(input.departmentNames.map((n) => n.trim()).filter(Boolean))]) {
     await tx.execute(
-      'INSERT INTO loyalty_card_items (card_id, department_id) VALUES (?,?)',
-      [cardId, departmentId] as never,
+      'INSERT INTO loyalty_card_items (card_id, department_name) VALUES (?,?)',
+      [cardId, name] as never,
     )
   }
 }
@@ -169,7 +256,7 @@ function cardColumns(input: CardInput): unknown[] {
     input.isActive ? 1 : 0,
     Math.floor(input.requiredStamps),
     input.rewardType,
-    input.rewardType === 'free_item' ? input.rewardProductId : null,
+    input.rewardType === 'free_item' ? input.rewardProductCode?.trim() || null : null,
     round(input.rewardType === 'free_item' ? 0 : input.rewardValue, 4).toFixed(4),
     input.oneStampPerSale ? 1 : 0,
     round(input.minLineAmount, 4).toFixed(4),
@@ -187,10 +274,10 @@ export async function createCard(
   const invalid = validateCard(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const id = await siteTransaction(siteId, async (tx) => {
+  const id = await customerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO loyalty_cards
-         (name, is_active, required_stamps, reward_type, reward_product_id, reward_value,
+         (name, is_active, required_stamps, reward_type, reward_product_code, reward_value,
           one_stamp_per_sale, min_line_amount, voucher_valid_days, starts_on, ends_on)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       cardColumns(input) as never,
@@ -219,13 +306,13 @@ export async function updateCard(
   const invalid = validateCard(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const existing = await siteQueryOne<Row>(siteId, 'SELECT id FROM loyalty_cards WHERE id = ?', [id])
+  const existing = await customerQueryOne<Row>(siteId, 'SELECT id FROM loyalty_cards WHERE id = ?', [id])
   if (!existing) return { ok: false, error: 'That card no longer exists.' }
 
-  await siteTransaction(siteId, async (tx) => {
+  await customerTransaction(siteId, async (tx) => {
     await tx.execute(
       `UPDATE loyalty_cards SET
-         name = ?, is_active = ?, required_stamps = ?, reward_type = ?, reward_product_id = ?,
+         name = ?, is_active = ?, required_stamps = ?, reward_type = ?, reward_product_code = ?,
          reward_value = ?, one_stamp_per_sale = ?, min_line_amount = ?, voucher_valid_days = ?,
          starts_on = ?, ends_on = ?
        WHERE id = ?`,
@@ -250,7 +337,7 @@ export async function setCardActive(
   id: number,
   isActive: boolean,
 ): Promise<Result> {
-  await siteExecute(siteId, 'UPDATE loyalty_cards SET is_active = ? WHERE id = ?', [
+  await customerExecute(siteId, 'UPDATE loyalty_cards SET is_active = ? WHERE id = ?', [
     isActive ? 1 : 0,
     id,
   ])
@@ -289,7 +376,7 @@ export async function deleteCard(siteId: number, actor: Actor, id: number): Prom
     }
   }
 
-  await siteExecute(siteId, 'DELETE FROM loyalty_cards WHERE id = ?', [id])
+  await customerExecute(siteId, 'DELETE FROM loyalty_cards WHERE id = ?', [id])
   await logActivity(siteId, actor, {
     entity: 'loyalty',
     entityId: null,
@@ -449,7 +536,7 @@ export async function awardSaleStamps(
             const voucher = await issueVoucherTx(tx, actor, {
               customerId: input.customerId,
               rewardType: card.rewardType === 'free_item' ? 'free_item' : 'value',
-              rewardProductId: card.rewardProductId,
+              rewardProductCode: card.rewardProductCode,
               rewardValue: card.rewardValue,
               description: card.name,
               validDays: card.voucherValidDays,
@@ -533,7 +620,7 @@ export type LoyaltyVoucher = {
   customerId: number | null
   customerName: string
   rewardType: 'free_item' | 'value'
-  rewardProductId: number | null
+  rewardProductCode: string | null
   rewardProductName: string | null
   rewardValue: number
   description: string
@@ -552,7 +639,7 @@ function mapVoucher(r: Row): LoyaltyVoucher {
     customerId: r.customer_id === null ? null : Number(r.customer_id),
     customerName: String(r.customer_name ?? ''),
     rewardType: String(r.reward_type) as 'free_item' | 'value',
-    rewardProductId: r.reward_product_id === null ? null : Number(r.reward_product_id),
+    rewardProductCode: (r.reward_product_code as string | null) ?? null,
     rewardProductName: (r.reward_product_name as string | null) ?? null,
     rewardValue: toNum(r.reward_value),
     description: String(r.description ?? ''),
@@ -578,13 +665,13 @@ function mapVoucher(r: Row): LoyaltyVoucher {
  * is unchanged for every single-store site.
  */
 const selectVoucher = (bdb: string) => `
-  SELECT v.id, v.code, v.customer_id, v.reward_type, v.reward_product_id, v.reward_value,
+  SELECT v.id, v.code, v.customer_id, v.reward_type, v.reward_product_code, v.reward_value,
          v.description, v.status, v.issued_by, v.expires_on, v.redeemed_at,
          v.redeemed_doc_number, v.created_at,
          c.name AS customer_name, p.description AS reward_product_name
     FROM loyalty_vouchers v
     LEFT JOIN customers c ON c.id = v.customer_id
-    LEFT JOIN ${bdb}products p ON p.id = v.reward_product_id
+    LEFT JOIN ${bdb}products p ON p.code = v.reward_product_code AND p.is_archived = 0
 `
 
 function makeCode(): string {
@@ -598,7 +685,7 @@ function makeCode(): string {
 export type VoucherIssueInput = {
   customerId: number | null
   rewardType: 'free_item' | 'value'
-  rewardProductId?: number | null
+  rewardProductCode?: string | null
   rewardValue?: number
   description: string
   validDays?: number
@@ -629,14 +716,14 @@ async function issueVoucherTx(
     try {
       const [res] = await tx.execute(
         `INSERT INTO loyalty_vouchers
-           (code, customer_id, reward_type, reward_product_id, reward_value, description,
+           (code, customer_id, reward_type, reward_product_code, reward_value, description,
             status, issued_by, card_id, expires_on, user_id, user_name)
          VALUES (?,?,?,?,?,?, 'issued', ?,?,?,?,?)`,
         [
           code,
           input.customerId,
           input.rewardType,
-          input.rewardType === 'free_item' ? (input.rewardProductId ?? null) : null,
+          input.rewardType === 'free_item' ? (input.rewardProductCode?.trim() || null) : null,
           round(input.rewardType === 'value' ? (input.rewardValue ?? 0) : 0, 4).toFixed(4),
           input.description.slice(0, 150),
           input.issuedBy ?? 'manual',
@@ -663,12 +750,12 @@ export async function issueVoucher(
   if (input.rewardType === 'value' && (input.rewardValue ?? 0) <= 0) {
     return { ok: false, error: 'Enter what the voucher is worth.' }
   }
-  if (input.rewardType === 'free_item' && !input.rewardProductId) {
+  if (input.rewardType === 'free_item' && !input.rewardProductCode?.trim()) {
     return { ok: false, error: 'Choose the free product.' }
   }
 
   try {
-    const voucher = await siteTransaction(siteId, (tx) => issueVoucherTx(tx, actor, input))
+    const voucher = await customerTransaction(siteId, (tx) => issueVoucherTx(tx, actor, input))
 
     await logActivity(siteId, actor, {
       entity: 'loyalty',
@@ -738,7 +825,7 @@ export async function redeemVoucherForSale(
   const code = input.code.trim().toUpperCase()
 
   const [[row]] = await tx.query<Row[]>(
-    `SELECT id, code, customer_id, reward_type, reward_product_id, reward_value, description,
+    `SELECT id, code, customer_id, reward_type, reward_product_code, reward_value, description,
             status, issued_by, expires_on, redeemed_at, redeemed_doc_number, created_at
        FROM loyalty_vouchers WHERE code = ? FOR UPDATE`,
     [code] as never,

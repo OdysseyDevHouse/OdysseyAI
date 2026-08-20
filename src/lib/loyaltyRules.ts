@@ -207,7 +207,15 @@ export type LoyaltyCard = {
   isActive: boolean
   requiredStamps: number
   rewardType: CardRewardType
-  rewardProductId: number | null
+  /**
+   * The reward product, named by CODE.
+   *
+   * A card belongs to the whole group, so it cannot name a local row id —
+   * those are per-database and mean nothing at another branch. The code is how
+   * this system already identifies the same product everywhere; see
+   * lib/site/shareSettings.ts.
+   */
+  rewardProductCode: string | null
   rewardProductName: string | null
   rewardValue: number
   oneStampPerSale: boolean
@@ -215,7 +223,24 @@ export type LoyaltyCard = {
   voucherValidDays: number
   startsOn: string | null
   endsOn: string | null
-  /** Empty means the card earns on anything. */
+  /**
+   * What the card earns on, as the group DEFINES it. Empty means anything.
+   *
+   * Codes and names rather than ids, for the same reason as the reward above.
+   */
+  productCodes: string[]
+  departmentNames: string[]
+  /**
+   * The same scope, resolved to THIS store's own row ids.
+   *
+   * Filled in when the card is loaded for a particular site, because matching a
+   * basket line is an id comparison on a hot path and re-resolving codes per
+   * line would be absurd.
+   *
+   * A code this branch does not stock simply resolves to nothing, so the card
+   * earns no stamps here — which is the honest answer: a shop that does not
+   * sell the item cannot award a stamp for buying it.
+   */
   productIds: number[]
   departmentIds: number[]
 }

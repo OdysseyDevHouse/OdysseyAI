@@ -89,7 +89,11 @@ export function CardsClient({
         isActive: card.isActive,
         requiredStamps: card.requiredStamps,
         rewardType: card.rewardType,
-        rewardProductId: card.rewardProductId,
+        // The card stores a code; the picker needs this store's row id. A code
+        // this branch does not stock resolves to nothing, so the picker shows
+        // it as unset rather than inventing a product.
+        rewardProductId:
+          products.find((p) => p.code === card.rewardProductCode)?.id ?? null,
         rewardValue: card.rewardValue,
         oneStampPerSale: card.oneStampPerSale,
         minLineAmount: card.minLineAmount,
@@ -108,7 +112,47 @@ export function CardsClient({
 
   function save() {
     start(async () => {
-      const result = await saveCardAction(editingId, form)
+      /*
+       * ── THE PICKER'S IDS BECOME THE GROUP'S CODES ────────────────────────
+       *
+       * A card belongs to every branch, so what is stored has to mean the same
+       * thing everywhere — a product code, not this database's row id.
+       *
+       * Codes the picker could not resolve are CARRIED THROUGH rather than
+       * dropped. Editing a card from a branch that does not stock one of its
+       * products would otherwise quietly delete that scope row from the whole
+       * group's card, which is the worst kind of silent edit: nobody at this
+       * store would ever see the difference.
+       */
+      const editing = editingId === null ? null : cards.find((c) => c.id === editingId)
+      // A code this store has no product for was never offered in the picker,
+      // so the user could neither keep nor remove it. It survives untouched.
+      const unresolved = (editing?.productCodes ?? []).filter(
+        (code) => !products.some((p) => p.code === code),
+      )
+      const chosen = form.productIds
+        .map((id) => products.find((p) => p.id === id)?.code)
+        .filter((code): code is string => !!code)
+
+      const result = await saveCardAction(editingId, {
+        name: form.name,
+        isActive: form.isActive,
+        requiredStamps: form.requiredStamps,
+        rewardType: form.rewardType,
+        rewardProductCode:
+          products.find((p) => p.id === form.rewardProductId)?.code ??
+          (editing?.rewardProductCode ?? null),
+        rewardValue: form.rewardValue,
+        oneStampPerSale: form.oneStampPerSale,
+        minLineAmount: form.minLineAmount,
+        voucherValidDays: form.voucherValidDays,
+        startsOn: form.startsOn,
+        endsOn: form.endsOn,
+        productCodes: [...new Set([...chosen, ...unresolved])],
+        departmentNames: form.departmentIds
+          .map((id) => departments.find((d) => d.id === id)?.name)
+          .filter((name): name is string => !!name),
+      })
       if (!result.ok) {
         toast.error(result.error)
         return
@@ -149,17 +193,28 @@ export function CardsClient({
     return `${formatMoney(card.rewardValue)} voucher`
   }
 
+  /*
+   * Described from the card's DEFINITION — the product codes and department
+   * names the group set — not from this store's resolved ids.
+   *
+   * The two differ when a branch does not carry a scoped code, and reading the
+   * ids would then say "Anything in the shop" for a card that is in fact
+   * tightly scoped and simply earns nothing here. That is the opposite of the
+   * truth, so the count comes from the definition and the shortfall is named
+   * separately.
+   */
   function scopeOf(card: LoyaltyCard): string {
-    if (card.productIds.length === 0 && card.departmentIds.length === 0) return 'Anything in the shop'
-    const bits: string[] = []
-    if (card.productIds.length > 0) {
-      bits.push(`${card.productIds.length} product${card.productIds.length === 1 ? '' : 's'}`)
+    if (card.productCodes.length === 0 && card.departmentNames.length === 0) {
+      return 'Anything in the shop'
     }
-    if (card.departmentIds.length > 0) {
-      const names = card.departmentIds
-        .map((id) => departments.find((d) => d.id === id)?.name)
-        .filter(Boolean)
-      bits.push(names.length > 0 ? names.join(', ') : `${card.departmentIds.length} departments`)
+    const bits: string[] = []
+    if (card.productCodes.length > 0) {
+      bits.push(`${card.productCodes.length} product${card.productCodes.length === 1 ? '' : 's'}`)
+      const missing = card.productCodes.length - card.productIds.length
+      if (missing > 0) bits.push(`${missing} not stocked here`)
+    }
+    if (card.departmentNames.length > 0) {
+      bits.push(card.departmentNames.join(', '))
     }
     return bits.join(' · ')
   }
