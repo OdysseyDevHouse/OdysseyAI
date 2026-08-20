@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQueryOne, siteTransaction } from '../siteDb'
+import { customerExecute } from './customerDb'
 import { isLocked } from './periodLocks'
 import { can, capabilitiesForRole } from './permissions'
 import { createCreditNote } from './salesReversal'
@@ -507,32 +508,43 @@ export async function postOfflineReturn(
           created.documentId,
         ] as never,
       )
-      /*
-       * The CUSTOMER LEDGER carries the number too, and it must move with the
-       * document.
-       *
-       * `postTransaction` stores `doc_number` as a literal string when a credit is
-       * left on an account, and `customer_transactions` even guards against two rows
-       * sharing one number. Renumbering only `sales_documents` would leave a
-       * statement citing CRN003817 for a credit note that now calls itself
-       * CRN_01_09_000001 — while the customer holds a slip bearing the second. The
-       * row is found by source_doc_id, which the renumber does not touch.
-       *
-       * Scoped to this document's own row rather than the number: matching on the old
-       * number could catch an unrelated row that legitimately holds it.
-       */
-      await tx.execute(
-        `UPDATE customer_transactions
-            SET doc_number = ?
-          WHERE source = 'sale' AND source_doc_id = ? AND doc_type = 'credit_note'`,
-        [printed, created.documentId] as never,
-      )
-
       const value = numberValueOf(printed)
       if (value !== null && ret.terminalId) {
         await adoptDocumentNumber(tx, 'credit_sale', ret.terminalId, value)
       }
     })
+
+    /*
+     * The CUSTOMER LEDGER carries the number too, and it must move with the
+     * document.
+     *
+     * `postTransaction` stores `doc_number` as a literal string when a credit is
+     * left on an account, and `customer_transactions` even guards against two rows
+     * sharing one number. Renumbering only `sales_documents` would leave a
+     * statement citing CRN003817 for a credit note that now calls itself
+     * CRN_01_09_000001 — while the customer holds a slip bearing the second. The
+     * row is found by source_doc_id, which the renumber does not touch.
+     *
+     * ── OUTSIDE THE TRANSACTION ABOVE, AND SCOPED BY ORIGIN ────────────────
+     *
+     * Two reasons, both from the shared customer file:
+     *
+     *   · The ledger may live in ANOTHER database — the group's primary — and no
+     *     transaction spans two. It runs after the document renumber commits,
+     *     which is the same ordering postTransaction already uses for exactly
+     *     this reason: a ledger failure must not un-do a document.
+     *   · source_doc_id names a document in THIS store, and document ids are
+     *     per-database. Without the origin scope this UPDATE could rewrite the
+     *     credit-note number on another branch's ledger row.
+     */
+    await customerExecute(
+      siteId,
+      `UPDATE customer_transactions
+          SET doc_number = ?
+        WHERE source = 'sale' AND source_doc_id = ? AND doc_type = 'credit_note'
+          AND (origin_site_id IS NULL OR origin_site_id = ?)`,
+      [printed, created.documentId, siteId],
+    )
   } catch (error) {
     /*
      * The credit note IS posted — the customer has their money and the stock is back.

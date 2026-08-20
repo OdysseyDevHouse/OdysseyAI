@@ -95,9 +95,14 @@ export async function jobDeposits(siteId: number, jobId: number): Promise<JobDep
       `SELECT id, doc_number, doc_date, amount_gross, amount_outstanding,
               reference, description, user_name
          FROM customer_transactions
-        WHERE source = 'job_deposit' AND source_doc_id = ? AND doc_type = 'payment'
+        WHERE source = 'job_deposit' AND source_doc_id = ?
+          -- Scoped to THIS store: job ids are per-database, so a shared ledger
+          -- holding ten branches' deposits would otherwise show job 42 at store 3
+          -- the deposits taken against job 42 at store 7.
+          AND (origin_site_id IS NULL OR origin_site_id = ?)
+          AND doc_type = 'payment'
         ORDER BY doc_date, id`,
-      [jobId],
+      [jobId, siteId],
     )
     return rows.map((r) => ({
       transactionId: Number(r.id),

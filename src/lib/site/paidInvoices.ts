@@ -162,8 +162,13 @@ export async function outstandingForDocument(
   const row = await customerQueryOne<Row>(
     siteId,
     `SELECT amount_outstanding FROM customer_transactions
-      WHERE source_doc_id = ? AND doc_type = 'invoice' LIMIT 1`,
-    [document.id],
+      WHERE source_doc_id = ?
+        -- Scoped to THIS store. Document ids are per-database, so in a shared
+        -- ledger the id alone would match another branch's invoice and report
+        -- the wrong amount still owing.
+        AND (origin_site_id IS NULL OR origin_site_id = ?)
+        AND doc_type = 'invoice' LIMIT 1`,
+    [document.id, siteId],
   )
   if (row) return Math.max(Number(row.amount_outstanding), 0)
 

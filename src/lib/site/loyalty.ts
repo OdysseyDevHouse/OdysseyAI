@@ -550,12 +550,26 @@ type LedgerWrite = {
   note?: string
 }
 
-async function insertLedger(tx: PoolConnection, actor: Actor, entry: LedgerWrite): Promise<number> {
+/**
+ * Appends one points row.
+ *
+ * `originSiteId` is the store the sale happened in, NOT the store the ledger
+ * lives in. With a shared customer file those differ, and `document_id` alone
+ * stops identifying a document — uq_ledger_document_earn is built on the pair,
+ * so leaving it out would make one branch's award collide with another's and
+ * the customer would silently lose the points.
+ */
+async function insertLedger(
+  tx: PoolConnection,
+  actor: Actor,
+  originSiteId: number,
+  entry: LedgerWrite,
+): Promise<number> {
   const [res] = await tx.execute(
     `INSERT INTO loyalty_ledger
        (customer_id, entry_type, points, basis_amount, document_id, document_number,
-        tier_name, multiplier, note, user_id, user_name)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        origin_site_id, tier_name, multiplier, note, user_id, user_name)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       entry.customerId,
       entry.entryType,
@@ -563,6 +577,7 @@ async function insertLedger(tx: PoolConnection, actor: Actor, entry: LedgerWrite
       round(entry.basisAmount ?? 0, 4).toFixed(4),
       entry.documentId ?? null,
       entry.documentNumber ?? '',
+      originSiteId,
       entry.tierName ?? '',
       round(entry.multiplier ?? 1, 3).toFixed(3),
       (entry.note ?? '').slice(0, 255),
@@ -634,7 +649,7 @@ export async function awardSaleLoyalty(
 
   try {
     await siteTransaction(siteId, async (tx) => {
-      await insertLedger(tx, actor, {
+      await insertLedger(tx, actor, siteId, {
         customerId: input.customerId,
         entryType: 'earn',
         points: result.points,
@@ -677,6 +692,8 @@ export type RedeemInput = {
 export async function redeemPointsForSale(
   tx: PoolConnection,
   actor: Actor,
+  /** The store making the sale — see insertLedger on why this is not the owner. */
+  originSiteId: number,
   input: RedeemInput,
   settings: LoyaltySettings,
   tiers: readonly LoyaltyTier[],
@@ -699,7 +716,7 @@ export async function redeemPointsForSale(
     )
   }
 
-  await insertLedger(tx, actor, {
+  await insertLedger(tx, actor, originSiteId, {
     customerId: input.customerId,
     entryType: 'redeem',
     points: -needed,
@@ -765,7 +782,7 @@ export async function adjustPoints(
         )
       }
 
-      await insertLedger(tx, actor, {
+      await insertLedger(tx, actor, siteId, {
         customerId,
         entryType: 'adjust',
         points,
@@ -848,7 +865,7 @@ export async function reverseSaleLoyalty(
 
       const net = round(returned - clawedBack, 4)
       if (net !== 0 || clawedBack !== 0 || returned !== 0) {
-        await insertLedger(tx, actor, {
+        await insertLedger(tx, actor, siteId, {
           customerId,
           entryType: 'reverse',
           points: net,
@@ -947,7 +964,7 @@ export async function expirePoints(
 
       if (toExpire <= 0) return 0
 
-      await insertLedger(tx, actor, {
+      await insertLedger(tx, actor, siteId, {
         customerId,
         entryType: 'expire',
         points: -toExpire,

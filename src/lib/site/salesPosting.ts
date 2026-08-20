@@ -931,6 +931,10 @@ export async function finaliseDocument(
           await redeemPointsForSale(
             tx,
             actor,
+            // The store making the sale. With a shared customer file the points
+            // ledger lives elsewhere, and document.id only identifies a document
+            // alongside the site it came from.
+            siteId,
             {
               customerId,
               documentId: document.id,
@@ -943,7 +947,7 @@ export async function finaliseDocument(
         }
 
         if (walletTender) {
-          await spendWalletForSale(tx, actor, {
+          await spendWalletForSale(tx, actor, siteId, {
             customerId,
             documentId: document.id,
             documentNumber,
@@ -1017,7 +1021,7 @@ export async function finaliseDocument(
       if (giftLines.length > 0 || giftTenders.length > 0) {
         const { activateGiftCardForSale, redeemGiftCardForSale } = await import('./giftCards')
         for (const line of giftLines) {
-          await activateGiftCardForSale(tx, actor, {
+          await activateGiftCardForSale(tx, actor, siteId, {
             code: line.giftCardCode ?? '',
             amount: line.lineTotalIncl,
             documentId: document.id,
@@ -1030,7 +1034,7 @@ export async function finaliseDocument(
         for (const tender of giftTenders) {
           // The sign carries the direction: positive spends the card, and a
           // credit note's negative tender pays the refund back ONTO it.
-          await redeemGiftCardForSale(tx, actor, {
+          await redeemGiftCardForSale(tx, actor, siteId, {
             code: tender.input.reference ?? '',
             amount: round(tender.input.amount, 2),
             documentId: document.id,

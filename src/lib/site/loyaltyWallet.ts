@@ -237,6 +237,8 @@ export type WalletSpendInput = {
 export async function spendWalletForSale(
   tx: PoolConnection,
   actor: Actor,
+  /** The store making the sale — see insertLedger in loyalty.ts. */
+  originSiteId: number,
   input: WalletSpendInput,
 ): Promise<{ amount: number }> {
   const amount = round(input.amount, 2)
@@ -253,13 +255,15 @@ export async function spendWalletForSale(
 
   await tx.execute(
     `INSERT INTO loyalty_wallet
-       (customer_id, entry_type, amount, document_id, document_number, user_id, user_name)
-     VALUES (?, 'spend', ?, ?, ?, ?, ?)`,
+       (customer_id, entry_type, amount, document_id, document_number,
+        origin_site_id, user_id, user_name)
+     VALUES (?, 'spend', ?, ?, ?, ?, ?, ?)`,
     [
       input.customerId,
       (-amount).toFixed(4),
       input.documentId,
       input.documentNumber,
+      originSiteId,
       actor.userId,
       actor.userName.slice(0, 120),
     ] as never,
@@ -286,8 +290,12 @@ export async function refundWalletForSale(
     const [[spent]] = await tx.query<Row[]>(
       `SELECT customer_id, amount, document_number
          FROM loyalty_wallet
-        WHERE document_id = ? AND entry_type = 'spend' FOR UPDATE`,
-      [documentId] as never,
+        WHERE document_id = ? AND entry_type = 'spend'
+          -- Document ids are per-database, so in a shared wallet the id alone
+          -- would match another branch's spend and refund the wrong sale.
+          AND (origin_site_id IS NULL OR origin_site_id = ?)
+          FOR UPDATE`,
+      [documentId, siteId] as never,
     )
     if (!spent) return { amount: 0 }
 
@@ -302,13 +310,15 @@ export async function refundWalletForSale(
 
     await tx.execute(
       `INSERT INTO loyalty_wallet
-         (customer_id, entry_type, amount, document_id, document_number, note, user_id, user_name)
-       VALUES (?, 'refund', ?, ?, ?, ?, ?, ?)`,
+         (customer_id, entry_type, amount, document_id, document_number,
+          origin_site_id, note, user_id, user_name)
+       VALUES (?, 'refund', ?, ?, ?, ?, ?, ?, ?)`,
       [
         customerId,
         amount.toFixed(4),
         documentId,
         String(spent.document_number ?? ''),
+        siteId,
         reason.slice(0, 255),
         actor.userId,
         actor.userName.slice(0, 120),

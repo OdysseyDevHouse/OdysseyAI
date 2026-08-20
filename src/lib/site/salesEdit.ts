@@ -1,5 +1,6 @@
 import 'server-only'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
+import { customerQueryOne } from './customerDb'
 import { round, toNum } from '@/lib/decimals'
 import { guardPosting } from './periodLocks'
 import { can, type CapabilitySet } from './permissions'
@@ -126,13 +127,19 @@ export async function canEditFinalised(
   // un-allocating someone's payment silently is not something a correction
   // should do behind their back.
   if (document.customerId) {
-    const allocated = await siteQueryOne<Row>(
+    // Both tables move with the customer, so the whole query goes to the owner.
+    // Scoped by origin because source_doc_id names a document in THIS store and
+    // ids are per-database — unscoped, this guard could read another branch's
+    // allocation and refuse an edit that is perfectly safe, or allow one that
+    // is not.
+    const allocated = await customerQueryOne<Row>(
       siteId,
       `SELECT COALESCE(SUM(a.amount), 0) AS allocated
          FROM customer_allocations a
          JOIN customer_transactions t ON t.id = a.debit_txn_id
-        WHERE t.source_doc_id = ? AND t.doc_type = 'invoice'`,
-      [documentId],
+        WHERE t.source_doc_id = ? AND t.doc_type = 'invoice'
+          AND (t.origin_site_id IS NULL OR t.origin_site_id = ?)`,
+      [documentId, siteId],
     )
     if (toNum(allocated?.allocated) > 0) {
       return {

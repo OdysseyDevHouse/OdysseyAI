@@ -188,6 +188,8 @@ export async function generateGiftCards(
 export async function activateGiftCardForSale(
   tx: PoolConnection,
   actor: Actor,
+  /** The store making the sale — document ids are per-database. */
+  originSiteId: number,
   input: {
     code: string
     amount: number
@@ -268,13 +270,15 @@ export async function activateGiftCardForSale(
 
   await tx.execute(
     `INSERT INTO gift_card_events
-       (card_id, entry_type, amount, document_id, document_number, shift_id, terminal_id, user_id, user_name)
-     VALUES (?, 'activation', ?, ?, ?, ?, ?, ?, ?)`,
+       (card_id, entry_type, amount, document_id, document_number, origin_site_id,
+        shift_id, terminal_id, user_id, user_name)
+     VALUES (?, 'activation', ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       cardId,
       amount.toFixed(4),
       input.documentId,
       input.documentNumber,
+      originSiteId,
       input.shiftId,
       input.terminalId,
       actor.userId,
@@ -293,6 +297,8 @@ export async function activateGiftCardForSale(
 export async function redeemGiftCardForSale(
   tx: PoolConnection,
   actor: Actor,
+  /** The store making the sale — document ids are per-database. */
+  originSiteId: number,
   input: {
     code: string
     amount: number
@@ -351,14 +357,16 @@ export async function redeemGiftCardForSale(
 
   await tx.execute(
     `INSERT INTO gift_card_events
-       (card_id, entry_type, amount, document_id, document_number, shift_id, terminal_id, user_id, user_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (card_id, entry_type, amount, document_id, document_number, origin_site_id,
+        shift_id, terminal_id, user_id, user_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       cardId,
       amount > 0 ? 'redeem' : 'refund',
       (-amount).toFixed(4),
       input.documentId,
       input.documentNumber,
+      originSiteId,
       input.shiftId,
       input.terminalId,
       actor.userId,
@@ -397,8 +405,13 @@ export async function restoreGiftCardsForDocument(
       `SELECT e.*, c.code, c.status AS card_status, c.balance AS card_balance, c.initial_value
          FROM gift_card_events e JOIN gift_cards c ON c.id = e.card_id
         WHERE e.document_id = ? AND e.entry_type IN ('activation','redeem','refund')
+          -- Document ids are per-database. In a shared gift-card ledger the id
+          -- alone would match another branch's sale, and this function REVERSES
+          -- money onto and off cards — so an unscoped match would restore value
+          -- against a sale that was never voided.
+          AND (e.origin_site_id IS NULL OR e.origin_site_id = ?)
         ORDER BY e.id`,
-      [documentId] as never,
+      [documentId, siteId] as never,
     )
     for (const event of events) {
       const cardId = Number(event.card_id)

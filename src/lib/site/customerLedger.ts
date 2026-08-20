@@ -457,8 +457,8 @@ export async function postTransaction(
       `INSERT INTO customer_transactions
          (customer_id, doc_type, doc_number, doc_date, due_date, reference, description,
           amount_gross, amount_vat, amount_net, amount_signed, amount_outstanding,
-          source, source_doc_id, reverses_id, user_id, user_name)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          source, source_doc_id, origin_site_id, reverses_id, user_id, user_name)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         input.customerId,
         input.docType,
@@ -476,6 +476,11 @@ export async function postTransaction(
         signed.toFixed(4),
         input.source ?? 'manual',
         input.sourceDocId ?? null,
+        // WHICH STORE this row came from. source_doc_id names a document in the
+        // CALLER's database, and document ids are per-database — so once ten
+        // branches post into one shared ledger, the id alone stops identifying
+        // anything. The pair is what a lookup must match on.
+        siteId,
         input.reversesId ?? null,
         actor.userId,
         actor.userName.slice(0, 120),
@@ -599,8 +604,8 @@ export async function reverseTransaction(
       `INSERT INTO customer_transactions
          (customer_id, doc_type, doc_number, doc_date, due_date, reference, description,
           amount_gross, amount_vat, amount_net, amount_signed, amount_outstanding,
-          source, reverses_id, user_id, user_name)
-       VALUES (?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?)`,
+          source, origin_site_id, reverses_id, user_id, user_name)
+       VALUES (?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         original.customerId,
         'journal',
@@ -614,6 +619,9 @@ export async function reverseTransaction(
         reversed.toFixed(4),
         reversed.toFixed(4),
         'manual',
+        // The reversal belongs to the store that raised it, which need not be
+        // the store that posted the original.
+        siteId,
         original.id,
         actor.userId,
         actor.userName.slice(0, 120),
