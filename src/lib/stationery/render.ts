@@ -2,7 +2,8 @@ import { formatMoney, formatQty } from '../decimals'
 import { getDocType, getSection, findToken, type TokenFormat } from './catalog'
 import { conditionHolds } from './conditions'
 import { isQrTarget, resolveQrUrl, type QrContext } from './qrTarget'
-import { qrDataUri } from './qr'
+import { qrDataUri, barcodeDataUri } from './qr'
+import { isBarcodeSource, resolveBarcodeText } from './barcodeSource'
 
 /**
  * Turning a designed template into the HTML that goes on paper.
@@ -215,7 +216,37 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
    * host is worse than a document that never offered one, and the caption still
    * prints so the layout does not jump.
    */
-  const withQr = body.replace(
+  /*
+   * ── BARCODES ────────────────────────────────────────────────────────────
+   *
+   * `{{barcode:SOURCE:HEIGHT}}` becomes a picture, from a value read out of
+   * THIS document's own token bag — so the number under the bars and the number
+   * printed in the corner are the same number by construction.
+   *
+   * A value CODE128 cannot carry produces nothing rather than a broken symbol.
+   * A barcode that scans as the wrong thing is worse than one that is absent:
+   * absent is noticed, wrong is acted on.
+   */
+  const withBarcodes = body.replace(
+    /<div class="sd-block sd-barcode"([^>]*)>\{\{barcode:([a-zA-Z]+):(\d+)\}\}/g,
+    (whole, attrs: string, source: string, rawH: string) => {
+      const strip = () => whole.replace(/\{\{barcode:[^}]*\}\}/, '')
+      if (!isBarcodeSource(source)) return strip()
+      const typed = /data-bc-text="([^"]*)"/.exec(attrs)?.[1]
+      const text = resolveBarcodeText(source, typed ? decodeAttr(typed) : undefined, input.values)
+      if (!text) return strip()
+
+      const pt = Math.min(Math.max(Number(rawH) || 40, 16), 120)
+      const uri = barcodeDataUri(text, { moduleWidth: 2, height: Math.round(pt * 2) })
+      if (!uri) return strip()
+      return whole.replace(
+        /\{\{barcode:[^}]*\}\}/,
+        `<img src="${uri}" alt="" style="height:${pt}px;max-width:100%">`,
+      )
+    },
+  )
+
+  const withQr = withBarcodes.replace(
     /<div class="sd-block sd-qr"([^>]*)>\{\{qr:([a-z]+):(\d+)\}\}/g,
     (whole, attrs: string, target: string, rawSize: string) => {
       if (!input.qr || !isQrTarget(target)) return whole.replace(/\{\{qr:[^}]*\}\}/, '')

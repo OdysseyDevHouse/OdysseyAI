@@ -3,6 +3,7 @@
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState, Field, Icons, Input, Select } from '@/components/ui'
 import { SLIP_CONDITIONS, conditionDef, type ConditionRule } from '@/lib/stationery/conditions'
 import { QR_TARGET_INFO, cleanCustomUrl, type QrTarget } from '@/lib/stationery/qrTarget'
+import { BARCODE_SOURCE_INFO, type BarcodeSource } from '@/lib/stationery/barcodeSource'
 import { SLIP_BLOCK_INFO, type SlipBlock } from '@/lib/stationery/slip'
 
 /**
@@ -56,12 +57,13 @@ export default function SlipInspector({
 
   const info = SLIP_BLOCK_INFO[block.kind]
   /*
-   * A QR is not stylable either, and for a more interesting reason than a rule
-   * is: the PRINTER draws it. Align, size and bold are commands about text, and
-   * the head positions a QR as a unit at its own module size — so offering the
-   * three would be offering settings the paper ignores.
+   * A QR and a barcode are not stylable either, and for a more interesting
+   * reason than a rule is: the PRINTER draws them. Align, size and bold are
+   * commands about text, and the head positions a symbol as a unit at its own
+   * module size — so offering the three would be offering settings the paper
+   * ignores.
    */
-  const stylable = block.kind !== 'rule' && block.kind !== 'feed' && block.kind !== 'qr'
+  const stylable = block.kind !== 'rule' && block.kind !== 'feed' && block.kind !== 'qr' && block.kind !== 'barcode'
 
   return (
     <Card>
@@ -108,9 +110,9 @@ export default function SlipInspector({
               </Button>
             </Field>
           </>
-        ) : block.kind === 'qr' ? (
-          /* Not "nothing to set" — a QR has plenty, just below. What it has
-             none of is TEXT styling, because the printer draws the square. */
+        ) : block.kind === 'qr' || block.kind === 'barcode' ? (
+          /* Not "nothing to set" — both have plenty, just below. What they
+             have none of is TEXT styling, because the printer draws them. */
           <p className="text-sm text-muted">
             The printer draws this one, centred, at its own size.
           </p>
@@ -118,6 +120,39 @@ export default function SlipInspector({
           <p className="text-sm text-muted">
             Nothing to set — this block is just the space or the line.
           </p>
+        )}
+
+        {block.kind === 'barcode' && (
+          <>
+            <Field label="What it carries" hint="The slip number, or a code you type.">
+              <Select
+                className="w-full"
+                value={block.barcodeSource ?? 'docNumber'}
+                onChange={(e) => onChange({ barcodeSource: e.target.value as BarcodeSource })}
+              >
+                {/* Only the two a SLIP can answer. A receipt has no reference of
+                    its own and no customer account, so offering those would be
+                    two settings that never fire. */}
+                {BARCODE_SOURCE_INFO.filter(
+                  (x) => x.source === 'docNumber' || x.source === 'custom',
+                ).map((x) => (
+                  <option key={x.source} value={x.source}>
+                    {x.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {block.barcodeSource === 'custom' && (
+              <Field label="The code" hint="Anything a barcode cannot carry is dropped.">
+                <Input
+                  value={block.barcodeText ?? ''}
+                  placeholder="PROMO2026"
+                  onChange={(e) => onChange({ barcodeText: e.target.value })}
+                />
+              </Field>
+            )}
+          </>
         )}
 
         {block.kind === 'qr' && (

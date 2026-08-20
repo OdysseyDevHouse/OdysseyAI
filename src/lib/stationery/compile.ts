@@ -4,6 +4,7 @@ import { escapeHtml } from './render'
 import {
   BAND_KEYS,
   DEFAULT_IMAGE_H,
+  DEFAULT_BARCODE_PT,
   DEFAULT_QR_PT,
   DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
@@ -198,6 +199,22 @@ function imageBlock(b: DocBlock): string {
  * attribute so that a shop's address — the one piece of this a person types —
  * can never be confused with the marker's own punctuation.
  */
+/**
+ * A barcode, as a placeholder the RENDERER fills in.
+ *
+ * Same shape as the QR, and for a reason particular to this block: the value it
+ * carries usually comes from the DOCUMENT — the number this invoice happens to
+ * have — which the compiler cannot know. Even the fixed case goes through the
+ * marker rather than being written out here, so both sources travel one road
+ * and the encoder is asked in one place.
+ */
+function barcodeBlock(b: DocBlock): string {
+  const source = b.barcodeSource ?? 'docNumber'
+  const h = Math.round(b.barcodeHeight ?? DEFAULT_BARCODE_PT)
+  const typed = b.barcodeText ? ` data-bc-text="${escapeHtml(b.barcodeText)}"` : ''
+  return `<div class="sd-block sd-barcode"${typed}>{{barcode:${source}:${h}}}</div>`
+}
+
 function qrBlock(b: DocBlock): string {
   const target = b.qrTarget ?? 'store'
   const size = Math.round(b.qrSize ?? DEFAULT_QR_PT)
@@ -387,6 +404,8 @@ function compileBlock(b: DocBlock, docKey: string): string {
       return imageBlock(b)
     case 'qr':
       return qrBlock(b)
+    case 'barcode':
+      return barcodeBlock(b)
     case 'letterhead':
       return letterhead(b)
     case 'docTitle':

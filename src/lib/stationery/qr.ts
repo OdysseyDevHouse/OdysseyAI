@@ -1,5 +1,6 @@
 import zlib from 'node:zlib'
 import qrcode from 'qrcode-generator'
+import { code128Bars } from '../labels/code128'
 
 /**
  * QR codes for printed documents.
@@ -118,4 +119,71 @@ export function qrPng(text: string, opts: { scale?: number; ecc?: QrEcc } = {}):
 /** The QR as a data URI, for an <img> on an A4 page. */
 export function qrDataUri(text: string, opts?: { scale?: number; ecc?: QrEcc }): string {
   return `data:image/png;base64,${qrPng(text, opts).toString('base64')}`
+}
+
+/* ── barcodes ────────────────────────────────────────────────────────────── */
+
+/**
+ * A CODE128 barcode as PNG bytes.
+ *
+ * ── IT REUSES THE LABEL PRINTER'S ENCODER ─────────────────────────────────
+ *
+ * lib/labels/code128.ts already encodes CODE128 by hand — the 107-pattern table
+ * and the checksum — and already returns the bars as x/width in modules with
+ * the quiet zones included. That is the same shape the QR matrix has, and it is
+ * why this is a few lines rather than a second encoder: a barcode that scanned
+ * on a shelf label and not on an invoice would be two implementations
+ * disagreeing, which is the thing worth avoiding here.
+ *
+ * Rendered like the QR and for the same reasons: SVG is stripped by the
+ * stationery sanitiser, and the CSP forbids a remote src, so a raster is the
+ * route. One-bit black on white, so the PNG stays tiny.
+ *
+ * Null when the text cannot be encoded — a barcode of the wrong characters is
+ * worse than none, because it scans as something else.
+ */
+export function barcodePng(
+  text: string,
+  opts: { moduleWidth?: number; height?: number } = {},
+): Buffer | null {
+  const encoded = code128Bars(text)
+  if (!encoded) return null
+
+  const mw = Math.min(Math.max(Math.round(opts.moduleWidth ?? 2), 1), 8)
+  const height = Math.min(Math.max(Math.round(opts.height ?? 60), 10), 400)
+
+  const width = encoded.totalModules * mw
+  const raw = Buffer.alloc((width + 1) * height, 0xff)
+  for (let y = 0; y < height; y++) raw[y * (width + 1)] = 0
+
+  for (const bar of encoded.bars) {
+    const from = bar.x * mw
+    const to = (bar.x + bar.width) * mw
+    for (let y = 0; y < height; y++) {
+      const rowStart = y * (width + 1) + 1
+      raw.fill(0x00, rowStart + from, rowStart + to)
+    }
+  }
+
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8
+  ihdr[9] = 0
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+
+/** A CODE128 barcode as a data URI, or null when the text cannot be encoded. */
+export function barcodeDataUri(
+  text: string,
+  opts?: { moduleWidth?: number; height?: number },
+): string | null {
+  const png = barcodePng(text, opts)
+  return png ? `data:image/png;base64,${png.toString('base64')}` : null
 }

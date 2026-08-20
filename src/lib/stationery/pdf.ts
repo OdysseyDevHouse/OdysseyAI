@@ -5,6 +5,8 @@ import { BAND_KEYS, DOC_BLOCK_CATALOG, type DocBlock, type DocumentSpec } from '
 import { findToken, getDocType, type TokenFormat } from './catalog'
 import { conditionHolds } from './conditions'
 import { qrMatrix } from './qr'
+import { resolveBarcodeText } from './barcodeSource'
+import { code128Bars } from '../labels/code128'
 import { resolveQrUrl, type QrContext } from './qrTarget'
 import type { RenderInput, TokenValues } from './render'
 
@@ -169,6 +171,36 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
   doc.y = box.y
 
   switch (b.kind) {
+    case 'barcode': {
+      /*
+       * Bars as rectangles, like the QR's modules — same reason: pdfkit draws
+       * them natively and the result is resolution-independent, where a raster
+       * would be fixed at whatever pixel size it was encoded.
+       */
+      const text = resolveBarcodeText(b.barcodeSource ?? 'docNumber', b.barcodeText, v)
+      if (!text) return 0
+      const encoded = code128Bars(text)
+      if (!encoded) return 0
+
+      const barsH = Math.min(Math.max(Math.round(b.barcodeHeight ?? 40), 16), 120)
+      /* The symbol keeps its proportions inside the box the designer drew: a
+         stretched barcode is a barcode that will not scan. */
+      const unit = box.w / encoded.totalModules
+
+      doc.save().fillColor('#000000')
+      for (const bar of encoded.bars) {
+        doc.rect(box.x + bar.x * unit, box.y, bar.width * unit, barsH).fill()
+      }
+      doc.restore()
+
+      /* The digits under the bars, so a person can key it in when a scanner
+         will not read it. The thermal path asks the printer for the same thing
+         with GS H 2. */
+      doc.fillColor(MUTED).fontSize(7)
+      doc.text(text, box.x, box.y + barsH + 2, { width: box.w, align: 'center' })
+      return doc.y - box.y
+    }
+
     case 'qr': {
       /*
        * Drawn as RECTANGLES, not as an image.

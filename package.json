@@ -254,7 +254,8 @@
     "test:conditions": "tsx scripts/test-conditions.ts",
     "test:stationery-copy": "tsx scripts/test-stationery-copy.ts",
     "test:stationery-pictures": "tsx scripts/test-stationery-pictures.ts",
-    "test:stationery-qr": "tsx scripts/test-stationery-qr.ts"
+    "test:stationery-qr": "tsx scripts/test-stationery-qr.ts",
+    "test:stationery-barcode": "tsx scripts/test-stationery-barcode.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

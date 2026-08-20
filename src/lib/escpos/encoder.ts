@@ -144,6 +144,56 @@ export class EscPos {
     return this.raw(GS, 0x28, 0x6b, 3, 0, 49, 81, 48)
   }
 
+  /**
+   * GS k 73 — a CODE128 barcode, drawn by the PRINTER.
+   *
+   * The same bargain the QR makes: the head has a barcode generator built in,
+   * so sending the text costs a few dozen bytes where a raster would cost
+   * thousands and look worse at 203dpi.
+   *
+   * ── FUNCTION B, BECAUSE FUNCTION A CANNOT SAY WHERE IT ENDS ─────────────
+   *
+   * `GS k m d1…dk NUL` (function A) terminates on a null byte and has no
+   * length, so it cannot carry arbitrary data safely. Function B — `GS k 73 n
+   * d1…dn` — states the length up front, which is both safer and the only form
+   * that can encode the code-set selector below.
+   *
+   * ── THE {B PREFIX IS NOT OPTIONAL ──────────────────────────────────────
+   *
+   * CODE128 has three code sets and the data must say which it starts in. `{B`
+   * (0x7b 0x42) selects Code B — the printable ASCII set — matching what
+   * lib/labels/code128.ts emits for a document number. Without it the printer
+   * either refuses the symbol or encodes something else entirely, and the
+   * failure is a barcode that scans as the wrong thing rather than one that
+   * does not scan at all.
+   *
+   * A literal `{` in the payload would therefore have to be doubled; a document
+   * number never contains one, and the caller filters what it sends.
+   */
+  barcode(data: string, opts: { height?: number; width?: number } = {}): this {
+    const bytes = encodeCp858(data)
+    // n is one byte, and the {B prefix costs two of it.
+    if (bytes.length === 0 || bytes.length > 253) return this
+
+    const height = Math.min(Math.max(Math.round(opts.height ?? 60), 1), 255)
+    const width = Math.min(Math.max(Math.round(opts.width ?? 2), 2), 6)
+
+    this.raw(GS, 0x68, height) // GS h — bar height in dots
+    this.raw(GS, 0x77, width) // GS w — module width
+    // GS H 2 — print the digits under the bars, so a human can read it back
+    // when a scanner will not.
+    this.raw(GS, 0x48, 2)
+
+    const payload = new Uint8Array(bytes.length + 2)
+    payload[0] = 0x7b // {
+    payload[1] = 0x42 // B
+    payload.set(bytes, 2)
+
+    this.raw(GS, 0x6b, 73, payload.length)
+    this.chunks.push(payload)
+    return this
+  }
+
   /** GS V 66 — partial cut with feed, the one every 80mm thermal honours. */
   cut(): this {
     return this.raw(GS, 0x56, 66, 0)

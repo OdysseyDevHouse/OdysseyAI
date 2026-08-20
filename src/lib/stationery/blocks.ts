@@ -1,6 +1,7 @@
 import { getDocType, type DocTypeDef } from './catalog'
 import { isConditionRule, type ConditionRule } from './conditions'
 import { isQrTarget, cleanCustomUrl, type QrTarget } from './qrTarget'
+import { isBarcodeSource, cleanBarcodeText, type BarcodeSource } from './barcodeSource'
 import { BAND_KEYS, MIN_BLOCK_W, clampBlock, overlaps, type BandKey } from './geometry'
 
 /**
@@ -60,6 +61,7 @@ export const DOC_BLOCK_KINDS = [
   'signature',
   'image',
   'qr',
+  'barcode',
   'rule',
   'spacer',
   'html',
@@ -139,6 +141,12 @@ export type DocBlock = {
   qrCaption?: string
   /** qr only: how big to print it, in points. */
   qrSize?: number
+  /** barcode only: which value it carries. See lib/stationery/barcodeSource. */
+  barcodeSource?: BarcodeSource
+  /** barcode only: the typed value, for the `custom` source and nothing else. */
+  barcodeText?: string
+  /** barcode only: how tall the bars print, in points. */
+  barcodeHeight?: number
   /**
    * image only: which of the shop's pictures, by id.
    *
@@ -357,6 +365,16 @@ export const DOC_BLOCK_CATALOG: Record<DocBlockKind, DocBlockDef> = {
     repeatable: true,
     defaultW: 45,
   },
+  barcode: {
+    kind: 'barcode',
+    label: 'A barcode',
+    hint: 'CODE128 — the document number, so a counter can scan it back in.',
+    /* Every document, slip included: a thermal head draws a barcode itself,
+       exactly as it does a QR. See EscPos.barcode. */
+    docTypes: 'all',
+    defaultW: 40,
+    repeatable: true,
+  },
   qr: {
     kind: 'qr',
     label: 'A QR code',
@@ -436,6 +454,12 @@ export function requiredBlockKinds(docType: string): DocBlockKind[] {
    at. */
 /* A QR, in points. Below about 50pt a phone struggles at arm's length on
    thermal paper; above 200 it is a poster. */
+/* Bar height, in points. Short bars scan badly at an angle; tall ones waste
+   paper. 40 is the usual retail compromise. */
+export const MIN_BARCODE_PT = 16
+export const MAX_BARCODE_PT = 120
+export const DEFAULT_BARCODE_PT = 40
+
 export const MIN_QR_PT = 40
 export const MAX_QR_PT = 200
 export const DEFAULT_QR_PT = 90
@@ -834,6 +858,17 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
        * designer and the renderer use, so a stored design cannot carry an
        * address the other two would have refused.
        */
+      const rawSource = (b as { barcodeSource?: unknown }).barcodeSource
+      const barcodeSource = isBarcodeSource(rawSource) ? rawSource : undefined
+      const rawBcText = (b as { barcodeText?: unknown }).barcodeText
+      const barcodeText =
+        typeof rawBcText === 'string' ? (cleanBarcodeText(rawBcText) ?? undefined) : undefined
+      const rawBcH = (b as { barcodeHeight?: unknown }).barcodeHeight
+      const barcodeHeight =
+        typeof rawBcH === 'number' && Number.isFinite(rawBcH)
+          ? Math.min(Math.max(Math.round(rawBcH), MIN_BARCODE_PT), MAX_BARCODE_PT)
+          : undefined
+
       const rawTarget = (b as { qrTarget?: unknown }).qrTarget
       const qrTarget = isQrTarget(rawTarget) ? rawTarget : undefined
       const rawQrUrl = (b as { qrUrl?: unknown }).qrUrl
@@ -880,6 +915,9 @@ export function parseSpec(json: string, docType: string): DocumentSpec | null {
         ...(section ? { section } : {}),
         ...(rows ? { rows } : {}),
         ...(typeof text === 'string' ? { text: text.slice(0, 4000) } : {}),
+        ...(barcodeSource ? { barcodeSource } : {}),
+        ...(barcodeText ? { barcodeText } : {}),
+        ...(barcodeHeight !== undefined ? { barcodeHeight } : {}),
         ...(qrTarget ? { qrTarget } : {}),
         ...(qrUrl ? { qrUrl } : {}),
         ...(qrCaption ? { qrCaption } : {}),

@@ -19,13 +19,16 @@ import {
   BAND_INFO,
   BAND_KEYS,
   DEFAULT_IMAGE_H,
+  DEFAULT_BARCODE_PT,
   DEFAULT_QR_PT,
   DEFAULT_LOGO_HEIGHT,
   DOC_BLOCK_CATALOG,
   MAX_IMAGE_H,
+  MAX_BARCODE_PT,
   MAX_QR_PT,
   MAX_LOGO_HEIGHT,
   MIN_IMAGE_H,
+  MIN_BARCODE_PT,
   MIN_QR_PT,
   MIN_LOGO_HEIGHT,
   type BandKey,
@@ -36,6 +39,7 @@ import {
 import { MIN_BLOCK_W, clampBlock } from '@/lib/stationery/geometry'
 import { CONDITIONS, conditionDef, type ConditionRule } from '@/lib/stationery/conditions'
 import { QR_TARGET_INFO, cleanCustomUrl, type QrTarget } from '@/lib/stationery/qrTarget'
+import { BARCODE_SOURCE_INFO, type BarcodeSource } from '@/lib/stationery/barcodeSource'
 import ColumnEditor from './ColumnEditor'
 
 /**
@@ -185,6 +189,66 @@ export default function BlockInspector({
               onChange={(e) => onChange({ text: e.target.value })}
             />
           </Field>
+        )}
+
+        {block.kind === 'barcode' && (
+          <>
+            <Field
+              label="What it carries"
+              hint={
+                BARCODE_SOURCE_INFO.find((x) => x.source === (block.barcodeSource ?? 'docNumber'))
+                  ?.hint
+              }
+            >
+              <Select
+                value={block.barcodeSource ?? 'docNumber'}
+                onChange={(e) => onChange({ barcodeSource: e.target.value as BarcodeSource })}
+              >
+                {BARCODE_SOURCE_INFO.map((x) => (
+                  <option key={x.source} value={x.source}>
+                    {x.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {block.barcodeSource === 'custom' && (
+              <Field
+                label="The code"
+                hint="Letters, digits and punctuation. Anything a barcode cannot carry is dropped."
+              >
+                <Input
+                  value={block.barcodeText ?? ''}
+                  placeholder="PROMO2026"
+                  onChange={(e) => onChange({ barcodeText: e.target.value })}
+                />
+              </Field>
+            )}
+
+            <Field label="How tall the bars are" hint="Points. Short bars scan badly at an angle.">
+              <div className="flex items-center gap-2">
+                <NumberInput
+                  aria-label="Barcode height"
+                  className="w-24"
+                  value={block.barcodeHeight ?? DEFAULT_BARCODE_PT}
+                  min={MIN_BARCODE_PT}
+                  max={MAX_BARCODE_PT}
+                  step={5}
+                  onChange={(e) => {
+                    const n = Number(e.target.value)
+                    if (!Number.isFinite(n)) return
+                    onChange({
+                      barcodeHeight: Math.min(
+                        Math.max(Math.round(n), MIN_BARCODE_PT),
+                        MAX_BARCODE_PT,
+                      ),
+                    })
+                  }}
+                />
+                <span className="text-xs text-muted">pt</span>
+              </div>
+            </Field>
+          </>
         )}
 
         {block.kind === 'qr' && (

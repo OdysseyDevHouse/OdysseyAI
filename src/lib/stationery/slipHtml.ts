@@ -2,7 +2,8 @@ import { formatMoney, formatQty } from '../decimals'
 import { escapeHtml } from './render'
 import { slipConditionHolds } from './conditions'
 import { resolveQrUrl, type QrContext } from './qrTarget'
-import { qrDataUri } from './qr'
+import { qrDataUri, barcodeDataUri } from './qr'
+import { resolveSlipBarcodeText } from './barcodeSource'
 import type { ReceiptData } from '../receiptData'
 import type { SlipBlock, SlipSpec } from './slip'
 
@@ -110,6 +111,8 @@ function prints(b: SlipBlock, r: ReceiptData): boolean {
       return !gift && r.vatByRate.length > 0
     case 'loyalty':
       return !gift && !!r.loyalty
+    case 'barcode':
+      return !!resolveSlipBarcodeText(b.barcodeSource ?? 'docNumber', b.barcodeText, r)
     case 'qr':
       // The same question blockPrints asks, for the same reason: a QR with
       // nowhere to point prints nothing, and the two slip renderers must agree.
@@ -125,6 +128,21 @@ function block(b: SlipBlock, r: ReceiptData): string {
   const gift = r.gift
 
   switch (b.kind) {
+    case 'barcode': {
+      const text = resolveSlipBarcodeText(b.barcodeSource ?? 'docNumber', b.barcodeText, r)
+      if (!text) return ''
+      const uri = barcodeDataUri(text, { moduleWidth: 2, height: 80 })
+      if (!uri) return ''
+      /* A picture on screen, bars from the printer on paper — the same
+         arrangement the QR has, for the same reason. */
+      return (
+        `<div class="${cls(b, 'center')}">` +
+        `<img src="${uri}" alt="" class="mx-auto block" style="max-width:100%;height:12mm">` +
+        `<div class="text-[0.9167em] text-muted">${escapeHtml(text)}</div>` +
+        `</div>`
+      )
+    }
+
     case 'qr': {
       const url = b.qrTarget ? resolveQrUrl(b.qrTarget, b.qrUrl, slipQrCtx(r)) : null
       if (!url) return ''

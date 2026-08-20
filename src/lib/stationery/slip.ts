@@ -1,5 +1,6 @@
 import { isConditionRule, type ConditionRule } from './conditions'
 import { isQrTarget, cleanCustomUrl, type QrTarget } from './qrTarget'
+import { isBarcodeSource, cleanBarcodeText, type BarcodeSource } from './barcodeSource'
 /**
  * The till slip's design, as an ordered list of BLOCKS.
  *
@@ -57,6 +58,7 @@ export const SLIP_BLOCK_KINDS = [
   'loyalty',
   'text',
   'qr',
+  'barcode',
   'rule',
   'feed',
 ] as const
@@ -87,6 +89,10 @@ export type SlipBlock = {
   qrUrl?: string
   /** qr only: words under the square. */
   qrCaption?: string
+  /** barcode only: which value it carries. See lib/stationery/barcodeSource. */
+  barcodeSource?: BarcodeSource
+  /** barcode only: the typed value, for the `custom` source. */
+  barcodeText?: string
 }
 
 export type SlipSpec = {
@@ -127,6 +133,10 @@ export const SLIP_BLOCK_INFO: Record<
     required: true,
   },
   loyalty: { label: 'Loyalty points', hint: 'Points earned and the balance, when the sale had a customer.' },
+  barcode: {
+    label: 'A barcode',
+    hint: 'CODE128 of the slip number, so a till can scan it back in.',
+  },
   qr: {
     label: 'A QR code',
     hint: 'A square customers scan. The printer draws it — see EscPos.qr.',
@@ -245,6 +255,8 @@ export function parseSlip(json: string): SlipSpec | null {
       const text = (b as { text?: unknown }).text
       // Kept only when this build still has the rule — see parseSpec's note.
       const when = (b as { showWhen?: unknown }).showWhen
+      const rawBcSource = (b as { barcodeSource?: unknown }).barcodeSource
+      const rawBcText = (b as { barcodeText?: unknown }).barcodeText
       const rawTarget = (b as { qrTarget?: unknown }).qrTarget
       const rawQrUrl = (b as { qrUrl?: unknown }).qrUrl
       const rawQrCaption = (b as { qrCaption?: unknown }).qrCaption
@@ -257,6 +269,10 @@ export function parseSlip(json: string): SlipSpec | null {
         ...((b as { bold?: unknown }).bold === true ? { bold: true } : {}),
         ...(isConditionRule(when) && when !== 'always' ? { showWhen: when } : {}),
         ...(isQrTarget(rawTarget) ? { qrTarget: rawTarget } : {}),
+        ...(isBarcodeSource(rawBcSource) ? { barcodeSource: rawBcSource } : {}),
+        ...(typeof rawBcText === 'string' && cleanBarcodeText(rawBcText)
+          ? { barcodeText: cleanBarcodeText(rawBcText) as string }
+          : {}),
         ...(typeof rawQrUrl === 'string' && cleanCustomUrl(rawQrUrl)
           ? { qrUrl: cleanCustomUrl(rawQrUrl) as string }
           : {}),

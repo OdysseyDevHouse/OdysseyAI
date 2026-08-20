@@ -3,6 +3,7 @@ import { formatMoney, formatQty } from '../decimals'
 import type { ReceiptData } from '../receiptData'
 import { slipConditionHolds } from '../stationery/conditions'
 import { resolveQrUrl, type QrContext } from '../stationery/qrTarget'
+import { resolveSlipBarcodeText } from '../stationery/barcodeSource'
 import type { SlipBlock, SlipSpec } from '../stationery/slip'
 
 /**
@@ -120,6 +121,10 @@ function blockPrints(block: SlipBlock, data: ReceiptData): boolean {
       return !gift && data.vatByRate.length > 0
     case 'loyalty':
       return !gift && !!data.loyalty
+    case 'barcode':
+      // Nothing to encode means nothing to print — a barcode of the wrong
+      // characters would scan as something else, which is worse than absent.
+      return !!resolveSlipBarcodeText(block.barcodeSource ?? 'docNumber', block.barcodeText, data)
     case 'qr':
       /*
        * A QR prints only if it has somewhere to point. The context comes from
@@ -164,6 +169,23 @@ function emitBlock(
   if (block.size && block.size > 1) job.size(block.size, block.size)
 
   switch (block.kind) {
+    case 'barcode': {
+      const text = resolveSlipBarcodeText(
+        block.barcodeSource ?? 'docNumber',
+        block.barcodeText,
+        data,
+      )
+      if (!text) break
+      /*
+       * THE PRINTER DRAWS IT, as it does the QR — GS k 73 with the {B prefix,
+       * see EscPos.barcode. Centred for the same reason: the head positions the
+       * symbol as a unit and a left-aligned barcode sits against the tear edge.
+       */
+      setAlign(job, head, 'center')
+      job.barcode(text, { height: 50, width: 2 })
+      break
+    }
+
     case 'qr': {
       const url = block.qrTarget ? resolveQrUrl(block.qrTarget, block.qrUrl, qrCtx(data)) : null
       // blockPrints already refused a QR with nowhere to point, so this is the
