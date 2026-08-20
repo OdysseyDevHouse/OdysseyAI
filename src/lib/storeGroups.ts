@@ -1,7 +1,8 @@
 import 'server-only'
+import { cache } from 'react'
 import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne, execute } from './db'
-import { siteQueryOne } from './siteDb'
+import { siteQueryOne, MASTER, type SitePurpose } from './siteDb'
 import { entitlementsForSite, allHold, has as hasModule } from './control/modules'
 
 /**
@@ -48,6 +49,18 @@ export type GroupMember = {
   /** Group defaults for newly created products. */
   sharesCost: boolean
   sharesSelling: boolean
+  /**
+   * Whether this store reads and writes the GROUP's customer file rather than
+   * its own.
+   *
+   * Unlike sharesProducts this is ownership, not replication — see
+   * customerOwnerSite() below and sql/tickets/015_share_customers.sql. A
+   * customer's balance is a running total, and a running total cannot be
+   * copied to ten databases without drifting.
+   */
+  sharesCustomers: boolean
+  /** The same, for the creditors book. Separately answerable on purpose. */
+  sharesSuppliers: boolean
   /** False when this site has no active database row — it cannot be written to. */
   hasDatabase: boolean
 }
@@ -85,6 +98,8 @@ type MemberRow = RowDataPacket & {
   shares_departments: number
   shares_cost: number
   shares_selling: number
+  shares_customers?: number
+  shares_suppliers?: number
   db_count: number
 }
 
@@ -110,6 +125,11 @@ function mapMember(r: MemberRow): GroupMember {
     sharesDepartments: Boolean(r.shares_departments),
     sharesCost: Boolean(r.shares_cost),
     sharesSelling: Boolean(r.shares_selling),
+    // Absent on a control database that has not run 015 yet. Off is the
+    // correct reading of "this column does not exist" — nobody has switched
+    // it on — and it matches how onlineGroupMode handles the same case.
+    sharesCustomers: Boolean(r.shares_customers),
+    sharesSuppliers: Boolean(r.shares_suppliers),
     hasDatabase: Number(r.db_count) > 0,
   }
 }
@@ -140,6 +160,7 @@ export async function membersOfGroup(groupId: number): Promise<GroupMember[]> {
       `SELECT m.site_id, s.site_code, s.company_name, s.trading_name,
               m.position, m.shares_products, m.shares_departments,
               m.shares_cost, m.shares_selling,
+              m.shares_customers, m.shares_suppliers,
               (SELECT COUNT(*) FROM cp2_site_databases d
                 WHERE d.site_id = m.site_id AND d.purpose = 'master' AND d.status = 'active'
               ) AS db_count
@@ -195,6 +216,136 @@ export async function linkedStores(siteId: number): Promise<GroupMember[]> {
     'multi_branch',
   )
   return sharing.filter((m) => entitled.has(m.siteId))
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * WHICH DATABASE OWNS THE CUSTOMER
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A database to read or write, as (site, purpose).
+ *
+ * A PAIR rather than a bare site id on purpose. Today the shared customer file
+ * lives in the primary store's own master database, so this always resolves to
+ * `purpose: 'master'`. If the file ever earns a database of its own — one
+ * `ody1000X_customer` per group rather than a table inside one store's master —
+ * that becomes a change to THIS FUNCTION and nothing else.
+ *
+ * Returning the pair now costs nothing and keeps that door open. Returning a
+ * bare number would close it, because 125 call sites would have to be revisited
+ * to add the purpose back.
+ */
+export type OwnerDb = { siteId: number; purpose: SitePurpose }
+
+/**
+ * Which database holds this store's customer file.
+ *
+ * ── THIS IS THE SHARED-FILE BOUNDARY ────────────────────────────────────────
+ *
+ * The sibling of linkedStores(), and the same kind of thing: every module that
+ * touches a customer asks HERE which database owns it, rather than assuming its
+ * own. A store in no group, or in a group that does not share, resolves to
+ * itself — which is why routing a call site through this function is a no-op
+ * until somebody switches the flag on.
+ *
+ * ── OWNERSHIP, NOT REPLICATION ──────────────────────────────────────────────
+ *
+ * linkedStores() answers "who else should receive a copy of this edit".  This
+ * answers "where does the one true row live". The difference is the whole
+ * design: a product's cost price is a value that can be copied, a customer's
+ * balance is a running total that cannot. See sql/tickets/015_share_customers.sql.
+ *
+ * ── BOTH ENDS MUST HOLD IT ──────────────────────────────────────────────────
+ *
+ * The caller's own multi_branch entitlement is checked, and so is the primary's.
+ * A store that declined Multi-Branch neither reads the group file nor
+ * contributes to it, and a primary that declined it cannot be made to host one.
+ * Same posture as linkedStores(), for the same reason.
+ *
+ * ── IT MUST NEVER THROW ─────────────────────────────────────────────────────
+ *
+ * A control-database blip must not take the debtors book down. Every failure
+ * path returns the caller's own site, which is exactly what a single store
+ * does — the till keeps trading against its own database rather than showing an
+ * error. That is the same fail-open posture the module checks already take,
+ * and it is safe here because reading your own customers is never WRONG, only
+ * narrower than the group view.
+ */
+export const customerOwnerSite = cache(async (siteId: number): Promise<OwnerDb> => {
+  return ownerSiteFor(siteId, 'customers')
+})
+
+/** The same, for the creditors book. Answered separately by design. */
+export const supplierOwnerSite = cache(async (siteId: number): Promise<OwnerDb> => {
+  return ownerSiteFor(siteId, 'suppliers')
+})
+
+/**
+ * The shared resolution both public helpers run.
+ *
+ * Memoised by its callers rather than here: React's cache() keys on arguments,
+ * and two exported wrappers give a clearer cache key than one function taking a
+ * discriminator — a page that resolves customers forty times asks the control
+ * database once.
+ */
+async function ownerSiteFor(
+  siteId: number,
+  file: 'customers' | 'suppliers',
+): Promise<OwnerDb> {
+  const own: OwnerDb = { siteId, purpose: MASTER }
+
+  try {
+    const group = await groupForSite(siteId)
+    if (!group) return own
+
+    // No primary means "the shared file" names nothing. A group can exist in
+    // that state — createGroup() allows a null primary — so this is a real
+    // case, not a defensive check.
+    if (!group.primarySiteId) return own
+
+    const members = await membersOfGroup(group.id)
+    const me = members.find((m) => m.siteId === siteId)
+    const shares = file === 'customers' ? me?.sharesCustomers : me?.sharesSuppliers
+    if (!shares) return own
+
+    // The primary must be in the group, hold a database, and share the same
+    // file. A primary that does not share cannot host the group's file — that
+    // combination is refused at the switch, and honoured here too so a stale
+    // row can never route a write into a store that opted out.
+    const primary = members.find((m) => m.siteId === group.primarySiteId)
+    if (!primary?.hasDatabase) return own
+    const primaryShares =
+      file === 'customers' ? primary.sharesCustomers : primary.sharesSuppliers
+    if (!primaryShares) return own
+
+    // Already the owner. Returned before the entitlement round trip because the
+    // answer cannot differ: a store always owns its own database.
+    if (primary.siteId === siteId) return own
+
+    const entitlements = await entitlementsForSite(siteId)
+    if (!hasModule(entitlements, 'multi_branch')) return own
+
+    const entitled = await allHold([primary.siteId], 'multi_branch')
+    if (!entitled.has(primary.siteId)) return own
+
+    return { siteId: primary.siteId, purpose: MASTER }
+  } catch {
+    // See the header: narrower is safe, unavailable is not.
+    return own
+  }
+}
+
+/**
+ * Whether this store's customer file is somebody else's database.
+ *
+ * For the handful of callers that need to BEHAVE differently rather than merely
+ * read from elsewhere — the spend-limit measurement, which sums the shared
+ * ledger instead of local tenders, and the setup screen, which says who owns
+ * the file. Most callers should just use the site id and not care.
+ */
+export async function customerFileIsShared(siteId: number): Promise<boolean> {
+  const owner = await customerOwnerSite(siteId)
+  return owner.siteId !== siteId
 }
 
 /**
@@ -368,6 +519,13 @@ export type MemberSharing = {
   sharesDepartments: boolean
   sharesCost: boolean
   sharesSelling: boolean
+  /**
+   * Optional so an existing caller that only edits product sharing leaves the
+   * customer switches exactly as they are. Passing `false` MEANS false;
+   * omitting means "do not touch".
+   */
+  sharesCustomers?: boolean
+  sharesSuppliers?: boolean
 }
 
 /**
@@ -407,18 +565,135 @@ export async function setMemberSharing(
     }
   }
 
+  // The customer and supplier switches have preconditions of their own, and
+  // they are checked HERE rather than only in the screen for the same reason
+  // the product gate is: merging two populated debtors books is not something
+  // this app can undo, and no future caller should be able to bypass it.
+  for (const file of ['customers', 'suppliers'] as const) {
+    const wanted = file === 'customers' ? sharing.sharesCustomers : sharing.sharesSuppliers
+    if (wanted !== true) continue
+
+    const column = file === 'customers' ? 'shares_customers' : 'shares_suppliers'
+    const current = await queryOne<RowDataPacket & Record<string, number>>(
+      `SELECT ${column} AS on_now FROM cp2_store_group_members
+        WHERE group_id = ? AND site_id = ?`,
+      [groupId, siteId],
+    )
+    // Only an off-to-on transition is gated. A store already sharing
+    // legitimately fills up with customers and must not become un-saveable.
+    if (current && current.on_now) continue
+
+    const refusal = await sharedFileRefusal(groupId, siteId, file)
+    if (refusal) return { ok: false, error: refusal }
+  }
+
+  const sets = [
+    'shares_products = ?',
+    'shares_departments = ?',
+    'shares_cost = ?',
+    'shares_selling = ?',
+  ]
+  const params: unknown[] = [
+    sharing.sharesProducts ? 1 : 0,
+    sharing.sharesDepartments ? 1 : 0,
+    sharing.sharesCost ? 1 : 0,
+    sharing.sharesSelling ? 1 : 0,
+  ]
+  // Omitted means "leave alone" — see MemberSharing. A caller that only edits
+  // product sharing must not silently switch the customer file off.
+  if (sharing.sharesCustomers !== undefined) {
+    sets.push('shares_customers = ?')
+    params.push(sharing.sharesCustomers ? 1 : 0)
+  }
+  if (sharing.sharesSuppliers !== undefined) {
+    sets.push('shares_suppliers = ?')
+    params.push(sharing.sharesSuppliers ? 1 : 0)
+  }
+
   await execute(
-    `UPDATE cp2_store_group_members
-        SET shares_products = ?, shares_departments = ?, shares_cost = ?, shares_selling = ?
+    `UPDATE cp2_store_group_members SET ${sets.join(', ')}
       WHERE group_id = ? AND site_id = ?`,
-    [
-      sharing.sharesProducts ? 1 : 0,
-      sharing.sharesDepartments ? 1 : 0,
-      sharing.sharesCost ? 1 : 0,
-      sharing.sharesSelling ? 1 : 0,
-      groupId,
-      siteId,
-    ],
+    [...params, groupId, siteId],
   )
   return { ok: true }
+}
+
+/**
+ * Why this store may not start sharing the group's customer or supplier file,
+ * or null when it may.
+ *
+ * Three preconditions, each of which produces a WRONG SYSTEM rather than an
+ * inconvenience if skipped. They are stated in
+ * sql/tickets/015_share_customers.sql too, because a rule enforced in only one
+ * place is a rule that moves when the code does.
+ */
+async function sharedFileRefusal(
+  groupId: number,
+  siteId: number,
+  file: 'customers' | 'suppliers',
+): Promise<string | null> {
+  const label = file === 'customers' ? 'customer' : 'supplier'
+
+  const group = await queryOne<GroupRow>(
+    'SELECT id, name, primary_site_id, status, online_group_mode FROM cp2_store_groups WHERE id = ?',
+    [groupId],
+  )
+  if (!group) return 'That store group no longer exists.'
+
+  const primarySiteId = group.primary_site_id === null ? null : Number(group.primary_site_id)
+  if (!primarySiteId) {
+    return `Choose which store owns the shared ${label} file before turning this on.`
+  }
+
+  // The store that OWNS the file has nothing to merge — it is already where
+  // the rows live — so the emptiness and same-server checks below do not apply
+  // to it.
+  if (primarySiteId === siteId) return null
+
+  /* ── The joining store must be empty ─────────────────────────────────── */
+
+  const table = file === 'customers' ? 'customers' : 'suppliers'
+  let held = 0
+  try {
+    const row = await siteQueryOne<RowDataPacket & { n: number }>(
+      siteId,
+      `SELECT COUNT(*) AS n FROM \`${table}\``,
+    )
+    held = Number(row?.n ?? 0)
+  } catch {
+    return `This store’s database could not be read, so ${label} sharing cannot be changed.`
+  }
+  if (held > 0) {
+    return (
+      `This store currently has ${held} ${label}(s). Two ${label} files cannot be ` +
+      'merged automatically — the same code may exist in both for different ' +
+      `people. Please remove this store’s ${label}s before sharing the group file.`
+    )
+  }
+
+  /* ── Both databases must be on the same server ───────────────────────── */
+
+  // The whole design rests on this: same instance means a cross-database join
+  // is cheap and a write to the owner is an ordinary transaction. The host is
+  // stored per database, so nothing else prevents a member being configured
+  // elsewhere — and the failure would be a confusing runtime error in a shop
+  // rather than a refusal in setup.
+  const hosts = await query<RowDataPacket & { site_id: number; server_host: string; server_port: number }>(
+    `SELECT site_id, server_host, server_port FROM cp2_site_databases
+      WHERE site_id IN (?, ?) AND purpose = 'master' AND status = 'active'`,
+    [siteId, primarySiteId],
+  )
+  const mine = hosts.find((h) => Number(h.site_id) === siteId)
+  const theirs = hosts.find((h) => Number(h.site_id) === primarySiteId)
+  if (!mine || !theirs) {
+    return `The main store’s database could not be found, so the ${label} file cannot be shared.`
+  }
+  if (mine.server_host !== theirs.server_host || Number(mine.server_port) !== Number(theirs.server_port)) {
+    return (
+      `A shared ${label} file needs both stores on the same database server. ` +
+      `This store is on ${mine.server_host} and the main store is on ${theirs.server_host}.`
+    )
+  }
+
+  return null
 }

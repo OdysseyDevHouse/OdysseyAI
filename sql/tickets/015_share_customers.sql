@@ -1,0 +1,53 @@
+-- Sharing the customer and supplier files across a store group.
+--
+-- Two more switches beside shares_products (002), and deliberately two rather
+-- than one: a group may run central buying from one creditors book while each
+-- branch keeps its own debtors, or the reverse. They are different commercial
+-- decisions and must be separately answerable.
+--
+-- ── WHAT "SHARED" MEANS HERE, AND WHY IT IS NOT LIKE PRODUCTS ────────────
+--
+-- Product sharing REPLICATES: the same product exists in every store's own
+-- database, matched by code, and an edit fans out. That works because a cost
+-- price is a VALUE — if two stores write it at once, last-write-wins and
+-- nobody is materially harmed.
+--
+-- A customer cannot work that way. A balance is not a value, it is a running
+-- total of events, and ten copies of a running total updated by ten databases
+-- with no shared transaction will drift. Two branches invoicing the same
+-- customer in the same second would both read R4,000, both add their own, and
+-- one invoice would silently vanish. A credit limit checked against a stale
+-- copy is not a limit at all.
+--
+-- So this flag means OWNERSHIP, not replication: the group's primary store
+-- holds the one customer file, and the other members read and write it. One
+-- row, one balance, one ledger, one statement. See lib/storeGroups.ts —
+-- customerOwnerSite() is the single place that resolves it.
+--
+-- ── WHY BOTH ENDS MUST HOLD IT ──────────────────────────────────────────
+--
+-- Like shares_products, this is read at both ends: a store that has not
+-- switched it on neither contributes to the shared file nor reads from it.
+-- The primary having it on is not enough to pull a branch in.
+--
+-- ── PRECONDITIONS THE COLUMN DOES NOT ENFORCE ───────────────────────────
+--
+-- Recorded here so they are not lost, and enforced in setMemberSharing():
+--
+--   · A PRIMARY must be chosen. "The shared customer file" names nothing
+--     otherwise.
+--   · The joining store must be EMPTY of customers. Two populated debtors
+--     books with overlapping codes cannot be merged by a flag — the same
+--     reasoning as products, with money attached.
+--   · Every member must be on the SAME MariaDB instance as the primary. The
+--     design rests on a cross-database join being cheap and a write to the
+--     owner being an ordinary transaction; a member on another host is
+--     neither. The host is stored per database in cp2_site_databases, so
+--     nothing else stops this being configured wrongly.
+--
+-- Default 0: nothing changes for a group that has not asked for it, including
+-- every group that exists today.
+
+ALTER TABLE cp2_store_group_members
+  ADD COLUMN shares_customers TINYINT(1) NOT NULL DEFAULT 0 AFTER shares_departments,
+  ADD COLUMN shares_suppliers TINYINT(1) NOT NULL DEFAULT 0 AFTER shares_customers;
