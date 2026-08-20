@@ -148,6 +148,17 @@ const PUBLIC_PREFIXES = [
   // failure with no symptom, because the feature's success state is also
   // silence.
   '/api/store/baskets/tick',
+  // The in-store box's flush — the loop that gets a hybrid shop's takings onto
+  // the books. Same reasoning and the same protection as the ticks above:
+  // BOX_CRON_SECRET, compared in constant time, with the route refusing every
+  // request when it is not set.
+  //
+  // Its failure is the loudest of the set and still invisible for a while.
+  // Behind a cookie gate it would 307 to the login page, the box would keep
+  // accepting sales, and nothing would reach the cloud — so the shop trades
+  // normally all day and the back office shows an empty till. Nothing errors,
+  // because a queue filling up is exactly what the queue is for.
+  '/api/pos/box-flush',
   // The low-stock digest tick. Same shape, its own LOW_STOCK_CRON_SECRET.
   // Without this entry it 307s to login and nobody is told stock ran out —
   // and the digest's success state is also silence, so watch the JSON.
