@@ -9,6 +9,7 @@ import {
   removeMember,
   setMemberSharing,
   setGroupOnlineMode,
+  setGroupLegalEntity,
 } from '@/lib/storeGroups'
 import { setBranchPin, syncBranchPin } from '@/lib/control/storeBranches'
 
@@ -103,6 +104,33 @@ export async function updateSharingAction(
   // The "store must be empty" rule, the same-server check and the "choose a
   // primary first" rule can only be judged server-side, so a refusal comes back
   // as a message rather than being silently ignored.
+  if (!result.ok) return { error: result.error }
+
+  revalidatePath('/setup/linked-stores')
+  return { error: null }
+}
+
+/**
+ * Records whether the group's stores are one company or several.
+ *
+ * The preconditions live in setGroupLegalEntity, not here — this action only
+ * establishes who is asking.
+ */
+export async function setLegalEntityAction(
+  _prev: LinkFormState,
+  form: FormData,
+): Promise<LinkFormState> {
+  const ctx = await actorForModule('multi_branch', 'setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  const group = await groupForSite(siteId)
+  if (!group) return { error: 'Link a store first — there is no group to describe.' }
+
+  const raw = String(form.get('legalEntity') ?? '')
+  if (raw !== 'one' && raw !== 'several') return { error: 'Choose one of the two answers.' }
+
+  const result = await setGroupLegalEntity(group.id, raw)
   if (!result.ok) return { error: result.error }
 
   revalidatePath('/setup/linked-stores')

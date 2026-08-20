@@ -55,6 +55,7 @@ export default async function LinkedStoresPage() {
             name: s.displayName,
           }))}
           primarySiteId={group?.primarySiteId ?? null}
+          legalEntity={group?.legalEntity ?? 'unknown'}
           groupStorefront={
             group
               ? {

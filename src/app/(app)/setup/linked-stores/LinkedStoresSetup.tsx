@@ -15,6 +15,7 @@ import {
 } from '@/components/ui'
 import type { GroupMember, StoreContents } from '@/lib/storeGroups'
 import StoreCard from './StoreCard'
+import LegalEntityCard from './LegalEntityCard'
 import GroupStorefront, { type BranchRow } from './GroupStorefront'
 import { linkStoreAction, type LinkFormState } from './actions'
 
@@ -48,6 +49,7 @@ export default function LinkedStoresSetup({
   available,
   groupStorefront,
   primarySiteId,
+  legalEntity,
 }: {
   currentSiteId: number
   currentSiteName: string
@@ -58,6 +60,8 @@ export default function LinkedStoresSetup({
   available: { id: number; code: string; name: string }[]
   /** Which store owns the shared master files, or null while none is chosen. */
   primarySiteId: number | null
+  /** One company or several — gates the master-file switches. */
+  legalEntity: 'unknown' | 'one' | 'several'
   /** Null when these stores are not a group yet — there is nothing to configure. */
   groupStorefront: {
     enabled: boolean
@@ -99,6 +103,11 @@ export default function LinkedStoresSetup({
         />
       )}
 
+      {/* Asked before the store cards, because it gates their master-file
+          switches — the answer has to come first on the page as well as in the
+          rules. Only shown once a group exists. */}
+      {members.length > 0 && <LegalEntityCard legalEntity={legalEntity} />}
+
       {/* Every store in the group, including this one — its own settings decide
           what it contributes, so it needs to be visible and editable too. */}
       {members.map((member) => (
@@ -112,6 +121,7 @@ export default function LinkedStoresSetup({
           // own contents to merge, and the primary never does.
           ownsSharedFiles={member.siteId === primarySiteId}
           hasPrimary={primarySiteId !== null}
+          entityAllows={legalEntity === 'one'}
         />
       ))}
 

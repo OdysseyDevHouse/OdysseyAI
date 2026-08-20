@@ -61,6 +61,7 @@ async function main() {
   // Everything this test changes, and how to put it back.
   const before = await membersOfGroup(group.id)
   const originalPrimary = group.primarySiteId
+  const originalEntity = group.legalEntity
   const restore = async () => {
     for (const m of before) {
       await execute(
@@ -69,10 +70,10 @@ async function main() {
         [m.sharesCustomers ? 1 : 0, group.id, m.siteId],
       )
     }
-    await execute('UPDATE cp2_store_groups SET primary_site_id = ? WHERE id = ?', [
-      originalPrimary,
-      group.id,
-    ])
+    await execute(
+      'UPDATE cp2_store_groups SET primary_site_id = ?, legal_entity = ? WHERE id = ?',
+      [originalPrimary, originalEntity, group.id],
+    )
   }
 
   try {
@@ -92,10 +93,12 @@ async function main() {
     /* ── Switch it on ─────────────────────────────────────────────────── */
 
     console.log('\n— Sharing on —')
-    await execute('UPDATE cp2_store_groups SET primary_site_id = ? WHERE id = ?', [
-      primary,
-      group.id,
-    ])
+    await execute(
+      // Declared one company: balance sharing is refused for separate taxpayers,
+      // so the resolver would decline whatever the member flags said.
+      "UPDATE cp2_store_groups SET primary_site_id = ?, legal_entity = 'one' WHERE id = ?",
+      [primary, group.id],
+    )
     for (const s of [primary, branch]) {
       await execute(
         'UPDATE cp2_store_group_members SET shares_customers = 1 WHERE group_id = ? AND site_id = ?',

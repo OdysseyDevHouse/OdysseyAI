@@ -32,6 +32,18 @@ export type StoreGroup = {
    * them have today.
    */
   onlineGroupMode: boolean
+  /**
+   * Whether these stores are one registered company or several.
+   *
+   * Gates BALANCE sharing — see sql/tickets/016_group_legal_entity.sql. Several
+   * separate taxpayers cannot share one debtors book without one of them
+   * collecting money it does not own, and doing so silently misstates two sets
+   * of statutory records.
+   *
+   * 'unknown' until somebody answers, and deliberately not assumed: defaulting
+   * to 'one' would switch a legal judgement on by silence.
+   */
+  legalEntity: 'unknown' | 'one' | 'several'
 }
 
 export type GroupMember = {
@@ -94,6 +106,7 @@ type GroupRow = RowDataPacket & {
   primary_site_id: number | null
   status: 'active' | 'inactive'
   online_group_mode?: number
+  legal_entity?: 'unknown' | 'one' | 'several'
 }
 
 type MemberRow = RowDataPacket & {
@@ -120,6 +133,9 @@ function mapGroup(r: GroupRow): StoreGroup {
     // Absent on a control database that has not run 009 yet. Off is the correct
     // reading of "this column does not exist": nobody has switched it on.
     onlineGroupMode: Boolean(r.online_group_mode),
+    // Absent on a control database that has not run 016. Unknown is the correct
+    // reading of a missing answer.
+    legalEntity: r.legal_entity ?? 'unknown',
   }
 }
 
@@ -145,7 +161,7 @@ function mapMember(r: MemberRow): GroupMember {
 /** The group a site belongs to, if any. A site belongs to at most one. */
 export async function groupForSite(siteId: number): Promise<StoreGroup | null> {
   const row = await queryOne<GroupRow>(
-    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode
+    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode, g.legal_entity
        FROM cp2_store_groups g
        JOIN cp2_store_group_members m ON m.group_id = g.id
       WHERE m.site_id = ? AND g.status = 'active'
@@ -311,6 +327,14 @@ async function ownerSiteFor(
     // case, not a defensive check.
     if (!group.primarySiteId) return own
 
+    // Separate companies must not share a balance, and the answer can change
+    // AFTER the flags were set — somebody corrects it in setup, or a group is
+    // restructured. Read here rather than trusted from the member row, so that
+    // saying "these are separate companies" stops the sharing immediately
+    // instead of leaving stale flags routing writes into another taxpayer's
+    // debtors book.
+    if (group.legalEntity !== 'one') return own
+
     const members = await membersOfGroup(group.id)
     const me = members.find((m) => m.siteId === siteId)
     const shares = file === 'customers' ? me?.sharesCustomers : me?.sharesSuppliers
@@ -402,7 +426,7 @@ export async function storeContents(siteId: number): Promise<StoreContents> {
 export async function listGroups(): Promise<StoreGroup[]> {
   return (
     await query<GroupRow>(
-      `SELECT id, name, primary_site_id, status, online_group_mode FROM cp2_store_groups ORDER BY name ASC`,
+      `SELECT id, name, primary_site_id, status, online_group_mode, legal_entity FROM cp2_store_groups ORDER BY name ASC`,
     )
   ).map(mapGroup)
 }
@@ -454,7 +478,7 @@ export async function setGroupOnlineMode(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (on) {
     const group = await queryOne<GroupRow>(
-      'SELECT id, name, primary_site_id, status, online_group_mode FROM cp2_store_groups WHERE id = ?',
+      'SELECT id, name, primary_site_id, status, online_group_mode, legal_entity FROM cp2_store_groups WHERE id = ?',
       [groupId],
     )
     if (!group) return { ok: false, error: 'That store group no longer exists.' }
@@ -491,6 +515,42 @@ export async function setGroupOnlineMode(
     on ? 1 : 0,
     groupId,
   ])
+  return { ok: true }
+}
+
+/**
+ * Records whether the group's stores are one company or several.
+ *
+ * ── WHY CHANGING TO 'several' IS REFUSED WHILE FILES ARE SHARED ──────────
+ *
+ * Switching the answer does not un-share anything by itself; the resolver
+ * simply stops routing, and every branch is suddenly reading its own empty
+ * customer file while its history sits in the primary. That looks exactly like
+ * data loss to whoever is standing at the till.
+ *
+ * So the sharing switches must be turned off first, deliberately, one store at
+ * a time — which is also the point at which somebody has to think about where
+ * each branch's debtors book is going to come from.
+ */
+export async function setGroupLegalEntity(
+  groupId: number,
+  entity: StoreGroup['legalEntity'],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (entity === 'several') {
+    const members = await membersOfGroup(groupId)
+    const sharing = members.filter((m) => m.sharesCustomers || m.sharesSuppliers)
+    if (sharing.length > 0) {
+      return {
+        ok: false,
+        error:
+          `${sharing.length} store(s) still share a customer or supplier file. ` +
+          'Switch those off first — separate companies each need their own book, ' +
+          'and this cannot decide how to split one that is already shared.',
+      }
+    }
+  }
+
+  await execute('UPDATE cp2_store_groups SET legal_entity = ? WHERE id = ?', [entity, groupId])
   return { ok: true }
 }
 
@@ -656,7 +716,7 @@ async function sharedFileRefusal(
   const label = file === 'customers' ? 'customer' : 'supplier'
 
   const group = await queryOne<GroupRow>(
-    'SELECT id, name, primary_site_id, status, online_group_mode FROM cp2_store_groups WHERE id = ?',
+    'SELECT id, name, primary_site_id, status, online_group_mode, legal_entity FROM cp2_store_groups WHERE id = ?',
     [groupId],
   )
   if (!group) return 'That store group no longer exists.'
@@ -664,6 +724,32 @@ async function sharedFileRefusal(
   const primarySiteId = group.primary_site_id === null ? null : Number(group.primary_site_id)
   if (!primarySiteId) {
     return `Choose which store owns the shared ${label} file before turning this on.`
+  }
+
+  /* ── One taxpayer, or several ─────────────────────────────────────────
+   *
+   * Checked BEFORE the emptiness rules, because it is the only one that is
+   * not about this store's data at all — it is about whether the feature is
+   * appropriate to the business, and answering it changes the advice rather
+   * than the tidying-up.
+   *
+   * Enforced here rather than only in the screen: a shared debtors book across
+   * separate companies means one of them collecting money it does not own, and
+   * that is not a rule a future caller should be able to skip.
+   */
+  const entity = (group.legal_entity ?? 'unknown') as StoreGroup['legalEntity']
+  if (entity === 'several') {
+    return (
+      `These stores are separate companies, so they cannot share one ${label} ` +
+      'file — a balance settled at one store would be money collected by ' +
+      'another. Their contact details can still be kept in step.'
+    )
+  }
+  if (entity === 'unknown') {
+    return (
+      'Say whether these stores are one company or several before sharing a ' +
+      `${label} file. It decides whether one shared balance is correct.`
+    )
   }
 
   // The store that OWNS the file has nothing to merge — it is already where

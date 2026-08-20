@@ -129,15 +129,21 @@ async function main() {
     }
   })
   const originalPrimary = group.primarySiteId
+  const originalEntity = group.legalEntity
   undo.push(async () => {
-    await execute('UPDATE cp2_store_groups SET primary_site_id = ? WHERE id = ?', [
-      originalPrimary,
-      groupId,
-    ])
+    await execute(
+      'UPDATE cp2_store_groups SET primary_site_id = ?, legal_entity = ? WHERE id = ?',
+      [originalPrimary, originalEntity, groupId],
+    )
   })
 
   // The primary owns the file. Set it explicitly rather than assuming.
-  await execute('UPDATE cp2_store_groups SET primary_site_id = ? WHERE id = ?', [siteA, groupId])
+  await execute(
+    // One company: balance sharing is refused for separate taxpayers, so the
+    // resolver would decline no matter what the flags said.
+    "UPDATE cp2_store_groups SET primary_site_id = ?, legal_entity = 'one' WHERE id = ?",
+    [siteA, groupId],
+  )
 
   // Both ends must hold multi_branch or the resolver correctly refuses to route
   // anywhere — which would make every assertion below pass for the wrong
@@ -206,6 +212,27 @@ async function main() {
     [groupId, siteA],
   )
 
+  /* ── Separate companies cannot share a balance ───────────────────────── */
+
+  console.log('\n— One company, or several —')
+
+  // The resolver reads the entity answer LIVE rather than trusting the member
+  // flags. Correcting it must stop the routing immediately, instead of leaving
+  // stale flags writing into another taxpayer's debtors book.
+  await execute(`UPDATE cp2_store_groups SET legal_entity = 'several' WHERE id = ?`, [groupId])
+  const separate = await customerOwnerSite(siteB)
+  ok(
+    'separate companies do not share a customer file',
+    separate.siteId === siteB,
+    `got ${separate.siteId}`,
+  )
+
+  await execute(`UPDATE cp2_store_groups SET legal_entity = 'unknown' WHERE id = ?`, [groupId])
+  const unanswered = await customerOwnerSite(siteB)
+  ok('an unanswered group does not share either', unanswered.siteId === siteB)
+
+  await execute(`UPDATE cp2_store_groups SET legal_entity = 'one' WHERE id = ?`, [groupId])
+
   /* ── No primary means the shared file names nothing ──────────────────── */
 
   console.log('\n— A group with no primary —')
@@ -213,7 +240,12 @@ async function main() {
   await execute('UPDATE cp2_store_groups SET primary_site_id = NULL WHERE id = ?', [groupId])
   const noPrimary = await customerOwnerSite(siteB)
   ok('with no primary chosen, a store owns itself', noPrimary.siteId === siteB, `got ${noPrimary.siteId}`)
-  await execute('UPDATE cp2_store_groups SET primary_site_id = ? WHERE id = ?', [siteA, groupId])
+  await execute(
+    // One company: balance sharing is refused for separate taxpayers, so the
+    // resolver would decline no matter what the flags said.
+    "UPDATE cp2_store_groups SET primary_site_id = ?, legal_entity = 'one' WHERE id = ?",
+    [siteA, groupId],
+  )
 
   /* ── The gate refuses a populated store ──────────────────────────────── */
 

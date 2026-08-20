@@ -1,0 +1,44 @@
+-- Is this group one company, or several?
+--
+-- ── WHY THE SOFTWARE HAS TO ASK ──────────────────────────────────────────
+--
+-- Sharing one customer file means one balance: a customer buys at branch 3 and
+-- pays at branch 7, and the money lands in one debtors book. Whether that is
+-- correct depends on a fact about the business that nothing else in this system
+-- records.
+--
+--   ONE ENTITY — ten branches of one registered company. There is legally ONE
+--   debtors book already; the customer owes the COMPANY, not a building.
+--   Sharing the file is the honest reflection of that.
+--
+--   SEVERAL ENTITIES — a franchise, or ten companies under a holding company.
+--   Each is its own taxpayer with its own books and its own VAT return. If
+--   branch 3 takes a payment settling branch 7's invoice, branch 3 has
+--   collected money it does not own, and an inter-company loan now exists that
+--   neither company's books record.
+--
+-- The second case is not merely awkward — it misstates two sets of statutory
+-- records, and it does so silently. So balance sharing is OFFERED only to a
+-- group that has said it is one entity.
+--
+-- ── WHAT THIS DOES *NOT* CHANGE ──────────────────────────────────────────
+--
+-- The general ledger stays PER STORE either way, and consolidated reporting
+-- keeps reading each store's books without merging them. That is already how
+-- groupReporting.ts works and it is correct for both cases: even ten branches
+-- of one company want per-branch performance figures, and merging their ledgers
+-- would produce a VAT201 belonging to no registered taxpayer.
+--
+-- Separate entities may still share the customer IDENTITY — name, contact,
+-- terms — because that is a value that can be copied. It is only the BALANCE
+-- that cannot be shared across taxpayers.
+--
+-- ── WHY 'unknown' IS THE DEFAULT AND NOT 'one' ───────────────────────────
+--
+-- Defaulting to 'one' would switch a legal judgement on by silence. A group
+-- that has never been asked has not answered, and the setup screen asks before
+-- offering the switch rather than assuming the convenient answer.
+
+ALTER TABLE cp2_store_groups
+  ADD COLUMN legal_entity ENUM('unknown','one','several') NOT NULL DEFAULT 'unknown'
+    AFTER primary_site_id;

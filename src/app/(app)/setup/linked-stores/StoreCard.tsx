@@ -47,6 +47,7 @@ export default function StoreCard({
   isCurrent,
   ownsSharedFiles,
   hasPrimary,
+  entityAllows,
 }: {
   member: GroupMember
   /** Null when the store has no database to read. */
@@ -60,6 +61,15 @@ export default function StoreCard({
   ownsSharedFiles: boolean
   /** Whether the group has chosen a primary at all. */
   hasPrimary: boolean
+  /**
+   * Whether the group has said its stores are ONE company.
+   *
+   * Separate companies cannot share a balance without one collecting money it
+   * does not own, so the switches are closed rather than merely warned about —
+   * and the same rule is enforced in setMemberSharing, because a screen is not
+   * a boundary.
+   */
+  entityAllows: boolean
 }) {
   const [state, formAction] = useActionState<LinkFormState, FormData>(updateSharingAction, {
     error: null,
@@ -190,10 +200,21 @@ export default function StoreCard({
               </p>
             </div>
 
-            {!hasPrimary && (
+            {/* A disabled control with no stated reason is the thing this
+                screen must not do, so each blocker says which one it is. The
+                entity answer is checked first because it is the one that can
+                make the whole feature inapplicable rather than merely not-yet. */}
+            {!entityAllows ? (
               <Callout tone="warning">
-                Choose which store owns the shared files before switching these on.
+                Answer <strong>How are these stores registered?</strong> above first.
+                Separate companies cannot share one balance — each collects its own.
               </Callout>
+            ) : (
+              !hasPrimary && (
+                <Callout tone="warning">
+                  Choose which store owns the shared files before switching these on.
+                </Callout>
+              )
             )}
 
             {customersBlocked && (
@@ -210,7 +231,7 @@ export default function StoreCard({
               label="Share customer file"
               hint="One customer list for the group. Buy at one store, pay at another."
               defaultChecked={member.sharesCustomers}
-              disabled={unreadable || customersBlocked || !hasPrimary}
+              disabled={unreadable || customersBlocked || !hasPrimary || !entityAllows}
             />
 
             {suppliersBlocked && (
@@ -225,7 +246,7 @@ export default function StoreCard({
               label="Share supplier file"
               hint="One supplier list and one creditors book, for central buying."
               defaultChecked={member.sharesSuppliers}
-              disabled={unreadable || suppliersBlocked || !hasPrimary}
+              disabled={unreadable || suppliersBlocked || !hasPrimary || !entityAllows}
             />
           </div>
         </CardBody>
