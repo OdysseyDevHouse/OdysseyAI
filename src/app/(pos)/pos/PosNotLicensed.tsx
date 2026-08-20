@@ -2,6 +2,7 @@
 
 import Image from 'next/image'
 import { Button, Card, Icons } from '@/components/ui'
+import { isPosBuild } from '@/lib/appRole'
 
 /**
  * The till, refused.
@@ -20,6 +21,17 @@ import { Button, Card, Icons } from '@/components/ui'
  * number support will ask for, and offer the one door that is still open — the
  * back office, on this same machine, where a manager can release a licence or
  * find the phone number.
+ *
+ * ── EXCEPT ON A TILL BUILD, WHERE THAT DOOR DOES NOT EXIST ─────────────────
+ *
+ * Odyssey Point of Sale ships without a back office at all, so the button would
+ * navigate to a screen this machine cannot show — and the will-navigate guard
+ * in electron/main.js refuses it anyway. A button that visibly does nothing is
+ * worse than no button: it reads as a broken app rather than a locked-down one.
+ *
+ * The numbered instructions above already say what to do instead — ask a
+ * supervisor to sign in to the back office — which on a till is the correct
+ * advice regardless, because the back office is on a different machine.
  */
 export default function PosNotLicensed({
   message,
@@ -94,11 +106,20 @@ export default function PosNotLicensed({
             </Button>
             {/* The back office still works on this machine — deliberately. It is
                 where a manager releases a spot, and locking them out of it would
-                make this screen a dead end. */}
-            <Button variant="ghost" size="touch" onClick={() => (window.location.href = '/dashboard')}>
-              <Icons.ArrowRight size={18} />
-              Back office
-            </Button>
+                make this screen a dead end.
+
+                Hidden on the till build, which has no back office to open. See
+                the note at the top of this file. */}
+            {!isPosBuild() && (
+              <Button
+                variant="ghost"
+                size="touch"
+                onClick={() => (window.location.href = '/dashboard')}
+              >
+                <Icons.ArrowRight size={18} />
+                Back office
+              </Button>
+            )}
           </div>
         </div>
       </Card>

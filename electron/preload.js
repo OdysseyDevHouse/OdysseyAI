@@ -36,9 +36,24 @@ function machineId() {
   }
 }
 
+const { appRole } = require('./appRole')
+
 contextBridge.exposeInMainWorld('odyssey', {
   isDesktop: true,
   platform: process.platform,
   version: process.env.npm_package_version || null,
   machineId: machineId(),
+  /**
+   * Which installer produced this app: 'backoffice' | 'pos' | 'database'.
+   *
+   * The renderer uses it to hide what this machine cannot do — a till build has
+   * no back office to send anybody to, so a "Back office" button on it is a
+   * dead end dressed up as an escape hatch.
+   *
+   * Presentation only. The till build's real constraint is the will-navigate
+   * guard in main.js, and the actual authority is capabilities on the server.
+   * A browser reads undefined here and keeps every button, which is right: the
+   * web build genuinely does have a back office.
+   */
+  role: appRole(),
 })

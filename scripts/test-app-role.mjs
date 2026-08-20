@@ -149,6 +149,63 @@ check('the database build carries the database', dbYml.includes('vendor/mariadb'
 const base = readFileSync(path.join(here, '..', 'electron-builder.yml'), 'utf8')
 check('the shared base carries no database', !base.includes('vendor/mariadb'))
 
+/* ── Where the till build may go ─────────────────────────────────────────── */
+
+/* The guard decides what happens to every link followed INSIDE the till window.
+   Get it wrong in one direction and a cashier is stranded on a screen with no
+   way out; wrong in the other and the till navigates to a supplier's website
+   with our preload attached. */
+{
+  const { posNavigation, isPosPath } = loadFresh()
+  const ORIGIN = 'http://127.0.0.1:4100'
+  const at = (p) => `${ORIGIN}${p}`
+
+  /* Screens a till legitimately shows. Each of these was broken by the first
+     version of this guard, which allowed /pos* and nothing else. */
+  for (const [p, why] of [
+    ['/pos', 'the till itself'],
+    ['/pos-unlock', 'where proxy.ts sends a lapsed session'],
+    ['/pos?new=quote', 'opened from Orders with a start type'],
+    ['/', 'the admin sign-in, and the unlock screen’s way out'],
+    ['/not-allowed', 'no sales.till capability'],
+  ]) {
+    check(`till allows ${p} — ${why}`, posNavigation(at(p), ORIGIN) === 'allow')
+  }
+
+  /* Our own back office. Refused OUTRIGHT rather than externalised: opening it
+     in a browser would hand somebody a signed-in back office from a machine
+     whose whole point is that it has none. */
+  for (const p of ['/dashboard', '/purchasing', '/setup/tills', '/sales/12/bill']) {
+    check(`till refuses ${p}`, posNavigation(at(p), ORIGIN) === 'refuse')
+  }
+
+  /* Somebody else's site goes to the user's own browser, as it does from the
+     back office. */
+  check(
+    'a supplier link opens externally',
+    posNavigation('https://supplier.example/help', ORIGIN) === 'external',
+  )
+
+  /* THE HOLE THIS ORDERING EXISTS TO CLOSE. Path-first, a foreign /pos matches
+     and the till window navigates to a third-party site. */
+  check(
+    'a foreign /pos does NOT count as the till',
+    posNavigation('https://supplier.example/pos', ORIGIN) === 'external',
+  )
+  check('...and isPosPath alone would have allowed it', isPosPath('https://supplier.example/pos'))
+
+  /* Non-web schemes must not reach shell.openExternal. */
+  for (const u of ['javascript:alert(1)', 'file:///C:/Windows/system32', 'not a url']) {
+    check(`refuses ${u.slice(0, 24)}`, posNavigation(u, ORIGIN) === 'refuse')
+  }
+
+  /* Startup: the window shows starting.html, origin 'null'. With appOrigin
+     unset, nothing may be treated as ours — and in particular our own URL must
+     not be shipped off to the user's browser. */
+  check('no appOrigin refuses our own URL', posNavigation(at('/pos'), null) === 'refuse')
+  check('no appOrigin still externalises nothing', posNavigation(at('/dashboard'), null) === 'refuse')
+}
+
 /* ── The configs actually RESOLVE ────────────────────────────────────────── */
 
 /* Everything above is string matching: the YAML is valid and the words are all

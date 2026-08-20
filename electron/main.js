@@ -8,13 +8,26 @@ const http = require('node:http')
 const runtimeConfig = require('./runtimeConfig')
 const localDb = require('./localDb')
 const replicationTunnel = require('./replicationTunnel')
-const { isPos, startPath } = require('./appRole')
+const { isPos, startPath, posNavigation } = require('./appRole')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
 
 let mainWindow = null
 let nextServer = null
+
+/**
+ * The origin this app serves itself from, fixed once at startup.
+ *
+ * NOT read back from the window. During startup the window is showing
+ * starting.html, whose origin is the string 'null', so anything comparing
+ * against `webContents.getURL()` concludes that our own app is a foreign site —
+ * and a guard acting on that would open the shop in the user's browser.
+ *
+ * Today nothing navigates that early, so the bug is latent rather than live.
+ * Anchoring it here means it stays that way.
+ */
+let appOrigin = null
 
 /**
  * Is this URL the till?
@@ -28,28 +41,6 @@ let nextServer = null
  * session has expired, and that screen belongs in the same window as the till
  * it is unlocking.
  */
-/**
- * Is this URL a till screen, judged on the PATH alone?
- *
- * Deliberately not isTillUrl(): that one compares against the window's CURRENT
- * origin, and during startup the window is showing starting.html, whose origin
- * is the string 'null'. Every comparison against it fails, so a till build would
- * refuse its own first navigation.
- *
- * Used only by the till build's will-navigate guard, where the question being
- * asked is "is this one of our own till screens" rather than "did the renderer
- * ask to open somebody else's /pos".
- */
-function isPosPath(url) {
-  try {
-    const { pathname, protocol } = new URL(url)
-    if (protocol !== 'http:' && protocol !== 'https:') return false
-    return pathname === '/pos' || pathname.startsWith('/pos-') || pathname.startsWith('/pos/')
-  } catch {
-    return false
-  }
-}
-
 function isTillUrl(url) {
   try {
     const target = new URL(url)
@@ -207,7 +198,7 @@ async function createWindow() {
           minWidth: 1024,
           minHeight: 640,
           backgroundColor: '#0f1216',
-          title: 'OdysseyAI Point of Sale',
+          title: 'Odyssey Point of Sale',
           webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -259,17 +250,11 @@ async function createWindow() {
    */
   if (isPos()) {
     mainWindow.webContents.on('will-navigate', (event, url) => {
-      if (isPosPath(url)) return
+      const verdict = posNavigation(url, appOrigin)
+      if (verdict === 'allow') return
+
       event.preventDefault()
-      /* Same-origin means one of our own back-office screens: refuse it
-         outright. Sending it to a browser would hand somebody a signed-in back
-         office from a machine whose whole point is that it has none. */
-      try {
-        if (new URL(url).origin === new URL(mainWindow.webContents.getURL()).origin) return
-      } catch {
-        return
-      }
-      shell.openExternal(url)
+      if (verdict === 'external') shell.openExternal(url)
     })
   }
 
@@ -291,9 +276,15 @@ async function createWindow() {
     })
 
     url = DEV_URL || (await startNextServer())
+    /* Fixed before anything can navigate. See the note on appOrigin. */
+    try {
+      appOrigin = new URL(url).origin
+    } catch {
+      appOrigin = null
+    }
     await waitForServer(`${url}/api/health`)
   } catch (err) {
-    dialog.showErrorBox('OdysseyAI could not start', String(err?.message || err))
+    dialog.showErrorBox('Odyssey could not start', String(err?.message || err))
     app.quit()
     return
   }
