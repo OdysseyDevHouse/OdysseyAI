@@ -38,12 +38,59 @@ const net = require('node:net')
 
 let serverProcess = null
 
-/** Where the bundled binaries sit, packaged or in a dev checkout. */
+/**
+ * Where the database binaries sit.
+ *
+ * ── THEY ARE NO LONGER IN THIS APP ──────────────────────────────────────────
+ *
+ * MariaDB ships in its own installer — Odyssey Database Setup — rather than
+ * inside the Back Office and Point of Sale builds. It is ~200MB of third-party
+ * binaries on their own release cadence, and bundling it meant every app update
+ * re-downloaded a database that had not changed. It also meant a ten-till
+ * restaurant put ten copies of a database on ten machines that would never run
+ * one.
+ *
+ * So there are three places to look, in order:
+ *
+ *   1. ODYSSEY_MARIADB_DIR — a support engineer pointing this at a database
+ *      somewhere unusual, and the seam the tests drive.
+ *   2. This app's own resources. Only the Database Setup build has them, and
+ *      that build is exactly the one that needs to run the server it installed.
+ *   3. The shared install location Database Setup writes to. This is the normal
+ *      answer for a Back Office build on a machine that also hosts the shop's
+ *      database.
+ *
+ * A dev checkout keeps using vendor/mariadb, unchanged.
+ */
 function binDir() {
-  const base = app.isPackaged
-    ? path.join(process.resourcesPath, 'mariadb')
-    : path.join(__dirname, '..', 'vendor', 'mariadb')
-  return path.join(base, 'bin')
+  const override = String(process.env.ODYSSEY_MARIADB_DIR || '').trim()
+  if (override) return path.join(override, 'bin')
+
+  if (!app.isPackaged) return path.join(__dirname, '..', 'vendor', 'mariadb', 'bin')
+
+  const own = path.join(process.resourcesPath, 'mariadb', 'bin')
+  if (fs.existsSync(own)) return own
+
+  return path.join(sharedDbDir(), 'bin')
+}
+
+/**
+ * Where Odyssey Database Setup installs the server.
+ *
+ * ProgramData, not userData: the database is a MACHINE-level asset that outlives
+ * any one Windows account. A technician provisions it under their own login and
+ * the shop then runs the app under the owner's — a per-user directory would
+ * leave the second account unable to find the first's database.
+ *
+ * The data directory stays in userData and is untouched by this. Only the
+ * binaries moved.
+ */
+function sharedDbDir() {
+  const base =
+    process.platform === 'win32'
+      ? process.env.ProgramData || 'C:\\ProgramData'
+      : '/usr/local/share'
+  return path.join(base, 'Odyssey', 'mariadb')
 }
 
 function exe(name) {
@@ -71,7 +118,14 @@ function serverId() {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1
 }
 
-/** Is the bundled server present at all? */
+/**
+ * Is a database server installed on this machine at all?
+ *
+ * This used to ask "did this BUILD ship with one". Since MariaDB moved into its
+ * own installer the question is about the machine, not the build — see binDir.
+ * The distinction matters for the error a customer sees: "run Odyssey Database
+ * Setup" is actionable, "this build was made wrong" is not.
+ */
 function isBundled() {
   try {
     return fs.existsSync(exe('mysqld')) || fs.existsSync(exe('mariadbd'))
@@ -366,8 +420,14 @@ async function ensureRunning({
   onProgress,
 }) {
   if (!isBundled()) {
+    /* The ordering trap: someone ran the app installer, chose "this machine
+       hosts the database", and has not run Odyssey Database Setup. Say exactly
+       that. The app deliberately does not fetch or install it — the three
+       artifacts stay independent — so the only useful thing here is to name the
+       missing step. */
     throw new Error(
-      'This installation is set to use a local database, but the database server was not included in the build.',
+      'This installation is set to keep its database on this machine, but no database server is installed. ' +
+        'Run Odyssey Database Setup on this machine first.',
     )
   }
 

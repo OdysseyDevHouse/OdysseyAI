@@ -18,7 +18,11 @@
     "dev:desktop:next": "node scripts/free-port.mjs 4100 && cross-env APP_MODE=desktop NEXT_PUBLIC_APP_MODE=desktop next dev -p 4100",
     "dev:desktop:electron": "wait-on -t 60000 http://localhost:4100/api/health && cross-env ELECTRON_DEV_URL=http://localhost:4100 electron .",
     "build:desktop": "cross-env APP_MODE=desktop NEXT_PUBLIC_APP_MODE=desktop next build",
-    "dist": "npm run build:desktop && electron-builder --win --publish never",
+    "dist": "npm run build:desktop && npm run pack:backoffice && npm run pack:pos && npm run pack:database",
+    "dist:backoffice": "npm run build:desktop && npm run pack:backoffice",
+    "dist:pos": "npm run build:desktop && npm run pack:pos",
+    "dist:database": "npm run build:desktop && npm run pack:database",
+    "test:app-role": "node scripts/test-app-role.mjs",
     "test:math": "tsx scripts/test-document-math.ts",
     "test:billing-periods": "tsx scripts/test-billing-periods.ts",
     "test:modules": "tsx --conditions=react-server --env-file=.env scripts/test-modules.ts",
@@ -259,7 +263,10 @@
     "test:stationery-pictures": "tsx scripts/test-stationery-pictures.ts",
     "test:stationery-qr": "tsx scripts/test-stationery-qr.ts",
     "test:stationery-barcode": "tsx scripts/test-stationery-barcode.ts",
-    "test:stationery-columns": "tsx scripts/test-stationery-columns.ts"
+    "test:stationery-columns": "tsx scripts/test-stationery-columns.ts",
+    "pack:backoffice": "electron-builder --win --config build-config/backoffice.yml --publish never",
+    "pack:pos": "electron-builder --win --config build-config/pos.yml --publish never",
+    "pack:database": "electron-builder --win --config build-config/database.yml --publish never"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

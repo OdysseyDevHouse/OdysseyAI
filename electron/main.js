@@ -8,6 +8,7 @@ const http = require('node:http')
 const runtimeConfig = require('./runtimeConfig')
 const localDb = require('./localDb')
 const replicationTunnel = require('./replicationTunnel')
+const { isPos, startPath } = require('./appRole')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
@@ -27,6 +28,28 @@ let nextServer = null
  * session has expired, and that screen belongs in the same window as the till
  * it is unlocking.
  */
+/**
+ * Is this URL a till screen, judged on the PATH alone?
+ *
+ * Deliberately not isTillUrl(): that one compares against the window's CURRENT
+ * origin, and during startup the window is showing starting.html, whose origin
+ * is the string 'null'. Every comparison against it fails, so a till build would
+ * refuse its own first navigation.
+ *
+ * Used only by the till build's will-navigate guard, where the question being
+ * asked is "is this one of our own till screens" rather than "did the renderer
+ * ask to open somebody else's /pos".
+ */
+function isPosPath(url) {
+  try {
+    const { pathname, protocol } = new URL(url)
+    if (protocol !== 'http:' && protocol !== 'https:') return false
+    return pathname === '/pos' || pathname.startsWith('/pos-') || pathname.startsWith('/pos/')
+  } catch {
+    return false
+  }
+}
+
 function isTillUrl(url) {
   try {
     const target = new URL(url)
@@ -139,7 +162,7 @@ async function createWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#0f1216',
-    title: 'OdysseyAI Back Office',
+    title: isPos() ? 'Odyssey Point of Sale' : 'Odyssey Back Office',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -169,7 +192,11 @@ async function createWindow() {
    * user's own browser rather than inside the app.
    */
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isTillUrl(url)) {
+    /* On the TILL build the main window already IS the till, so a second one
+       would be a duplicate of the screen the cashier is looking at — with its
+       own claim on a table and its own half-scanned basket. Everything external
+       still goes to the browser, via the branch below. */
+    if (isTillUrl(url) && !isPos()) {
       /* One till, not one per press: the link carries a NAMED target, and a
          named target reuses the window already opened under that name. */
       return {
@@ -212,6 +239,40 @@ async function createWindow() {
     })
   })
 
+  /*
+   * The till build may not leave the till.
+   *
+   * `will-navigate` fires for a link followed IN the window — the case
+   * setWindowOpenHandler never sees, because nothing is being opened. Without
+   * this, a link to a back-office screen from inside the till would simply
+   * replace it, and the cashier would be sitting in front of stock adjustments
+   * with no way back and a basket lost.
+   *
+   * Deliberately NOT a security boundary: the packaged window has no address
+   * bar, but the server still serves those routes and a browser elsewhere can
+   * reach them. actorForModule / requireModuleCapability remain the real
+   * guard. This keeps the machine's PURPOSE unambiguous — see appRole.js.
+   *
+   * An off-limits target still opens in the user's own browser rather than
+   * being silently swallowed: a waiter following a help link should get the
+   * help page, just not inside the till.
+   */
+  if (isPos()) {
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      if (isPosPath(url)) return
+      event.preventDefault()
+      /* Same-origin means one of our own back-office screens: refuse it
+         outright. Sending it to a browser would hand somebody a signed-in back
+         office from a machine whose whole point is that it has none. */
+      try {
+        if (new URL(url).origin === new URL(mainWindow.webContents.getURL()).origin) return
+      } catch {
+        return
+      }
+      shell.openExternal(url)
+    })
+  }
+
   let url
   try {
     /* First run on a local backend initialises a database — tens of seconds of
@@ -237,7 +298,9 @@ async function createWindow() {
     return
   }
 
-  await mainWindow.loadURL(url)
+  /* The till lands on /pos; the back office on the root. See appRole.startPath
+     for why the till does not go to a sign-in page first. */
+  await mainWindow.loadURL(`${url}${startPath()}`.replace(/\/$/, ''))
 }
 
 // Single instance only — two shells would fight over the same port.

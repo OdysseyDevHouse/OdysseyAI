@@ -1,5 +1,43 @@
+# ── ONE CODEBASE, THREE INSTALLERS ──────────────────────────────────────────
+#
+# This file is the SHARED base. It never builds anything on its own — every
+# build passes one of the configs in build-config/ with `--config`, and that
+# file `extends` this one.
+#
+#   npm run dist:backoffice   →  Odyssey Back Office
+#   npm run dist:pos          →  Odyssey Point of Sale
+#   npm run dist:database     →  Odyssey Database Setup
+#   npm run dist              →  all three
+#
+# ── WHY THE APP SPLITS IN TWO ───────────────────────────────────────────────
+#
+# There are two independent questions, and only ONE of them belongs in the
+# control panel:
+#
+#   · Where does the data live?  cloud / local / hybrid  → control panel, and
+#     the same build serves all three. A franchise must never be handed a
+#     different download because of it.
+#   · What is this machine FOR?  back office / till      → two builds.
+#
+# The second cannot be a runtime setting. A till must open straight to the
+# clerk PIN with no admin login reachable at all, and if one build could be
+# either then the back office is present on the machine and merely hidden —
+# and a manager who knows a URL can reach a hidden thing. Two builds means it
+# is not there to reach.
+#
+# That is a PRODUCT boundary, not a security one. The real boundary stays where
+# it already is: actorForModule / requireModuleCapability on every action.
+#
+# ── WHY THE DATABASE SPLITS OUT ─────────────────────────────────────────────
+#
+# MariaDB is ~200MB of third-party binaries on their own release cadence; the
+# app ships far more often. Bundled together, every app update re-downloads a
+# database that did not change. Apart, app updates stay small and the database
+# installer is a rare, separate thing.
+#
+# It also means a ten-till restaurant does not put ten copies of a database on
+# ten machines that will never run one. Only the machine that HOSTS gets it.
 appId: za.co.pointofsale.odysseyai
-productName: OdysseyAI Back Office
 copyright: Copyright © Point of Sale (Pty) Ltd
 
 directories:
@@ -23,19 +61,6 @@ extraResources:
     to: app/package.json
   - from: next.config.mjs
     to: app/next.config.mjs
-  # The shop's own database server, for a LOCAL-backend install.
-  #
-  # electron-builder skips a `from` that does not exist, so a cloud-only build
-  # simply needs nothing in vendor/ — there is no `optional` flag in a FileSet
-  # (the schema rejects unknown keys) and none is needed. A local build that
-  # somehow shipped without it reports a clear error at startup rather than
-  # crashing: see localDb.isBundled().
-  #
-  # Populate vendor/mariadb from the official portable ZIP — see
-  # docs/local-backend.md. Deliberately NOT committed: ~200MB of third-party
-  # binaries with their own release cadence.
-  - from: vendor/mariadb
-    to: mariadb
 
 win:
   target:

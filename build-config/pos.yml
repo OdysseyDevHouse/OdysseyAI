@@ -1,0 +1,16 @@
+# Odyssey Point of Sale — the till, and nothing else.
+#
+# Boots straight to /pos and refuses to navigate off it. After the one admin
+# sign-in that tells it which site and device it is, every launch lands on the
+# clerk PIN screen: (pos)/layout.tsx already has no auth gate, precisely so it
+# can serve that screen when a session has lapsed.
+#
+# Carries no database and no back office.
+extends: ./electron-builder.yml
+
+productName: Odyssey Point of Sale
+
+appId: za.co.pointofsale.odyssey.pos
+
+extraMetadata:
+  odysseyRole: pos

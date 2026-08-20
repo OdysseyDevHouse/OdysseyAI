@@ -1,0 +1,33 @@
+# Odyssey Database Setup — MariaDB, and the provisioning that configures it.
+#
+# Run once, by a technician, on the ONE machine that hosts the shop's database:
+# the in-store box on a hybrid site, or the back-office machine on a local one.
+# A cloud site never needs it.
+#
+# It asks for an email and password, authenticates against the control panel,
+# reads the site's connection_type, and creates the database and user from the
+# credentials the control panel already holds. The technician never learns them.
+#
+# ── THIS IS THE ONLY ARTIFACT CARRYING vendor/mariadb ───────────────────────
+#
+# electron-builder skips a `from` that does not exist, so a machine without
+# vendor/mariadb populated simply builds an installer with no database in it —
+# there is no `optional` flag in a FileSet (the schema rejects unknown keys) and
+# none is needed. localDb.isBundled() reports that clearly at runtime rather
+# than crashing.
+#
+# Populate vendor/mariadb from the official portable ZIP — see
+# docs/local-backend.md. Deliberately NOT committed: ~200MB of third-party
+# binaries with their own release cadence.
+extends: ./electron-builder.yml
+
+productName: Odyssey Database Setup
+
+appId: za.co.pointofsale.odyssey.database
+
+extraMetadata:
+  odysseyRole: database
+
+extraResources:
+  - from: vendor/mariadb
+    to: mariadb
