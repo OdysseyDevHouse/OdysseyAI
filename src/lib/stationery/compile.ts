@@ -304,10 +304,34 @@ function lineTable(b: DocBlock): string {
   // Which repeating section this table walks. See the note on DocBlock.section.
   const section = b.section ?? 'lines'
 
+  /*
+   * ── EVERY COLUMN GETS AN EXPLICIT WIDTH ─────────────────────────────────
+   *
+   * A sized column used to carry a width and a blank one carried none, leaving
+   * the browser to divide what was left. That is a perfectly good HTML table
+   * and it is NOT what the PDF does — pdfkit shares the remainder evenly and
+   * draws at absolute coordinates — so the same design came out with different
+   * proportions on paper depending on which route printed it.
+   *
+   * The arithmetic below is the PDF's, moved here so the two agree by
+   * construction rather than by luck. parseSpec has already made the sized
+   * columns fit (see fitColumns), so what is left over is always real.
+   */
+  const fixed = cols.reduce((sum, c) => sum + (c.width ?? 0), 0)
+  const autos = cols.filter((c) => c.width === undefined).length
+  const each = autos > 0 ? Math.max((100 - fixed) / autos, 4) : 0
+
   const head = cols
     .map((c) => {
       const align = ALIGN_CLASS[c.align ?? 'left']
-      const width = c.width ? ` style="width:${c.width}%"` : ''
+      const pct = c.width ?? each
+      /*
+       * Trailing zeros trimmed. A stored width is a whole number, so writing
+       * 52.00% instead of 52% would rewrite every shipped default's markup for
+       * no visual difference — and those defaults are compared byte-for-byte
+       * against the block designs they are generated from.
+       */
+      const width = pct > 0 ? ` style="width:${Number(pct.toFixed(2))}%"` : ''
       return `<th class="${TH} ${align}"${width}>${esc(c.heading)}</th>`
     })
     .join('')

@@ -753,7 +753,76 @@ function cleanColumns(
       ...(align === 'left' || align === 'right' ? { align } : {}),
     })
   }
-  return out
+  return fitColumns(out)
+}
+
+/**
+ * Make a set of column widths add up to something a page can draw.
+ *
+ * ── THE BUG THIS EXISTS FOR ───────────────────────────────────────────────
+ *
+ * Each width was clamped to 1–100 individually and the TOTAL was never checked,
+ * so four columns of 50/40/30/20 stored happily and summed to 140. The two
+ * engines then disagreed about what to do with that, in the worst possible way:
+ * HTML handed it to the browser, which squeezed the columns to fit and looked
+ * fine, while the PDF multiplied each percentage by the box and drew a table
+ * 40% wider than the page — text sliding off the right-hand edge.
+ *
+ * That is the shape of failure that makes a feature feel broken rather than
+ * wrong: it looks correct in the designer, and only the printed copy is bad.
+ *
+ * ── NORMALISED ON READ, IN ONE PLACE ──────────────────────────────────────
+ *
+ * Fixed here rather than in either renderer, because both read through
+ * parseSpec and neither should have an opinion about arithmetic the other might
+ * do differently. Scaled proportionally rather than truncated: a shop that set
+ * 50/40/30/20 wanted the FIRST column widest, and 36/29/21/14 keeps every
+ * relationship it asked for while fitting the paper.
+ *
+ * Columns left blank keep a real share. If the fixed ones have already eaten
+ * the page, they are scaled back to leave a floor — a column with no width at
+ * all prints its heading over nothing, which reads as a rendering fault.
+ */
+function fitColumns(cols: ColumnSpec[]): ColumnSpec[] {
+  const sized = cols.filter((c) => c.width !== undefined)
+  if (sized.length === 0) return cols
+
+  const autos = cols.length - sized.length
+  const fixed = sized.reduce((sum, c) => sum + (c.width ?? 0), 0)
+
+  /* Every blank column needs somewhere to live: 6% each is narrow but real. */
+  const AUTO_FLOOR = 6
+  const budget = 100 - autos * AUTO_FLOOR
+
+  /*
+   * ── UNDER 100 IS AS WRONG AS OVER ───────────────────────────────────────
+   *
+   * Widths of 20/10/10 fill 40% of the box, and the two engines part company
+   * again: the HTML table is `w-full`, so a browser stretches those columns to
+   * fill it anyway and prints 50/25/25 — while the PDF draws them at 40% of the
+   * box and leaves the right-hand third of the table empty.
+   *
+   * Scaled UP for the same reason it is scaled down: the shop expressed
+   * proportions, and both papers should honour the same ones. This is only done
+   * when every column is sized — with a blank one in the set, the leftover is
+   * that column's share and filling it would be taking space the design gave
+   * away deliberately.
+   */
+  if (autos === 0 && fixed > 0 && fixed !== 100) {
+    const scale = 100 / fixed
+    return cols.map((c) => ({ ...c, width: Math.max(Math.round((c.width ?? 0) * scale), 3) }))
+  }
+
+  if (fixed <= budget) return cols
+
+  const scale = budget / fixed
+  return cols.map((c) =>
+    c.width === undefined
+      ? c
+      : // Never below 3: a column scaled to nothing is a column that vanished,
+        // and losing one silently is worse than a tight fit.
+        { ...c, width: Math.max(Math.round(c.width * scale), 3) },
+  )
 }
 
 const num = (v: unknown, fallback: number) =>
