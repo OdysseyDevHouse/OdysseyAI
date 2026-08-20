@@ -22,6 +22,7 @@ import { groupForSite, membersOfGroup } from '../src/lib/storeGroups'
 import { entitlementsForSite, has as hasModule } from '../src/lib/control/modules'
 import { listLaybys } from '../src/lib/site/laybys'
 import { listCustomers } from '../src/lib/site/customers'
+import { runBuilderSpec } from '../src/lib/reportBuilder/run'
 import type { RowDataPacket } from 'mysql2/promise'
 
 /** Marks the layby this test writes, so cleanup cannot hit a real one. */
@@ -239,6 +240,59 @@ async function main() {
           found.items.length > 0,
           `${found.items.length} found`,
         )
+      }
+    }
+    /* ── The report builder ───────────────────────────────────────────── */
+
+    // The piece stage 1 flagged as most likely to need an engine rewrite. Two
+    // shapes, and they qualify in opposite directions:
+    //
+    //   a BRANCH source joining out to the customer file (sales)
+    //   an OWNER source joining back to a branch table (loyalty members → tiers)
+    //
+    // A report that returned zero rows would look identical to a report with
+    // nothing to show, so each is checked against what the same query returns
+    // with sharing off.
+    console.log('\n— Reports across the boundary —')
+
+    const canAll = () => true
+    for (const [label, spec] of [
+      [
+        'sales joined to the shared customer file',
+        {
+          source: 'sales',
+          columns: [{ field: 'documentNumber' }, { field: 'customerName' }],
+          filters: [],
+          period: { kind: 'all' as const },
+          limit: 20,
+        },
+      ],
+      [
+        'the shared customer list',
+        {
+          source: 'customers',
+          columns: [{ field: 'name' }, { field: 'code' }],
+          filters: [],
+          period: { kind: 'all' as const },
+          limit: 20,
+        },
+      ],
+      [
+        'loyalty members joined back to this branch’s tiers',
+        {
+          source: 'loyaltyMembers',
+          columns: [{ field: 'customerName' }, { field: 'tierName' }],
+          filters: [],
+          period: { kind: 'all' as const },
+          limit: 20,
+        },
+      ],
+    ] as const) {
+      try {
+        const result = await runBuilderSpec(branch, spec as never, canAll, { limit: 20 })
+        ok(`report: ${label}`, true, `${result.rows.length} row(s), ${result.columns.length} cols`)
+      } catch (e) {
+        ok(`report: ${label}`, false, e instanceof Error ? e.message : String(e))
       }
     }
   } finally {

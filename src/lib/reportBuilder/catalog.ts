@@ -160,6 +160,32 @@ export interface DefaultFilter {
   value: string
 }
 
+/* ── Naming the customer file across a shared-store boundary ──────────────
+ *
+ * A store group may share one customer file: the group's primary holds it and
+ * every branch reads and writes it. See customerOwnerSite() in
+ * lib/storeGroups.ts.
+ *
+ * The report engine composes its joins into ONE SQL string, so it cannot route
+ * a query the way lib/site modules do — half of it belongs to the branch and
+ * half to the owner. It qualifies instead, and these two tokens are how a
+ * catalogue entry says which side a table is on:
+ *
+ *   {C}  a customer-owned table — customers, customer_groups, the ledger,
+ *        loyalty balances, gift cards
+ *   {B}  a branch-owned table reached FROM a customer-owned source —
+ *        loyalty_tiers, products, tender_types
+ *
+ * run.ts replaces both with a database prefix (or with nothing, for a store
+ * that owns its own customers, so the SQL is byte-for-byte what it was).
+ *
+ * A token rather than a per-join flag because the same JoinUnit is reused
+ * across sources — CUSTOMER_GROUP_JOIN is on four — and the answer belongs to
+ * the TABLE, not to the join that happens to reach it.
+ */
+export const CUSTOMER_DB = '{C}'
+export const BRANCH_DB = '{B}'
+
 /** One queryable dataset offered in the builder's first step. */
 export interface CatalogSource {
   key: string
@@ -173,6 +199,15 @@ export interface CatalogSource {
   shape: SourceShape
   /** The primary table, aliased `t`. */
   table: string
+  /**
+   * Which database the primary table lives in when a group shares its customer
+   * file. Omitted means the caller's own, which is every source but the four
+   * built on the debtors book and loyalty balances.
+   *
+   * This decides WHERE the query runs. The {C} / {B} tokens above decide how
+   * the tables on the other side are named once it is running.
+   */
+  ownedBy?: 'customer'
   /** TIMELINE only: the column the date range filters on. */
   dateColumn?: string
   /**
@@ -490,11 +525,11 @@ const SALE_STATUSES = ['draft', 'saved', 'issued', 'finalised', 'cancelled']
 
 const CUSTOMER_JOIN: JoinUnit = {
   name: 'customer',
-  sql: 'LEFT JOIN customers c ON c.id = t.customer_id',
+  sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id',
 }
 const CUSTOMER_GROUP_JOIN: JoinUnit = {
   name: 'customerGroup',
-  sql: 'LEFT JOIN customer_groups cg ON cg.id = c.group_id',
+  sql: 'LEFT JOIN {C}customer_groups cg ON cg.id = c.group_id',
 }
 const CUSTOMER_REP_JOIN: JoinUnit = {
   name: 'customerRep',
@@ -872,7 +907,7 @@ const SALE_LINES_SOURCE: CatalogSource = {
     PRODUCT_BRAND_JOIN,
     PRODUCT_LEVELS_JOIN,
     LINE_DEPT_JOIN,
-    { name: 'customer', sql: 'LEFT JOIN customers c ON c.id = d.customer_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = d.customer_id' },
     /* Off the PARENT document, which on this source is `d` rather than `t` — so
        it cannot reuse RETURN_REASON_JOIN. A credit note line has no reason of
        its own; the whole document has one. */
@@ -1642,8 +1677,9 @@ const CUSTOMERS_SOURCE: CatalogSource = {
   permission: 'customers.view',
   shape: 'snapshot',
   table: 'customers',
+  ownedBy: 'customer',
   joins: [
-    { name: 'group', sql: 'LEFT JOIN customer_groups g ON g.id = t.group_id' },
+    { name: 'group', sql: 'LEFT JOIN {C}customer_groups g ON g.id = t.group_id' },
     { name: 'rep', sql: 'LEFT JOIN sales_reps r ON r.id = t.rep_id' },
   ],
   note: 'A snapshot of today. Balances are the current figure, not the balance on any past date.',
@@ -1729,9 +1765,10 @@ const CUSTOMER_TXN_SOURCE: CatalogSource = {
   permission: 'customers.view',
   shape: 'timeline',
   table: 'customer_transactions',
+  ownedBy: 'customer',
   dateColumn: 'doc_date',
   joins: [
-    { name: 'customer', sql: 'LEFT JOIN customers c ON c.id = t.customer_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' },
     CUSTOMER_GROUP_JOIN,
     CUSTOMER_REP_JOIN,
   ],
@@ -2086,7 +2123,7 @@ const JOB_TIME_SOURCE: CatalogSource = {
   joins: [
     { name: 'job', sql: 'INNER JOIN job_cards j ON j.id = t.job_card_id', always: true },
     { name: 'jobStatus', sql: 'LEFT JOIN job_statuses js ON js.id = j.status_id' },
-    { name: 'jobCustomer', sql: 'LEFT JOIN customers jc ON jc.id = j.customer_id' },
+    { name: 'jobCustomer', sql: 'LEFT JOIN {C}customers jc ON jc.id = j.customer_id' },
   ],
   note: 'Only time booked against a job. A shift with no job on it is on the timesheet, not here.',
   fields: [
@@ -2204,7 +2241,7 @@ const JOB_TRAVEL_SOURCE: CatalogSource = {
   dateColumn: 'travelled_on',
   joins: [
     { name: 'job', sql: 'INNER JOIN job_cards j ON j.id = t.job_card_id', always: true },
-    { name: 'jobCustomer', sql: 'LEFT JOIN customers jc ON jc.id = j.customer_id' },
+    { name: 'jobCustomer', sql: 'LEFT JOIN {C}customers jc ON jc.id = j.customer_id' },
   ],
   fields: [
     {
@@ -2355,7 +2392,7 @@ const JOB_VISITS_SOURCE: CatalogSource = {
   dateColumn: 'starts_at',
   joins: [
     { name: 'job', sql: 'INNER JOIN job_cards j ON j.id = t.job_card_id', always: true },
-    { name: 'jobCustomer', sql: 'LEFT JOIN customers jc ON jc.id = j.customer_id' },
+    { name: 'jobCustomer', sql: 'LEFT JOIN {C}customers jc ON jc.id = j.customer_id' },
     { name: 'visitAddress', sql: 'LEFT JOIN service_addresses jsa ON jsa.id = t.service_address_id' },
   ],
   fields: [
@@ -2572,7 +2609,7 @@ const SALE_MODIFIERS_SOURCE: CatalogSource = {
       needs: ['line'],
     },
     PRODUCT_DEPT_JOIN,
-    { name: 'customer', sql: 'LEFT JOIN customers c ON c.id = d.customer_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = d.customer_id' },
   ],
   defaultFilters: [{ field: 'status', op: 'eq', value: 'finalised' }],
   note: 'Starts with finalised documents only. The money here is already inside the sales-line totals — it is the breakdown of what was charged, not an extra charge.',
@@ -4113,8 +4150,9 @@ const LOYALTY_LEDGER_SOURCE: CatalogSource = {
   permission: 'customers.view',
   shape: 'timeline',
   table: 'loyalty_ledger',
+  ownedBy: 'customer',
   dateColumn: 'created_at',
-  joins: [{ name: 'customer', sql: 'LEFT JOIN customers c ON c.id = t.customer_id' }],
+  joins: [{ name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' }],
   fields: [
     { key: 'happenedAt', label: 'When', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },
     { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], starter: true, group: FIELD_GROUPS.IDENTITY },
@@ -4152,9 +4190,10 @@ const LOYALTY_MEMBERS_SOURCE: CatalogSource = {
   permission: 'customers.view',
   shape: 'snapshot',
   table: 'loyalty_members',
+  ownedBy: 'customer',
   joins: [
-    { name: 'customer', sql: 'INNER JOIN customers c ON c.id = t.customer_id', always: true },
-    { name: 'tier', sql: 'LEFT JOIN loyalty_tiers lt ON lt.id = t.tier_id' },
+    { name: 'customer', sql: 'INNER JOIN {C}customers c ON c.id = t.customer_id', always: true },
+    { name: 'tier', sql: 'LEFT JOIN {B}loyalty_tiers lt ON lt.id = t.tier_id' },
   ],
   fields: [
     { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', starter: true, group: FIELD_GROUPS.IDENTITY },
@@ -4230,7 +4269,7 @@ const JOURNAL_LINES_SOURCE: CatalogSource = {
     { name: 'batch', sql: 'INNER JOIN journal_batches b ON b.id = t.batch_id', always: true },
     { name: 'account', sql: 'INNER JOIN gl_accounts a ON a.id = t.account_id', always: true },
     { name: 'dept', sql: 'LEFT JOIN departments jd ON jd.id = t.department_id' },
-    { name: 'customer', sql: 'LEFT JOIN customers jc ON jc.id = t.customer_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers jc ON jc.id = t.customer_id' },
     { name: 'supplier', sql: 'LEFT JOIN suppliers js ON js.id = t.supplier_id' },
   ],
   /* Drafts have moved nothing and voids are reversals' tombstones. Only a

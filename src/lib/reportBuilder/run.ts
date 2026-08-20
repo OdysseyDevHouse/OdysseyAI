@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
+import { customerDbPrefix, branchDbPrefix } from '../site/customerDb'
 import type { Capability } from '../site/permissions'
 // The grand total and a band subtotal have to be the same arithmetic, so the
 // function lives with the banding rather than here. See shape.ts.
@@ -156,10 +157,50 @@ export async function runBuilderSpec(
     return { columns: [], rows: [], totals: {}, range, truncated: false, hiddenColumns: hidden }
   }
 
+  /*
+   * ── WHERE THE CUSTOMER FILE IS, AND HOW IT IS NAMED ──────────────────────
+   *
+   * A store group may share one customer file, in which case the debtors book
+   * and the loyalty balances live in the group primary's database while sales,
+   * jobs and products stay in the branch. A report routinely spans both.
+   *
+   * The engine cannot route the whole query the way lib/site modules do — half
+   * of it belongs to each side. So it QUALIFIES instead: MariaDB resolves a
+   * cross-database join in one pass on the same instance, including filters and
+   * sorts against the remote table (measured in
+   * scripts/probe-shared-customer-file.ts). No two-phase fetch is needed.
+   *
+   *   ownedBy: 'customer'  the source's own table is on the OWNER, so its FROM
+   *                        is qualified too
+   *   otherwise            the source's table is this branch's own
+   *
+   * `{C}` and `{B}` in the catalogue mark which side each joined table is on.
+   * Both resolve to '' for a store that owns its own customers, so a single-shop
+   * site's SQL — and its query plan — are exactly what they always were.
+   */
+  const ownerSide = source.ownedBy === 'customer'
+  const [customerPrefix, branchPrefix] = await Promise.all([
+    customerDbPrefix(siteId),
+    branchDbPrefix(siteId),
+  ])
+
+  /*
+   * The query always runs on the CALLER's connection — a report is a read, and
+   * opening it against the owner would strand every branch table in it. So
+   * `{C}` is qualified whichever side the source sits on, and an owner-side
+   * source qualifies its FROM as well.
+   *
+   * `{B}` is the mirror, and it is only ever non-empty on an owner-side source:
+   * a branch-side query is already in the branch's own database, so a branch
+   * table there needs no prefix at all.
+   */
+  const qualify = (text: string) =>
+    text.split('{C}').join(customerPrefix).split('{B}').join(ownerSide ? branchPrefix : '')
+
   const sql = [
     `SELECT ${selectSql.map((s) => s.sql).join(', ')}`,
-    `FROM \`${source.table}\` t`,
-    ...joins,
+    `FROM ${ownerSide ? customerPrefix : ''}\`${source.table}\` t`,
+    ...joins.map(qualify),
     where.sql ? `WHERE ${where.sql}` : '',
     summarised
       ? `GROUP BY ${visible.groupFields
