@@ -268,7 +268,9 @@
     "pack:pos": "electron-builder --win --config build-config/pos.yml --publish never",
     "pack:database": "electron-builder --win --config build-config/database.yml --publish never",
     "test:db-setup": "tsx --conditions=react-server --env-file=.env scripts/test-db-setup.ts",
-    "db:setup": "tsx --conditions=react-server --env-file=.env scripts/db-setup.ts"
+    "db:setup": "tsx --conditions=react-server --env-file=.env scripts/db-setup.ts",
+    "test:box-schema": "tsx --conditions=react-server --env-file=.env scripts/test-box-schema.ts",
+    "box:migrate": "node --env-file=.env scripts/box-migrate.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

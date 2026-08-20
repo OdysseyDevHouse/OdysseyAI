@@ -45,11 +45,26 @@ const control = await mysql.createConnection({
   database: process.env.DB_NAME,
 })
 
+/*
+ * The site's OWN database — its master.
+ *
+ * `ORDER BY purpose LIMIT 1` used to decide this, which was harmless while
+ * every site had exactly one record. A HYBRID site has two, and 'hybrid' sorts
+ * before 'master': this runner would have applied the full site schema to the
+ * in-store spool box and never touched the site's real database. Both halves of
+ * that are silent — the migrations succeed, against the wrong server.
+ *
+ * So the master is named rather than sorted to. The `hybrid` record is
+ * deliberately excluded: that box holds open tabs and an outbox, not a shop.
+ * It is provisioned by Odyssey Database Setup and migrated by
+ * scripts/box-migrate.mjs, which applies sql/box/ instead.
+ */
 const [rows] = await control.query(
   `SELECT purpose, server_host, server_port, database_name, db_username, db_password_enc
      FROM cp2_site_databases
-    WHERE site_id = ? AND status = 'active'
-    ORDER BY purpose LIMIT 1`,
+    WHERE site_id = ? AND status = 'active' AND purpose <> 'hybrid'
+    ORDER BY purpose = 'master' DESC, purpose ASC
+    LIMIT 1`,
   [siteId],
 )
 
