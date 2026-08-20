@@ -69,6 +69,20 @@ export type FanoutValues = {
    */
   purchaseVatPercent?: number
   sellingVatPercent?: number
+  /**
+   * The department, by NAME rather than id.
+   *
+   * Departments are per-database like everything else: on the dev data,
+   * department 9 is "Cooldrinks" in one store and does not exist in the other,
+   * whose 11-16 are entirely different departments. Sending the id would file
+   * the product under whatever happened to share that number.
+   *
+   * Undefined leaves the target's own department alone. A target with no
+   * department of that name is REPORTED rather than having one invented —
+   * creating departments as a side effect of saving a product is not something
+   * this screen should do.
+   */
+  departmentName?: string | null
 }
 
 export type FanoutOutcome = {
@@ -107,6 +121,30 @@ async function vatRateIdFor(
  * tiers as a side effect of saving a product would be a surprising thing for
  * this screen to do.
  */
+/**
+ * The target store's department carrying a given name.
+ *
+ * By name for the same reason price structures are: an id from the origin store
+ * names a different department, or nothing at all, in another database.
+ *
+ * Returns undefined when the caller sent no name (leave it alone) and null when
+ * a name was sent but the store has no such department (report it).
+ */
+async function departmentIdFor(
+  targetSiteId: number,
+  name: string | null | undefined,
+): Promise<number | null | undefined> {
+  if (name === undefined) return undefined
+  if (name === null || name.trim() === '') return undefined
+
+  const row = await siteQueryOne<RowDataPacket & { id: number }>(
+    targetSiteId,
+    'SELECT id FROM departments WHERE name = ? LIMIT 1',
+    [name.trim()],
+  )
+  return row ? Number(row.id) : null
+}
+
 async function mapStructureIds(
   targetSiteId: number,
   originStructures: { id: number; name: string }[],
@@ -188,6 +226,10 @@ async function applyToStore(
       ? await vatRateIdFor(targetSiteId, 'sales', values.sellingVatPercent)
       : null
 
+  // Resolved whatever the price sharing says: which department a product sits
+  // in describes what it IS, like its description — not what it costs.
+  const departmentId = await departmentIdFor(targetSiteId, values.departmentName)
+
   return siteTransaction(targetSiteId, async (tx) => {
     let productId: number
 
@@ -233,6 +275,13 @@ async function applyToStore(
       if (sellingVatId !== null) {
         sets.push('selling_vat_rate_id = ?')
         params.push(sellingVatId)
+      }
+      // Resolved by name above. Undefined = nothing sent, null = sent but this
+      // store has no such department; both leave the existing value alone, and
+      // the second is reported.
+      if (departmentId !== undefined && departmentId !== null) {
+        sets.push('department_id = ?')
+        params.push(departmentId)
       }
       /* Reorder levels are NOT fanned out. They belong to a (product,
          location) pair in the receiving store's own product_location_stock,
@@ -286,8 +335,8 @@ async function applyToStore(
            (code, barcode, description, extra_description, product_type,
             purchase_vat_rate_id, selling_vat_rate_id,
             last_cost, average_cost, stock_on_hand,
-            is_archived, origin_site_id${propertyColumns}, last_edit_date)
-         VALUES (?,?,?,?,?, ?,?, ?,?, 0, 0, ?${propertyPlaceholders}, NOW())`,
+            is_archived, origin_site_id, department_id${propertyColumns}, last_edit_date)
+         VALUES (?,?,?,?,?, ?,?, ?,?, 0, 0, ?, ?${propertyPlaceholders}, NOW())`,
         [
           code,
           values.barcode,
@@ -304,6 +353,9 @@ async function applyToStore(
           // in another store — the origin's own row keeps NULL, which reads as
           // "mine" and survives the group being dissolved.
           originSiteId,
+          // Null when this store has no department of that name: the product is
+          // still created, unfiled, and the outcome says why.
+          departmentId ?? null,
           ...propertyEntries.map(([, value]) => value),
         ] as never,
       )
@@ -353,6 +405,9 @@ async function applyToStore(
     }
     if (shareSelling && values.sellingVatPercent !== undefined && sellingVatId === null) {
       untranslated.push(`no ${values.sellingVatPercent}% selling tax rate here`)
+    }
+    if (departmentId === null && values.departmentName) {
+      untranslated.push(`no "${values.departmentName}" department here`)
     }
 
     return {

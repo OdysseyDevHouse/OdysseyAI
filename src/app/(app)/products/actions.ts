@@ -11,6 +11,7 @@ import { fanoutProduct } from '@/lib/site/productFanout'
 import { setGroupsForProduct } from '@/lib/site/instructions'
 import { saveLocationLevels } from '@/lib/site/stockLocations'
 import { listPriceStructures, listVatRates } from '@/lib/site/lookups'
+import { listDepartments } from '@/lib/site/departments'
 import {
   createProduct,
   updateProduct,
@@ -465,6 +466,15 @@ export async function saveProductAction(
         perStore: readPerStore(form),
         purchaseVatPercent: rateOf(input.purchaseVatRateId),
         sellingVatPercent: rateOf(input.sellingVatRateId),
+        // By NAME, resolved here against THIS store. Department ids are
+        // per-database — on the dev data, 9 is "Cooldrinks" in one store and
+        // does not exist in the other, whose 11-16 are different departments
+        // entirely — so sending the id would file the product under whatever
+        // happened to share that number.
+        departmentName: input.departmentId
+          ? ((await listDepartments(siteId).catch(() => []))
+              .find((d) => d.id === input.departmentId)?.name ?? null)
+          : null,
       },
       structures.map((s) => ({ id: s.id, name: s.name })),
       availability,
