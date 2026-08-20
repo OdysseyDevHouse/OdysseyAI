@@ -45,6 +45,7 @@ import {
 import { finaliseDocument } from '../src/lib/site/salesPosting'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { toNum } from '../src/lib/decimals'
+import { tabPurpose } from '../src/lib/site/tabRouting'
 
 const SITE = 1
 const actor = { userId: 1, userName: 'Tables test' }
@@ -59,8 +60,10 @@ async function main() {
 
   /* Sweep what an earlier crashed run left. `code` is UNIQUE, so litter fails the
      INSERT rather than the assertion it was making. */
-  await siteExecute(SITE, "DELETE FROM pos_tables WHERE code LIKE 'T9%'")
+  await siteExecute(SITE, "DELETE FROM pos_tables WHERE code LIKE 'T9%'", [], await tabPurpose(SITE))
 
+  /* NOT routed: vat_rates is a shop table and lives only in the cloud. The box
+     holds open tabs, not the rate card — see sql/box/001_spool.sql. */
   const vat = await siteQueryOne<any>(
     SITE,
     "SELECT id, rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1",
@@ -94,12 +97,12 @@ async function main() {
           unitCostExcl: 4,
         },
       ],
-    } as never)
+    } as never, undefined, await tabPurpose(SITE))
     if (!draft.ok) throw new Error(`draft failed: ${draft.error}`)
     /* Parked, not left as a draft. `listTables` joins on `status = 'saved'`, which is
        the same predicate the saved-sales list uses — a table holding a plain draft
        would read as free. */
-    const parked = await saveForLaterDocument(SITE, draft.id)
+    const parked = await saveForLaterDocument(SITE, draft.id, await tabPurpose(SITE))
     if (!parked.ok) throw new Error(`park failed: ${parked.error}`)
     return draft.id
   }
@@ -167,7 +170,7 @@ async function main() {
 
   let sameBillTwice = false
   try {
-    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = ? WHERE id = ?', [bill, t2.id])
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = ? WHERE id = ?', [bill, t2.id], await tabPurpose(SITE))
     sameBillTwice = true
   } catch {
     // The unique index did its job.
@@ -188,7 +191,36 @@ async function main() {
   /* ── 7. OCCUPANCY IS DERIVED ────────────────────────────────────────────
      THE assertion in this file. The bill is finalised — as it would be from the back
      office, with nothing telling the table about it — and the table must read free
-     because occupancy is a join, not a stored flag. */
+     because occupancy is a join, not a stored flag.
+
+     ── WHY THIS SECTION SKIPS ON A HYBRID SITE ───────────────────────────
+     finaliseDocument runs in the CLOUD, always. It reaches into stock, the
+     ledger, loyalty, serials, tips and shifts — none of which the box has, and
+     none of which it should: two stock ledgers cannot be reconciled. On a
+     hybrid site a tab is finalised when it reaches the cloud through the
+     outbox, not against the box it was opened on.
+
+     So this section is not merely inapplicable here — it describes a path that
+     does not exist on a hybrid site, and forcing it would be asserting
+     something untrue about the product. The behaviour it guards is unchanged
+     for every cloud site, which is where it is exercised. */
+
+  if ((await tabPurpose(SITE)) !== 'master') {
+    console.log('\n**SKIPPED**  sections 7-9: finalising happens in the cloud on a hybrid site.\n')
+    const p = await tabPurpose(SITE)
+    await siteExecute(SITE, "UPDATE pos_tables SET document_id = NULL WHERE code LIKE 'T9%'", [], p)
+    await siteExecute(SITE, "DELETE FROM pos_tables WHERE code LIKE 'T9%'", [], p)
+    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE product_id = ?', [productId], p)
+    for (const id of [bill, otherBill]) {
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id], p).catch(() => null)
+    }
+    await siteExecute(SITE, 'DELETE FROM stock_movements WHERE product_id = ?', [productId]).catch(
+      () => null,
+    )
+    await siteExecute(SITE, 'DELETE FROM products WHERE id = ?', [productId]).catch(() => null)
+    console.log(fails === 0 ? '\nAll table checks passed.' : `\n${fails} FAILURE(S)`)
+    process.exit(fails === 0 ? 0 : 1)
+  }
 
   const posted = await finaliseDocument(SITE, actor, {
     documentId: bill,
@@ -237,10 +269,10 @@ async function main() {
   const heldForVoid = await claimDocument(SITE, voidedBill, 1, 9003)
   ok('  and claimed by the till voiding it', heldForVoid.ok, heldForVoid.ok ? '' : heldForVoid.error)
 
-  const cancelled = await cancelUnpostedDocument(SITE, voidedBill)
+  const cancelled = await cancelUnpostedDocument(SITE, voidedBill, await tabPurpose(SITE))
   ok('a parked bill can be cancelled', cancelled.ok, cancelled.ok ? '' : cancelled.error)
 
-  const voidedDoc = await getDocument(SITE, voidedBill)
+  const voidedDoc = await getDocument(SITE, voidedBill, await tabPurpose(SITE))
   ok(
     '*** the document is CANCELLED, not deleted ***',
     voidedDoc?.status === 'cancelled',
@@ -252,8 +284,7 @@ async function main() {
   const claimRow = await siteQueryOne<{ claimed_by: number | null; claimed_at: string | null }>(
     SITE,
     'SELECT claimed_by, claimed_at FROM sales_documents WHERE id = ?',
-    [voidedBill],
-  )
+    [voidedBill], await tabPurpose(SITE))
   ok(
     '  and its claim is let go with it',
     claimRow?.claimed_by === null && claimRow?.claimed_at === null,
@@ -279,7 +310,7 @@ async function main() {
     tenders: [{ tenderTypeId: cash.id, amount: 30 }],
   })
   ok('a second bill posts, to test the refusal', paidDoc.ok, paidDoc.ok ? '' : paidDoc.error)
-  const refused = await cancelUnpostedDocument(SITE, paidAgain)
+  const refused = await cancelUnpostedDocument(SITE, paidAgain, await tabPurpose(SITE))
   ok('*** a FINALISED sale is refused by this path ***', !refused.ok, refused.ok ? '' : refused.error)
 
   /* Off the floor again before section 8, which counts the surviving T9 tables.
@@ -360,8 +391,7 @@ async function main() {
   await siteExecute(
     SITE,
     'UPDATE sales_documents SET claimed_at = UTC_TIMESTAMP() - INTERVAL ? MINUTE WHERE id = ?',
-    [CLAIM_LEASE_MINUTES + 60, claimBill],
-  )
+    [CLAIM_LEASE_MINUTES + 60, claimBill], await tabPurpose(SITE))
   const afterLongSilence = await claimDocument(SITE, claimBill, 2, TILL_B)
   ok(
     '*** an OLD terminal claim still holds — silence is not death ***',
@@ -381,7 +411,7 @@ async function main() {
 
   const released = await releaseDocument(SITE, claimBill)
   ok('releasing hands it back', released.ok, released.ok ? '' : released.error)
-  const afterRelease = await getDocument(SITE, claimBill)
+  const afterRelease = await getDocument(SITE, claimBill, await tabPurpose(SITE))
   ok(
     '  and leaves the bill saved, not draft',
     afterRelease?.status === 'saved',
@@ -394,16 +424,16 @@ async function main() {
   await freeTable(SITE, claimTable.id)
 
   /* ── Clean up ───────────────────────────────────────────────────────────── */
-  await siteExecute(SITE, "DELETE FROM pos_tables WHERE code LIKE 'T9%'")
-  await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE product_id = ?', [productId])
-  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [otherBill]).catch(() => null)
-  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [claimBill]).catch(() => null)
+  await siteExecute(SITE, "DELETE FROM pos_tables WHERE code LIKE 'T9%'", [], await tabPurpose(SITE))
+  await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE product_id = ?', [productId], await tabPurpose(SITE))
+  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [otherBill], await tabPurpose(SITE)).catch(() => null)
+  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [claimBill], await tabPurpose(SITE)).catch(() => null)
   await siteExecute(SITE, 'DELETE FROM stock_movements WHERE product_id = ?', [productId]).catch(
     () => null,
   )
   await siteExecute(SITE, 'DELETE FROM products WHERE id = ?', [productId]).catch(() => null)
 
-  const left = await siteQuery<any>(SITE, "SELECT COUNT(*) AS n FROM pos_tables WHERE code LIKE 'T9%'")
+  const left = await siteQuery<any>(SITE, "SELECT COUNT(*) AS n FROM pos_tables WHERE code LIKE 'T9%'", [], await tabPurpose(SITE))
   ok('the test leaves no tables behind', Number(left[0]?.n) === 0, String(left[0]?.n))
 
   console.log(fails === 0 ? '\nAll table checks passed.' : `\n${fails} FAILURE(S)`)

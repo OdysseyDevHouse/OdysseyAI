@@ -28,6 +28,7 @@ import {
 import { listTables, seatTable } from '../src/lib/site/posTables'
 import { saveDraft, saveForLaterDocument } from '../src/lib/site/salesDocuments'
 import { toNum } from '../src/lib/decimals'
+import { tabPurpose } from '../src/lib/site/tabRouting'
 
 const SITE = 1
 const ACTOR = { userId: 1, userName: 'Floor test' }
@@ -42,20 +43,20 @@ async function main() {
 
   /* Sweep an earlier crashed run. Rooms first would orphan nothing (the FK is SET NULL)
      but the unique name would collide, which is the litter lesson from test-offline-sync. */
-  const oldRooms = await siteQuery<any>(SITE, "SELECT id FROM pos_floor_rooms WHERE name LIKE 'FLR%'")
+  const oldRooms = await siteQuery<any>(SITE, "SELECT id FROM pos_floor_rooms WHERE name LIKE 'FLR%'", [], await tabPurpose(SITE))
   for (const r of oldRooms) {
-    await siteExecute(SITE, 'UPDATE pos_tables SET room_id = NULL WHERE room_id = ?', [r.id])
-    await siteExecute(SITE, 'DELETE FROM pos_floor_features WHERE room_id = ?', [r.id])
-    await siteExecute(SITE, 'DELETE FROM pos_floor_rooms WHERE id = ?', [r.id])
+    await siteExecute(SITE, 'UPDATE pos_tables SET room_id = NULL WHERE room_id = ?', [r.id], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM pos_floor_features WHERE room_id = ?', [r.id], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM pos_floor_rooms WHERE id = ?', [r.id], await tabPurpose(SITE))
   }
-  const oldTables = await siteQuery<any>(SITE, "SELECT id, document_id FROM pos_tables WHERE code LIKE 'FLT%'")
+  const oldTables = await siteQuery<any>(SITE, "SELECT id, document_id FROM pos_tables WHERE code LIKE 'FLT%'", [], await tabPurpose(SITE))
   for (const t of oldTables) {
-    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [t.id])
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [t.id], await tabPurpose(SITE))
     if (t.document_id) {
-      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id])
-      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id])
+      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id], await tabPurpose(SITE))
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id], await tabPurpose(SITE))
     }
-    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [t.id])
+    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [t.id], await tabPurpose(SITE))
   }
   if (oldRooms.length || oldTables.length) {
     console.log(`      (swept ${oldRooms.length} room(s), ${oldTables.length} table(s))`)
@@ -89,13 +90,11 @@ async function main() {
   const t1 = await siteExecute(
     SITE,
     `INSERT INTO pos_tables (code, name, section, seats, sort_order, is_active) VALUES (?,?,?,4,1,1)`,
-    [`FLT1${stamp}`.slice(0, 16), 'Floor test 1', 'Test'],
-  )
+    [`FLT1${stamp}`.slice(0, 16), 'Floor test 1', 'Test'], await tabPurpose(SITE))
   const t2 = await siteExecute(
     SITE,
     `INSERT INTO pos_tables (code, name, section, seats, sort_order, is_active) VALUES (?,?,?,2,2,1)`,
-    [`FLT2${stamp}`.slice(0, 16), 'Floor test 2', 'Test'],
-  )
+    [`FLT2${stamp}`.slice(0, 16), 'Floor test 2', 'Test'], await tabPurpose(SITE))
   const tableA = t1.insertId
   const tableB = t2.insertId
 
@@ -209,9 +208,9 @@ async function main() {
         unitCostExcl: 10,
       },
     ],
-  } as never)
+  } as never, undefined, await tabPurpose(SITE))
   if (!draft.ok) throw new Error(draft.error)
-  await saveForLaterDocument(SITE, draft.id)
+  await saveForLaterDocument(SITE, draft.id, await tabPurpose(SITE))
   await seatTable(SITE, tableA, draft.id)
 
   const retired = await retireRoom(SITE, room.id)
@@ -231,8 +230,7 @@ async function main() {
   const stillThere = await siteQueryOne<any>(
     SITE,
     'SELECT status, total_incl FROM sales_documents WHERE id = ?',
-    [draft.id],
-  )
+    [draft.id], await tabPurpose(SITE))
   ok('  with its lines intact', stillThere?.status === 'saved' && toNum(stillThere?.total_incl) === 50)
 
   /* An unplaced table is exactly what the sectioned grid renders, which is what makes a
@@ -261,8 +259,7 @@ async function main() {
   const orphanFeatures = await siteQueryOne<any>(
     SITE,
     'SELECT COUNT(*) AS n FROM pos_floor_features WHERE room_id = ?',
-    [room.id],
-  )
+    [room.id], await tabPurpose(SITE))
   ok(
     '*** retiring a room takes its features with it ***',
     toNum(orphanFeatures?.n) === 0,
@@ -275,12 +272,12 @@ async function main() {
 
   /* ── Clean up ───────────────────────────────────────────────────────────── */
 
-  await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id IN (?,?)', [tableA, tableB])
-  await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [draft.id])
-  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [draft.id])
-  await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id IN (?,?)', [tableA, tableB])
-  await siteExecute(SITE, 'DELETE FROM pos_floor_features WHERE room_id = ?', [room.id])
-  await siteExecute(SITE, 'DELETE FROM pos_floor_rooms WHERE id = ?', [room.id])
+  await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id IN (?,?)', [tableA, tableB], await tabPurpose(SITE))
+  await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [draft.id], await tabPurpose(SITE))
+  await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [draft.id], await tabPurpose(SITE))
+  await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id IN (?,?)', [tableA, tableB], await tabPurpose(SITE))
+  await siteExecute(SITE, 'DELETE FROM pos_floor_features WHERE room_id = ?', [room.id], await tabPurpose(SITE))
+  await siteExecute(SITE, 'DELETE FROM pos_floor_rooms WHERE id = ?', [room.id], await tabPurpose(SITE))
 
   console.log(fails === 0 ? '\nAll floor plan checks passed.' : `\n${fails} FAILURE(S)`)
   process.exit(fails === 0 ? 0 : 1)

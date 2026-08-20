@@ -1,6 +1,13 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import {
+  siteQuery,
+  siteQueryOne,
+  siteExecute,
+  siteTransaction,
+  MASTER,
+  type SitePurpose,
+} from '../siteDb'
 import { round, toNum } from '../decimals'
 import { lineTotals, documentTotals, type LineTotals } from '../documentMath'
 import type { ProductTypeId } from '../productTypes'
@@ -218,6 +225,7 @@ function mapLineInstruction(r: Row): SalesLineInstruction {
 async function instructionsForLines(
   siteId: number,
   lineIds: number[],
+  purpose: SitePurpose = MASTER,
 ): Promise<Map<number, SalesLineInstruction[]>> {
   const map = new Map<number, SalesLineInstruction[]>()
   if (lineIds.length === 0) return map
@@ -228,6 +236,7 @@ async function instructionsForLines(
       WHERE line_id IN (${lineIds.map(() => '?').join(',')})
       ORDER BY line_id ASC, sort_order ASC, id ASC`,
     lineIds,
+    purpose,
   ).catch(() => [] as Row[])
 
   for (const row of rows) {
@@ -374,9 +383,33 @@ const SELECT_DOC = `SELECT * FROM sales_documents`
 
 /* ── Reads ───────────────────────────────────────────────────────────────── */
 
-export async function getDocument(siteId: number, id: number): Promise<SalesDocument | null> {
+/**
+ * One document, with its lines.
+ *
+ * ── THE `purpose` ARGUMENT, AND WHY IT IS NOT A MODULE-WIDE SWITCH ────────
+ *
+ * On a HYBRID site an open tab lives on the shop's own box, while every other
+ * document — quotes, orders, finalised invoices, anything the back office
+ * touches — stays in the cloud. Those are the same table in two databases, so
+ * the choice cannot be made per-module: this file is imported by 57 files, and
+ * routing all of it would send the whole sales system to a box holding twelve
+ * tables.
+ *
+ * So it is made per CALL, by the caller that knows what it is holding.
+ * `tableActions.ts` passes `await tabPurpose(siteId)` because a table's bill is
+ * a tab; everything else omits it and gets the cloud, exactly as before.
+ *
+ * Defaulting to the cloud is deliberate. A caller that forgets reads a document
+ * that is genuinely there — wrong, but not corrupt — whereas defaulting to the
+ * box would send every back-office read to a machine in a restaurant.
+ */
+export async function getDocument(
+  siteId: number,
+  id: number,
+  purpose: SitePurpose = MASTER,
+): Promise<SalesDocument | null> {
   const [docRow, lineRows] = await Promise.all([
-    siteQueryOne<Row>(siteId, `${SELECT_DOC} WHERE id = ? LIMIT 1`, [id]),
+    siteQueryOne<Row>(siteId, `${SELECT_DOC} WHERE id = ? LIMIT 1`, [id], purpose),
     siteQuery<Row>(
       siteId,
       // The rep's name is joined rather than snapshotted: unlike a product
@@ -387,6 +420,7 @@ export async function getDocument(siteId: number, id: number): Promise<SalesDocu
          LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
         WHERE l.document_id = ? ORDER BY l.line_number ASC, l.id ASC`,
       [id],
+      purpose,
     ),
   ])
   if (!docRow) return null
@@ -405,6 +439,7 @@ export async function getDocument(siteId: number, id: number): Promise<SalesDocu
   const instructions = await instructionsForLines(
     siteId,
     lineRows.map((r) => Number(r.id)),
+    purpose,
   )
 
   return mapDocument(
@@ -849,12 +884,16 @@ export async function saveDraft(
   actor: { userId: number; userName: string },
   input: DocumentInput,
   documentId?: number,
+  /* Where this document lives. See the note on getDocument: a table's bill goes
+     to the shop's box on a hybrid site, everything else to the cloud. One
+     purpose covers the whole write because it is a single transaction. */
+  purpose: SitePurpose = MASTER,
 ): Promise<SaveResult> {
   const invalid = validateDocument(input)
   if (invalid) return { ok: false, error: invalid }
 
   if (documentId) {
-    const existing = await getDocument(siteId, documentId)
+    const existing = await getDocument(siteId, documentId, purpose)
     if (!existing) return { ok: false, error: 'That document no longer exists.' }
     if (!isEditable(existing.status)) {
       return { ok: false, error: `A ${existing.status} document cannot be changed.` }
@@ -1032,16 +1071,25 @@ export async function saveDraft(
     }
 
     return { ok: true as const, id: id! }
-  })
+  }, purpose)
 }
 
 /** Saves a draft so the counter can serve someone else. Touches nothing else. */
-export async function saveForLaterDocument(siteId: number, id: number): Promise<SaveResult> {
-  const doc = await getDocument(siteId, id)
+export async function saveForLaterDocument(
+  siteId: number,
+  id: number,
+  purpose: SitePurpose = MASTER,
+): Promise<SaveResult> {
+  const doc = await getDocument(siteId, id, purpose)
   if (!doc) return { ok: false, error: 'That document no longer exists.' }
   if (!isEditable(doc.status)) return { ok: false, error: `A ${doc.status} sale cannot be saved.` }
 
-  await siteExecute(siteId, "UPDATE sales_documents SET status = 'saved' WHERE id = ?", [id])
+  await siteExecute(
+    siteId,
+    "UPDATE sales_documents SET status = 'saved' WHERE id = ?",
+    [id],
+    purpose,
+  )
   return { ok: true, id }
 }
 
@@ -1125,8 +1173,9 @@ export async function claimDocument(
   id: number,
   userId: number,
   terminalId: number | null,
+  purpose: SitePurpose = MASTER,
 ): Promise<SaveResult> {
-  const doc = await getDocument(siteId, id)
+  const doc = await getDocument(siteId, id, purpose)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
   /* See CLAIMABLE_STATUSES. This insisted on `saved`, which is right for a
      parked basket and refused every quote — they are never saved. */
@@ -1152,6 +1201,7 @@ export async function claimDocument(
                OR claimed_by = ?
                OR claimed_at < UTC_TIMESTAMP() - INTERVAL ? MINUTE)`,
       [userId, id, userId, CLAIM_LEASE_MINUTES],
+      purpose,
     )
     if (claimed.affectedRows === 0) return { ok: false, error: 'That sale has already been taken.' }
     return { ok: true, id }
@@ -1181,6 +1231,7 @@ export async function claimDocument(
                       OR claimed_by = ?
                       OR claimed_at < UTC_TIMESTAMP() - INTERVAL ? MINUTE)))`,
     [terminalId, userId, id, terminalId, userId, CLAIM_LEASE_MINUTES],
+    purpose,
   )
   if (claimed.affectedRows === 0) {
     return { ok: false, error: 'That sale is open on another till.' }
@@ -1198,6 +1249,7 @@ export async function claimDocument(
 export async function documentClaim(
   siteId: number,
   id: number,
+  purpose: SitePurpose = MASTER,
 ): Promise<DocumentClaim | null> {
   const row = await siteQueryOne<Row>(
     siteId,
@@ -1207,6 +1259,7 @@ export async function documentClaim(
        LEFT JOIN users u ON u.id = d.claimed_by
       WHERE d.id = ?`,
     [id],
+    purpose,
   )
   if (!row || (!row.claimed_terminal_id && !row.claimed_at)) return null
   return {
@@ -1285,8 +1338,12 @@ export async function overrideClaim(
  *
  * So the repair applies where it was aimed and nowhere else.
  */
-export async function releaseDocument(siteId: number, id: number): Promise<SaveResult> {
-  const doc = await getDocument(siteId, id)
+export async function releaseDocument(
+  siteId: number,
+  id: number,
+  purpose: SitePurpose = MASTER,
+): Promise<SaveResult> {
+  const doc = await getDocument(siteId, id, purpose)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
   /* Only a claimable document goes back on the shelf. A finalised or cancelled one has
      its own status for good reason, and a released claim must never resurrect it. */
@@ -1305,6 +1362,7 @@ export async function releaseDocument(siteId: number, id: number): Promise<SaveR
             claimed_terminal_id = NULL
       WHERE id = ?`,
     [id],
+    purpose,
   )
   return { ok: true, id }
 }
@@ -1364,8 +1422,12 @@ export async function discardDocument(siteId: number, id: number): Promise<Delet
  * stock and has taken money; reversing it is `voidDocument`, which writes the
  * counter-entries this function deliberately does not.
  */
-export async function cancelUnpostedDocument(siteId: number, id: number): Promise<SaveResult> {
-  const doc = await getDocument(siteId, id)
+export async function cancelUnpostedDocument(
+  siteId: number,
+  id: number,
+  purpose: SitePurpose = MASTER,
+): Promise<SaveResult> {
+  const doc = await getDocument(siteId, id, purpose)
   if (!doc) return { ok: false, error: 'That sale no longer exists.' }
   if (doc.status !== 'draft' && doc.status !== 'saved') {
     return { ok: false, error: `A ${doc.status} sale cannot be cancelled this way.` }
@@ -1381,6 +1443,7 @@ export async function cancelUnpostedDocument(siteId: number, id: number): Promis
             claimed_terminal_id = NULL
       WHERE id = ?`,
     [id],
+    purpose,
   )
   return { ok: true, id }
 }

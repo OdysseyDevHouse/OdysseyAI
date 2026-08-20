@@ -58,9 +58,35 @@ const migrationsDir = path.join(root, 'sql', 'box')
 const TAB_TABLES = [
   'pos_visit_types',
   'pos_floor_rooms',
+  /* Joined by the document reads a tab goes through, not by the floor:
+     getDocument LEFT JOINs sales_reps for the line stamp, and documentClaim
+     LEFT JOINs terminals and users to say WHO holds a bill — which is the
+     whole point of the claim on a floor with ten tills. All small (2, 5 and 4
+     rows on a live site) and cloud-mastered, so their rows are mirrored. */
+  'sales_reps',
+  'users',
+  'terminals',
   'sales_documents',
   'sales_document_lines',
+  /* The answers a waiter gave when the till asked its questions — "no onions",
+     "well done". getDocument reads them back with every line, and a recalled
+     tab without them would silently strip every modifier off the order and
+     reprice it. Its FKs to instruction_groups, instruction_options and products
+     are stripped like any other reach into the shop: the rows here snapshot the
+     names and prices, so nothing is lost by the targets being absent. */
+  'sales_document_line_instructions',
   'pos_tables',
+  /* Walls, doors and the rest of the floor plan. FK to pos_floor_rooms, which
+     is already here, so it brings nothing new with it — and posFloor reads it
+     alongside the rooms on every render of the plan. */
+  'pos_floor_features',
+  /* The trail a tab leaves. transferTableBill writes it INSIDE the routed
+     transaction (posSplit.ts), so without it every transfer on a hybrid site
+     fails — and it would fail after the pointer had already moved.
+     Shape only, never rows: the box records what happens on the box. The
+     shop's own 878 rows of history stay in the cloud where the back office
+     reads them. */
+  'document_audit',
 ]
 
 /**
@@ -76,7 +102,13 @@ const TAB_TABLES = [
  * owns while a service is running. Copying them down would overwrite open tabs
  * with the cloud's stale view of which tables are occupied.
  */
-const MIRRORED_TABLES = ['pos_visit_types', 'pos_floor_rooms']
+const MIRRORED_TABLES = [
+  'pos_visit_types',
+  'pos_floor_rooms',
+  'sales_reps',
+  'users',
+  'terminals',
+]
 
 const siteId = Number(process.argv[2])
 const probeOnly = process.argv.includes('--probe')

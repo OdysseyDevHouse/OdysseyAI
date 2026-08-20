@@ -5,6 +5,7 @@ import { round, toNum } from '../decimals'
 import { documentTotals, lineTotals } from '../documentMath'
 import { getDocument } from './salesDocuments'
 import type { Actor } from './activityLog'
+import { tabPurpose } from './tabRouting'
 
 /**
  * Splitting a bill.
@@ -295,7 +296,7 @@ export async function splitTableBill(
       fromDocumentId: kept.length === 0 ? null : sourceDocId,
       toDocumentId: destination.documentId,
     }
-  })
+  }, await tabPurpose(siteId))
 }
 
 /**
@@ -429,7 +430,7 @@ export async function splitBillOntoDocument(
       fromDocumentId: kept.length === 0 ? null : input.fromDocumentId,
       toDocumentId: destination.documentId,
     }
-  })
+  }, await tabPurpose(siteId))
 }
 
 /**
@@ -516,7 +517,7 @@ export async function transferTableBill(
     )
 
     return { ok: true as const, documentId: sourceDocId }
-  })
+  }, await tabPurpose(siteId))
 }
 
 /* ── Writing the two halves ──────────────────────────────────────────────── */
@@ -886,6 +887,7 @@ export async function billLinesForSplit(siteId: number, tableId: number) {
     siteId,
     `SELECT document_id FROM pos_tables WHERE id = ?`,
     [tableId],
+    await tabPurpose(siteId),
   )
   const documentId = table?.document_id === null ? null : Number(table?.document_id)
   if (!documentId) return null
@@ -901,7 +903,7 @@ export async function billLinesForSplit(siteId: number, tableId: number) {
  * waiter has it on screen (171), and the bill being split is by definition one of those.
  */
 export async function billLinesForSplitByDocument(siteId: number, documentId: number) {
-  const doc = await getDocument(siteId, documentId)
+  const doc = await getDocument(siteId, documentId, await tabPurpose(siteId))
   if (!doc || (doc.status !== 'saved' && doc.status !== 'draft')) return null
 
   return {

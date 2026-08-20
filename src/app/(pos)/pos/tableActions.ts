@@ -32,6 +32,7 @@ import {
   attributeTo,
 } from '@/lib/site/salesDocuments'
 import type { LineInput } from '@/lib/site/salesDocuments'
+import { tabPurpose } from '@/lib/site/tabRouting'
 
 /**
  * Tables, from the till.
@@ -98,24 +99,35 @@ export async function openTableAction(
     return { ok: false, error: 'Ring something up before seating the table.' }
   }
 
-  const draft = await saveDraft(siteId, actor, {
-    docType: 'invoice',
-    /* The table's own name, when the waiter has not attached a customer. It prints on
-       the bill and it is what a kitchen ticket is read by. */
-    customerName: input.customerName?.trim() || 'Table',
-    terminalId: input.terminalId ?? null,
-    terminalCode: input.terminalCode ?? null,
-    priceStructureId: input.priceStructureId ?? null,
-    /* Stamped like every counter line. Missing here until now, so every line on
-       every table bill carried no salesperson: commission fell back to whoever
-       captured the header, and staff cost — which requires the line stamp —
-       dropped restaurant sales entirely. */
-    lines: attributeTo(input.lines, actor.userId),
-  })
+  const draft = await saveDraft(
+    siteId,
+    actor,
+    {
+      docType: 'invoice',
+      /* The table's own name, when the waiter has not attached a customer. It prints on
+         the bill and it is what a kitchen ticket is read by. */
+      customerName: input.customerName?.trim() || 'Table',
+      terminalId: input.terminalId ?? null,
+      terminalCode: input.terminalCode ?? null,
+      priceStructureId: input.priceStructureId ?? null,
+      /* Stamped like every counter line. Missing here until now, so every line on
+         every table bill carried no salesperson: commission fell back to whoever
+         captured the header, and staff cost — which requires the line stamp —
+         dropped restaurant sales entirely. */
+      lines: attributeTo(input.lines, actor.userId),
+    },
+    /* No id: this is a new bill. */
+    undefined,
+    /* On a hybrid site the tab lives on the shop's own box. Passed here rather
+       than decided inside saveDraft, because saveDraft is also how a quote, an
+       order and a back-office invoice are written — and those stay in the
+       cloud. See getDocument's note on why this is per-call. */
+    await tabPurpose(siteId),
+  )
   if (!draft.ok) return { ok: false, error: draft.error }
 
   // Parked BEFORE the table points at it — see the note above.
-  const parked = await saveForLaterDocument(siteId, draft.id)
+  const parked = await saveForLaterDocument(siteId, draft.id, await tabPurpose(siteId))
   if (!parked.ok) return { ok: false, error: parked.error }
 
   const seated = await seatTable(siteId, tableId, draft.id)
@@ -172,7 +184,7 @@ export async function updateTableBillAction(
   if ('ok' in denied) return denied
   const { siteId, actor } = await withTillOperator(denied)
 
-  const existing = await getDocument(siteId, documentId)
+  const existing = await getDocument(siteId, documentId, await tabPurpose(siteId))
   if (!existing) return { ok: false, error: 'That bill no longer exists.' }
   /* A table's bill is `saved` for its whole life now that a claim lives in its own
      column (171). `draft` is still accepted because a till on the PREVIOUS build claims
@@ -198,13 +210,14 @@ export async function updateTableBillAction(
       lines: attributeTo(carryAttribution(input.lines, existing.lines), actor.userId),
     },
     documentId,
+    await tabPurpose(siteId),
   )
   if (!saved.ok) return { ok: false, error: saved.error }
 
   /* Back to `saved`. saveDraft leaves a document as it found it for an update, but the
      status is the thing `listTables` joins on — so this is belt-and-braces against a
      future change there quietly emptying the floor. */
-  await saveForLaterDocument(siteId, documentId)
+  await saveForLaterDocument(siteId, documentId, await tabPurpose(siteId))
 
   return { ok: true, tables: await listTables(siteId) }
 }
@@ -285,7 +298,7 @@ export async function reparkTableBillAction(documentId: number): Promise<void> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return
 
-  const doc = await getDocument(ctx.siteId, documentId)
+  const doc = await getDocument(ctx.siteId, documentId, await tabPurpose(ctx.siteId))
   /* Only ever an unposted bill going back to the shelf. A document that was finalised or
      cancelled while the waiter held it must keep that status — re-parking a paid invoice
      would put it back on the floor as an open bill and invite it to be paid twice.
@@ -295,7 +308,7 @@ export async function reparkTableBillAction(documentId: number): Promise<void> {
      alone and only sheds the claim — see it for why. */
   if (!doc || !(CLAIMABLE_STATUSES as readonly string[]).includes(doc.status)) return
 
-  await releaseDocument(ctx.siteId, documentId)
+  await releaseDocument(ctx.siteId, documentId, await tabPurpose(ctx.siteId))
 }
 
 /**
@@ -329,13 +342,13 @@ export async function voidTableBillAction(documentId: number): Promise<void> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return
 
-  const doc = await getDocument(ctx.siteId, documentId)
+  const doc = await getDocument(ctx.siteId, documentId, await tabPurpose(ctx.siteId))
   /* Only ever an unposted bill. A document finalised while the waiter held it is
      real money on the books, and cancelling it here would silently reverse a
      paid sale — that path is `voidSaleAction`, which asks for a manager. */
   if (!doc || (doc.status !== 'draft' && doc.status !== 'saved')) return
 
-  await cancelUnpostedDocument(ctx.siteId, documentId)
+  await cancelUnpostedDocument(ctx.siteId, documentId, await tabPurpose(ctx.siteId))
   /* The table is pointed at a document that is no longer an open bill, so it has
      to be let go explicitly — `listTables` joins on `status = 'saved'` and would
      now read the table as free anyway, but leaving the pointer behind strands the

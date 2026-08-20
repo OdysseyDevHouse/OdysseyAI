@@ -20,6 +20,7 @@ import { seatTable, listTables } from '../src/lib/site/posTables'
 import { billDataFor } from '../src/lib/billData'
 import { documentTotals, lineTotals } from '../src/lib/documentMath'
 import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
+import { tabPurpose } from '../src/lib/site/tabRouting'
 
 const SITE = 1
 const actor = { userId: 1, userName: 'Transfer Test' }
@@ -38,8 +39,7 @@ async function makeTable(code: string, isActive = 1): Promise<number> {
   const res = await siteExecute(
     SITE,
     `INSERT INTO pos_tables (code, is_active) VALUES (?, ?)`,
-    [code, isActive],
-  )
+    [code, isActive], await tabPurpose(SITE))
   tableIds.push(res.insertId)
   return res.insertId
 }
@@ -51,10 +51,10 @@ async function makeTab(tableId: number, amount: number): Promise<number> {
     lines: [
       { description: `Test dish ${stamp}`, qty: 2, unitPriceIncl: amount / 2, vatRatePct: 15 },
     ],
-  })
+  }, undefined, await tabPurpose(SITE))
   if (!draft.ok) throw new Error(`draft refused: ${draft.error}`)
   docIds.push(draft.id)
-  const parked = await saveForLaterDocument(SITE, draft.id)
+  const parked = await saveForLaterDocument(SITE, draft.id, await tabPurpose(SITE))
   if (!parked.ok) throw new Error(`park refused: ${parked.error}`)
   const seated = await seatTable(SITE, tableId, draft.id)
   if (!seated.ok) throw new Error(`seat refused: ${seated.error}`)
@@ -65,8 +65,7 @@ async function pointerOf(tableId: number): Promise<number | null> {
   const row = await siteQueryOne<{ document_id: unknown }>(
     SITE,
     'SELECT document_id FROM pos_tables WHERE id = ?',
-    [tableId],
-  )
+    [tableId], await tabPurpose(SITE))
   return row?.document_id === null ? null : Number(row?.document_id)
 }
 
@@ -79,7 +78,7 @@ async function main() {
   const closed = await makeTable(`TTX${stamp}`, 0)
 
   const doc = await makeTab(t1, 230)
-  const before = await getDocument(SITE, doc)
+  const before = await getDocument(SITE, doc, await tabPurpose(SITE))
 
   const moved = await transferTableBill(SITE, actor, { fromTableId: t1, toTableId: t2 })
   ok('the transfer succeeds', moved.ok, moved.ok ? '' : moved.error)
@@ -87,7 +86,7 @@ async function main() {
   ok('the source table is freed', (await pointerOf(t1)) === null)
   ok('the destination holds the bill', (await pointerOf(t2)) === doc)
 
-  const after = await getDocument(SITE, doc)
+  const after = await getDocument(SITE, doc, await tabPurpose(SITE))
   ok('*** the lines are byte-for-byte untouched ***',
       JSON.stringify(before?.lines) === JSON.stringify(after?.lines))
   ok('the totals are untouched', before?.totalIncl === after?.totalIncl)
@@ -96,8 +95,7 @@ async function main() {
   const audit = await siteQuery<{ action: string; detail: string }>(
     SITE,
     `SELECT action, detail FROM document_audit WHERE document_id = ? AND action = 'transferred'`,
-    [doc],
-  )
+    [doc], await tabPurpose(SITE))
   ok('*** the move left a trail ***', audit.length === 1, JSON.stringify(audit))
   ok('…that names both tables',
       audit[0]?.detail.includes(`TT1${stamp}`) && audit[0]?.detail.includes(`TT2${stamp}`))
@@ -121,7 +119,7 @@ async function main() {
 
   /* A SETTLED destination is free: cancel t3's bill (a test shortcut for "it was
      paid") and the stale pointer must not block the move. */
-  await siteExecute(SITE, `UPDATE sales_documents SET status = 'cancelled' WHERE id = ?`, [doc3])
+  await siteExecute(SITE, `UPDATE sales_documents SET status = 'cancelled' WHERE id = ?`, [doc3], await tabPurpose(SITE))
   const ontoSettled = await transferTableBill(SITE, actor, { fromTableId: t2, toTableId: t3 })
   ok('*** a stale pointer to a settled bill does not block the destination ***',
       ontoSettled.ok, ontoSettled.ok ? '' : ontoSettled.error)
@@ -136,7 +134,7 @@ async function main() {
 
   console.log('\n── The pro-forma bill matches the engine ───────────────────\n')
 
-  const billDoc = await getDocument(SITE, doc)
+  const billDoc = await getDocument(SITE, doc, await tabPurpose(SITE))
   if (!billDoc) throw new Error('bill document vanished')
   const bill = billDataFor(billDoc, { name: 'Test Shop', vatNumber: '4123456789' }, {
     printedAt: '2026-08-14 12:00',
@@ -164,13 +162,13 @@ async function main() {
   console.log('\n── Cleanup ────────────────────────────────────────────────\n')
 
   for (const id of tableIds) {
-    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [id])
-    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [id])
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [id], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [id], await tabPurpose(SITE))
   }
   for (const id of docIds) {
-    await siteExecute(SITE, 'DELETE FROM document_audit WHERE document_id = ?', [id])
-    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [id])
-    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id])
+    await siteExecute(SITE, 'DELETE FROM document_audit WHERE document_id = ?', [id], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [id], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id], await tabPurpose(SITE))
   }
   // Saved bills carry no document number, so no sequence was consumed.
   const leftTables = await siteQuery(SITE, 'SELECT id FROM pos_tables WHERE code LIKE ?', [

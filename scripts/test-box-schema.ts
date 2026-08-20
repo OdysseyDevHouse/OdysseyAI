@@ -36,12 +36,34 @@ const EXPECTED = [
   'box_lease',
   'box_migrations',
   'box_outbox',
+  /* The floor a waiter looks at: rooms, the furniture in them, and how a table
+     is being served. All read on every render of the plan. */
+  'pos_floor_features',
   'pos_floor_rooms',
   'pos_tables',
   'pos_visit_types',
   'sales_documents',
   'sales_document_lines',
+  /* The modifiers on a line — 'no onions'. Read back with every tab. */
+  'sales_document_line_instructions',
+  /* Joined by the document reads a tab goes through: the rep stamped on a line,
+     and who holds the claim on a bill. */
+  'sales_reps',
+  'terminals',
+  'users',
+  /* Written INSIDE the routed transaction when a tab moves table, so a hybrid
+     site's transfers fail without it — after the pointer has already moved. */
+  'document_audit',
 ]
+
+/**
+ * Lookups whose ROWS are copied down, not just their shape.
+ *
+ * document_audit is deliberately NOT here: the box records what happens on the
+ * box, and the shop's own history stays in the cloud where the back office
+ * reads it.
+ */
+const MIRRORED = ['pos_visit_types', 'pos_floor_rooms', 'sales_reps', 'users', 'terminals']
 
 const TAB_TABLES = ['sales_documents', 'sales_document_lines', 'pos_tables']
 
@@ -150,7 +172,7 @@ async function main() {
      uses the site's own credentials. */
   const { siteQueryOne } = await import('../src/lib/siteDb')
 
-  for (const t of ['pos_visit_types', 'pos_floor_rooms']) {
+  for (const t of MIRRORED) {
     const [[onBoxRow]] = await conn!.query<RowDataPacket[]>(
       `SELECT COUNT(*) n FROM \`${box!.database_name}\`.\`${t}\``,
     )

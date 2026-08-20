@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import { cleanShape, type TableShape } from './floorGeometry'
+import { tabPurpose } from './tabRouting'
 
 /**
  * The floor plan: rooms, where the tables stand in them, and the fixed furniture.
@@ -89,6 +90,8 @@ export async function listRooms(siteId: number, includeInactive = false): Promis
        FROM pos_floor_rooms
       ${includeInactive ? '' : 'WHERE is_active = 1'}
       ORDER BY sort_order, name`,
+    [],
+    await tabPurpose(siteId),
   )
   return rows.map(mapRoom)
 }
@@ -100,6 +103,8 @@ export async function listFeatures(siteId: number): Promise<FloorFeature[]> {
        FROM pos_floor_features f
        JOIN pos_floor_rooms r ON r.id = f.room_id AND r.is_active = 1
       ORDER BY f.id`,
+    [],
+    await tabPurpose(siteId),
   )
   return rows.map((r) => ({
     id: Number(r.id),
@@ -132,8 +137,7 @@ export async function createRoom(
       siteId,
       `INSERT INTO pos_floor_rooms (name, width, height, sort_order)
        VALUES (?,?,?, (SELECT COALESCE(MAX(r.sort_order), 0) + 1 FROM pos_floor_rooms r))`,
-      [name, (input.width ?? 100).toFixed(2), (input.height ?? 70).toFixed(2)],
-    )
+      [name, (input.width ?? 100).toFixed(2), (input.height ?? 70).toFixed(2)], await tabPurpose(siteId))
     return { ok: true, id: result.insertId }
   } catch (error) {
     /* Names the room, rather than asserting one exists somewhere. A bare "there is
@@ -161,8 +165,7 @@ export async function updateRoom(
     await siteExecute(
       siteId,
       `UPDATE pos_floor_rooms SET name = ?, width = ?, height = ? WHERE id = ?`,
-      [name, input.width.toFixed(2), input.height.toFixed(2), id],
-    )
+      [name, input.width.toFixed(2), input.height.toFixed(2), id], await tabPurpose(siteId))
     return { ok: true }
   } catch (error) {
     if (isDuplicateName(error)) return { ok: false, error: 'There is already a room by that name.' }
@@ -212,9 +215,8 @@ export async function retireRoom(siteId: number, id: number): Promise<SaveResult
   await siteExecute(
     siteId,
     `UPDATE pos_tables SET room_id = NULL, pos_x = NULL, pos_y = NULL WHERE room_id = ?`,
-    [id],
-  )
-  await siteExecute(siteId, `DELETE FROM pos_floor_rooms WHERE id = ?`, [id])
+    [id], await tabPurpose(siteId))
+  await siteExecute(siteId, `DELETE FROM pos_floor_rooms WHERE id = ?`, [id], await tabPurpose(siteId))
   return { ok: true }
 }
 
@@ -308,7 +310,7 @@ export async function savePlacements(
       )
     }
     return { ok: true }
-  })
+  }, await tabPurpose(siteId))
 }
 
 /* ── Features ────────────────────────────────────────────────────────────── */
@@ -345,6 +347,7 @@ export async function saveFeature(
         rotation,
         input.id,
       ],
+      await tabPurpose(siteId),
     )
     return { ok: true, id: input.id }
   }
@@ -363,12 +366,13 @@ export async function saveFeature(
       height.toFixed(2),
       rotation,
     ],
+    await tabPurpose(siteId),
   )
   return { ok: true, id: result.insertId }
 }
 
 export async function deleteFeature(siteId: number, id: number): Promise<SaveResult> {
-  await siteExecute(siteId, `DELETE FROM pos_floor_features WHERE id = ?`, [id])
+  await siteExecute(siteId, `DELETE FROM pos_floor_features WHERE id = ?`, [id], await tabPurpose(siteId))
   return { ok: true }
 }
 

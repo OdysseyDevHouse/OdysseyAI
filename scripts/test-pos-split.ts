@@ -13,6 +13,7 @@
  * would have to learn about.
  */
 import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
+import { tabPurpose } from '../src/lib/site/tabRouting'
 import {
   splitTableBill,
   splitBillOntoDocument,
@@ -37,14 +38,13 @@ const ok = (label: string, cond: boolean, extra = '') => {
 }
 
 const docTotal = async (id: number) =>
-  toNum((await siteQueryOne<any>(SITE, 'SELECT total_incl FROM sales_documents WHERE id = ?', [id]))?.total_incl)
+  toNum((await siteQueryOne<any>(SITE, 'SELECT total_incl FROM sales_documents WHERE id = ?', [id], await tabPurpose(SITE)))?.total_incl)
 
 const docLines = async (id: number) =>
   siteQuery<any>(
     SITE,
     'SELECT description, qty, unit_price_incl, line_total_incl, line_number FROM sales_document_lines WHERE document_id = ? ORDER BY line_number',
-    [id],
-  )
+    [id], await tabPurpose(SITE))
 
 async function main() {
   const stamp = Date.now().toString().slice(-8)
@@ -52,14 +52,14 @@ async function main() {
   /* Sweep scratch rows from a crashed earlier run — the lesson from
      test-offline-sync, where a leftover made every later run die before its first
      assertion. Tables first: they point at documents. */
-  const oldTables = await siteQuery<any>(SITE, "SELECT id, document_id FROM pos_tables WHERE code LIKE 'SPL%'")
+  const oldTables = await siteQuery<any>(SITE, "SELECT id, document_id FROM pos_tables WHERE code LIKE 'SPL%'", [], await tabPurpose(SITE))
   for (const t of oldTables) {
-    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [t.id])
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [t.id], await tabPurpose(SITE))
     if (t.document_id) {
-      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id])
-      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id])
+      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id], await tabPurpose(SITE))
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id], await tabPurpose(SITE))
     }
-    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [t.id])
+    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [t.id], await tabPurpose(SITE))
   }
   if (oldTables.length) console.log(`      (swept ${oldTables.length} table(s) from an earlier run)`)
 
@@ -85,13 +85,11 @@ async function main() {
   const t1 = await siteExecute(
     SITE,
     `INSERT INTO pos_tables (code, name, section, seats, sort_order, is_active) VALUES (?,?,?,4,1,1)`,
-    [`SPL1${stamp}`.slice(0, 20), 'Split source', 'Test'],
-  )
+    [`SPL1${stamp}`.slice(0, 20), 'Split source', 'Test'], await tabPurpose(SITE))
   const t2 = await siteExecute(
     SITE,
     `INSERT INTO pos_tables (code, name, section, seats, sort_order, is_active) VALUES (?,?,?,4,2,1)`,
-    [`SPL2${stamp}`.slice(0, 20), 'Split dest', 'Test'],
-  )
+    [`SPL2${stamp}`.slice(0, 20), 'Split dest', 'Test'], await tabPurpose(SITE))
   const sourceTable = t1.insertId
   const destTable = t2.insertId
 
@@ -113,9 +111,9 @@ async function main() {
         { productId: beer.insertId, description: 'Beer', qty: 3, unitPriceIncl: 30, vatRatePct: vatRate, unitCostExcl: 8 },
         { productId: steak.insertId, description: 'Steak', qty: 2, unitPriceIncl: 180, vatRatePct: vatRate, unitCostExcl: 40 },
       ],
-    } as never)
+    } as never, undefined, await tabPurpose(SITE))
     if (!draft.ok) throw new Error(`could not open a bill: ${draft.error}`)
-    const parked = await saveForLaterDocument(SITE, draft.id)
+    const parked = await saveForLaterDocument(SITE, draft.id, await tabPurpose(SITE))
     if (!parked.ok) throw new Error(`could not park the bill: ${parked.error}`)
     await seatTable(SITE, sourceTable, draft.id)
     return draft.id
@@ -170,8 +168,7 @@ async function main() {
   const destDoc = await siteQueryOne<any>(
     SITE,
     'SELECT status, doc_type, customer_name, price_structure_id FROM sales_documents WHERE id = ?',
-    [whole.toDocumentId],
-  )
+    [whole.toDocumentId], await tabPurpose(SITE))
   ok('the new bill is an ordinary saved invoice', destDoc?.status === 'saved' && destDoc?.doc_type === 'invoice')
   /* The header is COPIED, not rebuilt: a split half that lost its price structure would
      reprice at retail — a staff discount becoming full price halfway through a meal. */
@@ -179,8 +176,8 @@ async function main() {
 
   /* ── 3. A PART of a line moves — the request this feature exists for ─────── */
 
-  await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id IN (?,?)', [sourceTable, destTable])
-  await siteExecute(SITE, "UPDATE sales_documents SET status='cancelled' WHERE id IN (?,?)", [billId, whole.toDocumentId])
+  await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id IN (?,?)', [sourceTable, destTable], await tabPurpose(SITE))
+  await siteExecute(SITE, "UPDATE sales_documents SET status='cancelled' WHERE id IN (?,?)", [billId, whole.toDocumentId], await tabPurpose(SITE))
 
   const bill2 = await openBill()
   const s2 = await billLinesForSplit(SITE, sourceTable)
@@ -216,14 +213,13 @@ async function main() {
 
   /* Properly this time: everything left on the source. */
   const remaining = await billLinesForSplit(SITE, sourceTable)
-  await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [destTable])
-  await siteExecute(SITE, "UPDATE sales_documents SET status='cancelled' WHERE id = ?", [part.toDocumentId])
+  await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [destTable], await tabPurpose(SITE))
+  await siteExecute(SITE, "UPDATE sales_documents SET status='cancelled' WHERE id = ?", [part.toDocumentId], await tabPurpose(SITE))
 
   const t3 = await siteExecute(
     SITE,
     `INSERT INTO pos_tables (code, name, section, seats, sort_order, is_active) VALUES (?,?,?,4,3,1)`,
-    [`SPL3${stamp}`.slice(0, 20), 'Split dest 2', 'Test'],
-  )
+    [`SPL3${stamp}`.slice(0, 20), 'Split dest 2', 'Test'], await tabPurpose(SITE))
   const destTable2 = t3.insertId
 
   const moveAll = await splitTableBill(SITE, ACTOR, {
@@ -238,7 +234,7 @@ async function main() {
     ok('the source table is freed', moveAll.fromDocumentId === null)
     const after = await listTables(SITE)
     ok('and reads as free on the floor', after.find((t) => t.id === sourceTable)?.state === 'free')
-    const emptied = await siteQueryOne<any>(SITE, 'SELECT status FROM sales_documents WHERE id = ?', [bill2])
+    const emptied = await siteQueryOne<any>(SITE, 'SELECT status FROM sales_documents WHERE id = ?', [bill2], await tabPurpose(SITE))
     /* Cancelled, not left saved at zero: a zero-total saved sale is a thing every report
        would have to learn to ignore. */
     ok('the emptied bill is cancelled, not left at zero', emptied?.status === 'cancelled', emptied?.status)
@@ -272,8 +268,7 @@ async function main() {
   const t4 = await siteExecute(
     SITE,
     `INSERT INTO pos_tables (code, name, section, seats, sort_order, is_active) VALUES (?,?,?,4,4,1)`,
-    [`SPL4${stamp}`.slice(0, 20), 'Split occupied', 'Test'],
-  )
+    [`SPL4${stamp}`.slice(0, 20), 'Split occupied', 'Test'], await tabPurpose(SITE))
   const occupiedTable = t4.insertId
   const otherDraft = await saveDraft(SITE, ACTOR, {
     docType: 'invoice',
@@ -282,9 +277,9 @@ async function main() {
     lines: [
       { productId: beer.insertId, description: 'Beer', qty: 1, unitPriceIncl: 30, vatRatePct: vatRate, unitCostExcl: 8 },
     ],
-  } as never)
+  } as never, undefined, await tabPurpose(SITE))
   if (otherDraft.ok) {
-    await saveForLaterDocument(SITE, otherDraft.id)
+    await saveForLaterDocument(SITE, otherDraft.id, await tabPurpose(SITE))
     await seatTable(SITE, occupiedTable, otherDraft.id)
 
     const source = await billLinesForSplit(SITE, destTable2)
@@ -341,11 +336,11 @@ async function main() {
       )
     }
 
-    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [occupiedTable])
-    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [otherDraft.id])
-    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [otherDraft.id])
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [occupiedTable], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [otherDraft.id], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [otherDraft.id], await tabPurpose(SITE))
   }
-  await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [occupiedTable])
+  await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [occupiedTable], await tabPurpose(SITE))
 
   const nothing = await splitTableBill(SITE, ACTOR, {
     fromTableId: destTable2,
@@ -445,9 +440,9 @@ async function main() {
           ],
         },
       ],
-    } as never)
+    } as never, undefined, await tabPurpose(SITE))
     if (!draft.ok) throw new Error(`could not open the carry bill: ${draft.error}`)
-    const parked = await saveForLaterDocument(SITE, draft.id)
+    const parked = await saveForLaterDocument(SITE, draft.id, await tabPurpose(SITE))
     if (!parked.ok) throw new Error(`could not park the carry bill: ${parked.error}`)
     await seatTable(SITE, sourceTable, draft.id)
 
@@ -456,8 +451,7 @@ async function main() {
     await siteExecute(
       SITE,
       `UPDATE sales_document_lines SET kitchen_sent_qty = 2 WHERE document_id = ?`,
-      [draft.id],
-    )
+      [draft.id], await tabPurpose(SITE))
 
     const before = await billLinesForSplit(SITE, sourceTable)
     const beerLine2 = before!.lines.find((l) => l.description === 'Beer')!
@@ -475,14 +469,12 @@ async function main() {
         SITE,
         `SELECT id, qty, line_note, kitchen_sent_qty, ordered_at
            FROM sales_document_lines WHERE document_id = ?`,
-        [carried.toDocumentId],
-      )
+        [carried.toDocumentId], await tabPurpose(SITE))
       const keptRow = await siteQueryOne<any>(
         SITE,
         `SELECT id, qty, line_note, kitchen_sent_qty, ordered_at
            FROM sales_document_lines WHERE document_id = ?`,
-        [draft.id],
-      )
+        [draft.id], await tabPurpose(SITE))
 
       ok(
         '*** the allergy note travels with the moved line ***',
@@ -498,13 +490,11 @@ async function main() {
       const movedAnswers = await siteQuery<any>(
         SITE,
         `SELECT option_name, qty FROM sales_document_line_instructions WHERE line_id = ?`,
-        [movedRow.id],
-      )
+        [movedRow.id], await tabPurpose(SITE))
       const keptAnswers = await siteQuery<any>(
         SITE,
         `SELECT option_name, qty FROM sales_document_line_instructions WHERE line_id = ?`,
-        [keptRow.id],
-      )
+        [keptRow.id], await tabPurpose(SITE))
       ok(
         '*** the modifiers travel with the moved line ***',
         movedAnswers.length === 1 && movedAnswers[0].option_name === 'No onions',
@@ -545,14 +535,14 @@ async function main() {
 
       await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE document_id = ?', [
         carried.toDocumentId,
-      ])
-      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [carried.toDocumentId])
+      ], await tabPurpose(SITE))
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [carried.toDocumentId], await tabPurpose(SITE))
     }
 
     await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE document_id = ?', [
       draft.id,
-    ])
-    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [draft.id])
+    ], await tabPurpose(SITE))
+    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [draft.id], await tabPurpose(SITE))
   }
 
   /* ── Splitting the table the till is sitting IN ──────────────────────────
@@ -572,16 +562,16 @@ async function main() {
         { productId: beer.insertId, description: 'Beer', productType: 'normal', qty: 2, unitPriceIncl: 50, vatRatePct: vatRate, unitCostExcl: 8 },
         { productId: steak.insertId, description: 'Steak', productType: 'normal', qty: 1, unitPriceIncl: 200, vatRatePct: vatRate, unitCostExcl: 40 },
       ],
-    } as never)
+    } as never, undefined, await tabPurpose(SITE))
     if (!held.ok) throw new Error(`could not open the held bill: ${held.error}`)
-    await saveForLaterDocument(SITE, held.id)
+    await saveForLaterDocument(SITE, held.id, await tabPurpose(SITE))
     await seatTable(SITE, sourceTable, held.id)
 
     /* The waiter opens the table. This is what the till does on resume. */
     /* Terminal-owned since 177, so this is the till the waiter is standing at
        rather than the waiter themselves. */
     const TILL = 9101
-    const claim = await claimDocument(SITE, held.id, ACTOR.userId, TILL)
+    const claim = await claimDocument(SITE, held.id, ACTOR.userId, TILL, await tabPurpose(SITE))
     ok('a waiter can claim a table bill', claim.ok, claim.ok ? '' : claim.error)
 
     const whileHeld = (await listTables(SITE)).find((t) => t.id === sourceTable)
@@ -613,7 +603,7 @@ async function main() {
       `${keptSide?.totalIncl} + ${movedSide?.totalIncl}`,
     )
 
-    const keptDoc = await getDocument(SITE, held.id)
+    const keptDoc = await getDocument(SITE, held.id, await tabPurpose(SITE))
     ok(
       '*** the kept half is still SAVED, so the floor keeps showing it ***',
       keptDoc?.status === 'saved',
@@ -623,22 +613,22 @@ async function main() {
     /* The till re-reads the kept half straight after the split, or its stale basket
        would overwrite the document and undo the move. That is a SAME-USER re-claim,
        which must succeed or a waiter is locked out of their own table. */
-    const reread = await claimDocument(SITE, held.id, ACTOR.userId, TILL)
+    const reread = await claimDocument(SITE, held.id, ACTOR.userId, TILL, await tabPurpose(SITE))
     ok('*** the waiter can re-read the kept half ***', reread.ok, reread.ok ? '' : reread.error)
     const keptLines = (await billLinesForSplit(SITE, sourceTable))!.lines
     ok('  and it carries only what stayed', keptLines.length === 1, String(keptLines.length))
     ok('    2 × Beer', keptLines[0]?.description === 'Beer' && Number(keptLines[0]?.qty) === 2)
 
     for (const id of [sourceTable, destTable]) {
-      const t = await siteQueryOne<any>(SITE, 'SELECT document_id FROM pos_tables WHERE id = ?', [id])
-      await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [id])
+      const t = await siteQueryOne<any>(SITE, 'SELECT document_id FROM pos_tables WHERE id = ?', [id], await tabPurpose(SITE))
+      await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [id], await tabPurpose(SITE))
       if (t?.document_id) {
-        await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id])
-        await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id])
+        await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id], await tabPurpose(SITE))
+        await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id], await tabPurpose(SITE))
       }
     }
-    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [held.id]).catch(() => null)
-    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [held.id]).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [held.id], await tabPurpose(SITE)).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [held.id], await tabPurpose(SITE)).catch(() => null)
   }
 
   /* ── Splitting onto an open SALE, not a table ────────────────────────────
@@ -649,9 +639,9 @@ async function main() {
      behind the dialog. */
   {
     const mkBill = async (name: string, lines: unknown[]) => {
-      const d = await saveDraft(SITE, ACTOR, { docType: 'invoice', customerName: name, lines } as never)
+      const d = await saveDraft(SITE, ACTOR, { docType: 'invoice', customerName: name, lines } as never, undefined, await tabPurpose(SITE))
       if (!d.ok) throw new Error(`could not open ${name}: ${d.error}`)
-      await saveForLaterDocument(SITE, d.id)
+      await saveForLaterDocument(SITE, d.id, await tabPurpose(SITE))
       return d.id
     }
 
@@ -682,7 +672,7 @@ async function main() {
       `${await docTotal(tab)} + ${await docTotal(src)}`,
     )
     /* Appending must not MOVE the destination: a tab on no table stays on none. */
-    const tabTable = await siteQueryOne<any>(SITE, 'SELECT id FROM pos_tables WHERE document_id = ?', [tab])
+    const tabTable = await siteQueryOne<any>(SITE, 'SELECT id FROM pos_tables WHERE document_id = ?', [tab], await tabPurpose(SITE))
     ok('  and the tab is still on no table', !tabTable)
 
     /* Onto a brand new sale — the only destination on a floor with one open bill. */
@@ -695,13 +685,13 @@ async function main() {
     })
     ok('*** a bill can be split onto a NEW sale ***', ontoNew.ok, ontoNew.ok ? '' : (ontoNew as any).error)
     if (ontoNew.ok) {
-      const fresh = await getDocument(SITE, ontoNew.toDocumentId)
+      const fresh = await getDocument(SITE, ontoNew.toDocumentId, await tabPurpose(SITE))
       ok('  the new sale carries the name it was given', fresh?.customerName === 'Dave', String(fresh?.customerName))
       ok('  with one beer on it', Number(fresh?.totalIncl) === 50, String(fresh?.totalIncl))
       ok('  and it is saved, so the floor lists it', fresh?.status === 'saved', String(fresh?.status))
       ok('  the source kept the other beer', (await docTotal(src)) === 50, String(await docTotal(src)))
-      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [ontoNew.toDocumentId]).catch(() => null)
-      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [ontoNew.toDocumentId]).catch(() => null)
+      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [ontoNew.toDocumentId], await tabPurpose(SITE)).catch(() => null)
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [ontoNew.toDocumentId], await tabPurpose(SITE)).catch(() => null)
     }
 
     /* Splitting a bill onto ITSELF is a no-op that would double its lines. */
@@ -713,25 +703,25 @@ async function main() {
     ok('*** a bill cannot be split onto itself ***', !ontoSelf.ok, ontoSelf.ok ? '' : ontoSelf.error)
 
     for (const id of [src, tab]) {
-      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [id]).catch(() => null)
-      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id]).catch(() => null)
+      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [id], await tabPurpose(SITE)).catch(() => null)
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id], await tabPurpose(SITE)).catch(() => null)
     }
   }
 
   /* ── Clean up ───────────────────────────────────────────────────────────── */
 
   for (const id of [sourceTable, destTable, destTable2]) {
-    const t = await siteQueryOne<any>(SITE, 'SELECT document_id FROM pos_tables WHERE id = ?', [id])
-    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [id])
+    const t = await siteQueryOne<any>(SITE, 'SELECT document_id FROM pos_tables WHERE id = ?', [id], await tabPurpose(SITE))
+    await siteExecute(SITE, 'UPDATE pos_tables SET document_id = NULL WHERE id = ?', [id], await tabPurpose(SITE))
     if (t?.document_id) {
-      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id])
-      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id])
+      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [t.document_id], await tabPurpose(SITE))
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [t.document_id], await tabPurpose(SITE))
     }
-    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [id])
+    await siteExecute(SITE, 'DELETE FROM pos_tables WHERE id = ?', [id], await tabPurpose(SITE))
   }
   for (const id of [bill2, billId]) {
-    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [id]).catch(() => null)
-    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id]).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [id], await tabPurpose(SITE)).catch(() => null)
+    await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [id], await tabPurpose(SITE)).catch(() => null)
   }
 
   /*

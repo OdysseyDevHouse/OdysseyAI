@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import { cleanShape, type TableShape } from './floorGeometry'
+import { tabPurpose } from './tabRouting'
 
 /**
  * The floor: which tables exist, and which of them has a bill open.
@@ -183,6 +184,8 @@ export async function listTables(siteId: number): Promise<PosTable[]> {
        LEFT JOIN pos_visit_types vt ON vt.id = t.visit_type_id
       WHERE t.is_active = 1
       ORDER BY t.section, t.sort_order, t.code`,
+    [],
+    await tabPurpose(siteId),
   )
   return rows.map(mapTable)
 }
@@ -201,6 +204,7 @@ export async function getTable(siteId: number, id: number): Promise<PosTable | n
        LEFT JOIN pos_visit_types vt ON vt.id = t.visit_type_id
       WHERE t.id = ? LIMIT 1`,
     [id],
+    await tabPurpose(siteId),
   )
   return row ? mapTable(row) : null
 }
@@ -214,6 +218,7 @@ export async function tableForDocument(
     siteId,
     `SELECT id FROM pos_tables WHERE document_id = ? LIMIT 1`,
     [documentId],
+    await tabPurpose(siteId),
   )
   return row ? getTable(siteId, Number(row.id)) : null
 }
@@ -273,7 +278,9 @@ export async function seatTable(
       [documentId, tableId] as never,
     )
     return { ok: true }
-  })
+  },
+    await tabPurpose(siteId),
+  )
 }
 
 /**
@@ -288,6 +295,7 @@ export async function freeTable(siteId: number, tableId: number): Promise<SaveRe
     siteId,
     `UPDATE pos_tables SET document_id = NULL, bill_asked_at = NULL WHERE id = ?`,
     [tableId],
+    await tabPurpose(siteId),
   )
   return { ok: true }
 }
@@ -305,6 +313,7 @@ export async function freeTableForDocument(siteId: number, documentId: number): 
     siteId,
     `UPDATE pos_tables SET document_id = NULL, bill_asked_at = NULL WHERE document_id = ?`,
     [documentId],
+    await tabPurpose(siteId),
   ).catch(() => {
     /* Swallowed on purpose: this runs after a sale has been posted, and failing the
        sale because a table could not be released would undo real money to tidy up a
@@ -321,6 +330,7 @@ export async function markBillAsked(siteId: number, tableId: number): Promise<Sa
     `UPDATE pos_tables SET bill_asked_at = NOW()
       WHERE id = ? AND document_id IS NOT NULL AND bill_asked_at IS NULL`,
     [tableId],
+    await tabPurpose(siteId),
   )
   if (result.affectedRows === 0) {
     return { ok: false, error: 'That table has no bill open.' }
@@ -391,6 +401,7 @@ export async function createTable(
     siteId,
     `SELECT id FROM pos_tables WHERE code = ? LIMIT 1`,
     [code],
+    await tabPurpose(siteId),
   )
   if (clash) return { ok: false, error: `There is already a table "${code}".` }
 
@@ -422,6 +433,7 @@ export async function createTable(
       place ? place.height.toFixed(2) : '8.00',
       cleanShape(place?.shape),
     ],
+    await tabPurpose(siteId),
   )
   return { ok: true, id: result.insertId }
 }
@@ -439,6 +451,7 @@ export async function updateTable(
     siteId,
     `SELECT id FROM pos_tables WHERE code = ? AND id <> ? LIMIT 1`,
     [code, id],
+    await tabPurpose(siteId),
   )
   if (clash) return { ok: false, error: `There is already a table "${code}".` }
 
@@ -459,6 +472,7 @@ export async function updateTable(
       ...(setsVisit ? [input.visitTypeId] : []),
       id,
     ],
+    await tabPurpose(siteId),
   )
   if (result.affectedRows === 0) return { ok: false, error: 'That table no longer exists.' }
   return { ok: true }
@@ -478,6 +492,8 @@ export async function deactivateTable(siteId: number, id: number): Promise<SaveR
     return { ok: false, error: 'Settle or clear the bill on that table first.' }
   }
 
-  await siteExecute(siteId, `UPDATE pos_tables SET is_active = 0 WHERE id = ?`, [id])
+  await siteExecute(siteId, `UPDATE pos_tables SET is_active = 0 WHERE id = ?`, [id],
+  await tabPurpose(siteId),
+)
   return { ok: true }
 }
