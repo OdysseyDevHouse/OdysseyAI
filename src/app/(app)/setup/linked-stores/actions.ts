@@ -10,6 +10,7 @@ import {
   setMemberSharing,
   setGroupOnlineMode,
   setGroupLegalEntity,
+  setGroupPrimary,
 } from '@/lib/storeGroups'
 import { setBranchPin, syncBranchPin } from '@/lib/control/storeBranches'
 
@@ -104,6 +105,35 @@ export async function updateSharingAction(
   // The "store must be empty" rule, the same-server check and the "choose a
   // primary first" rule can only be judged server-side, so a refusal comes back
   // as a message rather than being silently ignored.
+  if (!result.ok) return { error: result.error }
+
+  revalidatePath('/setup/linked-stores')
+  return { error: null }
+}
+
+/**
+ * Moves head office to another store in the group.
+ *
+ * The preconditions live in setGroupPrimary, not here — this action only
+ * establishes who is asking.
+ */
+export async function setPrimaryAction(
+  _prev: LinkFormState,
+  form: FormData,
+): Promise<LinkFormState> {
+  const ctx = await actorForModule('multi_branch', 'setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  const group = await groupForSite(siteId)
+  if (!group) return { error: 'Link a store first — there is no group to configure.' }
+
+  const targetSiteId = Number(form.get('primarySiteId'))
+  if (!Number.isFinite(targetSiteId) || targetSiteId <= 0) {
+    return { error: 'Choose which store is head office.' }
+  }
+
+  const result = await setGroupPrimary(group.id, targetSiteId)
   if (!result.ok) return { error: result.error }
 
   revalidatePath('/setup/linked-stores')

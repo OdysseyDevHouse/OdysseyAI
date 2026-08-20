@@ -16,6 +16,7 @@ import {
 import type { GroupMember, StoreContents } from '@/lib/storeGroups'
 import StoreCard from './StoreCard'
 import LegalEntityCard from './LegalEntityCard'
+import HeadOfficeCard from './HeadOfficeCard'
 import GroupStorefront, { type BranchRow } from './GroupStorefront'
 import { linkStoreAction, type LinkFormState } from './actions'
 
@@ -107,6 +108,13 @@ export default function LinkedStoresSetup({
           switches — the answer has to come first on the page as well as in the
           rules. Only shown once a group exists. */}
       {members.length > 0 && <LegalEntityCard legalEntity={legalEntity} />}
+
+      {/* After the entity question and before the store cards: it is the second
+          thing that has to be settled, and the third — the sharing switches —
+          depends on both. */}
+      {members.length > 0 && (
+        <HeadOfficeCard members={members} primarySiteId={primarySiteId} />
+      )}
 
       {/* Every store in the group, including this one — its own settings decide
           what it contributes, so it needs to be visible and editable too. */}

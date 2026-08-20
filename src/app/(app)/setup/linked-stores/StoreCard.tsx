@@ -129,6 +129,14 @@ export default function StoreCard({
             This store
           </Badge>
         )}
+        {/* Distinct from "This store": the one being administered, and the one
+            whose database holds the group's shared files, are different
+            questions and are often different shops. */}
+        {ownsSharedFiles && (
+          <Badge tone="success" className="ml-2">
+            Head office
+          </Badge>
+        )}
         {!member.hasDatabase && (
           <Badge tone="danger" className="ml-2">
             No database

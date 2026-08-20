@@ -519,6 +519,59 @@ export async function setGroupOnlineMode(
 }
 
 /**
+ * Names which store is head office.
+ *
+ * ── WHAT HEAD OFFICE ACTUALLY DOES ───────────────────────────────────────
+ *
+ * It is not a label. The primary's own database HOLDS the shared customer and
+ * supplier files, so every other store in the group reads and writes them over
+ * there — see customerOwnerSite(). It is also the shop whose catalogue the
+ * group storefront serves, and the store a shared product is edited from.
+ *
+ * ── WHY MOVING IT IS REFUSED WHILE FILES ARE SHARED ──────────────────────
+ *
+ * Changing this column does not move any DATA. Point it at another store while
+ * a group shares its customer file and every branch immediately starts reading
+ * a database that does not hold the customers — their whole debtors book
+ * appears to vanish, while it sits untouched in the old primary.
+ *
+ * There is no safe automatic answer to that, because moving the file is a
+ * merge: the new primary may hold customers of its own. So the sharing
+ * switches come off first, deliberately, which is also the point at which
+ * somebody has to decide where each branch's book is coming from.
+ */
+export async function setGroupPrimary(
+  groupId: number,
+  siteId: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const members = await membersOfGroup(groupId)
+
+  const target = members.find((m) => m.siteId === siteId)
+  if (!target) return { ok: false, error: 'That store is not in this group.' }
+  if (!target.hasDatabase) {
+    return {
+      ok: false,
+      error: `${target.displayName} has no database, so it cannot hold the group’s files.`,
+    }
+  }
+
+  const sharing = members.filter((m) => m.sharesCustomers || m.sharesSuppliers)
+  if (sharing.length > 0) {
+    return {
+      ok: false,
+      error:
+        `${sharing.length} store(s) are sharing a customer or supplier file, which ` +
+        'lives in the current head office’s database. Switch that sharing off ' +
+        'before moving head office, or those stores would be reading a database ' +
+        'that no longer holds their customers.',
+    }
+  }
+
+  await execute('UPDATE cp2_store_groups SET primary_site_id = ? WHERE id = ?', [siteId, groupId])
+  return { ok: true }
+}
+
+/**
  * Records whether the group's stores are one company or several.
  *
  * ── WHY CHANGING TO 'several' IS REFUSED WHILE FILES ARE SHARED ──────────
