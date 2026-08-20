@@ -16,13 +16,14 @@
  *   npm run test:shared-customer-queries
  */
 import { execute, query } from '../src/lib/db'
-import { siteQuery, siteExecute } from '../src/lib/siteDb'
+import { siteQuery, siteExecute, invalidateSitePool } from '../src/lib/siteDb'
 import { customerDbPrefix, customerQuery } from '../src/lib/site/customerDb'
 import { groupForSite, membersOfGroup } from '../src/lib/storeGroups'
 import { entitlementsForSite, has as hasModule } from '../src/lib/control/modules'
 import { listLaybys } from '../src/lib/site/laybys'
 import { listCustomers } from '../src/lib/site/customers'
 import { runBuilderSpec } from '../src/lib/reportBuilder/run'
+import { creditRefusalForTest } from '../src/lib/site/salesPosting'
 import { reconcileControlAccounts } from '../src/lib/site/chartOfAccounts'
 import type { RowDataPacket } from 'mysql2/promise'
 
@@ -246,6 +247,78 @@ async function main() {
         )
       }
     }
+    /* ── When the owner cannot be reached ─────────────────────────────── */
+
+    // A state a single store never had: this till is perfectly online, and
+    // ANOTHER machine's database is down. The shop already has a settled answer
+    // for "cannot verify the balance" — the offline account-sales setting — and
+    // this must reuse it rather than invent a third behaviour or throw a raw
+    // connection error into the middle of a sale.
+    console.log('\n— The owner is unreachable —')
+
+    const [dbRow] = await query<RowDataPacket & { server_host: string }>(
+      `SELECT server_host FROM cp2_site_databases
+        WHERE site_id = ? AND purpose = 'master'`,
+      [primary],
+    )
+    const realHost = dbRow?.server_host
+    if (realHost) {
+      try {
+        // TEST-NET-1 (RFC 5737): guaranteed unroutable, so this is a genuine
+        // connection failure rather than a wrong password.
+        await execute(
+          `UPDATE cp2_site_databases SET server_host = '192.0.2.1'
+            WHERE site_id = ? AND purpose = 'master'`,
+          [primary],
+        )
+        invalidateSitePool(primary, 'master')
+
+        for (const allow of ['0', '1'] as const) {
+          await siteExecute(
+            branch,
+            `INSERT INTO settings (setting_key, setting_value) VALUES ('pos_offline_account_sales', ?)
+             ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+            [allow],
+          )
+          const started = Date.now()
+          const refusal = await creditRefusalForTest(branch, ownerCustomer?.id ?? 1, 100, '2026-08-20')
+          const took = Date.now() - started
+
+          if (allow === '0') {
+            ok(
+              'with account sales off, an unreachable owner refuses and says why',
+              refusal !== null && refusal.includes('cannot be reached'),
+              refusal ?? 'it was allowed',
+            )
+          } else {
+            ok(
+              'with account sales on, it sells anyway — the owner’s own decision',
+              refusal === null,
+              refusal ?? '',
+            )
+          }
+          // A till cannot wait on a dead machine. Without an explicit
+          // connectTimeout the driver took the OS default — measured at ~10s,
+          // which is an outage at a counter with a queue.
+          ok(
+            `  and answers in under 6s (${took}ms)`,
+            took < 6000,
+            took < 6000 ? '' : 'the connect timeout is not being applied',
+          )
+        }
+      } finally {
+        await execute(
+          `UPDATE cp2_site_databases SET server_host = ? WHERE site_id = ? AND purpose = 'master'`,
+          [realHost, primary],
+        )
+        invalidateSitePool(primary, 'master')
+        await siteExecute(
+          branch,
+          `DELETE FROM settings WHERE setting_key = 'pos_offline_account_sales'`,
+        )
+      }
+    }
+
     /* ── The debtors control account ──────────────────────────────────── */
 
     // A shared customer file has ONE balance for every branch, so it can only

@@ -24,7 +24,7 @@ import { writeTips } from './tips'
    importing it from here keeps the dependency pointing at the shared arithmetic that the
    tender pad also runs. */
 import { planTips } from '../tipMath'
-import { getNumericSetting } from './settings'
+import { getNumericSetting, getSettings } from './settings'
 import { today } from './ledger'
 import { guardPosting } from './periodLocks'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
@@ -1406,15 +1406,39 @@ async function creditRefusal(
   amount: number,
   documentDate: string,
 ): Promise<string | null> {
-  // The customer may live in the group's primary store rather than here — see
-  // customerOwnerSite(). This is the credit check, so reading the wrong
-  // database would authorise credit against a balance that is not the real one.
-  const row = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
-    (await customerOwnerSite(siteId)).siteId,
-    `SELECT name, status, account_type, credit_limit, daily_limit, monthly_limit, balance
-       FROM customers WHERE id = ? LIMIT 1`,
-    [customerId],
-  )
+  /*
+   * ── WHEN THE SHARED CUSTOMER FILE CANNOT BE REACHED ──────────────────────
+   *
+   * The customer may live in the group's primary store rather than here — see
+   * customerOwnerSite(). This is the credit check, so reading the wrong
+   * database would authorise credit against a balance that is not the real one.
+   *
+   * But the owner is another machine's database, and it can be down while this
+   * till is perfectly online. That is a state a single store never had, and the
+   * WRONG thing to invent a third behaviour for: the shop already has a settled
+   * answer for "cannot check the balance right now", and it is the offline
+   * account-sales setting the owner configured deliberately.
+   *
+   *   OFF (the default)  refuse the account sale, saying why. Cash and card are
+   *                      untouched, so the shop keeps trading.
+   *   ON                 sell on account anyway. Exactly what an offline till
+   *                      does — see offlineCapability.ts, which spells out what
+   *                      the owner accepted when they switched it on.
+   *
+   * Only a CONNECTION failure lands here. A customer that does not exist, or a
+   * query that is wrong, still surfaces as itself.
+   */
+  let row: (RowDataPacket & Record<string, unknown>) | null
+  try {
+    row = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+      (await customerOwnerSite(siteId)).siteId,
+      `SELECT name, status, account_type, credit_limit, daily_limit, monthly_limit, balance
+         FROM customers WHERE id = ? LIMIT 1`,
+      [customerId],
+    )
+  } catch {
+    return sharedFileUnreachableRefusal(siteId)
+  }
   if (!row) return 'That customer no longer exists.'
 
   const account = {
@@ -1439,6 +1463,48 @@ async function creditRefusal(
 
   return headroomRefusal(account, amount, spend)
 }
+
+/**
+ * What to do when the group's customer file cannot be read.
+ *
+ * Returns a refusal, or null to let the sale through unchecked.
+ *
+ * ── WHY THIS REUSES THE OFFLINE SETTING ──────────────────────────────────
+ *
+ * The question is identical to the one an offline till faces: may this shop
+ * sell on account without being able to verify the balance? A shop that
+ * answered it once should not be asked again in different words because the
+ * cause happens to be a sibling store's database rather than its own network.
+ *
+ * The refusal names the real cause rather than saying "offline", because the
+ * till is not offline — every other tender still works — and a cashier told the
+ * wrong thing will go looking for the wrong problem.
+ *
+ * Never throws. If even the SETTING cannot be read, the answer is the safe one:
+ * refuse the credit, keep taking cash.
+ */
+async function sharedFileUnreachableRefusal(siteId: number): Promise<string | null> {
+  try {
+    const settings = await getSettings(siteId, ['pos_offline_account_sales'])
+    if (settings.pos_offline_account_sales === '1') return null
+  } catch {
+    // Fall through to the refusal.
+  }
+  return (
+    'The shared customer file cannot be reached, so this account’s balance ' +
+    'cannot be checked. Take cash or card, or ask an owner to allow account ' +
+    'sales when the balance cannot be verified.'
+  )
+}
+
+/**
+ * creditRefusal, exposed for scripts/test-shared-customer-queries.ts.
+ *
+ * The unreachable-owner path can only be exercised by actually breaking the
+ * connection, and a test that reached in through a private function would be
+ * testing a copy of the logic instead of the real one.
+ */
+export const creditRefusalForTest = creditRefusal
 
 /* ── Void ────────────────────────────────────────────────────────────────── */
 

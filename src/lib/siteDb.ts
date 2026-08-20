@@ -161,6 +161,22 @@ export async function sitePool(siteId: number, purpose: SitePurpose): Promise<Po
     database: row.database_name,
     connectionLimit: Number(process.env.SITE_DB_CONNECTION_LIMIT || 5),
     waitForConnections: true,
+    /*
+     * How long to wait for a database that is not answering.
+     *
+     * Without this the driver takes the OS default — measured at ~10 seconds on
+     * an unroutable host. That was survivable while every site only ever opened
+     * its OWN database, which is either up or the whole request is doomed
+     * anyway. It is not survivable now: a store group may share one customer
+     * file, so a till on a working machine can be waiting on a SIBLING store's
+     * database, and ten seconds at a counter with a queue is an outage.
+     *
+     * Four seconds is long enough to ride out a blip on a local network and
+     * short enough that the cashier gets an answer — "cannot check the balance,
+     * take cash" — rather than a frozen screen. See creditRefusal in
+     * salesPosting.ts, which turns the failure into that sentence.
+     */
+    connectTimeout: Number(process.env.SITE_DB_CONNECT_TIMEOUT_MS || 4000),
     charset: 'utf8mb4_unicode_ci',
     timezone: 'Z',
     decimalNumbers: false,
