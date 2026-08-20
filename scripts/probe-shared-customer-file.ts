@@ -204,15 +204,24 @@ async function main() {
       console.log('  Connected as:', asUser)
 
       const privileged = /^root@/.test(asUser)
+
+      // How many DISTINCT users the sites connect as. One shared user is the
+      // deployment model here, and it is what makes the cross-database read
+      // safe to rely on: there is no per-site user that could lack the grant.
+      const users = new Set(dbs.map((d) => d.db_username ?? '(none)'))
+      console.log(`  Distinct SQL users across all sites: ${users.size} — ${[...users].join(', ')}`)
+
       console.log(
-        privileged
-          ? '\n  ⚠ It worked, but this connection is ROOT — which can read every\n' +
-              '    schema by definition. That proves MariaDB allows the join, NOT that\n' +
-              '    a production per-site user would be allowed to run it.\n\n' +
-              '    Production sites must grant each site user SELECT on the primary\n' +
-              "    store's schema. Add it to the switch's preconditions."
-          : '\n  ✓ And this is a per-site user, not root — so the grant genuinely\n' +
-              '    carries across schemas in this deployment.',
+        users.size === 1
+          ? '\n  ✓ ONE SQL user for every site. A connection opened for any site can\n' +
+              "    read any other site's schema, because it is the same account either\n" +
+              '    way. The grant question does not arise in this deployment.'
+          : privileged
+            ? '\n  ⚠ It worked, but this connection is ROOT — which can read every\n' +
+                '    schema by definition, and the sites do NOT all share one user.\n' +
+                '    Grant each site user SELECT on the primary store\'s schema.'
+            : '\n  ⚠ Several distinct site users. Each needs SELECT on the primary\n' +
+                "    store's schema before sharing is switched on.",
       )
     } catch (e) {
       console.log(
