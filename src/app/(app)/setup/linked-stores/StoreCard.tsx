@@ -193,6 +193,13 @@ export default function StoreCard({
               <>
                 <input type="hidden" name="sharesProducts" value="on" />
                 <input type="hidden" name="sharesDepartments" value="on" />
+                {/* The price flags are not shown here but must still be POSTED:
+                    the action reads an absent field as "off", so leaving them
+                    out would silently switch off the default that new products
+                    created at head office start from. Carried through
+                    untouched. */}
+                {member.sharesSelling && <input type="hidden" name="sharesSelling" value="on" />}
+                {member.sharesCost && <input type="hidden" name="sharesCost" value="on" />}
                 <p className="text-sm text-muted">
                   Products and departments created here are offered to the branches.
                   Each branch chooses whether to use them, on its own card below.
@@ -216,24 +223,39 @@ export default function StoreCard({
                 />
               </>
             )}
-            <SharingSwitch
-              name="sharesSelling"
-              label="One selling price for the group"
-              hint="On: every store sells at the same price. Off: each store keeps its own selling price for the same product."
-              defaultChecked={member.sharesSelling}
-              disabled={blocked}
-            />
-            <SharingSwitch
-              name="sharesCost"
-              label="One cost price for the group"
-              hint="On: one cost across the group. Off: each store keeps its own cost — what it actually pays its supplier."
-              defaultChecked={member.sharesCost}
-              disabled={blocked}
-            />
-            <p className="text-xs text-muted">
-              The two price switches are the default for new products. Any product
-              can be set differently on its own screen.
-            </p>
+            {/* ── PRICE IS THE RECEIVING STORE'S DECISION ───────────────────
+                Only a BRANCH is asked. That is not a UI preference — it is what
+                the fan-out already does: applyToStore reads sharesCost and
+                sharesSelling from the TARGET store, so each branch decides for
+                itself whether it takes head office's figure or keeps its own.
+                Head office's own flags are never consulted when a price travels.
+
+                Leaving them on head office's card implied it could push a price
+                down, or refuse to share one, and it can do neither. Its only
+                real effect was as a default for products CREATED there, which
+                is invisible from a switch labelled "one price for the group". */}
+            {!ownsSharedFiles && (
+              <>
+                <SharingSwitch
+                  name="sharesSelling"
+                  label="Use head office’s selling price"
+                  hint="On: this store sells at head office’s price. Off: this store sets its own selling price for the same product."
+                  defaultChecked={member.sharesSelling}
+                  disabled={blocked}
+                />
+                <SharingSwitch
+                  name="sharesCost"
+                  label="Use head office’s cost price"
+                  hint="On: this store takes head office’s cost. Off: this store keeps its own — what it actually pays its supplier."
+                  defaultChecked={member.sharesCost}
+                  disabled={blocked}
+                />
+                <p className="text-xs text-muted">
+                  These two are the default for new products. Any product can be set
+                  differently on its own screen.
+                </p>
+              </>
+            )}
           </div>
 
           {/* ── HEAD OFFICE HAS NOTHING TO SWITCH ON ────────────────────────
