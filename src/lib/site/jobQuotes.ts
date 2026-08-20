@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 import { lineTotals } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
@@ -188,6 +189,7 @@ export async function quoteJob(
   jobId: number,
   options: { validUntil?: string | null; notes?: string | null } = {},
 ): Promise<QuoteJobResult> {
+  const cdb = await customerDbPrefix(siteId)
   const job = await siteQueryOne<Row>(
     siteId,
     `SELECT j.id, j.document_number, j.status, j.title, j.customer_id, j.customer_code,
@@ -195,7 +197,7 @@ export async function quoteJob(
             c.vat_number AS customer_vat_no,
             c.address_line1, c.address_line2, c.city, c.postal_code
        FROM job_cards j
-       LEFT JOIN customers c ON c.id = j.customer_id
+       LEFT JOIN ${cdb}customers c ON c.id = j.customer_id
       WHERE j.id = ?`,
     [jobId],
   )

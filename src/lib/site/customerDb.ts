@@ -178,6 +178,32 @@ export async function customerDbPrefix(siteId: number): Promise<string> {
   return `\`${db.databaseName}\`.`
 }
 
+/**
+ * The prefix that names the CALLER's own database, for a query that runs
+ * against the customer owner but has to reach back to a branch table.
+ *
+ * The mirror of customerDbPrefix, and needed for the same reason in reverse.
+ * Loyalty is the case: loyalty_wallet and loyalty_vouchers move WITH the
+ * customer, but they join `tender_types` and `products`, which stay in each
+ * branch. Run on the owner without this, those joins would read the OWNER's
+ * tender types — so a wallet top-up taken at branch 7 would be labelled with
+ * whatever tender happens to share that id at the primary.
+ *
+ * Empty when the caller owns its own customers, so nothing changes for a
+ * single store.
+ */
+export async function branchDbPrefix(siteId: number): Promise<string> {
+  const owner = await customerOwnerSite(siteId)
+  if (owner.siteId === siteId) return ''
+
+  const db = await getSiteDatabase(siteId, MASTER)
+  if (!db) throw new Error(`Site ${siteId} has no active database.`)
+  if (!SAFE_DB_NAME.test(db.databaseName)) {
+    throw new Error(`Refusing to build SQL with the database name "${db.databaseName}".`)
+  }
+  return `\`${db.databaseName}\`.`
+}
+
 /** The same, for the creditors book. */
 export async function supplierDbPrefix(siteId: number): Promise<string> {
   const owner = await supplierOwnerSite(siteId)

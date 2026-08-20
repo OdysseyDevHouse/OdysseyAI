@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerQueryOne } from './customerDb'
 import { logActivity, type Actor } from './activityLog'
 import { getSetting } from './settings'
 import { saveJobCard } from './jobCards'
@@ -345,7 +346,7 @@ export async function acceptRequest(
     return { ok: false, error: 'Choose which customer this is for.' }
   }
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     `SELECT id, name FROM customers WHERE id = ?`,
     [customerId],

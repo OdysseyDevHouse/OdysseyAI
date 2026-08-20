@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { getSettings } from './settings'
 import { holidayDatesFor } from './holidays'
 import { type Actor } from './activityLog'
@@ -138,13 +139,14 @@ export async function listSlaPolicies(
    * Tolerant of a site without 164 — the catch falls back to the query this
    * function has always run.
    */
+  const cdb = await customerDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT p.id, p.priority, p.name, p.respond_minutes, p.resolve_minutes, p.is_active, p.note,
             p.customer_id, p.escalate_after_minutes, p.escalate_to_user_id,
             c.name AS customer_name
        FROM job_sla_policies p
-       LEFT JOIN customers c ON c.id = p.customer_id
+       LEFT JOIN ${cdb}customers c ON c.id = p.customer_id
       ${includeInactive ? '' : 'WHERE p.is_active = 1'}
       ORDER BY CASE WHEN p.customer_id IS NULL THEN 0 ELSE 1 END,
                c.name,

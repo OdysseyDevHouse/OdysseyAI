@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { customerDbPrefix } from './customerDb'
 import { logActivity, type Actor } from './activityLog'
 import { getSetting } from './settings'
 import { send, isConfigured } from '../mail'
@@ -150,12 +151,14 @@ export async function requestFeedback(
   try {
     if (!(await feedbackEnabled(siteId))) return { sent: false, skipped: 'disabled' }
 
+    const cdb = await customerDbPrefix(siteId)
+
     const job = await siteQueryOne<Row>(
       siteId,
       `SELECT j.id, j.document_number, j.title, j.customer_id, j.customer_name,
               j.customer_email, c.email AS account_email
          FROM job_cards j
-         LEFT JOIN customers c ON c.id = j.customer_id
+         LEFT JOIN ${cdb}customers c ON c.id = j.customer_id
         WHERE j.id = ?`,
       [jobId],
     )
