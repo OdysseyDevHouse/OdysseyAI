@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { postTransaction } from './customerLedger'
@@ -100,7 +100,7 @@ function mapItem(r: Row): InterestRunItem {
 }
 
 export async function getRun(siteId: number, id: number): Promise<InterestRun | null> {
-  const row = await siteQueryOne<Row>(siteId, 'SELECT * FROM interest_runs WHERE id = ? LIMIT 1', [
+  const row = await customerQueryOne<Row>(siteId, 'SELECT * FROM interest_runs WHERE id = ? LIMIT 1', [
     id,
   ])
   return row ? mapRun(row) : null
@@ -108,7 +108,7 @@ export async function getRun(siteId: number, id: number): Promise<InterestRun | 
 
 export async function listRuns(siteId: number, limit = 20): Promise<InterestRun[]> {
   const capped = Math.min(Math.max(limit, 1), 100)
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM interest_runs ORDER BY created_at DESC LIMIT ${capped}`,
   )
@@ -120,7 +120,7 @@ export async function listItems(
   runId: number,
   opts: { includeSkipped?: boolean } = {},
 ): Promise<InterestRunItem[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM interest_run_items
       WHERE run_id = ? ${opts.includeSkipped === false ? "AND status <> 'skipped'" : ''}
@@ -182,7 +182,7 @@ export async function proposeRun(
   const scoped = ids.length > 0
 
   // Eligible accounts, with their terms resolved against the group's defaults.
-  const customers = await siteQuery<Row>(
+  const customers = await customerQuery<Row>(
     siteId,
     `SELECT c.id, c.code, c.name, c.balance,
             c.interest_rate_pct, c.interest_enabled, c.interest_grace_days,
@@ -205,7 +205,7 @@ export async function proposeRun(
 
   // Overdue open items for exactly those accounts, in one query.
   const customerIds = customers.map((c) => Number(c.id))
-  const openItems = await siteQuery<Row>(
+  const openItems = await customerQuery<Row>(
     siteId,
     `SELECT customer_id, id, amount_outstanding, doc_type,
             DATEDIFF(?, due_date) AS days_overdue
@@ -271,7 +271,7 @@ export async function proposeRun(
   const total = planned.reduce((sum, p) => round(sum + p.calculation.amount, 2), 0)
   const charged = planned.filter((p) => p.calculation.amount > 0).length
 
-  const runId = await siteTransaction(siteId, async (tx) => {
+  const runId = await customerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO interest_runs
          (as_at_date, period_from, period_to, total_amount, account_count,
@@ -364,7 +364,7 @@ export async function postRun(
     })
 
     if (!result.ok) {
-      await siteExecute(
+      await customerExecute(
         siteId,
         "UPDATE interest_run_items SET status = 'skipped', skip_reason = ? WHERE id = ?",
         [result.error.slice(0, 190), item.id],
@@ -372,7 +372,7 @@ export async function postRun(
       continue
     }
 
-    await siteExecute(
+    await customerExecute(
       siteId,
       "UPDATE interest_run_items SET status = 'posted', transaction_id = ? WHERE id = ?",
       [result.id, item.id],
@@ -391,7 +391,7 @@ export async function postRun(
     total = round(total + item.amount, 2)
   }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     "UPDATE interest_runs SET status = 'posted', posted_at = NOW(), posted_count = ?, total_amount = ? WHERE id = ?",
     [posted, total.toFixed(4), runId],
@@ -421,7 +421,7 @@ export async function cancelRun(
     }
   }
 
-  await siteExecute(siteId, "UPDATE interest_runs SET status = 'cancelled' WHERE id = ?", [runId])
+  await customerExecute(siteId, "UPDATE interest_runs SET status = 'cancelled' WHERE id = ?", [runId])
   await logActivity(siteId, actor, {
     entity: 'customer',
     entityId: null,
@@ -444,7 +444,7 @@ export async function excludeItem(
   itemId: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const item = await siteQueryOne<Row>(
+  const item = await customerQueryOne<Row>(
     siteId,
     `SELECT i.*, r.status AS run_status FROM interest_run_items i
        JOIN interest_runs r ON r.id = i.run_id WHERE i.id = ? LIMIT 1`,
@@ -455,7 +455,7 @@ export async function excludeItem(
     return { ok: false, error: 'That run is no longer a draft.' }
   }
 
-  await siteTransaction(siteId, async (tx) => {
+  await customerTransaction(siteId, async (tx) => {
     await tx.execute(
       "UPDATE interest_run_items SET status = 'skipped', skip_reason = ? WHERE id = ?",
       [reason.trim().slice(0, 190) || 'Excluded during review', itemId] as never,
@@ -494,7 +494,7 @@ export async function previewForCustomer(
 ): Promise<InterestCalculation | null> {
   const asAt = asAtDate ?? today()
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     `SELECT c.id, c.interest_rate_pct, c.interest_enabled, c.interest_grace_days,
             g.default_interest_rate_pct, g.default_interest_enabled, g.default_interest_grace_days
@@ -505,7 +505,7 @@ export async function previewForCustomer(
   )
   if (!customer) return null
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT id, amount_outstanding, doc_type, DATEDIFF(?, due_date) AS days_overdue
        FROM customer_transactions

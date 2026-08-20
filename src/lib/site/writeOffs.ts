@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { postTransaction, openDebits, allocate } from './customerLedger'
@@ -124,7 +124,7 @@ export async function listWriteOffs(
   }
 
   const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000)
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `${SELECT_WRITE_OFF}
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -136,7 +136,7 @@ export async function listWriteOffs(
 }
 
 export async function getWriteOff(siteId: number, id: number): Promise<WriteOff | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_WRITE_OFF} WHERE w.id = ? LIMIT 1`, [id])
+  const row = await customerQueryOne<Row>(siteId, `${SELECT_WRITE_OFF} WHERE w.id = ? LIMIT 1`, [id])
   return row ? mapWriteOff(row) : null
 }
 
@@ -195,7 +195,7 @@ export async function requestWriteOff(
   const locked = await guardPosting(siteId, writeOffDate, 'ledger')
   if (locked) return { ok: false, error: locked }
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     'SELECT id, code, name, balance FROM customers WHERE id = ? LIMIT 1',
     [input.customerId],
@@ -217,7 +217,7 @@ export async function requestWriteOff(
   const threshold = input.approvalThreshold ?? 0
   const needsApproval = threshold > 0 && amount >= threshold
 
-  const id = await siteTransaction(siteId, async (tx) => {
+  const id = await customerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO debt_write_offs
          (customer_id, amount, write_off_date, category, reason,
@@ -280,7 +280,7 @@ export async function approveWriteOff(
   if (writeOff.status === 'posted') return { ok: false, error: 'That write-off is already posted.' }
   if (writeOff.status === 'rejected') return { ok: false, error: 'That write-off was rejected.' }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     'UPDATE debt_write_offs SET approved_by = ?, approved_at = NOW() WHERE id = ?',
     [actor.userName.slice(0, 120), id],
@@ -334,7 +334,7 @@ async function postWriteOff(
   })
   if (!posted.ok) return { ok: false, error: posted.error }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     "UPDATE debt_write_offs SET status = 'posted', transaction_id = ? WHERE id = ?",
     [posted.id, id],
@@ -379,7 +379,7 @@ export async function rejectWriteOff(
     return { ok: false, error: 'That write-off is already posted. Reverse it instead.' }
   }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     "UPDATE debt_write_offs SET status = 'rejected', reason = CONCAT(reason, ' · REJECTED: ', ?) WHERE id = ?",
     [reason.trim().slice(0, 150), id],
@@ -431,7 +431,7 @@ export async function recoverWriteOff(
   })
   if (!posted.ok) return { ok: false, error: posted.error }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     'UPDATE debt_write_offs SET recovered_at = NOW(), recovered_txn_id = ? WHERE id = ?',
     [posted.id, id],
@@ -464,7 +464,7 @@ export async function writeOffSummary(
   range: { from: string; to: string },
 ): Promise<{ rows: WriteOffSummary[]; total: number; recovered: number }> {
   const [rows, recovered] = await Promise.all([
-    siteQuery<Row>(
+    customerQuery<Row>(
       siteId,
       `SELECT category, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
          FROM debt_write_offs
@@ -473,7 +473,7 @@ export async function writeOffSummary(
         ORDER BY total DESC`,
       [range.from, range.to],
     ),
-    siteQueryOne<Row>(
+    customerQueryOne<Row>(
       siteId,
       `SELECT COALESCE(SUM(amount), 0) AS total FROM debt_write_offs
         WHERE recovered_at IS NOT NULL AND write_off_date BETWEEN ? AND ?`,
@@ -517,7 +517,7 @@ export async function writeOffCandidates(
   const minAmount = round(opts.minAmount ?? 0, 2)
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500)
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT c.id, c.code, c.name, c.balance,
             DATEDIFF(CURDATE(), MAX(t.doc_date)) AS days_since,

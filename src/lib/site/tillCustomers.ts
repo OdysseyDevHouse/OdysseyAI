@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne } from '../siteDb'
+import { customerQuery, customerQueryOne } from './customerDb'
 import { toNum } from '../decimals'
 import { toAccountType, type AccountType } from '../accountTypes'
 import {
@@ -172,7 +172,7 @@ export async function searchCustomersForTill(
   const like = `%${needle}%`
   const capped = Math.min(Math.max(limit, 1), 50)
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `${SELECT_CUSTOMER}
       WHERE c.status <> 'closed'
@@ -206,7 +206,7 @@ export async function listCustomersForPicker(
 ): Promise<TillCustomer[]> {
   const capped = Math.min(Math.max(limit, 1), 200)
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `${SELECT_CUSTOMER}
       WHERE c.status <> 'closed'
@@ -221,7 +221,7 @@ export async function getTillCustomer(
   siteId: number,
   customerId: number,
 ): Promise<TillCustomer | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_CUSTOMER} WHERE c.id = ? LIMIT 1`, [
+  const row = await customerQueryOne<Row>(siteId, `${SELECT_CUSTOMER} WHERE c.id = ? LIMIT 1`, [
     customerId,
   ])
   if (!row) return null

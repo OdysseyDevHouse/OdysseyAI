@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum, formatMoney } from '../decimals'
 import { send, isConfigured } from '../mail'
 import { buildStatement, type StatementFormat } from '../statements/render'
@@ -115,7 +115,7 @@ function mapItem(r: Row): StatementItem {
 }
 
 export async function getRun(siteId: number, id: number): Promise<StatementRun | null> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     'SELECT * FROM customer_statement_runs WHERE id = ? LIMIT 1',
     [id],
@@ -125,7 +125,7 @@ export async function getRun(siteId: number, id: number): Promise<StatementRun |
 
 export async function listRuns(siteId: number, limit = 20): Promise<StatementRun[]> {
   const capped = Math.min(Math.max(limit, 1), 100)
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM customer_statement_runs ORDER BY created_at DESC LIMIT ${capped}`,
   )
@@ -137,7 +137,7 @@ export async function listItems(
   runId: number,
   status?: ItemStatus,
 ): Promise<StatementItem[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM customer_statement_items
       WHERE run_id = ? ${status ? 'AND status = ?' : ''}
@@ -152,7 +152,7 @@ export async function lastStatementFor(
   siteId: number,
   customerId: number,
 ): Promise<StatementItem | null> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT * FROM customer_statement_items
       WHERE customer_id = ? AND status = 'sent'
@@ -205,7 +205,7 @@ export async function createRun(
     return { ok: false, error: 'The period starts after it ends.' }
   }
 
-  const customers = await siteQuery<Row>(
+  const customers = await customerQuery<Row>(
     siteId,
     `SELECT id, code, name, email, balance, created_at,
             statement_cycle, statement_anchor_day, statement_anchor_date
@@ -216,7 +216,7 @@ export async function createRun(
 
   const byCycle = (input.periodMode ?? 'cycle') === 'cycle'
 
-  return siteTransaction(siteId, async (tx) => {
+  return customerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO customer_statement_runs
          (period_from, period_to, format, total_count, user_id, user_name)
@@ -317,14 +317,14 @@ export async function processRun(
   const run = await getRun(siteId, runId)
   if (!run) return { sent: 0, failed: 0, skipped: 0 }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     "UPDATE customer_statement_runs SET status = 'running', started_at = COALESCE(started_at, NOW()) WHERE id = ?",
     [runId],
   )
 
   if (!isConfigured()) {
-    await siteExecute(
+    await customerExecute(
       siteId,
       `UPDATE customer_statement_runs
           SET status = 'failed', finished_at = NOW(),
@@ -346,7 +346,7 @@ export async function processRun(
   }
 
   await refreshCounts(siteId, runId)
-  await siteExecute(
+  await customerExecute(
     siteId,
     "UPDATE customer_statement_runs SET status = 'completed', finished_at = NOW() WHERE id = ?",
     [runId],
@@ -363,7 +363,7 @@ async function sendOne(
   item: StatementItem,
 ): Promise<{ ok: boolean }> {
   const fail = async (error: string) => {
-    await siteExecute(
+    await customerExecute(
       siteId,
       "UPDATE customer_statement_items SET status = 'failed', attempts = attempts + 1, error = ? WHERE id = ?",
       [error.slice(0, 400), item.id],
@@ -404,7 +404,7 @@ async function sendOne(
 
     // The balance is frozen here, not at queue time: it is what the statement
     // they received actually said.
-    await siteExecute(
+    await customerExecute(
       siteId,
       `UPDATE customer_statement_items
           SET status = 'sent', attempts = attempts + 1, error = NULL, sent_at = NOW(),
@@ -443,7 +443,7 @@ async function notifyStatementBySms(
   const provider = await getSmsProvider(siteId)
   if (!provider) return
 
-  const row = await siteQueryOne<Row>(siteId, 'SELECT name, phone FROM customers WHERE id = ? LIMIT 1', [
+  const row = await customerQueryOne<Row>(siteId, 'SELECT name, phone FROM customers WHERE id = ? LIMIT 1', [
     customerId,
   ])
   const { normaliseSaPhone } = await import('../sms/phone')
@@ -473,7 +473,7 @@ async function notifyStatementBySms(
  * statement in front of a customer who already has one.
  */
 export async function retryFailed(siteId: number, runId: number): Promise<{ requeued: number }> {
-  const result = await siteExecute(
+  const result = await customerExecute(
     siteId,
     "UPDATE customer_statement_items SET status = 'queued', error = NULL WHERE run_id = ? AND status = 'failed'",
     [runId],
@@ -481,7 +481,7 @@ export async function retryFailed(siteId: number, runId: number): Promise<{ requ
   const requeued = result.affectedRows
 
   if (requeued > 0) {
-    await siteExecute(
+    await customerExecute(
       siteId,
       "UPDATE customer_statement_runs SET status = 'pending', finished_at = NULL, error = NULL WHERE id = ?",
       [runId],
@@ -492,7 +492,7 @@ export async function retryFailed(siteId: number, runId: number): Promise<{ requ
 
 /** Recomputes the header counts from the items, so they cannot drift. */
 export async function refreshCounts(siteId: number, runId: number): Promise<void> {
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_statement_runs r
         SET sent_count    = (SELECT COUNT(*) FROM customer_statement_items WHERE run_id = r.id AND status = 'sent'),
@@ -553,7 +553,7 @@ export async function deleteRun(
     return { ok: false, error: 'That run is still sending. Wait for it to finish.' }
   }
 
-  await siteExecute(siteId, 'DELETE FROM customer_statement_runs WHERE id = ?', [runId])
+  await customerExecute(siteId, 'DELETE FROM customer_statement_runs WHERE id = ?', [runId])
   await logActivity(siteId, actor, {
     entity: 'customer',
     entityId: null,
