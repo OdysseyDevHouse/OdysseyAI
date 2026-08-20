@@ -326,7 +326,41 @@ async function applyToStore(
       }
     }
 
-    return { status: existing ? ('written' as const) : ('created' as const) }
+    /*
+     * ── WHAT COULD NOT BE TRANSLATED ────────────────────────────────────────
+     *
+     * Price structures are matched by NAME and VAT rates by RATE, because ids
+     * are per-database and mean nothing across stores. A target that has no
+     * matching row is skipped rather than having one invented — which is
+     * right, but was until now SILENT.
+     *
+     * Silent is the problem. A store missing a "Wholesale" tier kept its old
+     * wholesale price while the screen reported the save as written, so the
+     * figure on the shelf and the figure on the screen disagreed and nothing
+     * said why. Reported here so the caller can show it.
+     */
+    const untranslated: string[] = []
+    if (structureMap) {
+      const missing = originStructures.filter((s) => !structureMap.has(s.id))
+      if (missing.length > 0) {
+        untranslated.push(
+          `no ${missing.map((s) => s.name).join(', ')} price tier here`,
+        )
+      }
+    }
+    if (shareCost && values.purchaseVatPercent !== undefined && purchaseVatId === null) {
+      untranslated.push(`no ${values.purchaseVatPercent}% purchase tax rate here`)
+    }
+    if (shareSelling && values.sellingVatPercent !== undefined && sellingVatId === null) {
+      untranslated.push(`no ${values.sellingVatPercent}% selling tax rate here`)
+    }
+
+    return {
+      status: existing ? ('written' as const) : ('created' as const),
+      ...(untranslated.length > 0
+        ? { detail: `${untranslated.join('; ')} — that part was left as it was` }
+        : {}),
+    }
   })
 }
 
