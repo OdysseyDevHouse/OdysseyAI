@@ -5,6 +5,7 @@ import { getProduct } from '@/lib/site/products'
 import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
 import { linkedStores } from '@/lib/storeGroups'
+import { ownershipOf } from '@/lib/site/productOwnership'
 import { shareSettingsFor } from '@/lib/site/shareSettings'
 import { readLinkedProducts } from '@/lib/site/productFanout'
 import { listGroups as listInstructionGroups, groupsForProduct } from '@/lib/site/instructions'
@@ -61,6 +62,16 @@ export default async function EditProductPage({
     ])
 
   if (!product) notFound()
+
+  /* Whether this store may change what the product IS.
+   *
+   * A product belongs to the store whose catalogue it was created in — head
+   * office, typically — and every other store may stock, price and sell it but
+   * not edit it. See lib/site/productOwnership.ts.
+   *
+   * Read here so the form can render read-only and SAY WHY. The save action
+   * asks again and refuses: this is the courtesy, that is the boundary. */
+  const ownership = await ownershipOf(siteId, product.code)
 
   // Only meaningful once this store is linked to others; a standalone store
   // skips both lookups entirely and the form renders as it always has.
@@ -190,8 +201,13 @@ export default async function EditProductPage({
         action={
           <>
             {/* Submits the form below by id — it is a sibling of that form, not
-                an ancestor, which is exactly what the `form` attribute is for. */}
-            <SaveProductButton />
+                an ancestor, which is exactly what the `form` attribute is for.
+
+                Hidden entirely when another store owns this product: the
+                fields are disabled and the action would refuse, so a Save
+                button here could only ever produce an error. The banner on
+                the form says who to ask instead. */}
+            {ownership.canEdit && <SaveProductButton />}
             <ProductActions
               productId={product.id}
               isArchived={product.isArchived}
@@ -215,6 +231,7 @@ export default async function EditProductPage({
           storeName={site.displayName}
           currentSiteId={siteId}
           linkedStores={linked}
+          ownership={ownership}
           locationStock={locationStock}
           linkedLines={linkedLines}
           sharesCost={sharing.sharesCost}

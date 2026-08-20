@@ -113,6 +113,7 @@ export default function ProductForm({
   linkedLines,
   sharesCost: defaultSharesCost,
   sharesSelling: defaultSharesSelling,
+  ownership = { canEdit: true, ownerName: null },
   instructionGroups,
   attachedInstructions,
   recipeLines,
@@ -169,6 +170,13 @@ export default function ProductForm({
   linkedLines: StoreLine[]
   sharesCost: boolean
   sharesSelling: boolean
+  /**
+   * Whether this store may change what the product IS.
+   *
+   * Defaulted for the NEW-product screen and any caller predating this: a
+   * product being created is always this store's own.
+   */
+  ownership?: { canEdit: boolean; ownerName: string | null }
   /** Every active instruction in the library, for the Instructions tab. */
   instructionGroups: InstructionGroup[]
   /** Ids of the instructions this product currently asks. */
@@ -286,6 +294,21 @@ export default function ProductForm({
           </Callout>
         )}
 
+        {/* A product belongs to the store whose catalogue it was created in.
+            Said BEFORE the fields rather than discovered on save: a form that
+            silently refuses is worse than one that explains itself first.
+
+            What this store CAN still do is spelled out, because "read only"
+            alone reads as "this product is not yours" — it stocks it, prices
+            it where prices are not shared, and sells it. */}
+        {!ownership.canEdit && (
+          <Callout tone="brand" title={`Managed by ${ownership.ownerName ?? 'another store'}`}>
+            You can stock this product, set your own prices where prices are not
+            shared, and sell it. Its details are changed at{' '}
+            {ownership.ownerName ?? 'the store that created it'}.
+          </Callout>
+        )}
+
         {/* Always rendered now: Properties exists whether or not this store is
             linked to another, so there is always a second tab's worth of
             content. Linked stores only joins the bar once there is one. */}
@@ -348,6 +371,12 @@ export default function ProductForm({
 
         {/* Hidden rather than unmounted for the same reason as the linked tab:
             every field below is part of this one form and must still submit. */}
+        {/* Disabled rather than hidden when another store owns this product: a
+            branch still needs to SEE what it is selling. Only the two tabs that
+            define what the product IS are locked — Pricing stays editable,
+            because a branch owns its own cost and selling price wherever those
+            are not shared. */}
+        <fieldset disabled={!ownership.canEdit} className="contents">
         <div className={tab === 'general' ? 'flex flex-col gap-4' : 'hidden'}>
           {/* ── Product overview ─────────────────────────────────────────── */}
           <Card>
@@ -550,11 +579,13 @@ export default function ProductForm({
             />
           </Card>
         </div>
+        </fieldset>
 
         {/* ── Linked stores ────────────────────────────────────────────── */}
         {/* ── Properties ───────────────────────────────────────────────── */}
         {/* Hidden with CSS, never unmounted — the switches submit through hidden
             inputs, and dropping them would save every property as off. */}
+        <fieldset disabled={!ownership.canEdit} className="contents">
         <div className={tab === 'properties' ? 'flex flex-col gap-4' : 'hidden'}>
           <PropertiesPanel
             value={{
@@ -586,6 +617,7 @@ export default function ProductForm({
             }}
           />
         </div>
+        </fieldset>
 
         {/* ── Instructions ─────────────────────────────────────────────── */}
         {/* Hidden with CSS, never unmounted — the ticked ids submit as hidden
