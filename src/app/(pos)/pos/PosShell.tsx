@@ -557,6 +557,16 @@ export default function PosShell({
   const [transferring, setTransferring] = useState<PosTable | null>(null)
   /** True while the hospitality autosave is writing this tab to the server. */
   const [tableSaving, setTableSaving] = useState(false)
+  /**
+   * Bumped when a table's autosave failed, to make it try again.
+   *
+   * The autosave is keyed on the LINES, so without this a waiter who added a
+   * round while the box was unreachable and then stopped would never retry: the
+   * basket would sit on screen, unsaved, until they happened to touch it again.
+   * A counter is the smallest thing that re-runs an effect whose real inputs
+   * have not changed.
+   */
+  const [tableSaveAttempt, setTableSaveAttempt] = useState(0)
 
   /**
    * The bill being split. Null when the split screen is closed.
@@ -4240,6 +4250,16 @@ export default function PosShell({
     if (!table) return
     if (state.lines.length === 0) return
 
+    /* 900ms debounces a waiter's typing; a RETRY waits longer, because the thing
+       it is waiting for is a machine coming back rather than a finger stopping.
+       Retrying every 900ms would put ten tills on a dead box's doorstep for the
+       whole outage, and the basket is safe on screen meanwhile.
+
+       Not reset when the waiter leaves the table: at worst the first save on the
+       next one waits five seconds and then resets itself, and a counter cleared
+       in three places is a counter one of them will eventually forget. */
+    const delay = tableSaveAttempt === 0 ? 900 : 5_000
+
     const timer = setTimeout(() => {
       void (async () => {
         setTableSaving(true)
@@ -4257,6 +4277,9 @@ export default function PosShell({
               return
             }
             setTables(updated.tables)
+            /* Back to the fast debounce. Left at a retry count, every later save
+               on this table would wait five seconds for no reason. */
+            setTableSaveAttempt(0)
             return
           }
 
@@ -4282,17 +4305,54 @@ export default function PosShell({
              creating a second bill for the same table. */
           dispatch({ type: 'ATTACH_DOCUMENT', documentId: opened.documentId })
           setTables(opened.tables)
+          setTableSaveAttempt(0)
+        } catch {
+          /*
+           * ── THE BILL COULD NOT BE WRITTEN ───────────────────────────────────
+           *
+           * On a hybrid site this is the shop's own box being unreachable — a
+           * cable out, the machine off, a switch rebooted mid-service. On any
+           * other site it is the cloud.
+           *
+           * Until now there was no catch here at all, only a `finally`. The
+           * rejection escaped, nothing was said, and the basket sat on screen
+           * looking exactly as it does when a save succeeded. A waiter would
+           * carry on adding to it — and the round they were adding existed
+           * nowhere but that browser.
+           *
+           * ── WHY IT DOES NOT FALL BACK TO A LOCAL PARK ──────────────────────
+           *
+           * The counter's Park button does, and that is right there: a parked
+           * basket belongs to the till that parked it, and a cashier recalls it
+           * where they left it.
+           *
+           * A TABLE is the opposite. Its whole purpose is that another waiter,
+           * at another till, can pick it up — so a bill quietly written to this
+           * browser would be a table nobody else can see, on a floor where the
+           * table still reads free. Two waiters would then serve it, and only
+           * one of the two bills exists anywhere. That is worse than the basket
+           * simply not being saved yet, which is what this says.
+           *
+           * So it tells the truth, keeps the basket on screen, and schedules
+           * another attempt. A box that comes back takes the whole basket with
+           * it — nothing here is lost by waiting.
+           */
+          toast.error('The bill could not be saved. It is still on this screen — trying again.')
+          /* Bumped, because the effect is keyed on the LINES: a waiter who added
+             a round and then stopped would otherwise never retry, and the basket
+             would sit unsaved until they happened to touch it again. */
+          setTableSaveAttempt((n) => n + 1)
         } finally {
           setTableSaving(false)
         }
       })()
-    }, 900)
+    }, delay)
 
     return () => clearTimeout(timer)
     /* Deliberately keyed on the LINES, not on `tableLines` — that array is rebuilt every
        render, so depending on it would fire this on every keystroke elsewhere. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table?.id, state.documentId, state.lines])
+  }, [table?.id, state.documentId, state.lines, tableSaveAttempt])
 
   /** Puts a table's existing bill on screen. */
   function resumeTable(picked: PosTable) {

@@ -274,7 +274,8 @@
     "test:tab-routing": "tsx --conditions=react-server --env-file=.env scripts/test-tab-routing.ts",
     "test:box-outbox": "tsx --conditions=react-server --env-file=.env scripts/test-box-outbox.ts",
     "test:box-flush": "tsx --conditions=react-server --env-file=.env scripts/test-box-flush.ts",
-    "test:box-handover": "tsx scripts/test-box-handover.ts"
+    "test:box-handover": "tsx scripts/test-box-handover.ts",
+    "test:table-autosave": "tsx scripts/test-table-autosave.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",
