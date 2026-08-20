@@ -14,7 +14,26 @@ import {
 } from '@/lib/storeGroups'
 import { setBranchPin, syncBranchPin } from '@/lib/control/storeBranches'
 
-export type LinkFormState = { error: string | null }
+export type LinkFormState = {
+  error: string | null
+  /**
+   * What was actually saved, for a control that has to re-render itself.
+   *
+   * ── WHY A PROP IS NOT ENOUGH ─────────────────────────────────────────────
+   *
+   * revalidatePath refreshes the SERVER's data, and the page re-renders with
+   * the new value. But these cards sit inside LinkedStoresSetup, which is a
+   * client component: it received its props on first render and does not get
+   * new ones from a revalidate alone. So a radio that derives its state from
+   * `legalEntity` keeps showing the pre-save answer — or, once the "sync when
+   * the prop changes" guard is added, clears itself and shows nothing.
+   *
+   * Reporting the saved value back through the form state closes that: the
+   * control trusts what the action says it wrote, which is the one thing that
+   * is definitely true.
+   */
+  saved?: string
+}
 
 /**
  * Links another store to this one, creating the group on first use.
@@ -137,7 +156,7 @@ export async function setPrimaryAction(
   if (!result.ok) return { error: result.error }
 
   revalidatePath('/setup/linked-stores')
-  return { error: null }
+  return { error: null, saved: String(targetSiteId) }
 }
 
 /**
@@ -164,7 +183,7 @@ export async function setLegalEntityAction(
   if (!result.ok) return { error: result.error }
 
   revalidatePath('/setup/linked-stores')
-  return { error: null }
+  return { error: null, saved: raw }
 }
 
 /**

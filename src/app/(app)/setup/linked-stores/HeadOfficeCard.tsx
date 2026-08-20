@@ -59,17 +59,22 @@ export default function HeadOfficeCard({
   const [state, formAction] = useActionState<LinkFormState, FormData>(setPrimaryAction, {
     error: null,
   })
-  // Re-synced when the saved value changes, for the reason spelled out in
-  // LegalEntityCard: useState reads its initial value once, and this component
-  // never unmounts, so after a save the picker would still show the old store.
-  const [choice, setChoice] = useState(primarySiteId ? String(primarySiteId) : '')
-  const [savedPrimary, setSavedPrimary] = useState(primarySiteId)
-  if (savedPrimary !== primarySiteId) {
-    setSavedPrimary(primarySiteId)
-    setChoice(primarySiteId ? String(primarySiteId) : '')
+  // The action's own result wins over the prop, for the reason spelled out in
+  // LegalEntityCard: the parent is a client component, so revalidatePath does
+  // not hand this tree a fresh `primarySiteId` and syncing to the prop would
+  // clear the picker instead of showing what was just saved.
+  const answered = state.saved ?? (primarySiteId ? String(primarySiteId) : '')
+  const [typed, setTyped] = useState<string | null>(null)
+  const [lastAnswered, setLastAnswered] = useState(answered)
+  if (lastAnswered !== answered) {
+    setLastAnswered(answered)
+    setTyped(null)
   }
+  const choice = typed ?? answered
+  const setChoice = setTyped
 
-  const primary = members.find((m) => m.siteId === primarySiteId) ?? null
+  // Read from `answered` rather than the prop, which is stale after a save.
+  const primary = members.find((m) => String(m.siteId) === answered) ?? null
   const sharing = members.filter((m) => m.sharesCustomers || m.sharesSuppliers)
 
   return (
@@ -103,7 +108,7 @@ export default function HeadOfficeCard({
             </ul>
           </div>
 
-          {!primarySiteId && (
+          {answered === '' && (
             <Callout tone="warning">
               Choose a store before switching on any shared customer or supplier file.
             </Callout>
@@ -144,7 +149,7 @@ export default function HeadOfficeCard({
         <CardFooter>
           <SaveButton
             disabled={
-              choice === '' || choice === String(primarySiteId ?? '') || sharing.length > 0
+              choice === '' || choice === answered || sharing.length > 0
             }
           />
         </CardFooter>

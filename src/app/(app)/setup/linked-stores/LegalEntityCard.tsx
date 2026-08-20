@@ -58,34 +58,47 @@ export default function LegalEntityCard({
     error: null,
   })
   /*
-   * ── WHY THIS IS NOT PLAIN useState ───────────────────────────────────────
+   * ── WHAT THE RADIO SHOWS AFTER A SAVE ────────────────────────────────────
    *
-   * The saved answer arrives as a prop: the action revalidates the page and the
-   * server sends the new `legalEntity` down. But useState only reads its
-   * initial value ONCE, and this component never unmounts — so after saving,
-   * the radios kept their pre-save state and both appeared unselected.
+   * Three things are true at once here, and the control has to satisfy all of
+   * them:
    *
-   * Tracking the prop we last initialised from, and re-syncing when it changes,
-   * is React's documented way to derive state from props. It keeps the control
-   * responsive while typing AND correct after a save.
+   *   · while choosing, it must follow the click
+   *   · after saving, it must show what was saved
+   *   · the parent is a CLIENT component, so revalidatePath does not hand it a
+   *     fresh `legalEntity` prop — the page's server data updates, the props
+   *     this tree already holds do not
+   *
+   * That third point is what made the first fix wrong. Syncing to the prop
+   * looked right and was worse: on save the prop was still 'unknown', so the
+   * guard dutifully cleared the choice and BOTH radios went blank — while the
+   * answer sat correctly in the database, which is exactly what a refresh
+   * showed.
+   *
+   * So the action reports what it wrote, and that wins. The prop is only the
+   * starting point.
    */
-  const [choice, setChoice] = useState(legalEntity === 'unknown' ? '' : legalEntity)
-  const [savedEntity, setSavedEntity] = useState(legalEntity)
-  if (savedEntity !== legalEntity) {
-    setSavedEntity(legalEntity)
-    setChoice(legalEntity === 'unknown' ? '' : legalEntity)
+  const answered = state.saved ?? (legalEntity === 'unknown' ? '' : legalEntity)
+  const [typed, setTyped] = useState<string | null>(null)
+  const [lastAnswered, setLastAnswered] = useState(answered)
+  if (lastAnswered !== answered) {
+    // A save landed: drop the in-progress choice so the saved answer shows.
+    setLastAnswered(answered)
+    setTyped(null)
   }
+  const choice = typed ?? answered
+  const setChoice = setTyped
 
   return (
     <Card>
       <SectionTitle
         icon={<Icons.Building2 size={16} />}
         action={
-          legalEntity === 'unknown' ? (
+          answered === '' ? (
             <Badge tone="warning">Not answered</Badge>
           ) : (
-            <Badge tone={legalEntity === 'one' ? 'success' : 'neutral'}>
-              {legalEntity === 'one' ? 'One company' : 'Separate companies'}
+            <Badge tone={answered === 'one' ? 'success' : 'neutral'}>
+              {answered === 'one' ? 'One company' : 'Separate companies'}
             </Badge>
           )
         }
@@ -144,7 +157,7 @@ export default function LegalEntityCard({
             />
           </div>
 
-          {legalEntity === 'unknown' && (
+          {answered === '' && (
             <Callout tone="warning">
               Until this is answered, the customer and supplier files cannot be
               shared.
@@ -153,7 +166,10 @@ export default function LegalEntityCard({
         </CardBody>
 
         <CardFooter>
-          <SaveButton disabled={choice === '' || choice === legalEntity} />
+          {/* Compared against `answered`, not the prop: after a save the prop is
+              stale, and comparing to it would leave Save enabled against an
+              answer already written. */}
+          <SaveButton disabled={choice === '' || choice === answered} />
         </CardFooter>
       </form>
     </Card>
