@@ -47,6 +47,7 @@ export default function LinkedStoresSetup({
   contents,
   available,
   groupStorefront,
+  primarySiteId,
 }: {
   currentSiteId: number
   currentSiteName: string
@@ -55,6 +56,8 @@ export default function LinkedStoresSetup({
   /** What each store already holds, for the empty-store gate. */
   contents: Record<number, StoreContents | null>
   available: { id: number; code: string; name: string }[]
+  /** Which store owns the shared master files, or null while none is chosen. */
+  primarySiteId: number | null
   /** Null when these stores are not a group yet — there is nothing to configure. */
   groupStorefront: {
     enabled: boolean
@@ -104,6 +107,11 @@ export default function LinkedStoresSetup({
           member={member}
           contents={contents[member.siteId] ?? null}
           isCurrent={member.siteId === currentSiteId}
+          // The OWNER of the shared files, which need not be the store being
+          // looked at: a branch reading a primary's customer file still has its
+          // own contents to merge, and the primary never does.
+          ownsSharedFiles={member.siteId === primarySiteId}
+          hasPrimary={primarySiteId !== null}
         />
       ))}
 

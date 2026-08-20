@@ -45,11 +45,21 @@ export default function StoreCard({
   member,
   contents,
   isCurrent,
+  ownsSharedFiles,
+  hasPrimary,
 }: {
   member: GroupMember
   /** Null when the store has no database to read. */
   contents: StoreContents | null
   isCurrent: boolean
+  /**
+   * Whether THIS store is the group's primary — the one whose database holds
+   * the shared customer and supplier files. Distinct from `isCurrent`, which is
+   * merely the store being administered.
+   */
+  ownsSharedFiles: boolean
+  /** Whether the group has chosen a primary at all. */
+  hasPrimary: boolean
 }) {
   const [state, formAction] = useActionState<LinkFormState, FormData>(updateSharingAction, {
     error: null,
@@ -63,6 +73,24 @@ export default function StoreCard({
     (contents.products > 0 || contents.departments > 0)
 
   const blocked = occupied || contents?.readable === false
+
+  /*
+   * The customer and supplier files are gated SEPARATELY from products, because
+   * they are separate merges. A store can legitimately share products while
+   * still holding its own debtors book, and telling someone to delete their
+   * products because they have customers would be nonsense.
+   *
+   * The store that OWNS the files has nothing to merge — the rows are already
+   * where they are going — so it is never blocked by its own contents.
+   */
+  const unreadable = contents?.readable === false
+  const customersBlocked =
+    !ownsSharedFiles &&
+    !member.sharesCustomers &&
+    contents !== null &&
+    contents.customers > 0
+  const suppliersBlocked =
+    !ownsSharedFiles && !member.sharesSuppliers && contents !== null && contents.suppliers > 0
 
   return (
     <Card>
@@ -146,6 +174,58 @@ export default function StoreCard({
               hint="Automatically update cost prices to all shared stores."
               defaultChecked={member.sharesCost}
               disabled={blocked}
+            />
+          </div>
+
+          {/* The master files are a different kind of sharing from products, so
+              they sit under their own heading rather than in the list above.
+              Products are COPIED to each store; these are not — one store holds
+              the file and the others read and write it. */}
+          <div className="border-t border-border pt-4 flex flex-col gap-3">
+            <div>
+              <p className="text-sm font-medium text-ink">Master files</p>
+              <p className="text-xs text-muted mt-0.5">
+                One shared file rather than a copy in each store — so a customer&apos;s
+                balance, credit limit and history are the same wherever they buy.
+              </p>
+            </div>
+
+            {!hasPrimary && (
+              <Callout tone="warning">
+                Choose which store owns the shared files before switching these on.
+              </Callout>
+            )}
+
+            {customersBlocked && (
+              <Callout tone="warning">
+                This store has <strong>{contents?.customers} customer(s)</strong> of its own.
+                Two customer files cannot be merged automatically — the same code may
+                exist in both for different people. Remove them first, or leave this
+                store with its own debtors book.
+              </Callout>
+            )}
+
+            <SharingSwitch
+              name="sharesCustomers"
+              label="Share customer file"
+              hint="One customer list for the group. Buy at one store, pay at another."
+              defaultChecked={member.sharesCustomers}
+              disabled={unreadable || customersBlocked || !hasPrimary}
+            />
+
+            {suppliersBlocked && (
+              <Callout tone="warning">
+                This store has <strong>{contents?.suppliers} supplier(s)</strong> of its own.
+                Remove them first, or leave this store with its own creditors book.
+              </Callout>
+            )}
+
+            <SharingSwitch
+              name="sharesSuppliers"
+              label="Share supplier file"
+              hint="One supplier list and one creditors book, for central buying."
+              defaultChecked={member.sharesSuppliers}
+              disabled={unreadable || suppliersBlocked || !hasPrimary}
             />
           </div>
         </CardBody>

@@ -92,10 +92,17 @@ export async function updateSharingAction(
     sharesDepartments: form.get('sharesDepartments') === 'on',
     sharesCost: form.get('sharesCost') === 'on',
     sharesSelling: form.get('sharesSelling') === 'on',
+    // Sent explicitly rather than left undefined. MemberSharing treats an
+    // omitted flag as "leave alone" so an unrelated caller cannot switch the
+    // customer file off by accident — but this form OWNS these switches, so
+    // omitting them here would make them impossible to turn off.
+    sharesCustomers: form.get('sharesCustomers') === 'on',
+    sharesSuppliers: form.get('sharesSuppliers') === 'on',
   })
 
-  // The "store must be empty" rule can only be judged server-side, so a refusal
-  // comes back as a message rather than being silently ignored.
+  // The "store must be empty" rule, the same-server check and the "choose a
+  // primary first" rule can only be judged server-side, so a refusal comes back
+  // as a message rather than being silently ignored.
   if (!result.ok) return { error: result.error }
 
   revalidatePath('/setup/linked-stores')

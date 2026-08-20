@@ -76,6 +76,14 @@ export type GroupMember = {
 export type StoreContents = {
   products: number
   departments: number
+  /**
+   * What the store's own master files hold, for the customer and supplier
+   * gates. Same rule as products: a file can only be merged into the group's
+   * while it is empty, because two files may use one code for two different
+   * people and nothing here could decide which is right.
+   */
+  customers: number
+  suppliers: number
   /** False when the store's database could not be read at all. */
   readable: boolean
 }
@@ -366,15 +374,28 @@ export async function storeContents(siteId: number): Promise<StoreContents> {
       siteId,
       'SELECT COUNT(*) AS n FROM departments',
     )
+    // Read from the store's OWN database on purpose, not through the customer
+    // resolver: the question is "what would have to be merged if this store
+    // started sharing", which is about the rows sitting here.
+    const customers = await siteQueryOne<RowDataPacket & { n: number }>(
+      siteId,
+      'SELECT COUNT(*) AS n FROM customers',
+    )
+    const suppliers = await siteQueryOne<RowDataPacket & { n: number }>(
+      siteId,
+      'SELECT COUNT(*) AS n FROM suppliers',
+    )
     return {
       products: Number(products?.n ?? 0),
       departments: Number(departments?.n ?? 0),
+      customers: Number(customers?.n ?? 0),
+      suppliers: Number(suppliers?.n ?? 0),
       readable: true,
     }
   } catch {
     // Unreachable database, or one that has never been migrated. Reported
     // rather than thrown so the screen can say so instead of failing.
-    return { products: 0, departments: 0, readable: false }
+    return { products: 0, departments: 0, customers: 0, suppliers: 0, readable: false }
   }
 }
 
