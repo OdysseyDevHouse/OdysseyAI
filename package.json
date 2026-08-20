@@ -45,6 +45,7 @@
     "test:sequences": "tsx --conditions=react-server --env-file=.env scripts/test-sequences.ts",
     "test": "node scripts/run-tests.mjs",
     "test:users": "tsx --conditions=react-server --env-file=.env scripts/test-users-pins.ts",
+    "test:mobile-devices": "tsx --conditions=react-server --env-file=.env scripts/test-mobile-devices.ts",
     "test:commission": "tsx --conditions=react-server --env-file=.env scripts/test-commission.ts",
     "test:alerts": "tsx --conditions=react-server --env-file=.env scripts/test-alerts.ts",
     "test:posting": "tsx --conditions=react-server --env-file=.env scripts/test-sales-posting.ts",

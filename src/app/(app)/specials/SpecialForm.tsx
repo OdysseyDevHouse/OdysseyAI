@@ -151,7 +151,12 @@ export default function SpecialForm({
       onClose={busy ? () => {} : onClose}
       title={draft.id ? 'Edit special' : 'New special'}
       description="A promotion the till applies automatically while its window is open."
-      size="lg"
+      /* `xl`, not `lg`: the combo sub-types are five segments on one bar, and
+         at 3xl the bar outgrew the panel and scrolled sideways. */
+      size="xl"
+      /* A dozen sections, and the taller ones — product pickers, quantity tiers
+         — are exactly the ones a 60vh letterbox makes unusable. */
+      bodyGrows
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>

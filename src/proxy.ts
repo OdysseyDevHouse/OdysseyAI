@@ -209,6 +209,22 @@ const PUBLIC_PREFIXES = [
   // payment intent together, the page shows only the invoice number, the payee
   // and the amount, and it can mark NOTHING paid — only the ITN callback does.
   '/pay/',
+  // The mobile app's authentication. A phone arriving at first light has no
+  // cookie by definition — these three routes are how it gets one, so a cookie
+  // gate here is a locked door with the key inside it.
+  //
+  // The failure would not read as an auth problem either. The proxy answers
+  // '/api/' with a 401 rather than a redirect, so the app would show "not
+  // signed in" on a correct password, for ever, with nothing in any log to say
+  // the request never reached the route.
+  //
+  // It is not unguarded, and each of the three carries its own scheme:
+  // /login takes an email and password through the same signIn() the web form
+  // uses — lockout, generic refusal and sign-in log included; /session and
+  // /revoke take a bearer refresh token, hashed at rest and compared in
+  // constant time, and /session re-reads the account's status and site access
+  // on every call rather than trusting the token for anything but possession.
+  '/api/mobile/auth/',
 ]
 
 /**

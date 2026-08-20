@@ -1837,6 +1837,7 @@ function ModalSection() {
   const [confirming, setConfirming] = useState(false)
   const [filling, setFilling] = useState(false)
   const [board, setBoard] = useState(false)
+  const [growing, setGrowing] = useState(false)
   const toast = useToast()
 
   return (
@@ -1865,6 +1866,15 @@ function ModalSection() {
         />
         <Button variant="secondary" onClick={() => setFilling(true)}>
           Open filling modal
+        </Button>
+      </Row>
+      <Row>
+        <Spec
+          name="<Modal bodyGrows>"
+          note="A long FORM, which the default 60vh cap gets wrong — on a tall screen it reads through a letterbox with empty desktop above and below. This takes whatever height the window has left. Still a max rather than a height, so a short form stays a short dialog; resize the window with it open and the panel follows."
+        />
+        <Button variant="secondary" onClick={() => setGrowing(true)}>
+          Open growing modal
         </Button>
       </Row>
       <Row>
@@ -1978,6 +1988,38 @@ function ModalSection() {
               </div>
             </div>
           ))}
+        </div>
+      </Modal>
+
+      <Modal
+        open={growing}
+        onClose={() => setGrowing(false)}
+        title="A form that uses the window"
+        description="What bodyGrows is for — the specials form is this shape."
+        size="xl"
+        bodyGrows
+        footer={
+          <Button variant="secondary" onClick={() => setGrowing(false)}>
+            Close
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          {['Name', 'Schedule', 'The deal', 'Which products', 'Where it applies'].map(
+            (title, i) => (
+              <section key={title} className="rounded-card border border-border bg-surface-2 p-4">
+                <h3 className="mb-3 text-sm font-semibold text-ink">{title}</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="A field">
+                    <Input defaultValue={`Section ${i + 1}`} />
+                  </Field>
+                  <Field label="Another">
+                    <NumberInput defaultValue={i + 1} />
+                  </Field>
+                </div>
+              </section>
+            ),
+          )}
         </div>
       </Modal>
 

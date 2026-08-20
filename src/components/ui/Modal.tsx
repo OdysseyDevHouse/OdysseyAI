@@ -29,6 +29,7 @@ export function Modal({
   bodyFills = false,
   bodyTall = false,
   bodyPins = false,
+  bodyGrows = false,
   closeOnBackdrop = true,
 }: {
   open: boolean
@@ -90,6 +91,20 @@ export function Modal({
    * the two halves.
    */
   bodyPins?: boolean
+  /**
+   * A body that GROWS WITH THE WINDOW — it takes whatever height the viewport
+   * has left, rather than stopping at the default 60vh.
+   *
+   * For a long FORM, which is the case the default cap gets wrong. 60vh is a
+   * sensible ceiling for a dialog that asks a question, but on a tall screen it
+   * makes a long form read through a letterbox with empty desktop above and
+   * below it. Unlike `bodyFills` this does not FIX a height — a short form
+   * still renders short, so the panel only grows when its content earns it.
+   *
+   * The specials form is the case this exists for: a dozen sections whose
+   * shape changes with the kind of promotion.
+   */
+  bodyGrows?: boolean
   /** Off for a dialog holding half-typed work, where a stray click would lose it. */
   closeOnBackdrop?: boolean
 }) {
@@ -180,7 +195,17 @@ export function Modal({
                      because a flex child will not shrink below its content without it —
                      the panes would grow past the panel instead of overflowing. */
                   `flex min-h-0 flex-col ${bodyTall ? 'h-[82vh]' : 'h-[70vh]'}`
-                : 'max-h-[60vh] overflow-y-auto'
+                : /* `bodyGrows` swaps the default ceiling for one that reserves
+                     the header, the footer and the panel's own margin, and
+                     nothing more — so the body ends where the WINDOW does
+                     rather than at an arbitrary fraction of it. Still a max
+                     rather than a height, so a short form is a short dialog.
+
+                     `dvh`, not `vh`: on a phone the browser chrome comes and
+                     goes, and `vh` measures the tallest state — a footer sized
+                     against it sits under the address bar, which is where the
+                     save button lives. */
+                  `overflow-y-auto ${bodyGrows ? 'max-h-[calc(100dvh-13rem)]' : 'max-h-[60vh]'}`
           }`}
         >
           {children}
