@@ -211,7 +211,22 @@ export default function PricingPanel({
                 </thead>
                 <tbody>
                   <tr className={TABLE_ROW}>
-                    <td className={`${TD} text-ink`}>{storeName}</td>
+                    {/* Named for the GROUP when cost is shared, because that is
+                        what the figure is. Labelling it with this store's name
+                        while every other store silently follows it reads as a
+                        per-store cost that happens to be copied. */}
+                    <td className={`${TD} text-ink`}>
+                      {sharesCost && lines.length > 0 ? (
+                        <>
+                          All stores
+                          <span className="ml-2 text-xs text-muted">
+                            {lines.length + 1} sharing
+                          </span>
+                        </>
+                      ) : (
+                        storeName
+                      )}
+                    </td>
 
                     {/* Supplier price comes from the supplier catalogue, which isn't
                         linked to products yet — shown so the column reads correctly
@@ -307,10 +322,17 @@ export default function PricingPanel({
                     </td>
                   </tr>
 
-                  {/* A linked store's cost row. When cost is SHARED it mirrors the
-                      row above and is read-only, because editing it would imply a
-                      difference that saving is about to erase. */}
-                  {lines.map((line) => (
+                  {/* A linked store's own cost row — shown only when cost is NOT
+                      shared, because then each store genuinely has its own figure
+                      to type.
+
+                      When cost IS shared these rows said nothing: every one
+                      mirrored the row above, greyed out. Harmless at two stores
+                      and unreadable at forty, where the real information — "one
+                      cost, and these are the stores on it" — was buried under
+                      forty identical copies of it. The row above now carries
+                      that, and the stores are listed once beneath the table. */}
+                  {!sharesCost && lines.map((line) => (
                     <tr key={line.siteId} className={TABLE_ROW}>
                       <td className={`${TD} text-ink`}>
                         {line.name}
@@ -397,11 +419,22 @@ export default function PricingPanel({
               </>
             ) : (
               <>
-                {lines.length > 0 && sharesCost
-                  ? 'Cost is shared: saving writes this cost to every linked store, so their rows follow it. '
-                  : lines.length > 0
-                    ? 'Cost is not shared: each store keeps the cost typed against it. '
-                    : ''}
+                {/* The stores are NAMED rather than counted. "4 stores" leaves
+                    somebody wondering which four, and at forty the list is the
+                    only place that answer exists now the rows are gone. */}
+                {lines.length > 0 && sharesCost ? (
+                  <>
+                    One cost for {storeName} and{' '}
+                    <strong className="text-ink">
+                      {lines.map((l) => l.name).join(', ')}
+                    </strong>
+                    . Saving writes it to all of them.{' '}
+                  </>
+                ) : lines.length > 0 ? (
+                  'Cost is not shared: each store keeps the cost typed against it. '
+                ) : (
+                  ''
+                )}
                 Average cost is a consequence of purchases and cannot be typed in. Margin is
                 calculated on{' '}
                 <strong className="text-ink">
@@ -422,8 +455,13 @@ export default function PricingPanel({
       <Card>
         <SectionTitle icon={<Banknote size={16} />}>Selling price</SectionTitle>
         <section className="flex flex-col gap-4 p-6">
+          {/* Headed for the GROUP when selling is shared — one table, one set of
+              prices, which is what the figures actually are. */}
           <SellingTable
-            heading={storeName}
+            heading={sharesSelling && lines.length > 0 ? 'All stores' : storeName}
+            headingNote={
+              sharesSelling && lines.length > 0 ? `${lines.length + 1} sharing` : undefined
+            }
             structures={structures}
             basis={basisCost}
             sellingVat={sellingVat}
@@ -432,7 +470,11 @@ export default function PricingPanel({
             fieldName={(id) => `price_${id}`}
           />
 
-          {lines.map((line) => (
+          {/* One table PER STORE, and only when prices are not shared. Shared,
+              each was a read-only copy of the table above — a whole table per
+              store saying nothing, which at forty stores is forty tables to
+              scroll past to reach the one editable figure. */}
+          {!sharesSelling && lines.map((line) => (
             <SellingTable
               key={line.siteId}
               heading={line.name}
@@ -454,9 +496,15 @@ export default function PricingPanel({
 
           {lines.length > 0 && (
             <p className="text-xs text-muted">
-              {sharesSelling
-                ? 'Selling prices are shared: saving writes these prices to every linked store, matched by tier name.'
-                : 'Selling prices are not shared: each store keeps the prices typed against it. Saving updates every store from here.'}
+              {sharesSelling ? (
+                <>
+                  These prices apply at {storeName} and{' '}
+                  <strong className="text-ink">{lines.map((l) => l.name).join(', ')}</strong>,
+                  matched by tier name.
+                </>
+              ) : (
+                'Selling prices are not shared: each store keeps the prices typed against it. Saving updates every store from here.'
+              )}
             </p>
           )}
         </section>
