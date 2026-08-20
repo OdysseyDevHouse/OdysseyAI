@@ -270,7 +270,8 @@
     "test:db-setup": "tsx --conditions=react-server --env-file=.env scripts/test-db-setup.ts",
     "db:setup": "tsx --conditions=react-server --env-file=.env scripts/db-setup.ts",
     "test:box-schema": "tsx --conditions=react-server --env-file=.env scripts/test-box-schema.ts",
-    "box:migrate": "node --env-file=.env scripts/box-migrate.mjs"
+    "box:migrate": "node --env-file=.env scripts/box-migrate.mjs",
+    "test:tab-routing": "tsx --conditions=react-server --env-file=.env scripts/test-tab-routing.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

@@ -42,8 +42,41 @@ import mysql from 'mysql2/promise'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const migrationsDir = path.join(root, 'sql', 'box')
 
-/** The shop tables a tab needs. Nothing else comes across. */
-const TAB_TABLES = ['sales_documents', 'sales_document_lines', 'pos_tables']
+/**
+ * The shop tables a tab needs. Nothing else comes across.
+ *
+ * Ordered so a table is created after anything it references — a kept foreign
+ * key is a real constraint, so its target must already exist.
+ *
+ * `pos_visit_types` and `pos_floor_rooms` are here because listTables and
+ * getTable LEFT JOIN them on every read of the floor: without them the box
+ * cannot answer the one question it exists to answer. They are small, FK-free
+ * lookups (three rows and one on a live site) whose contents the cloud owns —
+ * see MIRRORED_TABLES, which copies their rows rather than leaving a waiter
+ * looking at a floor with no rooms and no visit types.
+ */
+const TAB_TABLES = [
+  'pos_visit_types',
+  'pos_floor_rooms',
+  'sales_documents',
+  'sales_document_lines',
+  'pos_tables',
+]
+
+/**
+ * Lookups whose ROWS are copied down, not just their shape.
+ *
+ * These are cloud-mastered reference data that the floor reads on every render.
+ * Copying them is a cache, exactly as the till's product catalog is: losing it
+ * costs a re-copy and nothing else, and the cloud stays the only place they are
+ * edited.
+ *
+ * NOT in this list, and deliberately: pos_tables. The floor plan itself is
+ * cloud-mastered too, but its rows carry `document_id` — live state the box
+ * owns while a service is running. Copying them down would overwrite open tabs
+ * with the cloud's stale view of which tables are occupied.
+ */
+const MIRRORED_TABLES = ['pos_visit_types', 'pos_floor_rooms']
 
 const siteId = Number(process.argv[2])
 const probeOnly = process.argv.includes('--probe')
@@ -230,9 +263,6 @@ function stripConstraints(createSql, tablesOnBox) {
   return sql
 }
 
-/* TAB_TABLES is ordered so a table is created after anything it references:
-   sales_documents, then its lines, then the floor that points at a document.
-   A kept FK is a real constraint, so the target must already exist. */
 const onBox = new Set(TAB_TABLES)
 
 for (const table of TAB_TABLES) {
@@ -249,7 +279,38 @@ for (const table of TAB_TABLES) {
   console.log('ready')
 }
 
-/* ── 3. Say what this box is ──────────────────────────────────────────────── */
+/* ── 3. Mirror the lookups the floor reads ────────────────────────────────── */
+
+/*
+ * REPLACE, not INSERT IGNORE. These rows are cloud-mastered, so the cloud's
+ * version wins outright — a row edited there must reach the box, and a row this
+ * runner left behind from an earlier copy must be corrected rather than kept.
+ *
+ * Deleting what the cloud no longer has is deliberately NOT done. A visit type
+ * removed in the cloud may still be referenced by a tab open on the box right
+ * now, and dropping it under a live service would blank the label on a waiter's
+ * screen mid-sitting. A stale extra row is harmless; the FK from pos_tables is
+ * ON DELETE SET NULL anyway.
+ */
+for (const table of MIRRORED_TABLES) {
+  const [rows] = await masterConn.query(`SELECT * FROM \`${table}\``)
+  if (!rows.length) {
+    console.log(`  ${table} … no rows to mirror`)
+    continue
+  }
+  const columns = Object.keys(rows[0])
+  const collist = columns.map((c) => `\`${c}\``).join(', ')
+  const placeholders = `(${columns.map(() => '?').join(', ')})`
+  for (const row of rows) {
+    await boxConn.execute(
+      `REPLACE INTO \`${table}\` (${collist}) VALUES ${placeholders}`,
+      columns.map((c) => row[c]),
+    )
+  }
+  console.log(`  ${table} … ${rows.length} row(s) mirrored`)
+}
+
+/* ── 4. Say what this box is ──────────────────────────────────────────────── */
 
 await boxConn.execute(
   `INSERT INTO box_identity (id, site_id, site_code, schema_version)

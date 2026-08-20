@@ -17,13 +17,28 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne } from '../src/lib/db'
 import { decryptSecret } from '../src/lib/crypto/secrets'
 
-/** What the box is allowed to hold. Anything else is the shop leaking in. */
+/**
+ * What the box is allowed to hold. Anything else is the shop leaking in.
+ *
+ * `pos_visit_types` and `pos_floor_rooms` are here because listTables and
+ * getTable LEFT JOIN them on every read of the floor — without them the box
+ * cannot answer the question it exists to answer. Their ROWS are mirrored down
+ * by box-migrate too, since a floor with no rooms and no visit types is not a
+ * floor a waiter can use.
+ *
+ * Adding to this list should feel like a decision. The site schema is ~250
+ * tables and the tab tables' own foreign keys reach 32 of them; every addition
+ * is a step back towards the box being a second shop, with a second stock
+ * ledger nobody can reconcile.
+ */
 const EXPECTED = [
   'box_identity',
   'box_lease',
   'box_migrations',
   'box_outbox',
+  'pos_floor_rooms',
   'pos_tables',
+  'pos_visit_types',
   'sales_documents',
   'sales_document_lines',
 ]
@@ -121,6 +136,32 @@ async function main() {
       `${t} has every column the shop has`,
       diff.length === 0,
       diff.map((d) => d.c).join(', '),
+    )
+  }
+
+  /* ── The mirrored lookups have ROWS, not just shape ────────────────────── */
+
+  /* A shape-only check passes with an empty table, and an empty pos_visit_types
+     renders a floor where every table is unlabelled — which looks like working
+     software right up until a waiter needs to tell takeaway from sit-down. */
+  /* The box user is scoped to its OWN database — it cannot read the master, and
+     that grant is deliberate (see dbSetup/sql.ts: the box holds open tabs and
+     never needs the shop). So the shop side is counted through siteQuery, which
+     uses the site's own credentials. */
+  const { siteQueryOne } = await import('../src/lib/siteDb')
+
+  for (const t of ['pos_visit_types', 'pos_floor_rooms']) {
+    const [[onBoxRow]] = await conn!.query<RowDataPacket[]>(
+      `SELECT COUNT(*) n FROM \`${box!.database_name}\`.\`${t}\``,
+    )
+    const onCloudRow = await siteQueryOne<{ n: number }>(
+      site!.id,
+      `SELECT COUNT(*) AS n FROM \`${t}\``,
+    )
+    check(
+      `${t} rows are mirrored from the shop`,
+      Number(onBoxRow.n) === Number(onCloudRow?.n),
+      `box ${onBoxRow.n} vs shop ${onCloudRow?.n}`,
     )
   }
 
