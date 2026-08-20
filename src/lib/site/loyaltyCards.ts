@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { branchDbPrefix, customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum } from '../decimals'
 import {
   cardCompletions,
@@ -271,7 +272,11 @@ export async function setCardActive(
  * Stopping the card is the reversible alternative and is what the error says.
  */
 export async function deleteCard(siteId: number, actor: Actor, id: number): Promise<Result> {
-  const used = await siteQueryOne<Row>(
+  // The guard reads the OWNER's stamps; the delete below hits the BRANCH's
+  // cards. Two databases when the file is shared, which is exactly why
+  // fk_stamp_card had to go in 199 — this check is now what stops a card being
+  // deleted out from under progress a customer has earned.
+  const used = await customerQueryOne<Row>(
     siteId,
     'SELECT COUNT(*) AS n FROM loyalty_stamps WHERE card_id = ?',
     [id],
@@ -324,7 +329,7 @@ export async function getCardProgress(
   const cards = await listCards(siteId, true)
   if (cards.length === 0) return []
 
-  const counts = await siteQuery<Row>(
+  const counts = await customerQuery<Row>(
     siteId,
     `SELECT card_id, COUNT(*) AS n FROM loyalty_stamps
       WHERE customer_id = ? GROUP BY card_id`,
@@ -389,11 +394,13 @@ export async function awardSaleStamps(
     if (due <= 0) continue
 
     try {
-      const result = await siteTransaction(siteId, async (tx) => {
+      const result = await customerTransaction(siteId, async (tx) => {
         // Already stamped for this sale? A retry, so nothing to do.
         const [[existing]] = await tx.query<Row[]>(
-          'SELECT COUNT(*) AS n FROM loyalty_stamps WHERE card_id = ? AND document_id = ? AND customer_id = ?',
-          [card.id, input.documentId, input.customerId] as never,
+          `SELECT COUNT(*) AS n FROM loyalty_stamps
+            WHERE card_id = ? AND document_id = ? AND customer_id = ?
+              AND (origin_site_id IS NULL OR origin_site_id = ?)`,
+          [card.id, input.documentId, input.customerId, siteId] as never,
         )
         if (Number(existing?.n ?? 0) > 0) return { stamps: 0, codes: [] as string[], points: 0 }
 
@@ -407,10 +414,14 @@ export async function awardSaleStamps(
         const stampIds: number[] = []
         for (let seq = 1; seq <= due; seq++) {
           const [res] = await tx.execute(
+            // card_id and document_id are both BRANCH ids, and uq_stamp_sale is
+            // built on them — so without the origin, two stores stamping their
+            // own sale 5001 collide and the second customer silently gets no
+            // stamp. See 200_loyalty_stamp_origin.sql.
             `INSERT INTO loyalty_stamps
-               (card_id, customer_id, document_id, stamp_seq, product_id)
-             VALUES (?,?,?,?,?)`,
-            [card.id, input.customerId, input.documentId, seq, null] as never,
+               (card_id, customer_id, document_id, origin_site_id, stamp_seq, product_id)
+             VALUES (?,?,?,?,?,?)`,
+            [card.id, input.customerId, input.documentId, siteId, seq, null] as never,
           )
           stampIds.push((res as { insertId: number }).insertId)
         }
@@ -425,7 +436,7 @@ export async function awardSaleStamps(
           if (card.rewardType === 'points') {
             // A points reward needs no voucher — it lands straight on the
             // balance, where the customer can see it immediately.
-            await insertLedger(tx, actor, {
+            await insertLedger(tx, actor, siteId, {
               customerId: input.customerId,
               entryType: 'adjust',
               points: card.rewardValue,
@@ -481,10 +492,16 @@ export async function awardSaleStamps(
 
 /** Removes a refunded sale's stamps, and voids anything they issued. */
 export async function reverseSaleStamps(siteId: number, documentId: number): Promise<number> {
-  return siteTransaction(siteId, async (tx) => {
+  return customerTransaction(siteId, async (tx) => {
+    // Scoped by origin throughout. document_id is a BRANCH id, so in a shared
+    // stamp table it would match another store's sale — and this function VOIDS
+    // vouchers and DELETES stamps, so an unscoped match would wipe progress a
+    // customer at a different branch legitimately earned.
     const [issued] = await tx.query<Row[]>(
-      'SELECT voucher_id FROM loyalty_stamps WHERE document_id = ? AND voucher_id IS NOT NULL',
-      [documentId] as never,
+      `SELECT voucher_id FROM loyalty_stamps
+        WHERE document_id = ? AND voucher_id IS NOT NULL
+          AND (origin_site_id IS NULL OR origin_site_id = ?)`,
+      [documentId, siteId] as never,
     )
 
     for (const row of issued) {
@@ -497,9 +514,11 @@ export async function reverseSaleStamps(siteId: number, documentId: number): Pro
       )
     }
 
-    const [res] = await tx.execute('DELETE FROM loyalty_stamps WHERE document_id = ?', [
-      documentId,
-    ] as never)
+    const [res] = await tx.execute(
+      `DELETE FROM loyalty_stamps
+        WHERE document_id = ? AND (origin_site_id IS NULL OR origin_site_id = ?)`,
+      [documentId, siteId] as never,
+    )
     return (res as { affectedRows: number }).affectedRows
   })
 }
@@ -546,14 +565,26 @@ function mapVoucher(r: Row): LoyaltyVoucher {
   }
 }
 
-const SELECT_VOUCHER = `
+/**
+ * A voucher with its customer and reward product.
+ *
+ * A function rather than a constant because this query straddles the boundary
+ * when a group shares its customer file. Vouchers and customers move to the
+ * owner; `products` stays in each branch, because the reward is a line off that
+ * shop's own shelf. So the query runs against the OWNER and reaches back with
+ * `bdb` to name the caller's product table.
+ *
+ * Both prefixes are empty for a store that owns its own customers, so the SQL
+ * is unchanged for every single-store site.
+ */
+const selectVoucher = (bdb: string) => `
   SELECT v.id, v.code, v.customer_id, v.reward_type, v.reward_product_id, v.reward_value,
          v.description, v.status, v.issued_by, v.expires_on, v.redeemed_at,
          v.redeemed_doc_number, v.created_at,
          c.name AS customer_name, p.description AS reward_product_name
     FROM loyalty_vouchers v
     LEFT JOIN customers c ON c.id = v.customer_id
-    LEFT JOIN products p ON p.id = v.reward_product_id
+    LEFT JOIN ${bdb}products p ON p.id = v.reward_product_id
 `
 
 function makeCode(): string {
@@ -671,9 +702,10 @@ export async function listVouchers(
   }
 
   const limit = Math.min(Math.max(1, Math.floor(options.limit ?? 200)), 1000)
-  const rows = await siteQuery<Row>(
+  const bdb = await branchDbPrefix(siteId)
+  const rows = await customerQuery<Row>(
     siteId,
-    `${SELECT_VOUCHER} ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+    `${selectVoucher(bdb)} ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
      ORDER BY v.id DESC LIMIT ${limit}`,
     params,
   )
@@ -682,9 +714,10 @@ export async function listVouchers(
 
 /** Looks a code up for the till. Reserves nothing — this is a preview. */
 export async function findVoucher(siteId: number, code: string): Promise<LoyaltyVoucher | null> {
-  const row = await siteQueryOne<Row>(
+  const bdb = await branchDbPrefix(siteId)
+  const row = await customerQueryOne<Row>(
     siteId,
-    `${SELECT_VOUCHER} WHERE v.code = ? LIMIT 1`,
+    `${selectVoucher(bdb)} WHERE v.code = ? LIMIT 1`,
     [code.trim().toUpperCase()],
   )
   return row ? mapVoucher(row) : null
@@ -741,7 +774,7 @@ export async function redeemVoucherForSale(
 
 /** Cancels an unspent voucher. */
 export async function voidVoucher(siteId: number, actor: Actor, id: number): Promise<Result> {
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `UPDATE loyalty_vouchers SET status = 'void' WHERE id = ? AND status = 'issued'`,
     [id],
@@ -761,7 +794,7 @@ export async function voidVoucher(siteId: number, actor: Actor, id: number): Pro
 
 /** Marks lapsed vouchers expired. Safe to run repeatedly. */
 export async function expireVouchers(siteId: number): Promise<number> {
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `UPDATE loyalty_vouchers
         SET status = 'expired'
@@ -772,7 +805,7 @@ export async function expireVouchers(siteId: number): Promise<number> {
 
 /** Puts a voucher back when the sale that spent it is reversed. */
 export async function restoreVoucherForDocument(siteId: number, documentId: number): Promise<number> {
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `UPDATE loyalty_vouchers
         SET status = 'issued', redeemed_at = NULL, redeemed_doc_id = NULL, redeemed_doc_number = ''

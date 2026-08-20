@@ -102,6 +102,33 @@ gift-card tables, for exactly this reason:
 Those are worse than a wrong read: pooled across branches, the second branch's
 award is refused as a duplicate key and the customer **silently loses points**.
 
+## Related: loyalty splits into balances and programme configuration
+
+The stage 1 classification moved "loyalty" to the owner as one block. Working
+through it, the five customer-data tables do move — but three others turned up
+that were never classified, and they must **stay in the branch**:
+
+| Table | Why it stays |
+| --- | --- |
+| `loyalty_tiers` | The tier ladder is a shop's own pricing decision, and `loyalty_members.tier_id` FKs to it. |
+| `loyalty_cards` | Punch-card definitions — reward product, required stamps. |
+| `loyalty_card_items` | FKs to **`products`** and **`departments`**, both branch-owned. It cannot leave. |
+
+That produces a dependency crossing the boundary in the other direction:
+`loyalty_stamps` and `loyalty_vouchers` hold customer balances (owner) but FK to
+`loyalty_cards` (branch). Those two foreign keys have to be dropped, exactly as
+in `197_shared_customer_file.sql`, and validated in code.
+
+The practical consequence is worth stating plainly: **a punch card is defined
+per store.** "Buy 10 coffees" at branch 3 is a different card from the same
+offer at branch 7, even though the customer and their points balance are shared.
+Making cards group-wide would mean sharing `products` too, which is a different
+project (product sharing already exists and is a fan-out, not an ownership move).
+
+Tier ladders are the same: shared points, per-shop tiers. Worth confirming that
+is acceptable, because it is a visible product behaviour rather than an
+implementation detail.
+
 ## Related: two tables that serve both customers and suppliers
 
 `party_documents` and `party_comments` are keyed by a loose

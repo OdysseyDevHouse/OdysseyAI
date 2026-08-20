@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { branchDbPrefix, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, type Actor } from './activityLog'
 import { getTenderType } from './tenderTypes'
@@ -70,7 +71,7 @@ function mapEntry(r: Row): WalletEntry {
 
 /** The authoritative balance: summed from the rows, never read off the cache. */
 export async function getWalletBalance(siteId: number, customerId: number): Promise<number> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE customer_id = ?',
     [customerId],
@@ -97,12 +98,19 @@ export async function listWallet(
   limit = 100,
 ): Promise<WalletEntry[]> {
   const capped = Math.min(Math.max(1, Math.floor(limit)), 1000)
-  const rows = await siteQuery<Row>(
+
+  // The wallet moves WITH the customer, but tender_types stays in each branch —
+  // it is the shop's own list of ways to take money. So this runs against the
+  // owner and reaches BACK to name the caller's tender table. Unqualified, a
+  // top-up taken at branch 7 would be labelled with whatever tender happens to
+  // share that id at the primary: a wrong label on a money record.
+  const bdb = await branchDbPrefix(siteId)
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT w.id, w.customer_id, w.entry_type, w.amount, w.document_id, w.document_number,
             w.note, w.user_name, w.created_at, t.name AS tender_name
        FROM loyalty_wallet w
-       LEFT JOIN tender_types t ON t.id = w.tender_type_id
+       LEFT JOIN ${bdb}tender_types t ON t.id = w.tender_type_id
       WHERE w.customer_id = ?
       ORDER BY w.id DESC
       LIMIT ${capped}`,
@@ -163,7 +171,7 @@ export async function topUpWallet(
     return { ok: false, error: `A top-up above R${MAX_TOPUP.toLocaleString()} has to be split.` }
   }
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     'SELECT id, name FROM customers WHERE id = ? LIMIT 1',
     [input.customerId],
@@ -187,17 +195,23 @@ export async function topUpWallet(
   // taking the till's would put a waiter's top-up in someone else's drawer.
   const shiftId = await shiftToBankInto(siteId, input.terminalId ?? null, actor.userId)
 
-  const balance = await siteTransaction(siteId, async (tx) => {
+  const balance = await customerTransaction(siteId, async (tx) => {
     await tx.execute(
+      // origin_site_id is not optional here: tender_type_id, shift_id and
+      // terminal_id are ALL branch ids, and without the origin none of them
+      // means anything once ten stores share one wallet. walletTopUpsForShift
+      // filters on it, so a missing stamp shows up as a drawer that is over.
       `INSERT INTO loyalty_wallet
-         (customer_id, entry_type, amount, tender_type_id, shift_id, terminal_id, note, user_id, user_name)
-       VALUES (?, 'topup', ?, ?, ?, ?, ?, ?, ?)`,
+         (customer_id, entry_type, amount, tender_type_id, shift_id, terminal_id,
+          origin_site_id, note, user_id, user_name)
+       VALUES (?, 'topup', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.customerId,
         amount.toFixed(4),
         tender.id,
         shiftId,
         input.terminalId ?? null,
+        siteId,
         (input.note ?? '').slice(0, 255),
         actor.userId,
         actor.userName.slice(0, 120),
@@ -286,7 +300,7 @@ export async function refundWalletForSale(
   documentId: number,
   reason: string,
 ): Promise<{ amount: number }> {
-  return siteTransaction(siteId, async (tx) => {
+  return customerTransaction(siteId, async (tx) => {
     const [[spent]] = await tx.query<Row[]>(
       `SELECT customer_id, amount, document_number
          FROM loyalty_wallet
@@ -343,7 +357,7 @@ export async function adjustWallet(
   if (!reason.trim()) return { ok: false, error: 'Give a reason for the adjustment.' }
 
   try {
-    const balance = await siteTransaction(siteId, async (tx) => {
+    const balance = await customerTransaction(siteId, async (tx) => {
       const current = await lockedWalletBalance(tx, customerId)
       if (value < 0 && current + value < 0) {
         throw new Error(`That would overdraw the card — R${current.toFixed(2)} is available.`)
@@ -396,16 +410,25 @@ export async function walletTopUpsForShift(
   siteId: number,
   shiftId: number,
 ): Promise<WalletTopUpTotal[]> {
-  const rows = await siteQuery<Row>(
+  // Two boundary problems in one query, and the second is the dangerous one.
+  //
+  //   · tender_types stays in the branch, so it is named explicitly.
+  //   · shift_id is ALSO a branch id. In a shared wallet, filtering on it alone
+  //     would pull in another store's shift that happens to share the number —
+  //     and this figure is what a drawer is counted against. origin_site_id is
+  //     what makes the shift unambiguous.
+  const bdb = await branchDbPrefix(siteId)
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT w.tender_type_id, COALESCE(t.name,'Unknown') AS tender_name,
             COALESCE(SUM(w.amount),0) AS amount
        FROM loyalty_wallet w
-       LEFT JOIN tender_types t ON t.id = w.tender_type_id
+       LEFT JOIN ${bdb}tender_types t ON t.id = w.tender_type_id
       WHERE w.shift_id = ? AND w.entry_type = 'topup'
+        AND (w.origin_site_id IS NULL OR w.origin_site_id = ?)
       GROUP BY w.tender_type_id, t.name
       ORDER BY t.name`,
-    [shiftId],
+    [shiftId, siteId],
   )
   return rows.map((r) => ({
     tenderTypeId: Number(r.tender_type_id ?? 0),

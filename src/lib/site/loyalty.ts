@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum } from '../decimals'
 import {
   LOYALTY_DEFAULTS,
@@ -304,7 +305,7 @@ export async function getMember(
   customerId: number,
   settings?: LoyaltySettings,
 ): Promise<LoyaltyMember | null> {
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     'SELECT id, code, name FROM customers WHERE id = ? LIMIT 1',
     [customerId],
@@ -315,19 +316,19 @@ export async function getMember(
   const tiers = await listTiers(siteId)
 
   const [member, totals, spend, wallet] = await Promise.all([
-    siteQueryOne<Row>(
+    customerQueryOne<Row>(
       siteId,
       `SELECT customer_id, is_active, tier_id, joined_at, last_activity_at
          FROM loyalty_members WHERE customer_id = ? LIMIT 1`,
       [customerId],
     ),
-    siteQueryOne<Row>(
+    customerQueryOne<Row>(
       siteId,
       'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?',
       [customerId],
     ),
     qualifyingSpendFor(siteId, customerId, config),
-    siteQueryOne<Row>(
+    customerQueryOne<Row>(
       siteId,
       'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE customer_id = ?',
       [customerId],
@@ -360,7 +361,7 @@ async function qualifyingSpendFor(
   settings: LoyaltySettings,
 ): Promise<number> {
   const from = windowStart(settings)
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT COALESCE(SUM(basis_amount),0) AS spend
        FROM loyalty_ledger
@@ -509,7 +510,7 @@ export async function listLedger(
   limit = 200,
 ): Promise<LedgerEntry[]> {
   const capped = Math.min(Math.max(1, Math.floor(limit)), 1000)
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT id, customer_id, entry_type, points, basis_amount, document_id, document_number,
             tier_name, multiplier, note, user_name, created_at
@@ -628,7 +629,7 @@ export async function awardSaleLoyalty(
   const settings = await getLoyaltySettings(siteId)
   if (!settings.enabled) return null
 
-  const already = await siteQueryOne<Row>(
+  const already = await customerQueryOne<Row>(
     siteId,
     `SELECT id FROM loyalty_ledger WHERE document_id = ? AND entry_type = 'earn' LIMIT 1`,
     [input.documentId],
@@ -738,7 +739,7 @@ export async function redeemableFor(
   const settings = await getLoyaltySettings(siteId)
   if (!settings.enabled) return { points: 0, maxRand: 0, settings }
 
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?',
     [customerId],
@@ -839,7 +840,7 @@ export async function reverseSaleLoyalty(
   const tiers = await listTiers(siteId)
 
   try {
-    const result = await siteTransaction(siteId, async (tx) => {
+    const result = await customerTransaction(siteId, async (tx) => {
       const [rows] = await tx.query<Row[]>(
         `SELECT id, customer_id, entry_type, points, document_number
            FROM loyalty_ledger WHERE document_id = ? FOR UPDATE`,
@@ -928,7 +929,7 @@ export async function expirePoints(
 
   const candidates =
     settings.expiryMode === 'activity'
-      ? await siteQuery<Row>(
+      ? await customerQuery<Row>(
           siteId,
           `SELECT m.customer_id
              FROM loyalty_members m
@@ -936,7 +937,7 @@ export async function expirePoints(
               AND COALESCE(m.last_activity_at, m.joined_at) < ?`,
           [cutoff],
         )
-      : await siteQuery<Row>(
+      : await customerQuery<Row>(
           siteId,
           `SELECT customer_id
              FROM loyalty_ledger
@@ -1118,10 +1119,10 @@ export async function listMembers(
      LIMIT ${limit + 1}
   `
 
-  const rows = await siteQuery<Row>(siteId, sql, params)
+  const rows = await customerQuery<Row>(siteId, sql, params)
   const truncated = rows.length > limit
 
-  const countRow = await siteQueryOne<Row>(
+  const countRow = await customerQueryOne<Row>(
     siteId,
     'SELECT COUNT(*) AS n FROM loyalty_members',
   )
@@ -1165,14 +1166,14 @@ export async function getLiability(siteId: number): Promise<{
 }> {
   const settings = await getLoyaltySettings(siteId)
 
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT COUNT(*) AS members, COALESCE(SUM(points),0) AS points FROM (
        SELECT customer_id, SUM(points) AS points
          FROM loyalty_ledger GROUP BY customer_id HAVING SUM(points) > 0
      ) t`,
   )
-  const wallet = await siteQueryOne<Row>(
+  const wallet = await customerQueryOne<Row>(
     siteId,
     `SELECT COALESCE(SUM(amount),0) AS float_amount FROM loyalty_wallet`,
   )

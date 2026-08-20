@@ -1,0 +1,52 @@
+-- Loyalty splits into balances and programme configuration.
+--
+-- ── THE SPLIT ────────────────────────────────────────────────────────────
+--
+-- 197 moved the customer file to the group's primary when a group shares it.
+-- Loyalty went with the customer, which is right for the BALANCES — points
+-- earned at branch 3 and spent at branch 7 is what a shopper assumes a loyalty
+-- programme means:
+--
+--   loyalty_members   loyalty_ledger   loyalty_wallet
+--   loyalty_stamps    loyalty_vouchers
+--
+-- But three tables in the same migration are not customer data at all. They are
+-- the shop's own PROGRAMME CONFIGURATION, and they stay in the branch:
+--
+--   loyalty_tiers       the tier ladder — a pricing decision
+--   loyalty_cards       punch-card definitions
+--   loyalty_card_items  which products or departments a card counts
+--
+-- loyalty_card_items settles it on its own: it has foreign keys to `products`
+-- and `departments`, both of which stay in each branch and are shared (when
+-- they are shared at all) by REPLICATION rather than ownership. It cannot
+-- follow the customer without dragging the product file with it.
+--
+-- ── WHAT THIS MEANS IN THE SHOP ──────────────────────────────────────────
+--
+-- A punch card is defined PER STORE. "Buy 10 coffees, get one free" at branch 3
+-- is a different card from the same offer at branch 7 — while the customer,
+-- their points and their wallet are shared. Same for the tier ladder.
+--
+-- That is a visible product behaviour rather than an implementation detail, and
+-- it is the honest consequence of cards being defined in terms of products.
+-- Making them group-wide is a different project.
+--
+-- ── THE TWO KEYS THAT HAVE TO GO ─────────────────────────────────────────
+--
+-- The split leaves two foreign keys pointing the wrong way across it:
+-- loyalty_stamps and loyalty_vouchers hold customer balances (owner) but name
+-- a loyalty_cards row (branch). Same reasoning as 197 — a key cannot span the
+-- boundary, and repointing is not available because one schema has to serve a
+-- store that shares and a store that does not.
+--
+-- Both become code-validated references. What they were protecting — a stamp
+-- row outliving the card it belongs to — is handled where cards are deleted,
+-- which is a deliberate action rather than a silent cascade.
+--
+-- loyalty_members.tier_id crosses the same boundary — members move to the
+-- owner, the tier they name stays in the branch — and is dropped in 200
+-- alongside the stamp columns.
+
+ALTER TABLE loyalty_stamps   DROP FOREIGN KEY IF EXISTS fk_stamp_card;
+ALTER TABLE loyalty_vouchers DROP FOREIGN KEY IF EXISTS fk_voucher_card;
