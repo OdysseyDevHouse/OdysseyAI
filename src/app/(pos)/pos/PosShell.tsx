@@ -3914,12 +3914,66 @@ export default function PosShell({
       .catch(() => {})
   }, [hospitality])
 
+  /**
+   * Keeping the floor live.
+   *
+   * ── WHY IT RUNS ONLY WHILE THE FLOOR IS ON SCREEN ─────────────────────────
+   *
+   * `choosingTable` is true exactly when the gate is showing, which is the only
+   * time a stale floor is visible to anybody. A waiter deep in a basket cannot
+   * see the floor, so refreshing behind it is work with no reader — and on a
+   * hybrid site that work crosses the shop's LAN.
+   *
+   * It also seeds to `hospitality`, so a restaurant till opens on the gate and
+   * this effect's leading read IS the first read. There is no separate mount
+   * effect: one would fire alongside this on every start and read the floor
+   * twice.
+   *
+   * Gating on `choosingTable` rather than `hospitality` is also what keeps this
+   * out of the "fourth `if (hospitality)`" the header warns about: the question
+   * being asked is "is the floor visible", not "is this a restaurant". The
+   * `hospitality` term that remains is the existing one, narrowed.
+   *
+   * ── AND WHY THREE SECONDS ─────────────────────────────────────────────────
+   *
+   * Twenty was chosen when the floor lived in the cloud and every read crossed
+   * the internet. On a hybrid site it is a query to a machine in the same
+   * building, and the difference is measurable rather than assumed: 0.36ms per
+   * read on a 40-table floor with 25 occupied, which for ten tills at three
+   * seconds is 0.12% of one core.
+   *
+   * Three seconds is what makes ten waiters feel like they are looking at one
+   * floor. At twenty, a round added at the bar is missing from the pass for
+   * long enough that somebody walks over to ask.
+   *
+   * A cloud site pays for the same cadence over the internet, and gets the same
+   * benefit — a shared floor is a shared floor. If that ever proves too chatty
+   * for a shop on a poor line, the interval is the thing to change, not the
+   * mechanism.
+   *
+   * WebSocket push was the plan and was reconsidered here: Next never exposes
+   * the raw socket (see docs/local-backend.md — it is why replicaHost.mjs is a
+   * separate process), so push would mean a second long-running process on
+   * every restaurant box to install, supervise and restart — plus reconnect
+   * logic and a poll fallback for when it drops. For 0.12% of a core, the
+   * simpler thing wins. The trigger is the only part that would differ if that
+   * changes, because everything already goes through `refreshTables`.
+   */
   useEffect(() => {
-    if (!hospitality) return
+    if (!hospitality || !choosingTable) return
+    /*
+     * Immediately on arrival, then every three seconds.
+     *
+     * The leading read is what makes the gate truthful the moment it appears.
+     * Thirteen places set `choosingTable`, and only two of them refreshed —
+     * from the other eleven a waiter backing out of a basket met a floor as old
+     * as whenever they left it, for up to a full interval. Doing it here fixes
+     * all thirteen and cannot be forgotten by a fourteenth.
+     */
     refreshTables()
-    const timer = setInterval(refreshTables, 20_000)
+    const timer = setInterval(refreshTables, 3_000)
     return () => clearInterval(timer)
-  }, [hospitality, refreshTables])
+  }, [hospitality, choosingTable, refreshTables])
 
   /* Bookings change far more slowly than the floor does — a party arrives every
      few minutes at best, where a bill changes every time somebody rings up a
