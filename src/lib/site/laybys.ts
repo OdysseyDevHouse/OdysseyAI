@@ -16,6 +16,7 @@ import { saveDraft, getDocument, todayIso } from './salesDocuments'
 import { finaliseDocument } from './salesPosting'
 import { shiftToBankInto } from './shifts'
 import { logActivity, type Actor } from './activityLog'
+import { customerDbPrefix, customerQueryOne } from './customerDb'
 
 /**
  * Lay-bys — goods set aside and paid off over time.
@@ -115,11 +116,24 @@ export type Layby = {
   payments: LaybyPayment[]
 }
 
-const SELECT_LAYBY = `
+/**
+ * A layby with its customer and invoice number.
+ *
+ * A function rather than a constant because `customers` may live in another
+ * store's database — the group's primary, when the customer file is shared.
+ * `cdb` is the prefix that names it, and it is empty for a store that owns its
+ * own customers, so the SQL is unchanged for every single-store site.
+ *
+ * The join stays INNER, as it always was. That matters more here than
+ * elsewhere: a layby with no matching customer row silently disappears from
+ * the list rather than showing blanks, so getting the prefix wrong would look
+ * like data loss rather than an error.
+ */
+const selectLayby = (cdb: string) => `
   SELECT l.*, c.code AS customer_code, c.name AS customer_name,
          d.document_number AS invoice_number
     FROM laybys l
-    JOIN customers c            ON c.id = l.customer_id
+    JOIN ${cdb}customers c      ON c.id = l.customer_id
     LEFT JOIN sales_documents d ON d.id = l.invoice_doc_id
 `
 
@@ -187,8 +201,9 @@ function mapPayment(r: Row): LaybyPayment {
 }
 
 export async function getLayby(siteId: number, id: number): Promise<Layby | null> {
+  const cdb = await customerDbPrefix(siteId)
   const [header, lines, payments] = await Promise.all([
-    siteQueryOne<Row>(siteId, `${SELECT_LAYBY} WHERE l.id = ? LIMIT 1`, [id]),
+    siteQueryOne<Row>(siteId, `${selectLayby(cdb)} WHERE l.id = ? LIMIT 1`, [id]),
     siteQuery<Row>(siteId, 'SELECT * FROM layby_lines WHERE layby_id = ? ORDER BY line_number, id', [id]),
     siteQuery<Row>(siteId, 'SELECT * FROM layby_payments WHERE layby_id = ? ORDER BY id', [id]),
   ])
@@ -235,16 +250,21 @@ export async function listLaybys(
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const offset = Math.max(options.offset ?? 0, 0)
 
+  // Both halves must name the same customers table, or the count and the page
+  // would disagree — the search filters on c.name and c.code, so a mismatch
+  // would page through one set while counting another.
+  const cdb = await customerDbPrefix(siteId)
+
   const [rows, countRow] = await Promise.all([
     siteQuery<Row>(
       siteId,
-      `${SELECT_LAYBY} ${clause} ORDER BY l.status, l.due_date IS NULL, l.due_date, l.id DESC
+      `${selectLayby(cdb)} ${clause} ORDER BY l.status, l.due_date IS NULL, l.due_date, l.id DESC
         LIMIT ${limit} OFFSET ${offset}`,
       params,
     ),
     siteQueryOne<Row>(
       siteId,
-      `SELECT COUNT(*) AS total FROM laybys l JOIN customers c ON c.id = l.customer_id ${clause}`,
+      `SELECT COUNT(*) AS total FROM laybys l JOIN ${cdb}customers c ON c.id = l.customer_id ${clause}`,
       params,
     ),
   ])
@@ -299,7 +319,7 @@ export async function createLayby(
 ): Promise<CreateResult> {
   if (input.lines.length === 0) return { ok: false, error: 'Add at least one item to put aside.' }
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     'SELECT id, name, status FROM customers WHERE id = ? LIMIT 1',
     [input.customerId],
@@ -770,10 +790,11 @@ export async function expireStaleLaybys(
   siteId: number,
   graceDays = 30,
 ): Promise<{ id: number; laybyNumber: string | null; customerName: string | null }[]> {
+  const cdb = await customerDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT l.id, l.document_number, c.name AS customer_name
-       FROM laybys l JOIN customers c ON c.id = l.customer_id
+       FROM laybys l JOIN ${cdb}customers c ON c.id = l.customer_id
       WHERE l.status = 'open'
         AND l.due_date IS NOT NULL
         AND l.due_date < DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
@@ -816,11 +837,12 @@ export async function remindDueLaybys(
   const { renderTemplate } = await import('../creditModel')
   const companyName = await getCompanyName(siteId)
 
+  const cdb = await customerDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT l.id, l.document_number, l.due_date, l.total_incl, l.paid_total,
             c.name AS customer_name, c.phone
-       FROM laybys l JOIN customers c ON c.id = l.customer_id
+       FROM laybys l JOIN ${cdb}customers c ON c.id = l.customer_id
       WHERE l.status = 'open'
         AND l.due_date IS NOT NULL
         AND l.due_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)

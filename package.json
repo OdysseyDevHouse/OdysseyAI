@@ -25,6 +25,7 @@
     "test:app-role": "node scripts/test-app-role.mjs",
     "test:math": "tsx scripts/test-document-math.ts",
     "test:billing-periods": "tsx scripts/test-billing-periods.ts",
+    "test:shared-customer-queries": "tsx --conditions=react-server --env-file=.env scripts/test-shared-customer-queries.ts",
     "test:customer-owner": "tsx --conditions=react-server --env-file=.env scripts/test-customer-owner.ts",
     "test:modules": "tsx --conditions=react-server --env-file=.env scripts/test-modules.ts",
     "test:unlock-code": "tsx scripts/test-unlock-code.ts",

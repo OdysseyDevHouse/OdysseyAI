@@ -1,4 +1,53 @@
-# `source_doc_id` needs an origin site
+# Open schema work for the shared customer file
+
+Two items, both found by testing rather than by reading. Both must be done
+before the sharing switch is exposed (stage 6).
+
+---
+
+## 1. Branch foreign keys must be dropped, not kept
+
+**Status:** open. **Found:** stage 4, by switching sharing on and writing a
+layby against a shared customer.
+
+The stage 1 classification said cross-database foreign keys work — MariaDB
+accepts them and the cascade fires, both measured in
+`scripts/probe-shared-customer-file.ts`. It concluded that branch tables could
+therefore **keep** their FK to `customers`.
+
+That conclusion was wrong, and the probe did not catch it because it *created*
+a cross-database FK from scratch. The real schema is different: every branch
+table's FK already points at **its own** `customers` table, and those tables
+stay behind when the file moves. So a branch cannot record anything against a
+shared customer:
+
+```
+INSERT INTO laybys (customer_id, ...) VALUES (<owner's customer id>, ...)
+→ ER_NO_REFERENCED_ROW_2: a foreign key constraint fails
+  (`ody10001_master`.`laybys`, CONSTRAINT `fk_layby_customer`
+   FOREIGN KEY (`customer_id`) REFERENCES `customers` (`id`))
+```
+
+It fails hard and immediately, which is the good news — it cannot corrupt
+anything, and there is no silent-wrong-answer version of it.
+
+**The fix:** branch-owned tables drop their FK to `customers` and validate in
+code, exactly as the original plan said before the probe seemed to make it
+unnecessary. That is `sales_documents`, `laybys`, `job_cards`, `online_orders`,
+`contracts`, `gift_cards`, `tickets`, `job_sla_policies`, `customer_assets`,
+`job_series`, `service_addresses`, `online_saved_baskets`,
+`discount_code_uses`.
+
+Repointing them at the owner's schema is *not* the fix: the FK would then be
+wrong for every store that does not share, and a store cannot have two schemas.
+
+**What the probe result still buys us:** `cashbook_links` and the other
+customer-cluster tables move *with* `customers`, so their FKs stay intact and
+resolve locally. Only tables that stay behind lose theirs.
+
+---
+
+## 2. `source_doc_id` needs an origin site
 
 **Status:** open, must be fixed before the sharing switch is exposed (stage 6).
 **Found:** stage 3, while routing `salesPosting.ts` through `customerOwnerSite()`.

@@ -1,6 +1,13 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import {
+  siteQuery,
+  siteQueryOne,
+  siteExecute,
+  siteTransaction,
+  getSiteDatabase,
+  MASTER,
+} from '../siteDb'
 import { customerOwnerSite, supplierOwnerSite } from '../storeGroups'
 
 /**
@@ -102,4 +109,88 @@ export async function supplierTransaction<T>(
   fn: (tx: PoolConnection) => Promise<T>,
 ): Promise<T> {
   return siteTransaction(await supplierSite(siteId), fn)
+}
+
+/* ── Joining the customer file from a branch query ────────────────────────
+ *
+ * The wrappers above move a whole statement to the owner's database. That is
+ * right when every table in it belongs to the customer cluster, and WRONG the
+ * moment one does not: a query joining laybys to customers, run against the
+ * owner, would read the owner's laybys and silently return another store's
+ * rows — or none.
+ *
+ * Those queries stay on the CALLER's connection and name the owner's database
+ * in the join instead:
+ *
+ *     FROM laybys l JOIN `ody10000_master`.customers c ON c.id = l.customer_id
+ *
+ * MariaDB resolves that in one pass, on one instance, including WHERE and
+ * ORDER BY against the remote table — measured in
+ * scripts/probe-shared-customer-file.ts before any of this was built. So no
+ * query has to be split into two and stitched together in code, which is what
+ * this stage was originally scoped to do.
+ *
+ * ── WHY THIS RETURNS A STRING TO INTERPOLATE ─────────────────────────────
+ *
+ * A database name cannot be a bound parameter — placeholders stand for values,
+ * not identifiers, so `FROM ?.customers` is a syntax error rather than a
+ * substitution. The name therefore has to be concatenated into the SQL, which
+ * is exactly the shape of an injection bug.
+ *
+ * It is safe here for two reasons, and both must stay true:
+ *
+ *   1. The name comes from cp2_site_databases in the control database, written
+ *      by provisioning. It is never user input.
+ *   2. It is validated below anyway, and a name that fails is REFUSED rather
+ *      than escaped. Defence in depth: (1) is a fact about today's code and
+ *      could quietly stop being true, whereas (2) cannot.
+ */
+
+/** A database name safe to concatenate into SQL: what provisioning generates. */
+const SAFE_DB_NAME = /^[A-Za-z0-9_$]{1,64}$/
+
+/**
+ * The prefix to put in front of a customer-cluster table in a query that runs
+ * on the CALLER's connection.
+ *
+ * Empty string when the caller owns its own customers, which is every
+ * single-store site — so the SQL is byte-for-byte what it always was and the
+ * query plan does not change.
+ *
+ * Throws on a database name that is not a plain identifier. That is deliberate:
+ * a report returning nothing is a bug someone hunts for hours, and a name odd
+ * enough to fail this test means the control database is telling us something
+ * we should not paper over.
+ */
+export async function customerDbPrefix(siteId: number): Promise<string> {
+  const owner = await customerOwnerSite(siteId)
+  if (owner.siteId === siteId) return ''
+
+  const db = await getSiteDatabase(owner.siteId, owner.purpose ?? MASTER)
+  if (!db) {
+    throw new Error(
+      `The shared customer file is on site ${owner.siteId}, which has no active database.`,
+    )
+  }
+  if (!SAFE_DB_NAME.test(db.databaseName)) {
+    throw new Error(`Refusing to build SQL with the database name "${db.databaseName}".`)
+  }
+  return `\`${db.databaseName}\`.`
+}
+
+/** The same, for the creditors book. */
+export async function supplierDbPrefix(siteId: number): Promise<string> {
+  const owner = await supplierOwnerSite(siteId)
+  if (owner.siteId === siteId) return ''
+
+  const db = await getSiteDatabase(owner.siteId, owner.purpose ?? MASTER)
+  if (!db) {
+    throw new Error(
+      `The shared supplier file is on site ${owner.siteId}, which has no active database.`,
+    )
+  }
+  if (!SAFE_DB_NAME.test(db.databaseName)) {
+    throw new Error(`Refusing to build SQL with the database name "${db.databaseName}".`)
+  }
+  return `\`${db.databaseName}\`.`
 }
