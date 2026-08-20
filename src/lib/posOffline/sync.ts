@@ -136,6 +136,43 @@ export async function queueSale(siteId: number, sale: OfflineSale): Promise<void
 }
 
 /**
+ * Hands a sale over to the shop's box.
+ *
+ * ── THE ONE EXCEPTION TO "NOTHING DELETES A PENDING ROW" ──────────────────
+ *
+ * That rule exists because a pending row is usually the ONLY record that a sale
+ * happened. Here it is not: the box has confirmed it holds this sale and owns
+ * delivering it, so the record survives the deletion. The rule's purpose is
+ * intact; only its literal wording would object.
+ *
+ * Getting the ORDER wrong is what would break it, which is why this is
+ * deliberately not folded into the queue write. `finaliseOffline` writes the
+ * local row first, offers the sale to the box second, and calls this only on a
+ * confirmed acceptance. There is no instant at which the sale exists nowhere.
+ *
+ * ── AND WHY IT DELETES RATHER THAN MARKS SYNCED ───────────────────────────
+ *
+ * `synced` means "the cloud has it" — the state a reprint reads and the prune
+ * timer acts on. The cloud does NOT have it yet; the box does. Marking it
+ * synced would tell a truth-shaped lie to every reader of that column.
+ *
+ * Leaving it pending is worse still: this device will never deliver it, so the
+ * till's pending count would report money that is not its to deliver, and a
+ * manager would cash up against a figure that is wrong.
+ *
+ * Scoped to `pending` so a race cannot delete a row a flush has already
+ * delivered — that one is genuinely `synced` and belongs to the prune timer.
+ */
+export async function dropQueuedSale(siteId: number, saleUid: string): Promise<boolean> {
+  const removed = await posDb(siteId)
+    .outbox.where('saleUid')
+    .equals(saleUid)
+    .and((row) => row.status === 'pending')
+    .delete()
+  return removed > 0
+}
+
+/**
  * Puts a completed return in its outbox.
  *
  * Queued BEFORE the credit-note slip prints, for the same reason a sale is: a failed

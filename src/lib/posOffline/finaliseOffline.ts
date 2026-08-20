@@ -1,7 +1,8 @@
 'use client'
 
 import { nextLocalNumber, releaseLocalNumber } from './saleNumber'
-import { queueReturn, queueSale } from './sync'
+import { dropQueuedSale, queueReturn, queueSale } from './sync'
+import { offerToBox } from './boxQueue'
 import { decrementStock } from './catalog'
 import { kvGet, KV } from './db'
 import type {
@@ -19,6 +20,7 @@ import type {
  *
  *   1. take a number     — advances the local counter, burning it on a crash
  *   2. QUEUE THE SALE    — the only durable record that this happened
+ *  2b. offer it to the box — on a hybrid site only; hands over on acceptance
  *   3. take stock off    — cosmetic, so the next customer sees a truthful figure
  *   4. return, and let the caller print
  *
@@ -26,6 +28,12 @@ import type {
  * sale is still recorded; if the order were reversed, a crash between printing and
  * queueing would leave a customer holding a tax invoice for a sale no system has any
  * record of. One of those is a reprint, the other is unrecoverable.
+ *
+ * Step 2b runs AFTER 2 for the same reason, and it is the reason it is 2b rather
+ * than a replacement for 2: the local write must not depend on a network, not
+ * even a LAN one. Offering first would leave a window between the box accepting
+ * and this machine recording, and a power cut in that window on a box that then
+ * failed to flush is a printed invoice for a sale nothing holds.
  *
  * Numbering comes before queueing for the same reason in miniature: `nextLocalNumber`
  * advances the stored counter before it returns, so a crash burns a number rather
@@ -63,7 +71,14 @@ export type OfflineFinaliseInput = {
 }
 
 export type OfflineFinaliseResult =
-  | { ok: true; documentNumber: string; saleUid: string; change: number }
+  | {
+      ok: true
+      documentNumber: string
+      saleUid: string
+      change: number
+      /** The shop's own box took it, so this device is not delivering it. */
+      queuedOnBox?: boolean
+    }
   | { ok: false; error: string }
 
 /**
@@ -181,12 +196,54 @@ export async function finaliseOffline(
     }
   }
 
+  /*
+   * 2b. The BOX, on a hybrid site.
+   *
+   * ── AFTER THE LOCAL QUEUE, NEVER INSTEAD OF IT ──────────────────────────
+   *
+   * The device's outbox is written first and unconditionally, because it is the
+   * durable record and must not depend on a network — not even a LAN one. Only
+   * once the sale is safely on this machine is it offered to the box.
+   *
+   * That ordering costs a write that is usually thrown away moments later, and
+   * buys the thing that matters: there is no instant at which the sale exists
+   * nowhere. The reverse order has one — between the box accepting and the
+   * local write — and a power cut in that window on a machine whose box then
+   * failed to flush would be a printed invoice for a sale no system holds.
+   *
+   * ── AND THE ROW IS REMOVED ONLY WHEN THE BOX HAS IT ─────────────────────
+   *
+   * A sale must be pending in exactly ONE queue. Left in both, the till's
+   * pending count double-counts money and a manager cashes up against a figure
+   * that is wrong — the books stay right (the cloud claims on the uid), but the
+   * number a person acts on does not.
+   */
+  const offered = await offerToBox(sale)
+  if (offered.taken) {
+    /* The box owns the flush now. Deleting rather than marking synced: `synced`
+       means "the cloud has it", and the cloud does not yet. A pending row this
+       device will never deliver is a row that makes its own count a lie. */
+    await dropQueuedSale(siteId, sale.saleUid).catch(() => {
+      /* Swallowed: the sale IS recorded — twice, which is untidy rather than
+         dangerous. The uid makes the second delivery a no-op at the cloud, and
+         losing the sale to tidy up a duplicate would be the worse trade. */
+    })
+  }
+
   /* 3. Stock, optimistically. Cosmetic — the next refresh overwrites it — and
         deliberately after the queue write, because a failure here must not lose a
         recorded sale. */
   await decrementStock(siteId, input.lines).catch(() => {})
 
-  return { ok: true, documentNumber: sale.documentNumber, saleUid: sale.saleUid, change: input.change }
+  return {
+    ok: true,
+    documentNumber: sale.documentNumber,
+    saleUid: sale.saleUid,
+    change: input.change,
+    /* So the shell can say where the money is waiting. Absent on every
+       non-hybrid site, which is the overwhelming majority. */
+    ...(offered.taken ? { queuedOnBox: true } : {}),
+  }
 }
 
 /* ── A return, taken with no server ──────────────────────────────────────── */
