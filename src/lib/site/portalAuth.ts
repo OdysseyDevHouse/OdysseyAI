@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash, randomBytes } from 'node:crypto'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { customerExecute, customerQuery, customerQueryOne } from './customerDb'
 import { getSetting } from './settings'
 import { send, isConfigured } from '../mail'
 
@@ -125,7 +125,7 @@ export async function requestLink(
      * dispute, and the customer needs to SEE the invoices being disputed more
      * than ever. Closed and inactive do not — those accounts are over.
      */
-    const customer = await siteQueryOne<Row>(
+    const customer = await customerQueryOne<Row>(
       siteId,
       `SELECT id, name, email FROM customers
         WHERE LOWER(email) = ? AND status IN ('active', 'on_hold')
@@ -139,7 +139,7 @@ export async function requestLink(
 
       // The rate check. A stranger cannot trigger it, because a stranger has no
       // customer row — which is also why it is per customer rather than per IP.
-      const recent = await siteQueryOne<Row>(
+      const recent = await customerQueryOne<Row>(
         siteId,
         `SELECT COUNT(*) AS n FROM customer_login_links
           WHERE customer_id = ? AND created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)`,
@@ -147,7 +147,7 @@ export async function requestLink(
       )
       if (Number(recent?.n ?? 0) < MAX_LINKS_PER_HOUR) {
         const token = randomBytes(32).toString('base64url')
-        await siteExecute(
+        await customerExecute(
           siteId,
           `INSERT INTO customer_login_links
              (customer_id, token_hash, expires_at, requested_ip)
@@ -198,7 +198,7 @@ export async function consumeLink(
   try {
     const hash = hashToken(token)
 
-    const claimed = await siteExecute(
+    const claimed = await customerExecute(
       siteId,
       `UPDATE customer_login_links
           SET used_at = NOW(), used_ip = ?
@@ -207,7 +207,7 @@ export async function consumeLink(
     )
     if (claimed.affectedRows === 0) return null
 
-    const row = await siteQueryOne<Row>(
+    const row = await customerQueryOne<Row>(
       siteId,
       `SELECT l.customer_id, c.name, c.status
          FROM customer_login_links l
@@ -239,7 +239,7 @@ export async function consumeLink(
  */
 export async function purgeOldLinks(siteId: number): Promise<number> {
   try {
-    const result = await siteExecute(
+    const result = await customerExecute(
       siteId,
       `DELETE FROM customer_login_links
         WHERE expires_at < DATE_SUB(NOW(), INTERVAL 7 DAY)`,
@@ -267,7 +267,7 @@ export type PortalDrift = {
 export async function reconcilePortal(siteId: number): Promise<PortalDrift> {
   const empty: PortalDrift = { unusedLinks: 0, reusedLinks: [] }
   try {
-    const unused = await siteQueryOne<Row>(
+    const unused = await customerQueryOne<Row>(
       siteId,
       `SELECT COUNT(*) AS n FROM customer_login_links
         WHERE used_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 1 HOUR)`,
@@ -279,7 +279,7 @@ export async function reconcilePortal(siteId: number): Promise<PortalDrift> {
      * if it ever returns a row, the constraint is gone and one link resolves to
      * two customers. There is no more serious drift in this module.
      */
-    const reused = await siteQuery<Row>(
+    const reused = await customerQuery<Row>(
       siteId,
       `SELECT id, customer_id FROM customer_login_links
         WHERE token_hash IN (

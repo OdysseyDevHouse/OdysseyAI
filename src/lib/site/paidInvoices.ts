@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQueryOne } from '../siteDb'
+import { customerQueryOne } from './customerDb'
 import { postTransaction } from './customerLedger'
 import { getDocument } from './salesDocuments'
 import type { Actor } from './activityLog'
@@ -66,7 +66,7 @@ export async function settlePaidInvoice(
   // Already receipted through this same provider reference — a duplicate
   // callback that slipped past the intent guard. Reported as success because
   // the desired state already holds.
-  const existing = await siteQueryOne<Row>(
+  const existing = await customerQueryOne<Row>(
     siteId,
     `SELECT id FROM customer_transactions
       WHERE doc_type = 'payment' AND source = 'payfast' AND reference = ?
@@ -159,7 +159,7 @@ export async function outstandingForDocument(
     changeGiven: number
   },
 ): Promise<number> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT amount_outstanding FROM customer_transactions
       WHERE source_doc_id = ? AND doc_type = 'invoice' LIMIT 1`,

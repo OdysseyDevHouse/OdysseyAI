@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
+import { customerExecute, customerQuery, customerQueryOne, supplierQuery } from './customerDb'
 import { toNum } from '../decimals'
 import { toStatementCycle, type StatementCycle } from '../statementCycles'
 
@@ -91,7 +92,7 @@ export async function listCustomerGroups(
   siteId: number,
   includeInactive = false,
 ): Promise<CustomerGroup[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `${SELECT_GROUP}
       ${includeInactive ? '' : 'WHERE g.is_active = 1'}
@@ -101,7 +102,7 @@ export async function listCustomerGroups(
 }
 
 export async function getCustomerGroup(siteId: number, id: number): Promise<CustomerGroup | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_GROUP} WHERE g.id = ? LIMIT 1`, [id])
+  const row = await customerQueryOne<Row>(siteId, `${SELECT_GROUP} WHERE g.id = ? LIMIT 1`, [id])
   return row ? mapGroup(row) : null
 }
 
@@ -183,14 +184,14 @@ export async function createCustomerGroup(siteId: number, input: GroupInput): Pr
   if (invalid) return { ok: false, error: invalid }
 
   const name = input.name.trim()
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+  const clash = await customerQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM customer_groups WHERE name = ? LIMIT 1',
     [name],
   )
   if (clash) return { ok: false, error: `A group called "${name}" already exists.` }
 
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `INSERT INTO customer_groups
        (name, code, default_terms_days, default_credit_limit,
@@ -231,14 +232,14 @@ export async function updateCustomerGroup(
   if (invalid) return { ok: false, error: invalid }
 
   const name = input.name.trim()
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+  const clash = await customerQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM customer_groups WHERE name = ? AND id <> ? LIMIT 1',
     [name, id],
   )
   if (clash) return { ok: false, error: `A group called "${name}" already exists.` }
 
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `UPDATE customer_groups
         SET name = ?, code = ?, default_terms_days = ?, default_credit_limit = ?,
@@ -297,7 +298,7 @@ export async function deleteCustomerGroup(siteId: number, id: number): Promise<D
     }
   }
 
-  await siteExecute(siteId, 'DELETE FROM customer_groups WHERE id = ?', [id])
+  await customerExecute(siteId, 'DELETE FROM customer_groups WHERE id = ?', [id])
   return { ok: true }
 }
 
@@ -462,7 +463,7 @@ export async function deleteSalesRep(siteId: number, id: number): Promise<Delete
  * the guarantee that it never drifts from what accounts really hold.
  */
 export async function listCustomerCategories(siteId: number): Promise<string[]> {
-  const rows = await siteQuery<RowDataPacket & { category: string }>(
+  const rows = await customerQuery<RowDataPacket & { category: string }>(
     siteId,
     `SELECT DISTINCT category FROM customers
       WHERE category IS NOT NULL AND category <> ''
@@ -473,7 +474,7 @@ export async function listCustomerCategories(siteId: number): Promise<string[]> 
 }
 
 export async function listSupplierCategories(siteId: number): Promise<string[]> {
-  const rows = await siteQuery<RowDataPacket & { category: string }>(
+  const rows = await supplierQuery<RowDataPacket & { category: string }>(
     siteId,
     `SELECT DISTINCT category FROM suppliers
       WHERE category IS NOT NULL AND category <> ''

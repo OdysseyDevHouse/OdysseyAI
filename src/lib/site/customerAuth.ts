@@ -1,7 +1,8 @@
 import 'server-only'
 import { createHash, randomBytes } from 'crypto'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
+import { siteQuery } from '../siteDb'
+import { customerExecute, customerQueryOne } from './customerDb'
 import { hashPassword, verifyPassword } from '../password'
 import { toNum } from '../decimals'
 // The shared credit rules — the till, sales posting and this all ask the same
@@ -89,7 +90,7 @@ export async function signInCustomer(
   const email = emailRaw.trim().toLowerCase()
   if (!email || !password) return { ok: false, error: REFUSED }
 
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT cl.id, cl.customer_id, cl.password_hash, cl.failed_attempts, cl.locked_until,
             cl.must_change, cl.is_active,
@@ -126,7 +127,7 @@ export async function signInCustomer(
 
   if (!good) {
     const attempts = Number(row.failed_attempts) + 1
-    await siteExecute(
+    await customerExecute(
       siteId,
       `UPDATE customer_logins
           SET failed_attempts = ?,
@@ -146,7 +147,7 @@ export async function signInCustomer(
     return { ok: false, error: REFUSED }
   }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_logins
         SET failed_attempts = 0, locked_until = NULL, last_login_at = NOW()
@@ -177,7 +178,7 @@ export async function customerAccount(
   siteId: number,
   customerId: number,
 ): Promise<CustomerAccount | null> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT c.id, c.name, c.status, c.account_type, c.credit_limit,
             c.daily_limit, c.monthly_limit, c.balance, c.phone,
@@ -315,7 +316,7 @@ export async function getCustomerLogin(
   siteId: number,
   customerId: number,
 ): Promise<LoginSummary | null> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT email, is_active, must_change, last_login_at, locked_until
        FROM customer_logins WHERE customer_id = ?`,
@@ -354,7 +355,7 @@ export async function setCustomerLogin(
   if (password.length < 8) return { ok: false, error: 'Use at least 8 characters.' }
   if (password.length > 72) return { ok: false, error: 'Use 72 characters or fewer.' }
 
-  const clash = await siteQueryOne<Row>(
+  const clash = await customerQueryOne<Row>(
     siteId,
     `SELECT customer_id FROM customer_logins WHERE email = ? AND customer_id <> ?`,
     [email, customerId],
@@ -362,7 +363,7 @@ export async function setCustomerLogin(
   if (clash) return { ok: false, error: 'Another customer already signs in with that email.' }
 
   const hash = await hashPassword(password)
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO customer_logins (customer_id, email, password_hash, must_change)
      VALUES (?, ?, ?, 1)
@@ -390,7 +391,7 @@ export async function changeCustomerPassword(
   if (next.length < 8) return { ok: false, error: 'Use at least 8 characters.' }
   if (next.length > 72) return { ok: false, error: 'Use 72 characters or fewer.' }
 
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT id, password_hash FROM customer_logins WHERE customer_id = ?`,
     [customerId],
@@ -404,7 +405,7 @@ export async function changeCustomerPassword(
     return { ok: false, error: 'That is not your current password.' }
   }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_logins SET password_hash = ?, must_change = 0 WHERE id = ?`,
     [await hashPassword(next), row.id],
@@ -418,7 +419,7 @@ export async function setCustomerLoginActive(
   customerId: number,
   active: boolean,
 ): Promise<SaveResult> {
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_logins SET is_active = ? WHERE customer_id = ?`,
     [active ? 1 : 0, customerId],
@@ -447,7 +448,7 @@ export async function createPasswordReset(
   const email = emailRaw.trim().toLowerCase()
   if (!email || !email.includes('@')) return null
 
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT cl.id, cl.email FROM customer_logins cl
        JOIN customers c ON c.id = cl.customer_id
@@ -460,10 +461,10 @@ export async function createPasswordReset(
 
   // One live link per login: a fresh request retires the old email's link,
   // so a mailbox thief cannot use a stale one the customer forgot about.
-  await siteExecute(siteId, 'DELETE FROM customer_password_resets WHERE login_id = ? AND used_at IS NULL', [
+  await customerExecute(siteId, 'DELETE FROM customer_password_resets WHERE login_id = ? AND used_at IS NULL', [
     Number(row.id),
   ])
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO customer_password_resets (login_id, token_hash, expires_at)
      VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ${RESET_MINUTES} MINUTE))`,
@@ -475,7 +476,7 @@ export async function createPasswordReset(
 /** For the reset page to decide between the form and "link expired". */
 export async function passwordResetValid(siteId: number, rawToken: string): Promise<boolean> {
   if (!rawToken?.trim()) return false
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT id FROM customer_password_resets
       WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()`,
@@ -496,7 +497,7 @@ export async function resetPasswordWithToken(
   if (next.length < 8) return { ok: false, error: 'Use at least 8 characters.' }
   if (next.length > 72) return { ok: false, error: 'Use 72 characters or fewer.' }
 
-  const claim = await siteExecute(
+  const claim = await customerExecute(
     siteId,
     `UPDATE customer_password_resets SET used_at = NOW()
       WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW()`,
@@ -506,14 +507,14 @@ export async function resetPasswordWithToken(
     return { ok: false, error: 'That link has expired or was already used — request another.' }
   }
 
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `SELECT login_id FROM customer_password_resets WHERE token_hash = ?`,
     [sha256hex(rawToken.trim())],
   )
   if (!row) return { ok: false, error: 'That link has expired — request another.' }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_logins
         SET password_hash = ?, must_change = 0, failed_attempts = 0, locked_until = NULL

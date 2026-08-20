@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery } from '../siteDb'
+import { customerQuery, supplierQuery } from './customerDb'
 import { round, toNum } from '../decimals'
 import { bucketFor, daysBetween, emptyAging, today, type Aging, type AgingBucket } from './ledger'
 
@@ -183,7 +183,7 @@ async function currentRows(
   params: unknown[],
 ): Promise<Row[]> {
   const filter = where.length ? `AND ${where.join(' AND ')}` : ''
-  return siteQuery<Row>(
+  return customerQuery<Row>(
     siteId,
     `SELECT ${CUSTOMER_COLUMNS},
             t.doc_date, t.due_date, t.amount_outstanding AS outstanding
@@ -211,7 +211,7 @@ async function asAtRows(
   params: unknown[],
 ): Promise<Row[]> {
   const filter = where.length ? `AND ${where.join(' AND ')}` : ''
-  return siteQuery<Row>(
+  return customerQuery<Row>(
     siteId,
     `SELECT ${CUSTOMER_COLUMNS},
             t.doc_date, t.due_date,
@@ -319,7 +319,7 @@ async function supplierCurrentRows(
   params: unknown[],
 ): Promise<Row[]> {
   const filter = where.length ? `AND ${where.join(' AND ')}` : ''
-  return siteQuery<Row>(
+  return supplierQuery<Row>(
     siteId,
     `SELECT ${SUPPLIER_COLUMNS},
             t.doc_date, t.due_date, t.amount_outstanding AS outstanding
@@ -338,7 +338,7 @@ async function supplierAsAtRows(
   params: unknown[],
 ): Promise<Row[]> {
   const filter = where.length ? `AND ${where.join(' AND ')}` : ''
-  return siteQuery<Row>(
+  return supplierQuery<Row>(
     siteId,
     `SELECT ${SUPPLIER_COLUMNS},
             t.doc_date, t.due_date,

@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum, formatMoney } from '../decimals'
 import { today } from './ledger'
 import { logActivity, type Actor } from './activityLog'
@@ -59,7 +59,7 @@ function mapLevel(r: Row): DunningLevel {
 }
 
 export async function listLevels(siteId: number, activeOnly = false): Promise<DunningLevel[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM dunning_levels ${activeOnly ? 'WHERE is_active = 1' : ''} ORDER BY step`,
   )
@@ -67,7 +67,7 @@ export async function listLevels(siteId: number, activeOnly = false): Promise<Du
 }
 
 export async function getLevel(siteId: number, id: number): Promise<DunningLevel | null> {
-  const row = await siteQueryOne<Row>(siteId, 'SELECT * FROM dunning_levels WHERE id = ? LIMIT 1', [
+  const row = await customerQueryOne<Row>(siteId, 'SELECT * FROM dunning_levels WHERE id = ? LIMIT 1', [
     id,
   ])
   return row ? mapLevel(row) : null
@@ -117,7 +117,7 @@ export async function saveLevel(
   const invalid = validateLevel(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const clash = await siteQueryOne<Row>(
+  const clash = await customerQueryOne<Row>(
     siteId,
     'SELECT id FROM dunning_levels WHERE step = ? AND id <> ? LIMIT 1',
     [input.step, id ?? 0],
@@ -139,7 +139,7 @@ export async function saveLevel(
   ]
 
   if (id) {
-    await siteExecute(
+    await customerExecute(
       siteId,
       `UPDATE dunning_levels SET step=?, name=?, min_days_overdue=?, min_amount=?,
          subject=?, body=?, channel=?, sms_body=?, blocks_account=?, requires_call=?, is_active=? WHERE id=?`,
@@ -154,7 +154,7 @@ export async function saveLevel(
     return { ok: true, id }
   }
 
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `INSERT INTO dunning_levels
        (step, name, min_days_overdue, min_amount, subject, body, channel, sms_body, blocks_account, requires_call, is_active)
@@ -181,7 +181,7 @@ export async function deleteLevel(
 
   // Items keep level_step and level_name of their own, so deleting a level
   // does not rewrite history — but the FK is ON DELETE... nothing. Check.
-  const used = await siteQueryOne<Row>(
+  const used = await customerQueryOne<Row>(
     siteId,
     'SELECT COUNT(*) AS n FROM dunning_run_items WHERE level_id = ?',
     [id],
@@ -193,7 +193,7 @@ export async function deleteLevel(
     }
   }
 
-  await siteExecute(siteId, 'DELETE FROM dunning_levels WHERE id = ?', [id])
+  await customerExecute(siteId, 'DELETE FROM dunning_levels WHERE id = ?', [id])
   await logActivity(siteId, actor, {
     entity: 'credit',
     entityId: id,
@@ -260,7 +260,7 @@ export async function listPositions(
 ): Promise<AccountPosition[]> {
   const asAt = options.asAt ?? today()
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT
         c.id, c.code, c.name, c.email, c.phone, c.status, c.balance, c.credit_limit,
@@ -383,7 +383,7 @@ export async function overdueDocuments(
   asAt?: string,
 ): Promise<OverdueDoc[]> {
   const on = asAt ?? today()
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT id, doc_number, doc_date, due_date, amount_outstanding
        FROM customer_transactions
@@ -408,7 +408,7 @@ export async function overdueDocuments(
 async function disputedIds(siteId: number): Promise<Set<number>> {
   // A dispute is "live" until something later is logged on the account. A
   // dispute from two years ago should not shield a debtor forever.
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT c.customer_id
        FROM credit_contacts c
@@ -513,7 +513,7 @@ function mapItem(r: Row): DunningItem {
 }
 
 export async function getRun(siteId: number, id: number): Promise<DunningRun | null> {
-  const row = await siteQueryOne<Row>(siteId, 'SELECT * FROM dunning_runs WHERE id = ? LIMIT 1', [
+  const row = await customerQueryOne<Row>(siteId, 'SELECT * FROM dunning_runs WHERE id = ? LIMIT 1', [
     id,
   ])
   return row ? mapRun(row) : null
@@ -521,7 +521,7 @@ export async function getRun(siteId: number, id: number): Promise<DunningRun | n
 
 export async function listRuns(siteId: number, limit = 20): Promise<DunningRun[]> {
   const capped = Math.min(Math.max(limit, 1), 100)
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM dunning_runs ORDER BY created_at DESC LIMIT ${capped}`,
   )
@@ -533,7 +533,7 @@ export async function listItems(
   runId: number,
   status?: ItemStatus,
 ): Promise<DunningItem[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM dunning_run_items
       WHERE run_id = ? ${status ? 'AND status = ?' : ''}
@@ -647,7 +647,7 @@ export async function buildRun(
     2,
   )
 
-  return siteTransaction(siteId, async (tx) => {
+  return customerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO dunning_runs (as_at, status, total_count, skipped_count, total_overdue, user_id, user_name)
        VALUES (?,'draft',?,?,?,?,?)`,
@@ -700,7 +700,7 @@ export async function excludeItem(
   itemId: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const item = await siteQueryOne<Row>(
+  const item = await customerQueryOne<Row>(
     siteId,
     `SELECT i.*, r.status AS run_status FROM dunning_run_items i
        JOIN dunning_runs r ON r.id = i.run_id WHERE i.id = ? LIMIT 1`,
@@ -714,12 +714,12 @@ export async function excludeItem(
     return { ok: false, error: 'That line was not going to be sent anyway.' }
   }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE dunning_run_items SET status = 'excluded', error = ? WHERE id = ?`,
     [reason.trim().slice(0, 400) || 'Removed during review', itemId],
   )
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE dunning_runs SET skipped_count = skipped_count + 1 WHERE id = ?`,
     [Number(item.run_id)],
@@ -742,7 +742,7 @@ export async function cancelRun(
   if (!run) return { ok: false, error: 'That run no longer exists.' }
   if (run.status !== 'draft') return { ok: false, error: 'Only a draft run can be cancelled.' }
 
-  await siteExecute(siteId, `UPDATE dunning_runs SET status = 'cancelled' WHERE id = ?`, [runId])
+  await customerExecute(siteId, `UPDATE dunning_runs SET status = 'cancelled' WHERE id = ?`, [runId])
   await logActivity(siteId, actor, {
     entity: 'credit',
     entityId: runId,
@@ -799,7 +799,7 @@ export async function processRun(
   if (!run) return { sent: 0, failed: 0 }
   if (run.status !== 'draft' && run.status !== 'sending') return { sent: 0, failed: 0 }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE dunning_runs SET status = 'sending', started_at = NOW(), sent_by_id = ?, sent_by_name = ? WHERE id = ?`,
     [actor.userId, actor.userName.slice(0, 120), runId],
@@ -821,7 +821,7 @@ export async function processRun(
     const level = item.levelId === null ? null : levels.get(item.levelId)
     if (!level) {
       failed++
-      await siteExecute(
+      await customerExecute(
         siteId,
         `UPDATE dunning_run_items SET status='failed', attempts=attempts+1, error=? WHERE id=?`,
         ['The level this line used no longer exists.', item.id],
@@ -895,7 +895,7 @@ export async function processRun(
 
     if (anySent) {
       sent++
-      await siteExecute(
+      await customerExecute(
         siteId,
         `UPDATE dunning_run_items
             SET status='sent', attempts=attempts+1, sent_at=NOW(),
@@ -914,7 +914,7 @@ export async function processRun(
       failed++
       const overallError =
         [emailError, smsError].filter(Boolean).join(' · ') || 'Nothing could be sent.'
-      await siteExecute(
+      await customerExecute(
         siteId,
         `UPDATE dunning_run_items
             SET status='failed', attempts=attempts+1, error=?, sms_status=?, sms_error=? WHERE id=?`,
@@ -922,14 +922,14 @@ export async function processRun(
       )
     }
 
-    await siteExecute(
+    await customerExecute(
       siteId,
       `UPDATE dunning_runs SET sent_count=?, failed_count=? WHERE id=?`,
       [sent, failed, runId],
     )
   }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE dunning_runs SET status='completed', finished_at=NOW() WHERE id=?`,
     [runId],
@@ -952,7 +952,7 @@ async function recordSend(
   level: DunningLevel,
   asAt: string,
 ): Promise<void> {
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO customer_credit_status (customer_id, dunning_level, last_dunned_at, last_run_id)
      VALUES (?,?,?,?)
@@ -963,7 +963,7 @@ async function recordSend(
     [item.customerId, level.step, asAt, item.runId],
   )
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO credit_contacts
        (customer_id, contact_date, kind, outcome, summary, balance_at, run_item_id, user_id, user_name)
@@ -1007,21 +1007,21 @@ export async function holdAccount(
   customerId: number,
   reason: string,
 ): Promise<void> {
-  const existing = await siteQueryOne<Row>(
+  const existing = await customerQueryOne<Row>(
     siteId,
     'SELECT held_at FROM customer_credit_status WHERE customer_id = ? LIMIT 1',
     [customerId],
   )
   if (existing?.held_at) return
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO customer_credit_status (customer_id, held_at, hold_reason)
      VALUES (?, NOW(), ?)
      ON DUPLICATE KEY UPDATE held_at = NOW(), hold_reason = VALUES(hold_reason)`,
     [customerId, reason.slice(0, 200)],
   )
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customers SET status = 'on_hold', status_reason = ? WHERE id = ? AND status = 'active'`,
     [reason.slice(0, 200), customerId],
@@ -1040,12 +1040,12 @@ export async function releaseAccount(
   customerId: number,
   reason: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_credit_status SET held_at = NULL, hold_reason = NULL WHERE customer_id = ?`,
     [customerId],
   )
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customers SET status = 'active', status_reason = NULL WHERE id = ? AND status = 'on_hold'`,
     [customerId],
@@ -1071,7 +1071,7 @@ export async function pauseChasing(
   if (until < today()) return { ok: false, error: 'That date has already passed.' }
   if (!reason.trim()) return { ok: false, error: 'Say why chasing is paused.' }
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO customer_credit_status (customer_id, paused_until, pause_reason)
      VALUES (?,?,?)
@@ -1092,7 +1092,7 @@ export async function resumeChasing(
   actor: Actor,
   customerId: number,
 ): Promise<{ ok: true }> {
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_credit_status SET paused_until = NULL, pause_reason = NULL WHERE customer_id = ?`,
     [customerId],
@@ -1114,7 +1114,7 @@ export async function resumeChasing(
  * reached two years ago.
  */
 export async function resetLevel(siteId: number, customerId: number): Promise<void> {
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE customer_credit_status SET dunning_level = 0 WHERE customer_id = ? AND dunning_level > 0`,
     [customerId],
@@ -1194,7 +1194,7 @@ export async function listPromises(
   }
   const capped = Math.min(Math.max(options.limit ?? 200, 1), 500)
 
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `${PROMISE_SELECT}
      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -1232,7 +1232,7 @@ export async function createPromise(
   }
   if (!(input.promisedAmount > 0)) return { ok: false, error: 'The amount must be more than zero.' }
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     'SELECT id, name, balance FROM customers WHERE id = ? LIMIT 1',
     [input.customerId],
@@ -1241,7 +1241,7 @@ export async function createPromise(
 
   // One open promise at a time. Two live promises on one account cannot both be
   // "the" commitment, and the escalation rules would not know which to honour.
-  const open = await siteQueryOne<Row>(
+  const open = await customerQueryOne<Row>(
     siteId,
     `SELECT id FROM payment_promises WHERE customer_id = ? AND status = 'open' LIMIT 1`,
     [input.customerId],
@@ -1254,7 +1254,7 @@ export async function createPromise(
   }
 
   const balance = toNum(customer.balance)
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `INSERT INTO payment_promises
        (customer_id, promised_date, promised_amount, balance_at_promise,
@@ -1274,7 +1274,7 @@ export async function createPromise(
   )
   const id = res.insertId
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO customer_credit_status (customer_id, promises_made)
      VALUES (?, 1)
@@ -1282,7 +1282,7 @@ export async function createPromise(
     [input.customerId],
   )
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `INSERT INTO credit_contacts
        (customer_id, contact_date, kind, outcome, summary, balance_at, promise_id, user_id, user_name)
@@ -1323,7 +1323,7 @@ export async function resolvePromise(
   outcome: 'kept' | 'broken' | 'cancelled',
   receivedAmount?: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const row = await siteQueryOne<Row>(
+  const row = await customerQueryOne<Row>(
     siteId,
     `${PROMISE_SELECT} WHERE p.id = ? LIMIT 1`,
     [promiseId],
@@ -1333,7 +1333,7 @@ export async function resolvePromise(
 
   const customerId = Number(row.customer_id)
 
-  await siteExecute(
+  await customerExecute(
     siteId,
     `UPDATE payment_promises
         SET status = ?, received_amount = ?, resolved_at = NOW()
@@ -1345,7 +1345,7 @@ export async function resolvePromise(
   // superseded, and counting it as broken would punish a correction.
   if (outcome === 'kept' || outcome === 'broken') {
     const column = outcome === 'kept' ? 'promises_kept' : 'promises_broken'
-    await siteExecute(
+    await customerExecute(
       siteId,
       `INSERT INTO customer_credit_status (customer_id, ${column})
        VALUES (?, 1)
@@ -1443,7 +1443,7 @@ export async function listContacts(
   limit = 50,
 ): Promise<CreditContact[]> {
   const capped = Math.min(Math.max(limit, 1), 200)
-  const rows = await siteQuery<Row>(
+  const rows = await customerQuery<Row>(
     siteId,
     `SELECT * FROM credit_contacts WHERE customer_id = ?
       ORDER BY contact_date DESC, id DESC LIMIT ${capped}`,
@@ -1470,14 +1470,14 @@ export async function logContact(
   const date = input.contactDate ?? today()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { ok: false, error: 'Choose a valid date.' }
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await customerQueryOne<Row>(
     siteId,
     'SELECT id, balance FROM customers WHERE id = ? LIMIT 1',
     [input.customerId],
   )
   if (!customer) return { ok: false, error: 'That account no longer exists.' }
 
-  const res = await siteExecute(
+  const res = await customerExecute(
     siteId,
     `INSERT INTO credit_contacts
        (customer_id, contact_date, kind, outcome, summary, detail, balance_at, user_id, user_name)
@@ -1618,7 +1618,7 @@ export async function accountCredit(
  * default when the row is missing or unparseable.
  */
 async function getNumber(siteId: number, key: string, fallback: number): Promise<number> {
-  const row = await siteQueryOne<RowDataPacket & { setting_value: string | null }>(
+  const row = await customerQueryOne<RowDataPacket & { setting_value: string | null }>(
     siteId,
     'SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1',
     [key],
