@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { customerOwnerSite } from '../storeGroups'
 import { round, toNum } from '../decimals'
 import { logActivityTx, type Actor } from './activityLog'
 import {
@@ -34,7 +35,59 @@ import { guardPosting } from './periodLocks'
  * A row, once posted, is never edited or deleted. A mistake is corrected by
  * posting its reverse, so the trail shows what happened AND what was done about
  * it. That is why there is no updateTransaction() here.
+ *
+ * ── WHICH DATABASE THIS READS AND WRITES ──────────────────────────────────
+ *
+ * Not necessarily the caller's. A store group may share one customer file, in
+ * which case the ledger lives in the group's primary store and every branch
+ * posts into it — see customerOwnerSite() in lib/storeGroups.ts.
+ *
+ * So every query here goes through the three helpers below rather than calling
+ * siteQuery/siteTransaction directly. Three reasons that matters here more than
+ * anywhere else:
+ *
+ *   1. THE INVARIANT ABOVE IS PER DATABASE. A balance and the rows that move it
+ *      must live together, or the two halves of a posting land in different
+ *      places and reconcileBalances() reports drift no one can repair.
+ *   2. Every table this file touches — customers, customer_transactions,
+ *      customer_allocations — moves to the owner TOGETHER, so one resolution
+ *      per call is correct for the whole statement. This file never joins a
+ *      branch-owned table, which is what makes that true.
+ *   3. siteTransaction still gets ONE connection, so the transaction is a real
+ *      transaction. Resolving the owner does not split it; it only chooses
+ *      which database it runs against.
+ *
+ * With no sharing configured the owner is the caller, so all of this is an
+ * identity function and the file behaves exactly as it always has.
  */
+
+/** The site whose database holds this caller's customers. */
+async function owner(siteId: number): Promise<number> {
+  return (await customerOwnerSite(siteId)).siteId
+}
+
+async function ledgerQuery<T = RowDataPacket>(
+  siteId: number,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  return siteQuery<T>(await owner(siteId), sql, params)
+}
+
+async function ledgerQueryOne<T = RowDataPacket>(
+  siteId: number,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T | null> {
+  return siteQueryOne<T>(await owner(siteId), sql, params)
+}
+
+async function ledgerTransaction<T>(
+  siteId: number,
+  fn: (tx: PoolConnection) => Promise<T>,
+): Promise<T> {
+  return siteTransaction(await owner(siteId), fn)
+}
 
 export type LedgerLine = {
   id: number
@@ -137,7 +190,7 @@ export async function listLedger(
   }
 
   const limit = Math.min(Math.max(opts.limit ?? 500, 1), 2000)
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE ${where.join(' AND ')}
       ORDER BY doc_date ASC, id ASC
@@ -159,13 +212,13 @@ export async function listLedger(
 }
 
 export async function getTransaction(siteId: number, id: number): Promise<LedgerLine | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_LINE} WHERE id = ? LIMIT 1`, [id])
+  const row = await ledgerQueryOne<Row>(siteId, `${SELECT_LINE} WHERE id = ? LIMIT 1`, [id])
   return row ? mapLine(row) : null
 }
 
 /** Open debits for an account, oldest first — what a credit can be applied to. */
 export async function openDebits(siteId: number, customerId: number): Promise<LedgerLine[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE customer_id = ? AND amount_outstanding > 0
       ORDER BY doc_date ASC, id ASC`,
@@ -176,7 +229,7 @@ export async function openDebits(siteId: number, customerId: number): Promise<Le
 
 /** Credits with something left to apply — the other half of the allocation screen. */
 export async function unappliedCredits(siteId: number, customerId: number): Promise<LedgerLine[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE customer_id = ? AND amount_outstanding < 0
       ORDER BY doc_date ASC, id ASC`,
@@ -205,7 +258,7 @@ export async function agingFor(
    */
   bucketWidth = 30,
 ): Promise<Aging> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE customer_id = ? AND amount_outstanding <> 0`,
     [customerId],
@@ -279,7 +332,7 @@ export async function agingAsAt(
 
 /** The whole book, bucketed, for the age-analysis screen. */
 export async function agingSummary(siteId: number): Promise<Aging> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `SELECT due_date, amount_outstanding FROM customer_transactions WHERE amount_outstanding <> 0`,
   )
@@ -363,7 +416,7 @@ export async function postTransaction(
   const locked = await guardPosting(siteId, input.docDate ?? today(), 'ledger')
   if (locked) return { ok: false, error: locked }
 
-  const customer = await siteQueryOne<Row>(
+  const customer = await ledgerQueryOne<Row>(
     siteId,
     'SELECT id, code, name, payment_terms_days FROM customers WHERE id = ? LIMIT 1',
     [input.customerId],
@@ -379,7 +432,7 @@ export async function postTransaction(
   // documents of the same type sharing a number: the reversal path writes its
   // own number, and a genuine second document has a genuine second number.
   if (input.docNumber?.trim()) {
-    const clash = await siteQueryOne<Row>(
+    const clash = await ledgerQueryOne<Row>(
       siteId,
       `SELECT id, doc_type FROM customer_transactions
         WHERE customer_id = ? AND doc_number = ? AND doc_type = ? LIMIT 1`,
@@ -399,7 +452,7 @@ export async function postTransaction(
   const signed = signedAmount(input.docType, input.amount)
   const { gross, net, vat } = splitVat(Math.abs(signed), input.vatRatePct ?? 0)
 
-  const posted = await siteTransaction(siteId, async (tx) => {
+  const posted = await ledgerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO customer_transactions
          (customer_id, doc_type, doc_number, doc_date, due_date, reference, description,
@@ -466,7 +519,7 @@ export async function postTransaction(
   if (posted.ok && signed < 0) {
     try {
       const { resetLevel } = await import('./creditControl')
-      const owing = await siteQueryOne<Row>(
+      const owing = await ledgerQueryOne<Row>(
         siteId,
         `SELECT COALESCE(SUM(amount_outstanding), 0) AS overdue
            FROM customer_transactions
@@ -509,7 +562,7 @@ export async function reverseTransaction(
   const original = await getTransaction(siteId, id)
   if (!original) return { ok: false, error: 'Transaction not found.' }
 
-  const already = await siteQueryOne<RowDataPacket & { id: number }>(
+  const already = await ledgerQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM customer_transactions WHERE reverses_id = ? LIMIT 1',
     [id],
@@ -539,7 +592,7 @@ export async function reverseTransaction(
     }
   }
 
-  return siteTransaction(siteId, async (tx) => {
+  return ledgerTransaction(siteId, async (tx) => {
     const reversed = round(-original.amountSigned, 2)
 
     const [res] = await tx.execute(
@@ -631,7 +684,7 @@ export async function allocate(
 
   const value = round(amount, 2)
 
-  await siteTransaction(siteId, async (tx) => {
+  await ledgerTransaction(siteId, async (tx) => {
     await tx.execute(
       `INSERT INTO customer_allocations (debit_txn_id, credit_txn_id, amount, user_id, user_name)
             VALUES (?,?,?,?,?)
@@ -660,7 +713,7 @@ export async function unallocate(
   debitId: number,
   creditId: number,
 ): Promise<AllocateResult> {
-  const row = await siteQueryOne<Row>(
+  const row = await ledgerQueryOne<Row>(
     siteId,
     'SELECT amount FROM customer_allocations WHERE debit_txn_id = ? AND credit_txn_id = ? LIMIT 1',
     [debitId, creditId],
@@ -669,7 +722,7 @@ export async function unallocate(
 
   const value = toNum(row.amount)
 
-  await siteTransaction(siteId, async (tx) => {
+  await ledgerTransaction(siteId, async (tx) => {
     await tx.execute(
       'DELETE FROM customer_allocations WHERE debit_txn_id = ? AND credit_txn_id = ?',
       [debitId, creditId] as never,
@@ -724,7 +777,7 @@ export async function allocationsFor(
   siteId: number,
   transactionId: number,
 ): Promise<{ otherId: number; amount: number; allocatedAt: Date; userName: string }[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `SELECT CASE WHEN debit_txn_id = ? THEN credit_txn_id ELSE debit_txn_id END AS other_id,
             amount, allocated_at, user_name
@@ -764,7 +817,7 @@ export type BalanceDrift = {
  * fix, run once the cause is understood.
  */
 export async function reconcileBalances(siteId: number): Promise<BalanceDrift[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `SELECT c.id, c.code, c.name,
             c.balance                     AS stored,
@@ -796,7 +849,7 @@ export async function repairBalance(
   actor: Actor,
   customerId: number,
 ): Promise<{ ok: true; from: number; to: number } | { ok: false; error: string }> {
-  const row = await siteQueryOne<Row>(
+  const row = await ledgerQueryOne<Row>(
     siteId,
     `SELECT c.balance AS stored, COALESCE(SUM(t.amount_signed), 0) AS computed
        FROM customers c
@@ -813,7 +866,7 @@ export async function repairBalance(
     return { ok: false, error: 'That balance already agrees with the ledger.' }
   }
 
-  await siteTransaction(siteId, async (tx) => {
+  await ledgerTransaction(siteId, async (tx) => {
     await tx.execute('UPDATE customers SET balance = ? WHERE id = ?', [
       computed.toFixed(4),
       customerId,

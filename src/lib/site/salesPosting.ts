@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { customerOwnerSite } from '../storeGroups'
 import { round, toNum } from '../decimals'
 import { assertBalanced, documentTotals, roundToCash } from '../documentMath'
 import { headroomRefusal, NO_SPEND } from '../creditRules'
@@ -1401,8 +1402,11 @@ async function creditRefusal(
   amount: number,
   documentDate: string,
 ): Promise<string | null> {
+  // The customer may live in the group's primary store rather than here — see
+  // customerOwnerSite(). This is the credit check, so reading the wrong
+  // database would authorise credit against a balance that is not the real one.
   const row = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
-    siteId,
+    (await customerOwnerSite(siteId)).siteId,
     `SELECT name, status, account_type, credit_limit, daily_limit, monthly_limit, balance
        FROM customers WHERE id = ? LIMIT 1`,
     [customerId],
@@ -1821,8 +1825,15 @@ async function findSaleTransaction(
   customerId: number,
   documentId: number,
 ): Promise<number | null> {
+  // customer_transactions travels with the customer, so this reads the owner.
+  //
+  // source_doc_id points at a sales_documents.id in the CALLER's database, and
+  // document ids are per-database — store 3 and store 7 both have a 5,001. This
+  // query is safe because it also scopes by customer_id, which a shared file
+  // does not duplicate. Four other lookups match on source_doc_id ALONE and are
+  // not safe; see docs/shared-customer-file-origin-site.md.
   const row = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
-    siteId,
+    (await customerOwnerSite(siteId)).siteId,
     `SELECT t.id
        FROM customer_transactions t
       WHERE t.customer_id = ? AND t.source_doc_id = ? AND t.source = 'sale'
