@@ -105,6 +105,8 @@ export default function StoreCard({
     contents.customers > 0
   const suppliersBlocked =
     !ownsSharedFiles && !member.sharesSuppliers && contents !== null && contents.suppliers > 0
+  const loyaltyBlocked =
+    !ownsSharedFiles && !member.sharesLoyalty && contents !== null && contents.members > 0
 
   return (
     <Card>
@@ -355,6 +357,41 @@ export default function StoreCard({
               hint="One supplier list and one creditors book — a supplier invoiced at one store can be paid from another. Orders and agreed costs stay with each store."
               defaultChecked={member.sharesSuppliers}
               disabled={unreadable || suppliersBlocked || !hasPrimary || !entityAllows}
+            />
+
+            {loyaltyBlocked && (
+              <Callout tone="warning">
+                This store has <strong>{contents?.members} member(s)</strong> of its own.
+                Two member files cannot be merged automatically — both may have issued the
+                same card number to different people, and there is no way to tell whose
+                points are whose. Remove them first, or leave this store its own programme.
+              </Callout>
+            )}
+
+            {/*
+              ── THIS ONE IS NOT GATED ON THE ENTITY ANSWER ───────────────────
+              ─────────────────────────────────────────────────────────────────
+              The two switches above are, and must be: a shared debtors or
+              creditors book across separate companies has one of them
+              collecting money it does not own.
+
+              Points are not money. They are a marketing promise, and a
+              franchise running one card across separately-owned stores owes
+              nothing between the companies when a shopper earns at one and
+              redeems at another. Gating this on "one company" would refuse the
+              ordinary franchise case — which is the case the whole member file
+              was built for.
+
+              The one part that IS money is the wallet, and that has its own
+              switch on the group, off by default, under the entity answer. See
+              LegalEntityCard and sql/tickets/017_share_loyalty.sql.
+            */}
+            <SharingSwitch
+              name="sharesLoyalty"
+              label="Use head office’s loyalty programme"
+              hint="One card across the group — earn at any store, spend at any store, one set of tiers. Works even where each store keeps its own customers and its own books."
+              defaultChecked={member.sharesLoyalty}
+              disabled={unreadable || loyaltyBlocked || !hasPrimary}
             />
           </div>
           )}

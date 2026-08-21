@@ -120,6 +120,7 @@ export async function updateSharingAction(
     // omitting them here would make them impossible to turn off.
     sharesCustomers: form.get('sharesCustomers') === 'on',
     sharesSuppliers: form.get('sharesSuppliers') === 'on',
+    sharesLoyalty: form.get('sharesLoyalty') === 'on',
   })
 
   // The "store must be empty" rule, the same-server check and the "choose a

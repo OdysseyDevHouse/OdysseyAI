@@ -127,6 +127,14 @@ export type StoreContents = {
    */
   customers: number
   suppliers: number
+  /**
+   * The store's own members, for the loyalty gate.
+   *
+   * Same rule and a stronger reason: two member files cannot be merged
+   * either, and a member number is a card in somebody's wallet. Merging two
+   * files that both issued M000001 would hand one person's points to another.
+   */
+  members: number
   /** False when the store's database could not be read at all. */
   readable: boolean
 }
@@ -627,17 +635,29 @@ export async function storeContents(siteId: number): Promise<StoreContents> {
       siteId,
       'SELECT COUNT(*) AS n FROM suppliers',
     )
+    // Tolerated separately: a site that has not run 052 has no loyalty_members
+    // at all, and a missing table must report zero rather than making the whole
+    // store unreadable. Schema drifts between sites.
+    let members = 0
+    try {
+      const row = await siteQueryOne<RowDataPacket & { n: number }>(
+        siteId,
+        'SELECT COUNT(*) AS n FROM loyalty_members',
+      )
+      members = Number(row?.n ?? 0)
+    } catch {}
     return {
       products: Number(products?.n ?? 0),
       departments: Number(departments?.n ?? 0),
       customers: Number(customers?.n ?? 0),
       suppliers: Number(suppliers?.n ?? 0),
+      members,
       readable: true,
     }
   } catch {
     // Unreachable database, or one that has never been migrated. Reported
     // rather than thrown so the screen can say so instead of failing.
-    return { products: 0, departments: 0, customers: 0, suppliers: 0, readable: false }
+    return { products: 0, departments: 0, customers: 0, suppliers: 0, members: 0, readable: false }
   }
 }
 
@@ -901,6 +921,7 @@ export type MemberSharing = {
    */
   sharesCustomers?: boolean
   sharesSuppliers?: boolean
+  sharesLoyalty?: boolean
 }
 
 /**
@@ -959,11 +980,21 @@ export async function setMemberSharing(
   // they are checked HERE rather than only in the screen for the same reason
   // the product gate is: merging two populated debtors books is not something
   // this app can undo, and no future caller should be able to bypass it.
-  for (const file of ['customers', 'suppliers'] as const) {
-    const wanted = file === 'customers' ? sharing.sharesCustomers : sharing.sharesSuppliers
+  for (const file of ['customers', 'suppliers', 'loyalty'] as const) {
+    const wanted =
+      file === 'customers'
+        ? sharing.sharesCustomers
+        : file === 'suppliers'
+          ? sharing.sharesSuppliers
+          : sharing.sharesLoyalty
     if (wanted !== true) continue
 
-    const column = file === 'customers' ? 'shares_customers' : 'shares_suppliers'
+    const column =
+      file === 'customers'
+        ? 'shares_customers'
+        : file === 'suppliers'
+          ? 'shares_suppliers'
+          : 'shares_loyalty'
     const current = await queryOne<RowDataPacket & Record<string, number>>(
       `SELECT ${column} AS on_now FROM cp2_store_group_members
         WHERE group_id = ? AND site_id = ?`,
@@ -999,6 +1030,10 @@ export async function setMemberSharing(
     sets.push('shares_suppliers = ?')
     params.push(sharing.sharesSuppliers ? 1 : 0)
   }
+  if (sharing.sharesLoyalty !== undefined) {
+    sets.push('shares_loyalty = ?')
+    params.push(sharing.sharesLoyalty ? 1 : 0)
+  }
 
   await execute(
     `UPDATE cp2_store_group_members SET ${sets.join(', ')}
@@ -1020,9 +1055,11 @@ export async function setMemberSharing(
 async function sharedFileRefusal(
   groupId: number,
   siteId: number,
-  file: 'customers' | 'suppliers',
+  file: 'customers' | 'suppliers' | 'loyalty',
 ): Promise<string | null> {
-  const label = file === 'customers' ? 'customer' : 'supplier'
+  const label = file === 'customers' ? 'customer' : file === 'suppliers' ? 'supplier' : 'member'
+  // What the switch is called on screen, which is not always the row's name.
+  const feature = file === 'loyalty' ? 'loyalty programme' : `${label} file`
 
   const group = await queryOne<GroupRow>(
     'SELECT id, name, primary_site_id, status, online_group_mode, legal_entity FROM cp2_store_groups WHERE id = ?',
@@ -1032,7 +1069,7 @@ async function sharedFileRefusal(
 
   const primarySiteId = group.primary_site_id === null ? null : Number(group.primary_site_id)
   if (!primarySiteId) {
-    return `Choose which store owns the shared ${label} file before turning this on.`
+    return `Choose which store owns the shared ${feature} before turning this on.`
   }
 
   /* ── One taxpayer, or several ─────────────────────────────────────────
@@ -1047,14 +1084,28 @@ async function sharedFileRefusal(
    * that is not a rule a future caller should be able to skip.
    */
   const entity = (group.legal_entity ?? 'unknown') as StoreGroup['legalEntity']
-  if (entity === 'several') {
+  /*
+   * LOYALTY SKIPS THIS ENTIRELY, and the exemption is the point of the
+   * feature rather than a relaxation of the rule.
+   *
+   * The rule protects a BALANCE: separate companies sharing a debtors book
+   * means one collecting money it does not own. Points are not money — they
+   * are a marketing promise, and a franchise running one card across
+   * separately-owned stores owes nothing between the companies when a shopper
+   * earns at one and redeems at another.
+   *
+   * Refusing here would refuse the ordinary franchise case, which is the case
+   * the member file was built for. The part that IS money — the wallet — is
+   * gated separately on the group, off by default. See loyaltyWalletRefusal.
+   */
+  if (file !== 'loyalty' && entity === 'several') {
     return (
       `These stores are separate companies, so they cannot share one ${label} ` +
       'file — a balance settled at one store would be money collected by ' +
       'another. Their contact details can still be kept in step.'
     )
   }
-  if (entity === 'unknown') {
+  if (file !== 'loyalty' && entity === 'unknown') {
     return (
       'Say whether these stores are one company or several before sharing a ' +
       `${label} file. It decides whether one shared balance is correct.`
@@ -1068,7 +1119,7 @@ async function sharedFileRefusal(
 
   /* ── The joining store must be empty ─────────────────────────────────── */
 
-  const table = file === 'customers' ? 'customers' : 'suppliers'
+  const table = file === 'customers' ? 'customers' : file === 'suppliers' ? 'suppliers' : 'loyalty_members'
   let held = 0
   try {
     const row = await siteQueryOne<RowDataPacket & { n: number }>(
@@ -1077,9 +1128,21 @@ async function sharedFileRefusal(
     )
     held = Number(row?.n ?? 0)
   } catch {
-    return `This store’s database could not be read, so ${label} sharing cannot be changed.`
+    return `This store’s database could not be read, so ${feature} sharing cannot be changed.`
   }
   if (held > 0) {
+    // The member wording is stronger on purpose: a card number is in somebody's
+    // wallet, so two files that both issued M000001 would hand one person's
+    // points to another rather than merely confusing two records.
+    if (file === 'loyalty') {
+      return (
+        `This store currently has ${held} member(s) of its own. Two member files ` +
+        'cannot be merged automatically — both may have issued the same card ' +
+        'number to different people, and there is no way to tell whose points ' +
+        'are whose. Please remove this store’s members before joining the ' +
+        'group programme.'
+      )
+    }
     return (
       `This store currently has ${held} ${label}(s). Two ${label} files cannot be ` +
       'merged automatically — the same code may exist in both for different ' +
@@ -1102,11 +1165,11 @@ async function sharedFileRefusal(
   const mine = hosts.find((h) => Number(h.site_id) === siteId)
   const theirs = hosts.find((h) => Number(h.site_id) === primarySiteId)
   if (!mine || !theirs) {
-    return `The main store’s database could not be found, so the ${label} file cannot be shared.`
+    return `The main store’s database could not be found, so the ${feature} cannot be shared.`
   }
   if (mine.server_host !== theirs.server_host || Number(mine.server_port) !== Number(theirs.server_port)) {
     return (
-      `A shared ${label} file needs both stores on the same database server. ` +
+      `A shared ${feature} needs both stores on the same database server. ` +
       `This store is on ${mine.server_host} and the main store is on ${theirs.server_host}.`
     )
   }
