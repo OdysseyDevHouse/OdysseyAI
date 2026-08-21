@@ -1,7 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
-import { loyaltyQuery, loyaltyQueryOne, loyaltyTransaction } from './loyaltyDb'
+import { loyaltyQuery, loyaltyQueryOne, loyaltyExecute, loyaltyTransaction } from './loyaltyDb'
 import { round, toNum } from '../decimals'
 import {
   LOYALTY_DEFAULTS,
@@ -432,7 +432,7 @@ async function refreshMember(
   const spend = round(toNum(spendRow?.spend), 2)
 
   const [[existing]] = await tx.query<Row[]>(
-    'SELECT tier_id, tier_review_date FROM loyalty_members WHERE member_id = ? FOR UPDATE',
+    'SELECT tier_id, tier_review_date FROM loyalty_members WHERE id = ? FOR UPDATE',
     [memberId] as never,
   )
 
@@ -464,18 +464,28 @@ async function refreshMember(
   review.setMonth(review.getMonth() + Math.max(1, settings.tierGraceMonths))
   const reviewDate = review.toISOString().slice(0, 10)
 
+  /*
+   * An UPDATE, not the upsert this used to be.
+   *
+   * When the table was keyed on customer_id, the upsert was honest: the
+   * customer already existed, and this created or refreshed their loyalty
+   * cache. A member is not like that. A member has a number and a name, and
+   * neither can be invented by a cache refresh — an INSERT here would either
+   * fail on the NOT NULL columns or, worse, manufacture a nameless member.
+   *
+   * So a missing member updates nothing, which is correct: there is no cache to
+   * refresh for someone who has not joined.
+   */
   await tx.execute(
-    `INSERT INTO loyalty_members
-       (member_id, points_balance, wallet_balance, tier_id, tier_since, tier_review_date, last_activity_at)
-     VALUES (?,?,?,?,NOW(),?,NOW())
-     ON DUPLICATE KEY UPDATE
-       points_balance = VALUES(points_balance),
-       wallet_balance = VALUES(wallet_balance),
-       tier_id = VALUES(tier_id),
-       tier_since = ${touchTierSince ? 'VALUES(tier_since)' : 'tier_since'},
-       tier_review_date = VALUES(tier_review_date),
-       last_activity_at = VALUES(last_activity_at)`,
-    [memberId, points.toFixed(4), wallet.toFixed(4), tierId, reviewDate] as never,
+    `UPDATE loyalty_members
+        SET points_balance = ?,
+            wallet_balance = ?,
+            tier_id = ?,
+            ${touchTierSince ? 'tier_since = NOW(),' : ''}
+            tier_review_date = ?,
+            last_activity_at = NOW()
+      WHERE id = ?`,
+    [points.toFixed(4), wallet.toFixed(4), tierId, reviewDate, memberId] as never,
   )
 }
 
@@ -546,11 +556,9 @@ export async function listLedger(
 /** The balance, read under a lock. The only figure a spend may be based on. */
 async function lockedBalance(tx: PoolConnection, memberId: number): Promise<number> {
   // Locks the member row so two tills serialise here rather than both reading
-  // the same balance and each spending it. A customer with no row yet has no
-  // points either, so there is nothing to race over.
-  await tx.query('SELECT member_id FROM loyalty_members WHERE member_id = ? FOR UPDATE', [
-    memberId,
-  ] as never)
+  // the same balance and each spending it. A member id that matches nothing
+  // locks nothing and sums to zero, which refuses the spend either way.
+  await tx.query('SELECT id FROM loyalty_members WHERE id = ? FOR UPDATE', [memberId] as never)
 
   const [[row]] = await tx.query<Row[]>(
     'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE member_id = ?',
@@ -794,6 +802,175 @@ export async function memberIdForCustomer(
     [customerId, owner.siteId],
   )
   return row ? Number(row.id) : null
+}
+
+/* ── Joining ─────────────────────────────────────────────────────────────── */
+
+export type EnrolInput = {
+  name: string
+  phone?: string | null
+  email?: string | null
+  /** The debtors account to link, if this member has one. */
+  customerId?: number | null
+  /**
+   * A specific number — a pre-printed card being handed out.
+   *
+   * Left off, one is allocated. Supplied, it is taken as given and refused if
+   * already in use: a shop with a box of printed cards must be able to use them
+   * in whatever order they come out of the box.
+   */
+  memberNumber?: string | null
+}
+
+export type EnrolResult =
+  | { ok: true; memberId: number; memberNumber: string }
+  | { ok: false; error: string }
+
+/**
+ * Allocates the next member number, inside the caller's transaction.
+ *
+ * ── WHY NOT document_sequences ───────────────────────────────────────────
+ *
+ * Two reasons, either sufficient. It lives in the BRANCH's database while
+ * members live in the loyalty owner's, so twenty branches sharing a programme
+ * would each hand out M000001 and collide on uq_member_number. And
+ * `verifySequence` audits a sequence by counting rows in a table with a
+ * `status` column, which loyalty_members does not have — registering members
+ * there would make an unrelated test suite report holes forever.
+ *
+ * ── WHY MAX()+1 IS SAFE HERE, WHERE IT USUALLY IS NOT ────────────────────
+ *
+ * Because it runs under the same transaction as the INSERT, and
+ * uq_member_number is the real arbiter: two tills enrolling at once serialise
+ * on the unique key, and the loser retries. Numbering a MEMBER is also not
+ * numbering a document — nothing audits it for gaps, so a burnt number is
+ * invisible rather than a defect.
+ */
+async function nextMemberNumber(tx: PoolConnection): Promise<string> {
+  const [[row]] = await tx.query<Row[]>(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(member_number, 2) AS UNSIGNED)), 0) AS n
+       FROM loyalty_members
+      WHERE member_number REGEXP '^M[0-9]+$'`,
+  )
+  return `M${String(Number(row?.n ?? 0) + 1).padStart(6, '0')}`
+}
+
+/**
+ * Signs somebody up.
+ *
+ * ── WHAT IS REQUIRED, AND WHAT IS NOT ────────────────────────────────────
+ *
+ * A name. That is all. The plan asks for enrolment at the till in seconds from
+ * a cell number, and every field this refuses to make optional is a queue
+ * getting longer — so an address, an email and even a phone are things a member
+ * may add later or never.
+ *
+ * `customerId` is optional for the same reason in reverse: joining must not
+ * open a debtors account. A member with no account is the ordinary case.
+ */
+export async function enrolMember(
+  siteId: number,
+  actor: Actor,
+  input: EnrolInput,
+): Promise<EnrolResult> {
+  const name = input.name.trim()
+  if (!name) return { ok: false, error: 'Give the member a name.' }
+
+  const settings = await getLoyaltySettings(siteId)
+  if (!settings.enabled) return { ok: false, error: 'The loyalty programme is not running.' }
+
+  // The customer id is only meaningful alongside the file it came from, and
+  // both columns must be set or neither — see uq_member_customer.
+  const owner = await customerOwnerSite(siteId)
+  const customerId = input.customerId ?? null
+
+  if (customerId) {
+    const existing = await memberIdForCustomer(siteId, customerId)
+    if (existing) return { ok: false, error: 'That customer is already a member.' }
+  }
+
+  const requested = input.memberNumber?.trim() ?? ''
+
+  try {
+    const result = await loyaltyTransaction(siteId, async (tx) => {
+      const memberNumber = requested || (await nextMemberNumber(tx))
+
+      const [res] = await tx.execute(
+        `INSERT INTO loyalty_members
+           (member_number, customer_id, customer_origin_site_id, name, phone, email, joined_at)
+         VALUES (?,?,?,?,?,?,NOW())`,
+        [
+          memberNumber.slice(0, 60),
+          customerId,
+          customerId ? owner.siteId : null,
+          name.slice(0, 160),
+          input.phone?.trim().slice(0, 40) || null,
+          input.email?.trim().slice(0, 190) || null,
+        ] as never,
+      )
+      return { memberId: Number((res as { insertId: number }).insertId), memberNumber }
+    })
+
+    await logActivity(siteId, actor, {
+      entity: 'loyalty',
+      entityId: result.memberId,
+      action: 'member_joined',
+      detail: `${result.memberNumber} · ${name}`,
+    })
+
+    return { ok: true, ...result }
+  } catch (error) {
+    // The unique key is what makes concurrent enrolment safe, so its refusal is
+    // an expected outcome to explain rather than a crash to report.
+    const code = (error as { code?: string }).code
+    if (code === 'ER_DUP_ENTRY') {
+      return requested
+        ? { ok: false, error: `Member number ${requested} is already in use.` }
+        : { ok: false, error: 'Another till just took that number — please try again.' }
+    }
+    throw error
+  }
+}
+
+/**
+ * Links an existing member to a debtors account, or unlinks them.
+ *
+ * Separate from enrolment because it happens later and for a different reason:
+ * a member who has been collecting points for a year opens an account, and the
+ * two records should meet without either being recreated.
+ */
+export async function linkMemberToCustomer(
+  siteId: number,
+  actor: Actor,
+  memberId: number,
+  customerId: number | null,
+): Promise<SaveResult> {
+  const owner = await customerOwnerSite(siteId)
+
+  if (customerId) {
+    const taken = await memberIdForCustomer(siteId, customerId)
+    if (taken && taken !== memberId) {
+      return { ok: false, error: 'That customer is already linked to another member.' }
+    }
+  }
+
+  await loyaltyExecute(
+    siteId,
+    `UPDATE loyalty_members
+        SET customer_id = ?, customer_origin_site_id = ?
+      WHERE id = ?`,
+    // Both columns move together. Leaving the site set with a null id would
+    // make a walk-in member look like they belong to a customer file.
+    [customerId, customerId ? owner.siteId : null, memberId],
+  )
+
+  await logActivity(siteId, actor, {
+    entity: 'loyalty',
+    entityId: memberId,
+    action: customerId ? 'member_linked' : 'member_unlinked',
+    detail: customerId ? `Customer ${customerId}` : 'Account removed',
+  })
+  return { ok: true }
 }
 
 /**

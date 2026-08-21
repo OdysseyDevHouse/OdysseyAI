@@ -82,9 +82,7 @@ export async function getWalletBalance(siteId: number, memberId: number): Promis
 
 /** Same, under a lock, for a caller about to spend it. */
 async function lockedWalletBalance(tx: PoolConnection, memberId: number): Promise<number> {
-  await tx.query('SELECT member_id FROM loyalty_members WHERE member_id = ? FOR UPDATE', [
-    memberId,
-  ] as never)
+  await tx.query('SELECT id FROM loyalty_members WHERE id = ? FOR UPDATE', [memberId] as never)
 
   const [[row]] = await tx.query<Row[]>(
     'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE member_id = ?',
@@ -126,12 +124,14 @@ async function refreshWalletCache(tx: PoolConnection, memberId: number): Promise
     'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE member_id = ?',
     [memberId] as never,
   )
+  // An UPDATE, not an upsert — see the matching note in refreshMember. A wallet
+  // movement cannot bring a member into existence; it can only refresh the cache
+  // of one who already joined.
   await tx.execute(
-    `INSERT INTO loyalty_members (member_id, wallet_balance, last_activity_at)
-     VALUES (?,?,NOW())
-     ON DUPLICATE KEY UPDATE wallet_balance = VALUES(wallet_balance),
-                             last_activity_at = VALUES(last_activity_at)`,
-    [memberId, round(toNum(row?.amount), 4).toFixed(4)] as never,
+    `UPDATE loyalty_members
+        SET wallet_balance = ?, last_activity_at = NOW()
+      WHERE id = ?`,
+    [round(toNum(row?.amount), 4).toFixed(4), memberId] as never,
   )
 }
 

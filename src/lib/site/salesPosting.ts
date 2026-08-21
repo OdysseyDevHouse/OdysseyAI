@@ -287,7 +287,18 @@ export async function finaliseDocument(
     .filter(Boolean)
 
   const usesLoyalty = !!pointsTender || !!walletTender || voucherCodes.length > 0
-  const loyaltySettings = usesLoyalty || customerId ? await getLoyaltySettings(siteId) : null
+  /*
+   * Loaded when there is a MEMBER, not when there is a customer.
+   *
+   * This read `usesLoyalty || customerId`, which was right when every member
+   * was a customer and is wrong now: a walk-in member paying cash is neither
+   * spending loyalty nor on an account, so the settings came back null and the
+   * earning guard below silently skipped them. The sale posted, the points did
+   * not — the exact failure the member file exists to prevent, and invisible
+   * from the till. Found by probe, not by tsc.
+   */
+  const loyaltySettings =
+    usesLoyalty || memberId || customerId ? await getLoyaltySettings(siteId) : null
 
   /*
    * ── LOYALTY IS CHECKED HERE AND WRITTEN AFTER THE COMMIT ────────────────
