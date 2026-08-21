@@ -597,9 +597,42 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
 /**
  * Every member store's debtors control account, added up.
  *
- * Returns null when this store owns its own customers, which is every single
+ * Returns null when this store's debtors book is its own, which is every single
  * shop and every group that has not switched sharing on — the caller then takes
  * the ordinary per-store path and nothing about the check changes.
+ *
+ * ── "OWNS ITS OWN CUSTOMERS" IS NOT THE SAME QUESTION ─────────────────────
+ *
+ * This used to return null whenever customerOwnerSite(siteId) resolved to the
+ * caller, as a shorthand for "not sharing". It is true at every branch and
+ * FALSE at the primary: a primary hosting the group's file resolves to itself
+ * while its customers table holds the whole group's debtors.
+ *
+ * So head office — the one place that reconciles the whole book — took the
+ * per-store path and compared its own debtors control account against the
+ * GROUP's sub-ledger total. It reported drift equal to every other branch's
+ * debtors, with no scope marker to explain it, growing daily and repairable by
+ * nothing. Measured at 55.1m against a demo group of two in
+ * scripts/probe-shared-customer-accounting.ts.
+ *
+ * The question this has to ask is whether the FILE is shared, not whether this
+ * store happens to hold it. customerFileIsShared() answers exactly that and is
+ * true at both ends of a sharing group.
+ *
+ * ── WHY MEMBERSHIP IS RE-RESOLVED RATHER THAN FILTERED ON THE FLAG ────────
+ *
+ * shares_customers is what a member ASKED for; it is not what the resolver
+ * DOES. ownerSiteFor() applies four further conditions — the group being one
+ * legal entity, the primary sharing too, and both ends holding multi_branch —
+ * and a store failing any of them keeps its own separate debtors book while
+ * its flag still reads 1.
+ *
+ * Adding such a store's control account to this total would invent drift on
+ * every other branch's trial balance equal to that store's own debtors: its GL
+ * is counted here while its sub-ledger is not in the shared file. So each
+ * member is asked where it actually routes, and only the ones that genuinely
+ * land on this owner are counted. A lapsed Multi-Branch entitlement then
+ * quietly narrows the check instead of breaking it.
  *
  * ── WHY A STORE THAT CANNOT BE READ IS NAMED RATHER THAN SKIPPED ──────────
  *
@@ -616,15 +649,25 @@ async function debtorsGroupScope(
   siteId: number,
 ): Promise<{ controlTotal: number; scope: NonNullable<ControlDrift['scope']> } | null> {
   try {
-    const { customerOwnerSite, groupForSite, membersOfGroup } = await import('../storeGroups')
+    const { customerOwnerSite, customerFileIsShared, groupForSite, membersOfGroup } = await import(
+      '../storeGroups'
+    )
+    if (!(await customerFileIsShared(siteId))) return null
+
+    // Where THIS store's debtors actually live. Every member counted below must
+    // agree with it, or their control accounts are being added to a total the
+    // sub-ledger side does not cover.
     const owner = await customerOwnerSite(siteId)
-    if (owner.siteId === siteId) return null
 
     const group = await groupForSite(siteId)
     if (!group) return null
-    const members = (await membersOfGroup(group.id)).filter(
-      (m) => m.hasDatabase && m.sharesCustomers,
-    )
+
+    const candidates = (await membersOfGroup(group.id)).filter((m) => m.hasDatabase)
+    const members: typeof candidates = []
+    for (const m of candidates) {
+      const theirOwner = await customerOwnerSite(m.siteId)
+      if (theirOwner.siteId === owner.siteId) members.push(m)
+    }
     if (members.length === 0) return null
 
     let controlTotal = 0

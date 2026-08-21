@@ -302,6 +302,15 @@ async function main() {
       'SELECT COALESCE(SUM(balance),0) AS total FROM customers',
     )
 
+    // The premise of the whole finding: the primary must know its file is
+    // shared. Printed rather than assumed, because "is it shared" and "is it
+    // elsewhere" are different questions and conflating them is the bug.
+    const { customerFileIsShared } = await import('../src/lib/storeGroups')
+    console.log(
+      `  customerFileIsShared: primary=${await customerFileIsShared(primary)}, ` +
+        `branch=${await customerFileIsShared(branch)} (both must be true)`,
+    )
+
     try {
       const atPrimary = await reconcileControlAccounts(primary)
       const line = atPrimary.find((r) => r.controlType === 'debtors')

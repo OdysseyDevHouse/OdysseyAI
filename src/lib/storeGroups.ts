@@ -383,16 +383,53 @@ async function ownerSiteFor(
 }
 
 /**
- * Whether this store's customer file is somebody else's database.
+ * Whether this store's customer file is shared with other stores.
  *
  * For the handful of callers that need to BEHAVE differently rather than merely
- * read from elsewhere — the spend-limit measurement, which sums the shared
- * ledger instead of local tenders, and the setup screen, which says who owns
- * the file. Most callers should just use the site id and not care.
+ * read from elsewhere — the spend-limit measurement, which must sum the shared
+ * ledger instead of local tenders, and the debtors reconciliation, which must
+ * compare against every member's control account rather than one store's.
+ * Most callers should just use the site id and not care.
+ *
+ * ── TRUE AT BOTH ENDS, WHICH IS THE WHOLE POINT ──────────────────────────
+ *
+ * This used to read `owner.siteId !== siteId` — "is my file in somebody else's
+ * database". That is true at a branch and FALSE at the primary, even though
+ * the primary's customers table is precisely the shared file: it holds every
+ * branch's debtors and its balances are group balances.
+ *
+ * A caller asking this question is asking "is this file shared", not "is it
+ * elsewhere". Answering the second broke the debtors reconciliation at head
+ * office, which is the one place that reconciles the whole book — see
+ * debtorsGroupScope() in site/chartOfAccounts.ts. Callers that genuinely need
+ * "is it elsewhere" should compare customerOwnerSite() themselves, which is
+ * what customerDbPrefix() does and why it stays correct.
  */
 export async function customerFileIsShared(siteId: number): Promise<boolean> {
   const owner = await customerOwnerSite(siteId)
-  return owner.siteId !== siteId
+  // A branch: the file is somewhere else. Answered first and cheaply.
+  if (owner.siteId !== siteId) return true
+
+  // Otherwise this store owns its own customers — but that covers two very
+  // different cases, and only one of them is "not shared". A primary hosting
+  // the group's file also resolves to itself, so the question becomes whether
+  // any OTHER member routes its customers here.
+  try {
+    const group = await groupForSite(siteId)
+    if (!group) return false
+    const members = await membersOfGroup(group.id)
+    for (const m of members) {
+      if (m.siteId === siteId) continue
+      const theirOwner = await customerOwnerSite(m.siteId)
+      if (theirOwner.siteId === siteId) return true
+    }
+    return false
+  } catch {
+    // A control-database problem must not make a single shop start behaving
+    // like a group. Falling back to "not shared" is what the site did before
+    // any of this existed.
+    return false
+  }
 }
 
 /**

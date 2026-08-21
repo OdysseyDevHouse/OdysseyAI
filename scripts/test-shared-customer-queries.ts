@@ -408,17 +408,43 @@ async function main() {
       console.log('SKIP  debtors is already in step on this site, so there is no row to inspect')
     }
 
-    // The OWNER owns its own customers, so it takes the ordinary per-store
-    // path — the group figure must not leak onto a store that is not sharing.
+    // The OWNER reconciles at group level too, and this assertion used to say
+    // the opposite.
+    //
+    // The reasoning it carried was "the owner owns its own customers, so it
+    // takes the ordinary per-store path — the group figure must not leak onto a
+    // store that is not sharing". The premise is true and the conclusion does
+    // not follow: the primary IS sharing. It is the store hosting the file, and
+    // its customers table holds every branch's debtors.
+    //
+    // So the per-store path compared head office's own debtors control account
+    // against the WHOLE GROUP's sub-ledger and reported the difference as
+    // drift — at the one site that reconciles the whole book. Reproduced at
+    // 55.1m on a two-store demo group in probe-shared-customer-accounting.ts.
+    //
+    // The two ends must now agree, which is the real invariant: one shared
+    // debtors book, one answer, whoever asks.
     const ownerDebtors = (await reconcileControlAccounts(primary)).find(
       (d) => d.controlType === 'debtors',
     )
     if (ownerDebtors) {
       ok(
-        'the owner still reconciles against itself',
-        ownerDebtors.scope === undefined,
-        ownerDebtors.scope ? 'it was given a group scope' : '',
+        'the owner reconciles at GROUP level as well',
+        ownerDebtors.scope?.level === 'group',
+        ownerDebtors.scope
+          ? `${ownerDebtors.scope.stores} store(s)`
+          : 'it was left comparing the group sub-ledger against its own control account',
       )
+      if (branchDebtors) {
+        // The figures themselves, not just the marker. Both sites are asking
+        // about one book, so a difference here means one of them is counting a
+        // member the other is not.
+        ok(
+          'and reaches the same figure the branch does',
+          Math.abs(ownerDebtors.drift - branchDebtors.drift) < 0.005,
+          `owner ${ownerDebtors.drift.toFixed(2)} vs branch ${branchDebtors.drift.toFixed(2)}`,
+        )
+      }
     }
 
     /* ── The report builder ───────────────────────────────────────────── */
