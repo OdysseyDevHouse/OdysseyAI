@@ -1,0 +1,46 @@
+-- ── Gift cards follow the loyalty programme, with their own money gate ────
+--
+-- ── WHY THERE IS NO shares_gift_cards FLAG ────────────────────────────────
+--
+-- Because a shop asking for one card scheme is asking for one card scheme.
+-- Loyalty and gift cards are the same conversation at the counter — "can I use
+-- this here" — and answering it with two separate switches invites the state
+-- nobody wants: a group where points travel and stored value does not, so a
+-- shopper's card works for some things at store 7 and not others.
+--
+-- So `shares_loyalty` decides WHERE the cards live, and gift_cards resolves
+-- through loyaltyOwnerSite() like loyalty_members does.
+--
+-- ── WHY THE MONEY STILL NEEDS ITS OWN ANSWER ──────────────────────────────
+--
+-- Riding on the loyalty flag inherits loyalty's exemption from the
+-- legal-entity gate, and that exemption was argued for POINTS: a franchise
+-- running one card across separately-owned stores owes nothing between the
+-- companies when a shopper earns at one and redeems at another, because points
+-- cost nothing to honour and were never anybody's money.
+--
+-- A gift card is not that. It is cash the shopper handed over. Sold at store 3
+-- and spent at store 7, store 3 holds money store 7 has given goods for — an
+-- inter-company balance neither set of books records. That is the same
+-- objection 016 raises about a shared debtors book, and it does not go away
+-- because the card is bearer.
+--
+-- Without this column, turning loyalty on for a group of separate companies
+-- would silently pool their stored value. The switch is what stops that being
+-- silent.
+--
+-- ── AN OPTION RATHER THAN A REFUSAL ───────────────────────────────────────
+--
+-- Same reasoning as shares_loyalty_wallet in 017, and deliberately the same
+-- shape so the two read as one decision on screen. A group with a settlement
+-- agreement between the companies has already answered this; what the software
+-- owes them is the consequence stated at the moment of choosing, not a refusal
+-- of a commercial arrangement that is theirs to make.
+--
+-- Off by default — the answer that needs no agreement in place. Consulted only
+-- when legal_entity = 'several': one company sharing value across its own
+-- branches raises no question, since there is one taxpayer and one set of books.
+
+ALTER TABLE cp2_store_groups
+  ADD COLUMN IF NOT EXISTS shares_gift_cards TINYINT(1) NOT NULL DEFAULT 0
+    AFTER shares_loyalty_wallet;

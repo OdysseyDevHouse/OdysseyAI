@@ -65,6 +65,21 @@ export type StoreGroup = {
    * the float is already theirs.
    */
   sharesLoyaltyWallet: boolean
+  /**
+   * Whether SEPARATELY REGISTERED companies here pool GIFT CARD value.
+   *
+   * The twin of sharesLoyaltyWallet and for the same reason: a gift card is
+   * cash the shopper handed over, so a card sold at one company and spent at
+   * another leaves one holding money the other gave goods for.
+   *
+   * Needed even though gift cards ride on shares_loyalty, because loyalty is
+   * exempt from the legal-entity gate — that exemption was argued for points,
+   * which cost nothing to honour. Without this column, one card scheme would
+   * silently pool two taxpayers' liabilities.
+   *
+   * Meaningless when legalEntity is 'one'. See giftCardOwnerSite.
+   */
+  sharesGiftCards: boolean
 }
 
 export type GroupMember = {
@@ -147,6 +162,7 @@ type GroupRow = RowDataPacket & {
   online_group_mode?: number
   legal_entity?: 'unknown' | 'one' | 'several'
   shares_loyalty_wallet?: number
+  shares_gift_cards?: number
 }
 
 type MemberRow = RowDataPacket & {
@@ -182,6 +198,9 @@ function mapGroup(r: GroupRow): StoreGroup {
     // which is the answer that needs no settlement agreement between the
     // companies. See sql/tickets/017_share_loyalty.sql.
     sharesLoyaltyWallet: Boolean(r.shares_loyalty_wallet),
+    // Absent on a control database that has not run 018. Off is the correct
+    // reading of a missing column: nobody has agreed to pool anything.
+    sharesGiftCards: Boolean(r.shares_gift_cards),
   }
 }
 
@@ -211,7 +230,7 @@ function mapMember(r: MemberRow): GroupMember {
 /** The group a site belongs to, if any. A site belongs to at most one. */
 export async function groupForSite(siteId: number): Promise<StoreGroup | null> {
   const row = await queryOne<GroupRow>(
-    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode, g.legal_entity, g.shares_loyalty_wallet
+    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode, g.legal_entity, g.shares_loyalty_wallet, g.shares_gift_cards
        FROM cp2_store_groups g
        JOIN cp2_store_group_members m ON m.group_id = g.id
       WHERE m.site_id = ? AND g.status = 'active'
@@ -440,6 +459,93 @@ export async function loyaltyWalletRefusal(siteId: number): Promise<string | nul
 }
 
 /**
+ * Which database holds this store's gift cards.
+ *
+ * ── GIFT CARDS FOLLOW LOYALTY, AND HAVE NO FLAG OF THEIR OWN ─────────────
+ *
+ * A shop asking for one card scheme is asking for one card scheme. Loyalty and
+ * gift cards are the same conversation at the counter — "can I use this here" —
+ * and two switches invite the state nobody wants: points that travel and stored
+ * value that does not, so a card works for some things at store 7 and not
+ * others. See sql/tickets/018_share_gift_cards.sql.
+ *
+ * ── EXCEPT WHEN THE MONEY SAYS OTHERWISE ─────────────────────────────────
+ *
+ * Following shares_loyalty would inherit loyalty's exemption from the
+ * legal-entity gate, and that exemption was argued for POINTS: they cost
+ * nothing to honour and were never anybody's money. A gift card is cash the
+ * shopper handed over. Sold at store 3 and spent at store 7, store 3 holds
+ * money store 7 has given goods for.
+ *
+ * So a group of SEPARATE COMPANIES that has not agreed to pool stored value
+ * resolves to its OWN cards — the programme is shared, the money is not. That
+ * is the one place gift cards and loyalty part company, and it is deliberate:
+ * the alternative is a switch that silently pools two taxpayers' liabilities.
+ */
+export const giftCardOwnerSite = cache(async (siteId: number): Promise<OwnerDb> => {
+  const own: OwnerDb = { siteId, purpose: MASTER }
+  try {
+    const owner = await loyaltyOwnerSite(siteId)
+    if (owner.siteId === siteId) return own
+
+    // The money question, asked only where it arises. One company sharing value
+    // across its own branches has one set of books and nothing to settle.
+    const group = await groupForSite(siteId)
+    if (!group) return own
+    if (group.legalEntity === 'several' && !group.sharesGiftCards) return own
+
+    return owner
+  } catch {
+    // A control-database blip must not strand a till that can otherwise trade.
+    // Own cards is the safe answer: it refuses a card sold elsewhere rather
+    // than spending one twice.
+    return own
+  }
+})
+
+/** Whether this store's gift cards are shared with anyone. */
+export async function giftCardFileIsShared(siteId: number): Promise<boolean> {
+  return fileIsShared(siteId, giftCardOwnerSite)
+}
+
+/**
+ * Why a group of separate companies is not pooling gift card value.
+ *
+ * The twin of loyaltyWalletRefusal, and shown in the same place for the same
+ * reason: a cashier told "no such card" about a card that plainly exists needs
+ * to know it is a company boundary rather than a fault.
+ */
+export async function giftCardRefusalForGroup(siteId: number): Promise<string | null> {
+  try {
+    const loyaltyOwner = await loyaltyOwnerSite(siteId)
+    // Not sharing the programme at all — nothing to explain.
+    if (loyaltyOwner.siteId === siteId) return null
+
+    const group = await groupForSite(siteId)
+    if (!group) return null
+    if (group.legalEntity !== 'several') return null
+    if (group.sharesGiftCards) return null
+
+    return (
+      'These stores are registered as separate companies, and this group has ' +
+      'not agreed to share gift card value across them. A card is spendable at ' +
+      'the company that sold it. Points and rewards still work everywhere. An ' +
+      'owner can change this in Setup → Linked stores.'
+    )
+  } catch {
+    return null
+  }
+}
+
+/** Turns pooled gift card value on or off for a group. */
+export async function setGroupGiftCards(groupId: number, shared: boolean): Promise<void> {
+  await execute('UPDATE cp2_store_groups SET shares_gift_cards = ? WHERE id = ?', [
+    shared ? 1 : 0,
+    groupId,
+  ])
+}
+
+/**
  * The shared resolution both public helpers run.
  *
  * Memoised by its callers rather than here: React's cache() keys on arguments,
@@ -664,7 +770,7 @@ export async function storeContents(siteId: number): Promise<StoreContents> {
 export async function listGroups(): Promise<StoreGroup[]> {
   return (
     await query<GroupRow>(
-      `SELECT id, name, primary_site_id, status, online_group_mode, legal_entity FROM cp2_store_groups ORDER BY name ASC`,
+      `SELECT id, name, primary_site_id, status, online_group_mode, legal_entity, shares_loyalty_wallet, shares_gift_cards FROM cp2_store_groups ORDER BY name ASC`,
     )
   ).map(mapGroup)
 }
@@ -716,7 +822,7 @@ export async function setGroupOnlineMode(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (on) {
     const group = await queryOne<GroupRow>(
-      'SELECT id, name, primary_site_id, status, online_group_mode, legal_entity FROM cp2_store_groups WHERE id = ?',
+      'SELECT id, name, primary_site_id, status, online_group_mode, legal_entity, shares_loyalty_wallet, shares_gift_cards FROM cp2_store_groups WHERE id = ?',
       [groupId],
     )
     if (!group) return { ok: false, error: 'That store group no longer exists.' }
@@ -1062,7 +1168,7 @@ async function sharedFileRefusal(
   const feature = file === 'loyalty' ? 'loyalty programme' : `${label} file`
 
   const group = await queryOne<GroupRow>(
-    'SELECT id, name, primary_site_id, status, online_group_mode, legal_entity FROM cp2_store_groups WHERE id = ?',
+    'SELECT id, name, primary_site_id, status, online_group_mode, legal_entity, shares_loyalty_wallet, shares_gift_cards FROM cp2_store_groups WHERE id = ?',
     [groupId],
   )
   if (!group) return 'That store group no longer exists.'
