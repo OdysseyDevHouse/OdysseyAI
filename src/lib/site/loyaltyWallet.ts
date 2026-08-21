@@ -1,11 +1,12 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
-import { branchDbPrefix, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
+import { loyaltyBranchDbPrefix, loyaltyQuery, loyaltyQueryOne, loyaltyTransaction } from './loyaltyDb'
 import { round, toNum } from '../decimals'
 import { logActivity, type Actor } from './activityLog'
 import { getTenderType } from './tenderTypes'
 import { shiftToBankInto } from './shifts'
+import { loyaltyWalletRefusal } from '../storeGroups'
 
 /**
  * The loyalty wallet — rand a customer has pre-loaded onto their card.
@@ -43,7 +44,7 @@ export type WalletEntryType = 'topup' | 'spend' | 'refund' | 'adjust'
 
 export type WalletEntry = {
   id: number
-  customerId: number
+  memberId: number
   entryType: WalletEntryType
   amount: number
   tenderName: string
@@ -57,7 +58,7 @@ export type WalletEntry = {
 function mapEntry(r: Row): WalletEntry {
   return {
     id: Number(r.id),
-    customerId: Number(r.customer_id),
+    memberId: Number(r.member_id),
     entryType: String(r.entry_type) as WalletEntryType,
     amount: toNum(r.amount),
     tenderName: String(r.tender_name ?? ''),
@@ -70,31 +71,31 @@ function mapEntry(r: Row): WalletEntry {
 }
 
 /** The authoritative balance: summed from the rows, never read off the cache. */
-export async function getWalletBalance(siteId: number, customerId: number): Promise<number> {
-  const row = await customerQueryOne<Row>(
+export async function getWalletBalance(siteId: number, memberId: number): Promise<number> {
+  const row = await loyaltyQueryOne<Row>(
     siteId,
-    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE customer_id = ?',
-    [customerId],
+    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE member_id = ?',
+    [memberId],
   )
   return round(toNum(row?.amount), 2)
 }
 
 /** Same, under a lock, for a caller about to spend it. */
-async function lockedWalletBalance(tx: PoolConnection, customerId: number): Promise<number> {
-  await tx.query('SELECT customer_id FROM loyalty_members WHERE customer_id = ? FOR UPDATE', [
-    customerId,
+async function lockedWalletBalance(tx: PoolConnection, memberId: number): Promise<number> {
+  await tx.query('SELECT member_id FROM loyalty_members WHERE member_id = ? FOR UPDATE', [
+    memberId,
   ] as never)
 
   const [[row]] = await tx.query<Row[]>(
-    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE customer_id = ?',
-    [customerId] as never,
+    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE member_id = ?',
+    [memberId] as never,
   )
   return round(toNum(row?.amount), 2)
 }
 
 export async function listWallet(
   siteId: number,
-  customerId: number,
+  memberId: number,
   limit = 100,
 ): Promise<WalletEntry[]> {
   const capped = Math.min(Math.max(1, Math.floor(limit)), 1000)
@@ -104,40 +105,40 @@ export async function listWallet(
   // owner and reaches BACK to name the caller's tender table. Unqualified, a
   // top-up taken at branch 7 would be labelled with whatever tender happens to
   // share that id at the primary: a wrong label on a money record.
-  const bdb = await branchDbPrefix(siteId)
-  const rows = await customerQuery<Row>(
+  const bdb = await loyaltyBranchDbPrefix(siteId)
+  const rows = await loyaltyQuery<Row>(
     siteId,
-    `SELECT w.id, w.customer_id, w.entry_type, w.amount, w.document_id, w.document_number,
+    `SELECT w.id, w.member_id, w.entry_type, w.amount, w.document_id, w.document_number,
             w.note, w.user_name, w.created_at, t.name AS tender_name
        FROM loyalty_wallet w
        LEFT JOIN ${bdb}tender_types t ON t.id = w.tender_type_id
-      WHERE w.customer_id = ?
+      WHERE w.member_id = ?
       ORDER BY w.id DESC
       LIMIT ${capped}`,
-    [customerId],
+    [memberId],
   )
   return rows.map(mapEntry)
 }
 
 /** Rewrites the display cache. Called on the caller's transaction. */
-async function refreshWalletCache(tx: PoolConnection, customerId: number): Promise<void> {
+async function refreshWalletCache(tx: PoolConnection, memberId: number): Promise<void> {
   const [[row]] = await tx.query<Row[]>(
-    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE customer_id = ?',
-    [customerId] as never,
+    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE member_id = ?',
+    [memberId] as never,
   )
   await tx.execute(
-    `INSERT INTO loyalty_members (customer_id, wallet_balance, last_activity_at)
+    `INSERT INTO loyalty_members (member_id, wallet_balance, last_activity_at)
      VALUES (?,?,NOW())
      ON DUPLICATE KEY UPDATE wallet_balance = VALUES(wallet_balance),
                              last_activity_at = VALUES(last_activity_at)`,
-    [customerId, round(toNum(row?.amount), 4).toFixed(4)] as never,
+    [memberId, round(toNum(row?.amount), 4).toFixed(4)] as never,
   )
 }
 
 /* ── Topping up ──────────────────────────────────────────────────────────── */
 
 export type TopUpInput = {
-  customerId: number
+  memberId: number
   amount: number
   tenderTypeId: number
   terminalId?: number | null
@@ -171,12 +172,28 @@ export async function topUpWallet(
     return { ok: false, error: `A top-up above R${MAX_TOPUP.toLocaleString()} has to be split.` }
   }
 
-  const customer = await customerQueryOne<Row>(
+  const member = await loyaltyQueryOne<Row>(
     siteId,
-    'SELECT id, name FROM customers WHERE id = ? LIMIT 1',
-    [input.customerId],
+    'SELECT id, name, is_active FROM loyalty_members WHERE id = ? LIMIT 1',
+    [input.memberId],
   )
-  if (!customer) return { ok: false, error: 'That customer no longer exists.' }
+  if (!member) return { ok: false, error: 'That member no longer exists.' }
+  if (!Number(member.is_active)) {
+    return { ok: false, error: `${String(member.name)}'s membership is not active.` }
+  }
+
+  /*
+   * Money crossing a company boundary is the owner's decision.
+   *
+   * Points are never gated — they are a marketing promise, and a franchise
+   * sharing one card owes nothing between its companies. The float is
+   * different: topped up at store 3 and spent at store 7, store 3 holds cash
+   * store 7 has given goods for. Whether that is acceptable is a commercial
+   * question with a switch behind it, not something this function should
+   * decide. See loyaltyWalletRefusal.
+   */
+  const walletRefusal = await loyaltyWalletRefusal(siteId)
+  if (walletRefusal) return { ok: false, error: walletRefusal }
 
   const tender = await getTenderType(siteId, input.tenderTypeId)
   if (!tender) return { ok: false, error: 'Choose how the money was paid.' }
@@ -195,18 +212,18 @@ export async function topUpWallet(
   // taking the till's would put a waiter's top-up in someone else's drawer.
   const shiftId = await shiftToBankInto(siteId, input.terminalId ?? null, actor.userId)
 
-  const balance = await customerTransaction(siteId, async (tx) => {
+  const balance = await loyaltyTransaction(siteId, async (tx) => {
     await tx.execute(
       // origin_site_id is not optional here: tender_type_id, shift_id and
       // terminal_id are ALL branch ids, and without the origin none of them
       // means anything once ten stores share one wallet. walletTopUpsForShift
       // filters on it, so a missing stamp shows up as a drawer that is over.
       `INSERT INTO loyalty_wallet
-         (customer_id, entry_type, amount, tender_type_id, shift_id, terminal_id,
+         (member_id, entry_type, amount, tender_type_id, shift_id, terminal_id,
           origin_site_id, note, user_id, user_name)
        VALUES (?, 'topup', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        input.customerId,
+        input.memberId,
         amount.toFixed(4),
         tender.id,
         shiftId,
@@ -217,13 +234,13 @@ export async function topUpWallet(
         actor.userName.slice(0, 120),
       ] as never,
     )
-    await refreshWalletCache(tx, input.customerId)
-    return lockedWalletBalance(tx, input.customerId)
+    await refreshWalletCache(tx, input.memberId)
+    return lockedWalletBalance(tx, input.memberId)
   })
 
   await logActivity(siteId, actor, {
     entity: 'loyalty',
-    entityId: input.customerId,
+    entityId: input.memberId,
     action: 'wallet_topped_up',
     detail: `R${amount.toFixed(2)} by ${tender.name}`,
   })
@@ -234,7 +251,7 @@ export async function topUpWallet(
 /* ── Spending ────────────────────────────────────────────────────────────── */
 
 export type WalletSpendInput = {
-  customerId: number
+  memberId: number
   documentId: number
   documentNumber: string
   amount: number
@@ -260,7 +277,7 @@ export async function spendWalletForSale(
     throw new Error('Enter an amount to settle from the wallet.')
   }
 
-  const balance = await lockedWalletBalance(tx, input.customerId)
+  const balance = await lockedWalletBalance(tx, input.memberId)
   if (amount > balance) {
     throw new Error(
       `Not enough on the card: R${balance.toFixed(2)} available, R${amount.toFixed(2)} asked for.`,
@@ -269,11 +286,11 @@ export async function spendWalletForSale(
 
   await tx.execute(
     `INSERT INTO loyalty_wallet
-       (customer_id, entry_type, amount, document_id, document_number,
+       (member_id, entry_type, amount, document_id, document_number,
         origin_site_id, user_id, user_name)
      VALUES (?, 'spend', ?, ?, ?, ?, ?, ?)`,
     [
-      input.customerId,
+      input.memberId,
       (-amount).toFixed(4),
       input.documentId,
       input.documentNumber,
@@ -282,7 +299,7 @@ export async function spendWalletForSale(
       actor.userName.slice(0, 120),
     ] as never,
   )
-  await refreshWalletCache(tx, input.customerId)
+  await refreshWalletCache(tx, input.memberId)
 
   return { amount }
 }
@@ -300,9 +317,9 @@ export async function refundWalletForSale(
   documentId: number,
   reason: string,
 ): Promise<{ amount: number }> {
-  return customerTransaction(siteId, async (tx) => {
+  return loyaltyTransaction(siteId, async (tx) => {
     const [[spent]] = await tx.query<Row[]>(
-      `SELECT customer_id, amount, document_number
+      `SELECT member_id, amount, document_number
          FROM loyalty_wallet
         WHERE document_id = ? AND entry_type = 'spend'
           -- Document ids are per-database, so in a shared wallet the id alone
@@ -319,16 +336,16 @@ export async function refundWalletForSale(
     )
     if (already) return { amount: 0 }
 
-    const customerId = Number(spent.customer_id)
+    const memberId = Number(spent.member_id)
     const amount = round(Math.abs(toNum(spent.amount)), 2)
 
     await tx.execute(
       `INSERT INTO loyalty_wallet
-         (customer_id, entry_type, amount, document_id, document_number,
+         (member_id, entry_type, amount, document_id, document_number,
           origin_site_id, note, user_id, user_name)
        VALUES (?, 'refund', ?, ?, ?, ?, ?, ?, ?)`,
       [
-        customerId,
+        memberId,
         amount.toFixed(4),
         documentId,
         String(spent.document_number ?? ''),
@@ -338,7 +355,7 @@ export async function refundWalletForSale(
         actor.userName.slice(0, 120),
       ] as never,
     )
-    await refreshWalletCache(tx, customerId)
+    await refreshWalletCache(tx, memberId)
 
     return { amount }
   })
@@ -348,7 +365,7 @@ export async function refundWalletForSale(
 export async function adjustWallet(
   siteId: number,
   actor: Actor,
-  customerId: number,
+  memberId: number,
   amount: number,
   reason: string,
 ): Promise<TopUpResult> {
@@ -357,31 +374,31 @@ export async function adjustWallet(
   if (!reason.trim()) return { ok: false, error: 'Give a reason for the adjustment.' }
 
   try {
-    const balance = await customerTransaction(siteId, async (tx) => {
-      const current = await lockedWalletBalance(tx, customerId)
+    const balance = await loyaltyTransaction(siteId, async (tx) => {
+      const current = await lockedWalletBalance(tx, memberId)
       if (value < 0 && current + value < 0) {
         throw new Error(`That would overdraw the card — R${current.toFixed(2)} is available.`)
       }
 
       await tx.execute(
         `INSERT INTO loyalty_wallet
-           (customer_id, entry_type, amount, note, user_id, user_name)
+           (member_id, entry_type, amount, note, user_id, user_name)
          VALUES (?, 'adjust', ?, ?, ?, ?)`,
         [
-          customerId,
+          memberId,
           value.toFixed(4),
           reason.trim().slice(0, 255),
           actor.userId,
           actor.userName.slice(0, 120),
         ] as never,
       )
-      await refreshWalletCache(tx, customerId)
+      await refreshWalletCache(tx, memberId)
       return round(current + value, 2)
     })
 
     await logActivity(siteId, actor, {
       entity: 'loyalty',
-      entityId: customerId,
+      entityId: memberId,
       action: value > 0 ? 'wallet_credited' : 'wallet_debited',
       detail: `R${Math.abs(value).toFixed(2)} · ${reason.trim()}`,
     })
@@ -417,8 +434,8 @@ export async function walletTopUpsForShift(
   //     would pull in another store's shift that happens to share the number —
   //     and this figure is what a drawer is counted against. origin_site_id is
   //     what makes the shift unambiguous.
-  const bdb = await branchDbPrefix(siteId)
-  const rows = await customerQuery<Row>(
+  const bdb = await loyaltyBranchDbPrefix(siteId)
+  const rows = await loyaltyQuery<Row>(
     siteId,
     `SELECT w.tender_type_id, COALESCE(t.name,'Unknown') AS tender_name,
             COALESCE(SUM(w.amount),0) AS amount

@@ -336,18 +336,46 @@ design work and the honest source of the variance.
 
 1. **Dev database reset** — drop-and-recreate the loyalty tables per site, or
    re-provision? Blocks step 1.
-2. **Gift cards** (`147_gift_cards.sql:23`) also key to `customer_id`. They are a
-   separate liability from the loyalty wallet and this plan leaves them on
-   customers — but a shopper would reasonably expect a gift card to work like a
-   loyalty balance across a group. Deliberate, or worth folding in?
-3. **`member_number` format** — sequential via the numbering machinery, or free
-   text so physical pre-printed cards can be scanned as-is? Affects decision 6.
+2. ~~**Gift cards**~~ — **ANSWERED: a separate piece, straight after this one.**
+
+   `gift_cards.customer_id` has the same FK to `customers`
+   (`147_gift_cards.sql:23`, constraint at `:35`) and therefore the same
+   boundary problem loyalty just had.
+
+   It is NOT the same fix, though, and that is why it stays separate. A gift
+   card is BEARER value — whoever holds it spends it, which is why
+   `customer_id` is nullable and why most cards carry no customer at all. The
+   loyalty wallet is NAMED value belonging to a member. So gift cards need no
+   member link: they need the FK dropped and an `origin_site_id`, which is much
+   smaller than what loyalty required.
+
+   Deferred rather than folded in because it is ~60 code sites and 14 touch
+   points in `salesPosting`, and conflating the two would make a large change
+   larger while making neither easier to review.
+3. ~~**`member_number` format**~~ — **ANSWERED: sequential, through the existing
+   numbering machinery.** Same gap-checking and audit as every other numbered
+   thing. A pre-printed card is entered as an override rather than being the
+   number itself.
 4. **The customer screen's Loyalty tab** (`customers/[id]/LoyaltyTab.tsx`) —
    when a customer has no linked member, does it show an empty state or an
    "enrol this customer" button? The second is better and is what this plan
    assumes.
-5. **Separate companies and the wallet** (decision 5) — may stores registered as
-   separate companies share one loyalty programme? My reading: yes for points,
-   tiers and punch cards; **no** for the wallet, because that is money one
-   company would be holding on another's behalf. Needs your call, and it is the
-   only open question that changes what the refusal gate does.
+5. ~~**Separate companies and the wallet**~~ — **ANSWERED, and not the way this
+   plan read it.** Built in `sql/tickets/017_share_loyalty.sql` and
+   `loyaltyWalletRefusal()`.
+
+   Separate companies may share the programme — `loyaltyOwnerSite()` does not
+   inherit the `legal_entity = 'one'` gate, which is what makes the franchise
+   case possible at all. The wallet is a per-group SWITCH rather than a
+   refusal: off by default (the answer needing no settlement agreement between
+   the companies), surfaced on Setup → Linked stores only under "separate
+   companies", with the consequence stated beside it.
+
+   An option rather than my recommended refusal because it is a commercial
+   decision the owner is entitled to make — a group with a settlement agreement
+   has already made it. What the software owes them is the trade stated at the
+   moment of choosing rather than discovered at a till.
+
+6. **ANSWERED — attaching a customer at the till AUTO-ATTACHES their linked
+   member**, rather than offering it. Fewer taps, and reversible: the member can
+   be detached without detaching the customer. Decision 4 left this open.

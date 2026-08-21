@@ -1,7 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
-import { branchDbPrefix, customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
+import { loyaltyBranchDbPrefix, loyaltyExecute, loyaltyQuery, loyaltyQueryOne, loyaltyTransaction } from './loyaltyDb'
 import { round, toNum } from '../decimals'
 import {
   cardCompletions,
@@ -92,15 +92,15 @@ const selectCard = (bdb: string) => `
  * shop that does not sell the item cannot award a stamp for buying it.
  */
 export async function listCards(siteId: number, activeOnly = false): Promise<LoyaltyCard[]> {
-  const bdb = await branchDbPrefix(siteId)
-  const rows = await customerQuery<Row>(
+  const bdb = await loyaltyBranchDbPrefix(siteId)
+  const rows = await loyaltyQuery<Row>(
     siteId,
     `${selectCard(bdb)} ${activeOnly ? 'WHERE c.is_active = 1' : ''} ORDER BY c.name ASC`,
   )
   if (rows.length === 0) return []
 
   const ids = rows.map((r) => Number(r.id))
-  const items = await customerQuery<Row>(
+  const items = await loyaltyQuery<Row>(
     siteId,
     `SELECT card_id, product_code, department_name
        FROM loyalty_card_items WHERE card_id IN (${ids.map(() => '?').join(',')})`,
@@ -274,7 +274,7 @@ export async function createCard(
   const invalid = validateCard(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const id = await customerTransaction(siteId, async (tx) => {
+  const id = await loyaltyTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO loyalty_cards
          (name, is_active, required_stamps, reward_type, reward_product_code, reward_value,
@@ -306,10 +306,10 @@ export async function updateCard(
   const invalid = validateCard(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const existing = await customerQueryOne<Row>(siteId, 'SELECT id FROM loyalty_cards WHERE id = ?', [id])
+  const existing = await loyaltyQueryOne<Row>(siteId, 'SELECT id FROM loyalty_cards WHERE id = ?', [id])
   if (!existing) return { ok: false, error: 'That card no longer exists.' }
 
-  await customerTransaction(siteId, async (tx) => {
+  await loyaltyTransaction(siteId, async (tx) => {
     await tx.execute(
       `UPDATE loyalty_cards SET
          name = ?, is_active = ?, required_stamps = ?, reward_type = ?, reward_product_code = ?,
@@ -337,7 +337,7 @@ export async function setCardActive(
   id: number,
   isActive: boolean,
 ): Promise<Result> {
-  await customerExecute(siteId, 'UPDATE loyalty_cards SET is_active = ? WHERE id = ?', [
+  await loyaltyExecute(siteId, 'UPDATE loyalty_cards SET is_active = ? WHERE id = ?', [
     isActive ? 1 : 0,
     id,
   ])
@@ -363,7 +363,7 @@ export async function deleteCard(siteId: number, actor: Actor, id: number): Prom
   // cards. Two databases when the file is shared, which is exactly why
   // fk_stamp_card had to go in 199 — this check is now what stops a card being
   // deleted out from under progress a customer has earned.
-  const used = await customerQueryOne<Row>(
+  const used = await loyaltyQueryOne<Row>(
     siteId,
     'SELECT COUNT(*) AS n FROM loyalty_stamps WHERE card_id = ?',
     [id],
@@ -376,7 +376,7 @@ export async function deleteCard(siteId: number, actor: Actor, id: number): Prom
     }
   }
 
-  await customerExecute(siteId, 'DELETE FROM loyalty_cards WHERE id = ?', [id])
+  await loyaltyExecute(siteId, 'DELETE FROM loyalty_cards WHERE id = ?', [id])
   await logActivity(siteId, actor, {
     entity: 'loyalty',
     entityId: null,
@@ -411,16 +411,16 @@ function rewardLabel(card: LoyaltyCard): string {
  */
 export async function getCardProgress(
   siteId: number,
-  customerId: number,
+  memberId: number,
 ): Promise<CardProgress[]> {
   const cards = await listCards(siteId, true)
   if (cards.length === 0) return []
 
-  const counts = await customerQuery<Row>(
+  const counts = await loyaltyQuery<Row>(
     siteId,
     `SELECT card_id, COUNT(*) AS n FROM loyalty_stamps
-      WHERE customer_id = ? GROUP BY card_id`,
-    [customerId],
+      WHERE member_id = ? GROUP BY card_id`,
+    [memberId],
   )
   const byCard = new Map(counts.map((r) => [Number(r.card_id), Number(r.n)]))
 
@@ -456,7 +456,7 @@ export async function awardSaleStamps(
   siteId: number,
   actor: Actor,
   input: {
-    customerId: number
+    memberId: number
     documentId: number
     documentNumber: string
     lines: readonly StampLine[]
@@ -481,19 +481,19 @@ export async function awardSaleStamps(
     if (due <= 0) continue
 
     try {
-      const result = await customerTransaction(siteId, async (tx) => {
+      const result = await loyaltyTransaction(siteId, async (tx) => {
         // Already stamped for this sale? A retry, so nothing to do.
         const [[existing]] = await tx.query<Row[]>(
           `SELECT COUNT(*) AS n FROM loyalty_stamps
-            WHERE card_id = ? AND document_id = ? AND customer_id = ?
+            WHERE card_id = ? AND document_id = ? AND member_id = ?
               AND (origin_site_id IS NULL OR origin_site_id = ?)`,
-          [card.id, input.documentId, input.customerId, siteId] as never,
+          [card.id, input.documentId, input.memberId, siteId] as never,
         )
         if (Number(existing?.n ?? 0) > 0) return { stamps: 0, codes: [] as string[], points: 0 }
 
         const [[before]] = await tx.query<Row[]>(
-          'SELECT COUNT(*) AS n FROM loyalty_stamps WHERE card_id = ? AND customer_id = ? FOR UPDATE',
-          [card.id, input.customerId] as never,
+          'SELECT COUNT(*) AS n FROM loyalty_stamps WHERE card_id = ? AND member_id = ? FOR UPDATE',
+          [card.id, input.memberId] as never,
         )
         const priorTotal = Number(before?.n ?? 0)
         const priorCompleted = cardCompletions(priorTotal, card.requiredStamps).completed
@@ -506,9 +506,9 @@ export async function awardSaleStamps(
             // own sale 5001 collide and the second customer silently gets no
             // stamp. See 200_loyalty_stamp_origin.sql.
             `INSERT INTO loyalty_stamps
-               (card_id, customer_id, document_id, origin_site_id, stamp_seq, product_id)
+               (card_id, member_id, document_id, origin_site_id, stamp_seq, product_id)
              VALUES (?,?,?,?,?,?)`,
-            [card.id, input.customerId, input.documentId, siteId, seq, null] as never,
+            [card.id, input.memberId, input.documentId, siteId, seq, null] as never,
           )
           stampIds.push((res as { insertId: number }).insertId)
         }
@@ -524,7 +524,7 @@ export async function awardSaleStamps(
             // A points reward needs no voucher — it lands straight on the
             // balance, where the customer can see it immediately.
             await insertLedger(tx, actor, siteId, {
-              customerId: input.customerId,
+              memberId: input.memberId,
               entryType: 'adjust',
               points: card.rewardValue,
               documentId: input.documentId,
@@ -534,7 +534,7 @@ export async function awardSaleStamps(
             points = round(points + card.rewardValue, 4)
           } else {
             const voucher = await issueVoucherTx(tx, actor, {
-              customerId: input.customerId,
+              memberId: input.memberId,
               rewardType: card.rewardType === 'free_item' ? 'free_item' : 'value',
               rewardProductCode: card.rewardProductCode,
               rewardValue: card.rewardValue,
@@ -558,7 +558,7 @@ export async function awardSaleStamps(
         }
 
         if (points > 0) {
-          await refreshMember(tx, input.customerId, settings, tiers)
+          await refreshMember(tx, input.memberId, settings, tiers)
         }
 
         return { stamps: due, codes, points }
@@ -579,7 +579,7 @@ export async function awardSaleStamps(
 
 /** Removes a refunded sale's stamps, and voids anything they issued. */
 export async function reverseSaleStamps(siteId: number, documentId: number): Promise<number> {
-  return customerTransaction(siteId, async (tx) => {
+  return loyaltyTransaction(siteId, async (tx) => {
     // Scoped by origin throughout. document_id is a BRANCH id, so in a shared
     // stamp table it would match another store's sale — and this function VOIDS
     // vouchers and DELETES stamps, so an unscoped match would wipe progress a
@@ -617,8 +617,9 @@ export type VoucherStatus = 'issued' | 'redeemed' | 'expired' | 'void'
 export type LoyaltyVoucher = {
   id: number
   code: string
-  customerId: number | null
-  customerName: string
+  memberId: number | null
+  memberName: string
+  memberNumber: string
   rewardType: 'free_item' | 'value'
   rewardProductCode: string | null
   rewardProductName: string | null
@@ -636,8 +637,9 @@ function mapVoucher(r: Row): LoyaltyVoucher {
   return {
     id: Number(r.id),
     code: String(r.code),
-    customerId: r.customer_id === null ? null : Number(r.customer_id),
-    customerName: String(r.customer_name ?? ''),
+    memberId: r.member_id === null ? null : Number(r.member_id),
+    memberName: String(r.member_name ?? ''),
+    memberNumber: String(r.member_number ?? ''),
     rewardType: String(r.reward_type) as 'free_item' | 'value',
     rewardProductCode: (r.reward_product_code as string | null) ?? null,
     rewardProductName: (r.reward_product_name as string | null) ?? null,
@@ -664,13 +666,23 @@ function mapVoucher(r: Row): LoyaltyVoucher {
  * Both prefixes are empty for a store that owns its own customers, so the SQL
  * is unchanged for every single-store site.
  */
+/*
+ * Joined to loyalty_members, NOT customers.
+ *
+ * Left joined to the customer file with a member id this returned a real row
+ * and the wrong name — or none at all for a walk-in member, who has no customer
+ * row. The silent-wrong-answer shape rather than an error.
+ *
+ * (Kept outside the template literal: a backtick-quoted table name inside one
+ * terminates the string, which is how this first went in and broke the build.)
+ */
 const selectVoucher = (bdb: string) => `
-  SELECT v.id, v.code, v.customer_id, v.reward_type, v.reward_product_code, v.reward_value,
+  SELECT v.id, v.code, v.member_id, v.reward_type, v.reward_product_code, v.reward_value,
          v.description, v.status, v.issued_by, v.expires_on, v.redeemed_at,
          v.redeemed_doc_number, v.created_at,
-         c.name AS customer_name, p.description AS reward_product_name
+         m.name AS member_name, m.member_number, p.description AS reward_product_name
     FROM loyalty_vouchers v
-    LEFT JOIN customers c ON c.id = v.customer_id
+    LEFT JOIN loyalty_members m ON m.id = v.member_id
     LEFT JOIN ${bdb}products p ON p.code = v.reward_product_code AND p.is_archived = 0
 `
 
@@ -683,7 +695,7 @@ function makeCode(): string {
 }
 
 export type VoucherIssueInput = {
-  customerId: number | null
+  memberId: number | null
   rewardType: 'free_item' | 'value'
   rewardProductCode?: string | null
   rewardValue?: number
@@ -716,12 +728,12 @@ async function issueVoucherTx(
     try {
       const [res] = await tx.execute(
         `INSERT INTO loyalty_vouchers
-           (code, customer_id, reward_type, reward_product_code, reward_value, description,
+           (code, member_id, reward_type, reward_product_code, reward_value, description,
             status, issued_by, card_id, expires_on, user_id, user_name)
          VALUES (?,?,?,?,?,?, 'issued', ?,?,?,?,?)`,
         [
           code,
-          input.customerId,
+          input.memberId,
           input.rewardType,
           input.rewardType === 'free_item' ? (input.rewardProductCode?.trim() || null) : null,
           round(input.rewardType === 'value' ? (input.rewardValue ?? 0) : 0, 4).toFixed(4),
@@ -755,11 +767,11 @@ export async function issueVoucher(
   }
 
   try {
-    const voucher = await customerTransaction(siteId, (tx) => issueVoucherTx(tx, actor, input))
+    const voucher = await loyaltyTransaction(siteId, (tx) => issueVoucherTx(tx, actor, input))
 
     await logActivity(siteId, actor, {
       entity: 'loyalty',
-      entityId: input.customerId,
+      entityId: input.memberId,
       action: 'voucher_issued',
       detail: `${voucher.code} · ${input.description.trim()}`,
     })
@@ -775,22 +787,22 @@ export async function issueVoucher(
 
 export async function listVouchers(
   siteId: number,
-  options: { customerId?: number; spendableOnly?: boolean; limit?: number } = {},
+  options: { memberId?: number; spendableOnly?: boolean; limit?: number } = {},
 ): Promise<LoyaltyVoucher[]> {
   const where: string[] = []
   const params: unknown[] = []
 
-  if (options.customerId) {
-    where.push('v.customer_id = ?')
-    params.push(options.customerId)
+  if (options.memberId) {
+    where.push('v.member_id = ?')
+    params.push(options.memberId)
   }
   if (options.spendableOnly) {
     where.push(`v.status = 'issued' AND (v.expires_on IS NULL OR v.expires_on >= CURDATE())`)
   }
 
   const limit = Math.min(Math.max(1, Math.floor(options.limit ?? 200)), 1000)
-  const bdb = await branchDbPrefix(siteId)
-  const rows = await customerQuery<Row>(
+  const bdb = await loyaltyBranchDbPrefix(siteId)
+  const rows = await loyaltyQuery<Row>(
     siteId,
     `${selectVoucher(bdb)} ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
      ORDER BY v.id DESC LIMIT ${limit}`,
@@ -801,8 +813,8 @@ export async function listVouchers(
 
 /** Looks a code up for the till. Reserves nothing — this is a preview. */
 export async function findVoucher(siteId: number, code: string): Promise<LoyaltyVoucher | null> {
-  const bdb = await branchDbPrefix(siteId)
-  const row = await customerQueryOne<Row>(
+  const bdb = await loyaltyBranchDbPrefix(siteId)
+  const row = await loyaltyQueryOne<Row>(
     siteId,
     `${selectVoucher(bdb)} WHERE v.code = ? LIMIT 1`,
     [code.trim().toUpperCase()],
@@ -825,7 +837,7 @@ export async function redeemVoucherForSale(
   const code = input.code.trim().toUpperCase()
 
   const [[row]] = await tx.query<Row[]>(
-    `SELECT id, code, customer_id, reward_type, reward_product_code, reward_value, description,
+    `SELECT id, code, member_id, reward_type, reward_product_code, reward_value, description,
             status, issued_by, expires_on, redeemed_at, redeemed_doc_number, created_at
        FROM loyalty_vouchers WHERE code = ? FOR UPDATE`,
     [code] as never,
@@ -861,7 +873,7 @@ export async function redeemVoucherForSale(
 
 /** Cancels an unspent voucher. */
 export async function voidVoucher(siteId: number, actor: Actor, id: number): Promise<Result> {
-  const res = await customerExecute(
+  const res = await loyaltyExecute(
     siteId,
     `UPDATE loyalty_vouchers SET status = 'void' WHERE id = ? AND status = 'issued'`,
     [id],
@@ -881,7 +893,7 @@ export async function voidVoucher(siteId: number, actor: Actor, id: number): Pro
 
 /** Marks lapsed vouchers expired. Safe to run repeatedly. */
 export async function expireVouchers(siteId: number): Promise<number> {
-  const res = await customerExecute(
+  const res = await loyaltyExecute(
     siteId,
     `UPDATE loyalty_vouchers
         SET status = 'expired'
@@ -892,7 +904,7 @@ export async function expireVouchers(siteId: number): Promise<number> {
 
 /** Puts a voucher back when the sale that spent it is reversed. */
 export async function restoreVoucherForDocument(siteId: number, documentId: number): Promise<number> {
-  const res = await customerExecute(
+  const res = await loyaltyExecute(
     siteId,
     `UPDATE loyalty_vouchers
         SET status = 'issued', redeemed_at = NULL, redeemed_doc_id = NULL, redeemed_doc_number = ''

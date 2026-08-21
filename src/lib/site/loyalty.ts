@@ -1,7 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
-import { customerQuery, customerQueryOne, customerTransaction } from './customerDb'
+import { loyaltyQuery, loyaltyQueryOne, loyaltyTransaction } from './loyaltyDb'
 import { round, toNum } from '../decimals'
 import {
   LOYALTY_DEFAULTS,
@@ -267,9 +267,20 @@ export async function saveTiers(
 /* ── Members ─────────────────────────────────────────────────────────────── */
 
 export type LoyaltyMember = {
-  customerId: number
-  customerCode: string
-  customerName: string
+  memberId: number
+  /** What the till matches on. Replaces customers.loyalty_number. */
+  memberNumber: string
+  /**
+   * The linked debtors account, or null.
+   *
+   * Null is ordinary, not exceptional: a shopper who joined with a cell number
+   * is a member and may never be a customer. Code reading this must not treat
+   * absence as an error — it used to be impossible, which is why the old shape
+   * carried customerCode and customerName as required strings.
+   */
+  customerId: number | null
+  name: string
+  phone: string | null
   isActive: boolean
   points: number
   pointsValue: number
@@ -302,47 +313,55 @@ function windowStart(settings: LoyaltySettings, now = new Date()): Date | null {
  */
 export async function getMember(
   siteId: number,
-  customerId: number,
+  memberId: number,
   settings?: LoyaltySettings,
 ): Promise<LoyaltyMember | null> {
-  const customer = await customerQueryOne<Row>(
-    siteId,
-    'SELECT id, code, name FROM customers WHERE id = ? LIMIT 1',
-    [customerId],
-  )
-  if (!customer) return null
-
   const config = settings ?? (await getLoyaltySettings(siteId))
   const tiers = await listTiers(siteId)
 
   const [member, totals, spend, wallet] = await Promise.all([
-    customerQueryOne<Row>(
+    // The member IS the record now — it used to be a facet of a customer, so
+    // this function opened by reading `customers` and returned null when there
+    // was none. A walk-in member has no customer at all, and that early return
+    // would have hidden every one of them.
+    //
+    // `id`, not `member_id`: loyalty_members is keyed on its own id and
+    // customer_id is the optional link.
+    loyaltyQueryOne<Row>(
       siteId,
-      `SELECT customer_id, is_active, tier_id, joined_at, last_activity_at
-         FROM loyalty_members WHERE customer_id = ? LIMIT 1`,
-      [customerId],
+      `SELECT id, member_number, customer_id, name, phone, email,
+              is_active, tier_id, joined_at, last_activity_at
+         FROM loyalty_members WHERE id = ? LIMIT 1`,
+      [memberId],
     ),
-    customerQueryOne<Row>(
+    loyaltyQueryOne<Row>(
       siteId,
-      'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?',
-      [customerId],
+      'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE member_id = ?',
+      [memberId],
     ),
-    qualifyingSpendFor(siteId, customerId, config),
-    customerQueryOne<Row>(
+    qualifyingSpendFor(siteId, memberId, config),
+    loyaltyQueryOne<Row>(
       siteId,
-      'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE customer_id = ?',
-      [customerId],
+      'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE member_id = ?',
+      [memberId],
     ),
   ])
+
+  // No member row, no member. This used to fall back to "enrolled, zero
+  // balance" for any customer, because every customer implicitly was one.
+  // Membership is now a thing somebody joins, so its absence is an answer.
+  if (!member) return null
 
   const points = round(toNum(totals?.points), 4)
   const tier = tierForSpend(tiers, spend)
 
   return {
-    customerId,
-    customerCode: String(customer.code),
-    customerName: String(customer.name),
-    isActive: member ? !!member.is_active : true,
+    memberId,
+    memberNumber: String(member.member_number),
+    customerId: member.customer_id === null ? null : Number(member.customer_id),
+    name: String(member.name),
+    phone: (member.phone as string | null) ?? null,
+    isActive: !!member.is_active,
     points,
     pointsValue: pointsToRand(points, config),
     walletBalance: round(toNum(wallet?.amount), 2),
@@ -357,17 +376,17 @@ export async function getMember(
 /** Spend that counts towards a tier: earn rows only, inside the window. */
 async function qualifyingSpendFor(
   siteId: number,
-  customerId: number,
+  memberId: number,
   settings: LoyaltySettings,
 ): Promise<number> {
   const from = windowStart(settings)
-  const row = await customerQueryOne<Row>(
+  const row = await loyaltyQueryOne<Row>(
     siteId,
     `SELECT COALESCE(SUM(basis_amount),0) AS spend
        FROM loyalty_ledger
-      WHERE customer_id = ? AND entry_type = 'earn'
+      WHERE member_id = ? AND entry_type = 'earn'
         ${from ? 'AND created_at >= ?' : ''}`,
-    from ? [customerId, from] : [customerId],
+    from ? [memberId, from] : [memberId],
   )
   return round(toNum(row?.spend), 2)
 }
@@ -385,26 +404,26 @@ async function qualifyingSpendFor(
  */
 async function refreshMember(
   tx: PoolConnection,
-  customerId: number,
+  memberId: number,
   settings: LoyaltySettings,
   tiers: readonly LoyaltyTier[],
 ): Promise<void> {
   const [[totals]] = await tx.query<Row[]>(
-    'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?',
-    [customerId] as never,
+    'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE member_id = ?',
+    [memberId] as never,
   )
   const [[walletRow]] = await tx.query<Row[]>(
-    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE customer_id = ?',
-    [customerId] as never,
+    'SELECT COALESCE(SUM(amount),0) AS amount FROM loyalty_wallet WHERE member_id = ?',
+    [memberId] as never,
   )
 
   const from = windowStart(settings)
   const [[spendRow]] = await tx.query<Row[]>(
     `SELECT COALESCE(SUM(basis_amount),0) AS spend
        FROM loyalty_ledger
-      WHERE customer_id = ? AND entry_type = 'earn'
+      WHERE member_id = ? AND entry_type = 'earn'
         ${from ? 'AND created_at >= ?' : ''}`,
-    (from ? [customerId, from] : [customerId]) as never,
+    (from ? [memberId, from] : [memberId]) as never,
   )
 
   const points = round(toNum(totals?.points), 4)
@@ -412,8 +431,8 @@ async function refreshMember(
   const spend = round(toNum(spendRow?.spend), 2)
 
   const [[existing]] = await tx.query<Row[]>(
-    'SELECT tier_id, tier_review_date FROM loyalty_members WHERE customer_id = ? FOR UPDATE',
-    [customerId] as never,
+    'SELECT tier_id, tier_review_date FROM loyalty_members WHERE member_id = ? FOR UPDATE',
+    [memberId] as never,
   )
 
   const earned = tierForSpend(tiers, spend)
@@ -446,7 +465,7 @@ async function refreshMember(
 
   await tx.execute(
     `INSERT INTO loyalty_members
-       (customer_id, points_balance, wallet_balance, tier_id, tier_since, tier_review_date, last_activity_at)
+       (member_id, points_balance, wallet_balance, tier_id, tier_since, tier_review_date, last_activity_at)
      VALUES (?,?,?,?,NOW(),?,NOW())
      ON DUPLICATE KEY UPDATE
        points_balance = VALUES(points_balance),
@@ -455,16 +474,16 @@ async function refreshMember(
        tier_since = ${touchTierSince ? 'VALUES(tier_since)' : 'tier_since'},
        tier_review_date = VALUES(tier_review_date),
        last_activity_at = VALUES(last_activity_at)`,
-    [customerId, points.toFixed(4), wallet.toFixed(4), tierId, reviewDate] as never,
+    [memberId, points.toFixed(4), wallet.toFixed(4), tierId, reviewDate] as never,
   )
 }
 
 /** Rebuilds a member's cache from the ledger. The repair tool for drift. */
-export async function recalcMember(siteId: number, customerId: number): Promise<void> {
+export async function recalcMember(siteId: number, memberId: number): Promise<void> {
   const settings = await getLoyaltySettings(siteId)
   const tiers = await listTiers(siteId)
-  await customerTransaction(siteId, async (tx) => {
-    await refreshMember(tx, customerId, settings, tiers)
+  await loyaltyTransaction(siteId, async (tx) => {
+    await refreshMember(tx, memberId, settings, tiers)
   })
 }
 
@@ -474,7 +493,7 @@ export type LedgerEntryType = 'earn' | 'redeem' | 'expire' | 'adjust' | 'reverse
 
 export type LedgerEntry = {
   id: number
-  customerId: number
+  memberId: number
   entryType: LedgerEntryType
   points: number
   basisAmount: number
@@ -490,7 +509,7 @@ export type LedgerEntry = {
 function mapLedger(r: Row): LedgerEntry {
   return {
     id: Number(r.id),
-    customerId: Number(r.customer_id),
+    memberId: Number(r.member_id),
     entryType: String(r.entry_type) as LedgerEntryType,
     points: toNum(r.points),
     basisAmount: toNum(r.basis_amount),
@@ -506,41 +525,41 @@ function mapLedger(r: Row): LedgerEntry {
 
 export async function listLedger(
   siteId: number,
-  customerId: number,
+  memberId: number,
   limit = 200,
 ): Promise<LedgerEntry[]> {
   const capped = Math.min(Math.max(1, Math.floor(limit)), 1000)
-  const rows = await customerQuery<Row>(
+  const rows = await loyaltyQuery<Row>(
     siteId,
-    `SELECT id, customer_id, entry_type, points, basis_amount, document_id, document_number,
+    `SELECT id, member_id, entry_type, points, basis_amount, document_id, document_number,
             tier_name, multiplier, note, user_name, created_at
        FROM loyalty_ledger
-      WHERE customer_id = ?
+      WHERE member_id = ?
       ORDER BY id DESC
       LIMIT ${capped}`,
-    [customerId],
+    [memberId],
   )
   return rows.map(mapLedger)
 }
 
 /** The balance, read under a lock. The only figure a spend may be based on. */
-async function lockedBalance(tx: PoolConnection, customerId: number): Promise<number> {
+async function lockedBalance(tx: PoolConnection, memberId: number): Promise<number> {
   // Locks the member row so two tills serialise here rather than both reading
   // the same balance and each spending it. A customer with no row yet has no
   // points either, so there is nothing to race over.
-  await tx.query('SELECT customer_id FROM loyalty_members WHERE customer_id = ? FOR UPDATE', [
-    customerId,
+  await tx.query('SELECT member_id FROM loyalty_members WHERE member_id = ? FOR UPDATE', [
+    memberId,
   ] as never)
 
   const [[row]] = await tx.query<Row[]>(
-    'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?',
-    [customerId] as never,
+    'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE member_id = ?',
+    [memberId] as never,
   )
   return round(toNum(row?.points), 4)
 }
 
 type LedgerWrite = {
-  customerId: number
+  memberId: number
   entryType: LedgerEntryType
   points: number
   basisAmount?: number
@@ -568,11 +587,11 @@ async function insertLedger(
 ): Promise<number> {
   const [res] = await tx.execute(
     `INSERT INTO loyalty_ledger
-       (customer_id, entry_type, points, basis_amount, document_id, document_number,
+       (member_id, entry_type, points, basis_amount, document_id, document_number,
         origin_site_id, tier_name, multiplier, note, user_id, user_name)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      entry.customerId,
+      entry.memberId,
       entry.entryType,
       round(entry.points, 4).toFixed(4),
       round(entry.basisAmount ?? 0, 4).toFixed(4),
@@ -600,7 +619,7 @@ export type SaleLine = {
 }
 
 export type AwardInput = {
-  customerId: number
+  memberId: number
   documentId: number
   documentNumber: string
   lines: readonly SaleLine[]
@@ -629,7 +648,7 @@ export async function awardSaleLoyalty(
   const settings = await getLoyaltySettings(siteId)
   if (!settings.enabled) return null
 
-  const already = await customerQueryOne<Row>(
+  const already = await loyaltyQueryOne<Row>(
     siteId,
     `SELECT id FROM loyalty_ledger WHERE document_id = ? AND entry_type = 'earn' LIMIT 1`,
     [input.documentId],
@@ -637,7 +656,7 @@ export async function awardSaleLoyalty(
   if (already) return null
 
   const tiers = await listTiers(siteId)
-  const spend = await qualifyingSpendFor(siteId, input.customerId, settings)
+  const spend = await qualifyingSpendFor(siteId, input.memberId, settings)
   const tier = tierForSpend(tiers, spend)
 
   const earnLines: EarnLine[] = input.lines.map((l) => ({
@@ -649,9 +668,9 @@ export async function awardSaleLoyalty(
   if (result.points <= 0) return null
 
   try {
-    await customerTransaction(siteId, async (tx) => {
+    await loyaltyTransaction(siteId, async (tx) => {
       await insertLedger(tx, actor, siteId, {
-        customerId: input.customerId,
+        memberId: input.memberId,
         entryType: 'earn',
         points: result.points,
         basisAmount: result.basisAmount,
@@ -660,7 +679,7 @@ export async function awardSaleLoyalty(
         tierName: tier?.name ?? '',
         multiplier: tier?.multiplier ?? 1,
       })
-      await refreshMember(tx, input.customerId, settings, tiers)
+      await refreshMember(tx, input.memberId, settings, tiers)
     })
   } catch (error) {
     // A duplicate key here means a concurrent finalise won the race and the
@@ -676,7 +695,7 @@ export async function awardSaleLoyalty(
 /* ── Redeeming ───────────────────────────────────────────────────────────── */
 
 export type RedeemInput = {
-  customerId: number
+  memberId: number
   documentId: number
   documentNumber: string
   /** Rand of the sale being settled with points. */
@@ -702,7 +721,7 @@ export async function redeemPointsForSale(
   if (!settings.enabled) throw new Error('The loyalty programme is not running.')
   if (input.randAmount <= 0) throw new Error('Enter an amount to settle with points.')
 
-  const balance = await lockedBalance(tx, input.customerId)
+  const balance = await lockedBalance(tx, input.memberId)
   const needed = randToPoints(input.randAmount, settings)
 
   if (settings.minRedeemPoints > 0 && balance < settings.minRedeemPoints) {
@@ -718,7 +737,7 @@ export async function redeemPointsForSale(
   }
 
   await insertLedger(tx, actor, originSiteId, {
-    customerId: input.customerId,
+    memberId: input.memberId,
     entryType: 'redeem',
     points: -needed,
     documentId: input.documentId,
@@ -726,23 +745,23 @@ export async function redeemPointsForSale(
     note: `R${round(input.randAmount, 2).toFixed(2)} off ${input.documentNumber}`,
   })
 
-  await refreshMember(tx, input.customerId, settings, tiers)
+  await refreshMember(tx, input.memberId, settings, tiers)
   return { points: needed }
 }
 
 /** What this customer may put on this sale. The figure the till shows. */
 export async function redeemableFor(
   siteId: number,
-  customerId: number,
+  memberId: number,
   amountDue: number,
 ): Promise<{ points: number; maxRand: number; settings: LoyaltySettings }> {
   const settings = await getLoyaltySettings(siteId)
   if (!settings.enabled) return { points: 0, maxRand: 0, settings }
 
-  const row = await customerQueryOne<Row>(
+  const row = await loyaltyQueryOne<Row>(
     siteId,
-    'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?',
-    [customerId],
+    'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE member_id = ?',
+    [memberId],
   )
   const points = round(toNum(row?.points), 4)
   return { points, maxRand: maxRedeemableRand(points, amountDue, settings), settings }
@@ -762,7 +781,7 @@ export type AdjustResult = { ok: true; balance: number } | { ok: false; error: s
 export async function adjustPoints(
   siteId: number,
   actor: Actor,
-  customerId: number,
+  memberId: number,
   points: number,
   reason: string,
 ): Promise<AdjustResult> {
@@ -775,8 +794,8 @@ export async function adjustPoints(
   const tiers = await listTiers(siteId)
 
   try {
-    const balance = await customerTransaction(siteId, async (tx) => {
-      const current = await lockedBalance(tx, customerId)
+    const balance = await loyaltyTransaction(siteId, async (tx) => {
+      const current = await lockedBalance(tx, memberId)
       if (points < 0 && current + points < 0) {
         throw new Error(
           `That would take the balance below zero — this account has ${Math.floor(current)} points.`,
@@ -784,18 +803,18 @@ export async function adjustPoints(
       }
 
       await insertLedger(tx, actor, siteId, {
-        customerId,
+        memberId,
         entryType: 'adjust',
         points,
         note: reason.trim(),
       })
-      await refreshMember(tx, customerId, settings, tiers)
+      await refreshMember(tx, memberId, settings, tiers)
       return round(current + points, 4)
     })
 
     await logActivity(siteId, actor, {
       entity: 'loyalty',
-      entityId: customerId,
+      entityId: memberId,
       action: points > 0 ? 'points_granted' : 'points_deducted',
       detail: `${points > 0 ? '+' : ''}${points} · ${reason.trim()}`,
     })
@@ -840,19 +859,19 @@ export async function reverseSaleLoyalty(
   const tiers = await listTiers(siteId)
 
   try {
-    const result = await customerTransaction(siteId, async (tx) => {
+    const result = await loyaltyTransaction(siteId, async (tx) => {
       const [rows] = await tx.query<Row[]>(
-        `SELECT id, customer_id, entry_type, points, document_number
+        `SELECT id, member_id, entry_type, points, document_number
            FROM loyalty_ledger WHERE document_id = ? FOR UPDATE`,
         [documentId] as never,
       )
-      if (rows.length === 0) return { clawedBack: 0, returned: 0, customerId: null }
+      if (rows.length === 0) return { clawedBack: 0, returned: 0, memberId: null }
 
       if (rows.some((r) => String(r.entry_type) === 'reverse')) {
-        return { clawedBack: 0, returned: 0, customerId: null }
+        return { clawedBack: 0, returned: 0, memberId: null }
       }
 
-      const customerId = Number(rows[0].customer_id)
+      const memberId = Number(rows[0].member_id)
       const documentNumber = String(rows[0].document_number ?? '')
 
       let clawedBack = 0
@@ -867,23 +886,23 @@ export async function reverseSaleLoyalty(
       const net = round(returned - clawedBack, 4)
       if (net !== 0 || clawedBack !== 0 || returned !== 0) {
         await insertLedger(tx, actor, siteId, {
-          customerId,
+          memberId,
           entryType: 'reverse',
           points: net,
           documentId,
           documentNumber,
           note: reason.trim().slice(0, 255),
         })
-        await refreshMember(tx, customerId, settings, tiers)
+        await refreshMember(tx, memberId, settings, tiers)
       }
 
-      return { clawedBack, returned, customerId }
+      return { clawedBack, returned, memberId }
     })
 
-    if (result.customerId !== null) {
+    if (result.memberId !== null) {
       await logActivity(siteId, actor, {
         entity: 'loyalty',
-        entityId: result.customerId,
+        entityId: result.memberId,
         action: 'sale_reversed',
         detail: `-${result.clawedBack} earned, +${result.returned} returned · ${reason.trim()}`,
       })
@@ -929,20 +948,20 @@ export async function expirePoints(
 
   const candidates =
     settings.expiryMode === 'activity'
-      ? await customerQuery<Row>(
+      ? await loyaltyQuery<Row>(
           siteId,
-          `SELECT m.customer_id
+          `SELECT m.member_id
              FROM loyalty_members m
             WHERE m.points_balance > 0
               AND COALESCE(m.last_activity_at, m.joined_at) < ?`,
           [cutoff],
         )
-      : await customerQuery<Row>(
+      : await loyaltyQuery<Row>(
           siteId,
-          `SELECT customer_id
+          `SELECT member_id
              FROM loyalty_ledger
             WHERE entry_type = 'earn' AND created_at < ?
-            GROUP BY customer_id
+            GROUP BY member_id
            HAVING COALESCE(SUM(points),0) > 0`,
           [cutoff],
         )
@@ -951,22 +970,22 @@ export async function expirePoints(
   let expired = 0
 
   for (const row of candidates) {
-    const customerId = Number(row.customer_id)
+    const memberId = Number(row.member_id)
 
-    const points = await customerTransaction(siteId, async (tx) => {
+    const points = await loyaltyTransaction(siteId, async (tx) => {
       // Re-read under the lock: the balance may have moved between the sweep
       // above and this write, and expiring a stale figure would take points a
       // customer earned this morning.
-      const balance = await lockedBalance(tx, customerId)
+      const balance = await lockedBalance(tx, memberId)
       if (balance <= 0) return 0
 
       const toExpire =
-        settings.expiryMode === 'activity' ? balance : await agedBatch(tx, customerId, cutoff, balance)
+        settings.expiryMode === 'activity' ? balance : await agedBatch(tx, memberId, cutoff, balance)
 
       if (toExpire <= 0) return 0
 
       await insertLedger(tx, actor, siteId, {
-        customerId,
+        memberId,
         entryType: 'expire',
         points: -toExpire,
         note:
@@ -974,7 +993,7 @@ export async function expirePoints(
             ? `Inactive for ${settings.expiryMonths} months`
             : `Earned more than ${settings.expiryMonths} months ago`,
       })
-      await refreshMember(tx, customerId, settings, tiers)
+      await refreshMember(tx, memberId, settings, tiers)
       return toExpire
     })
 
@@ -1005,21 +1024,21 @@ export async function expirePoints(
  */
 async function agedBatch(
   tx: PoolConnection,
-  customerId: number,
+  memberId: number,
   cutoff: Date,
   balance: number,
 ): Promise<number> {
   const [[aged]] = await tx.query<Row[]>(
     `SELECT COALESCE(SUM(points),0) AS earned
        FROM loyalty_ledger
-      WHERE customer_id = ? AND entry_type = 'earn' AND created_at < ?`,
-    [customerId, cutoff] as never,
+      WHERE member_id = ? AND entry_type = 'earn' AND created_at < ?`,
+    [memberId, cutoff] as never,
   )
   const [[spent]] = await tx.query<Row[]>(
     `SELECT COALESCE(SUM(points),0) AS spent
        FROM loyalty_ledger
-      WHERE customer_id = ? AND entry_type <> 'earn'`,
-    [customerId] as never,
+      WHERE member_id = ? AND entry_type <> 'earn'`,
+    [memberId] as never,
   )
 
   // `spent` is negative for redemptions and expiries, positive for an upward
@@ -1031,7 +1050,7 @@ async function agedBatch(
 /* ── Lists and totals ────────────────────────────────────────────────────── */
 
 export type MemberRow = {
-  customerId: number
+  memberId: number
   code: string
   name: string
   phone: string
@@ -1074,8 +1093,13 @@ export async function listMembers(
 
   if (options.search?.trim()) {
     const term = `%${options.search.trim()}%`
-    where.push('(c.name LIKE ? OR c.code LIKE ? OR c.phone LIKE ? OR c.loyalty_number LIKE ?)')
-    params.push(term, term, term, term)
+    // Against the MEMBER file. The old search read customers.loyalty_number,
+    // which no member of this list is guaranteed to have — a walk-in has no
+    // customer row at all, so searching customers would hide exactly the people
+    // this screen now exists to show.
+    where.push('(m.name LIKE ? OR m.member_number LIKE ? OR m.phone LIKE ?)')
+    // Three, not four: the clause lost its loyalty_number placeholder.
+    params.push(term, term, term)
   }
   if (options.tierId) {
     where.push('m.tier_id = ?')
@@ -1086,43 +1110,42 @@ export async function listMembers(
   // system, customers and loyalty live in the SAME database here, so a join is
   // available and a 500-row page costs one round trip.
   const sql = `
-    SELECT c.id, c.code, c.name, c.phone,
+    SELECT m.id, m.member_number, m.customer_id, m.name, m.phone,
            COALESCE(l.points, 0) AS points,
            COALESCE(w.wallet, 0) AS wallet,
            COALESCE(s.spend, 0) AS spend,
            COALESCE(v.ready, 0) AS vouchers_ready,
            m.last_activity_at,
            t.name AS tier_name, t.color AS tier_color
-      FROM customers c
-      JOIN loyalty_members m ON m.customer_id = c.id
+      FROM loyalty_members m
       LEFT JOIN loyalty_tiers t ON t.id = m.tier_id
       LEFT JOIN (
-        SELECT customer_id, SUM(points) AS points FROM loyalty_ledger GROUP BY customer_id
-      ) l ON l.customer_id = c.id
+        SELECT member_id, SUM(points) AS points FROM loyalty_ledger GROUP BY member_id
+      ) l ON l.member_id = m.id
       LEFT JOIN (
-        SELECT customer_id, SUM(amount) AS wallet FROM loyalty_wallet GROUP BY customer_id
-      ) w ON w.customer_id = c.id
+        SELECT member_id, SUM(amount) AS wallet FROM loyalty_wallet GROUP BY member_id
+      ) w ON w.member_id = m.id
       LEFT JOIN (
-        SELECT customer_id, SUM(basis_amount) AS spend
+        SELECT member_id, SUM(basis_amount) AS spend
           FROM loyalty_ledger
          WHERE entry_type = 'earn' ${from ? 'AND created_at >= ?' : ''}
-         GROUP BY customer_id
-      ) s ON s.customer_id = c.id
+         GROUP BY member_id
+      ) s ON s.member_id = m.id
       LEFT JOIN (
-        SELECT customer_id, COUNT(*) AS ready
+        SELECT member_id, COUNT(*) AS ready
           FROM loyalty_vouchers
          WHERE status = 'issued' AND (expires_on IS NULL OR expires_on >= CURDATE())
-         GROUP BY customer_id
-      ) v ON v.customer_id = c.id
+         GROUP BY member_id
+      ) v ON v.member_id = m.id
      ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY points DESC, c.name ASC
+     ORDER BY points DESC, m.name ASC
      LIMIT ${limit + 1}
   `
 
-  const rows = await customerQuery<Row>(siteId, sql, params)
+  const rows = await loyaltyQuery<Row>(siteId, sql, params)
   const truncated = rows.length > limit
 
-  const countRow = await customerQueryOne<Row>(
+  const countRow = await loyaltyQueryOne<Row>(
     siteId,
     'SELECT COUNT(*) AS n FROM loyalty_members',
   )
@@ -1131,8 +1154,11 @@ export async function listMembers(
     rows: rows.slice(0, limit).map((r) => {
       const points = round(toNum(r.points), 4)
       return {
-        customerId: Number(r.id),
-        code: String(r.code),
+        memberId: Number(r.id),
+        // The member's OWN number now, not a customer code. A walk-in member
+        // has no customer code to show.
+        code: String(r.member_number),
+        customerId: r.customer_id === null ? null : Number(r.customer_id),
         name: String(r.name),
         phone: String(r.phone ?? ''),
         points,
@@ -1166,14 +1192,14 @@ export async function getLiability(siteId: number): Promise<{
 }> {
   const settings = await getLoyaltySettings(siteId)
 
-  const row = await customerQueryOne<Row>(
+  const row = await loyaltyQueryOne<Row>(
     siteId,
     `SELECT COUNT(*) AS members, COALESCE(SUM(points),0) AS points FROM (
-       SELECT customer_id, SUM(points) AS points
-         FROM loyalty_ledger GROUP BY customer_id HAVING SUM(points) > 0
+       SELECT member_id, SUM(points) AS points
+         FROM loyalty_ledger GROUP BY member_id HAVING SUM(points) > 0
      ) t`,
   )
-  const wallet = await customerQueryOne<Row>(
+  const wallet = await loyaltyQueryOne<Row>(
     siteId,
     `SELECT COALESCE(SUM(amount),0) AS float_amount FROM loyalty_wallet`,
   )
@@ -1193,13 +1219,13 @@ export async function memberSummaries(
 ): Promise<Map<number, { points: number; tierName: string }>> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT m.customer_id, m.points_balance, COALESCE(t.name,'') AS tier_name
+    `SELECT m.member_id, m.points_balance, COALESCE(t.name,'') AS tier_name
        FROM loyalty_members m
        LEFT JOIN loyalty_tiers t ON t.id = m.tier_id`,
   )
   return new Map(
     rows.map((r) => [
-      Number(r.customer_id),
+      Number(r.member_id),
       { points: toNum(r.points_balance), tierName: String(r.tier_name) },
     ]),
   )
