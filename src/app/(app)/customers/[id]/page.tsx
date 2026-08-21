@@ -31,6 +31,7 @@ import TransactionsTab from './TransactionsTab'
 import ActivityTable from './ActivityTable'
 import { CreditTab } from './CreditTab'
 import { LoyaltyTab } from './LoyaltyTab'
+import { JoinLoyaltyPanel } from './JoinLoyaltyPanel'
 import {
   getLoyaltySettings,
   getMember,
@@ -102,8 +103,17 @@ function when(date: Date | null): string {
 async function loadLoyalty(siteId: number, customerId: number) {
   const settings = await getLoyaltySettings(siteId)
 
+  /*
+   * `programmeEnabled` travels with the null, rather than the null meaning
+   * everything at once.
+   *
+   * The tab has three states, not two: a member with a balance, a customer who
+   * has not joined a RUNNING programme (offer to enrol), and a shop whose
+   * programme is switched off (offering to enrol would be a button that cannot
+   * work). A bare null could not tell the last two apart.
+   */
   const memberId = await memberIdForCustomer(siteId, customerId)
-  if (!memberId) return null
+  if (!memberId) return { member: null as null, programmeEnabled: settings.enabled }
 
   const [member, ledger, vouchers, cards, wallet] = await Promise.all([
     getMember(siteId, memberId, settings),
@@ -112,9 +122,13 @@ async function loadLoyalty(siteId: number, customerId: number) {
     getCardProgress(siteId, memberId),
     listWallet(siteId, memberId),
   ])
-  if (!member) return null
+  // A member id with no member row is a genuine fault rather than a state, but
+  // it still renders as "not joined" — which is the safe reading, and the only
+  // one that offers a way forward.
+  if (!member) return { member: null as null, programmeEnabled: settings.enabled }
 
   return {
+    programmeEnabled: settings.enabled,
     enabled: settings.enabled,
     // The tab acts on the MEMBER — every loyalty action is keyed on it now, and
     // the customer id it used to send would name the wrong row (or none) on a
@@ -344,7 +358,7 @@ export default async function CustomerPage({
               value: 'loyalty',
               label: 'Loyalty',
               icon: <Icons.Gem size={15} />,
-              count: loyalty ? Math.floor(loyalty.member.points) : 0,
+              count: loyalty?.member ? Math.floor(loyalty.member.points) : 0,
               href: `/customers/${customerId}?tab=loyalty`,
             },
             {
@@ -466,7 +480,7 @@ export default async function CustomerPage({
             }}
           />
         ) : active === 'loyalty' ? (
-          loyalty ? (
+          loyalty?.member ? (
             <LoyaltyTab
               memberId={loyalty.memberId}
               enabled={loyalty.enabled}
@@ -485,11 +499,16 @@ export default async function CustomerPage({
               canAdjust={can(capabilities, 'loyalty.adjust')}
             />
           ) : (
-            <Card>
-              <Callout tone="warning">
-                Loyalty could not be loaded for this customer.
-              </Callout>
-            </Card>
+            /* Not a member — the ordinary state of most customers now that
+               joining is deliberate, and so not a warning. See the panel. */
+            <JoinLoyaltyPanel
+              customerId={customerId}
+              customerName={customer.name}
+              customerPhone={customer.phone ?? ''}
+              customerEmail={customer.email ?? ''}
+              enabled={loyalty?.programmeEnabled ?? false}
+              canAdjust={can(capabilities, 'loyalty.adjust')}
+            />
           )
         ) : active === 'online' ? (
           <OnlineAccess
