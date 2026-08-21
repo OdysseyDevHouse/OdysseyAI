@@ -519,17 +519,25 @@ VALUES
   ('LOYALTY_WALLET', 'Loyalty wallet', 0, 0, 0, 0, 0, 1, 1, 0, NULL, 0,
    0.0000, 0.0000, 0.000, 'loyalty', 'wallet', NULL, 81, 0, 0);
 
--- ── customers.loyalty_number goes ────────────────────────────────────────
+-- ── customers.loyalty_number STAYS, for now ──────────────────────────────
 --
--- It was what the till matched on, and `loyalty_members.member_number` is now.
--- Keeping both would be two columns holding the same claim, which is how they
--- drift — and the one on `customers` cannot serve a walk-in member, who has no
--- customer row at all.
+-- It is what the till matches on today, and `loyalty_members.member_number`
+-- will replace it: two columns holding the same claim is how they drift, and
+-- the one on `customers` cannot serve a walk-in member who has no customer row
+-- at all. So it goes — but NOT in this migration.
 --
--- Guarded because this file also runs on a fresh database where the column was
--- never created.
-ALTER TABLE customers DROP INDEX IF EXISTS ix_customer_loyalty;
-ALTER TABLE customers DROP COLUMN IF EXISTS loyalty_number;
+-- Dropping it here was tried and reverted, and the reason is worth recording
+-- rather than repeating. The column is written by createCustomer, so the moment
+-- it disappeared EVERY suite that makes a customer failed — accounting, sales
+-- posting, account sales, duplicates, the sharing probes — seven of them, none
+-- about loyalty. A schema change landing ahead of the code that answers it does
+-- not fail in the feature it belongs to; it fails everywhere that feature's
+-- table is touched.
+--
+-- It is dropped in the same change that ports customers.ts, tillCustomers.ts
+-- and the two report fields off it — the eight sites listed in
+-- docs/plans/loyalty-members.md, decision 2. Until then it stands unused by the
+-- loyalty tables above, which is harmless: nothing here reads it.
 
 -- ── Programme settings ───────────────────────────────────────────────────
 --
