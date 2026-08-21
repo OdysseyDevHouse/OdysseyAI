@@ -1,8 +1,9 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { supplierOwnerSite } from '../storeGroups'
 import { round, toNum } from '../decimals'
-import { logActivityTx, type Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 import {
   bucketFor,
   DOC_LABELS,
@@ -32,7 +33,73 @@ import { guardPosting } from './periodLocks'
  * The SQL is written out rather than shared with the debtors module: threading
  * a table name through a query builder is how an injection bug gets in, and the
  * pure rules that genuinely are shared already live in ledger.ts.
+ *
+ * ── WHICH DATABASE THIS READS AND WRITES ──────────────────────────────────
+ *
+ * Not necessarily the caller's. A store group may share one supplier file, in
+ * which case the creditors ledger lives in the group's primary and every branch
+ * posts into it — see supplierOwnerSite() in lib/storeGroups.ts.
+ *
+ * So every query here goes through the three helpers below rather than calling
+ * siteQuery/siteTransaction directly, for the same three reasons the debtors
+ * ledger gives:
+ *
+ *   1. THE INVARIANT IS PER DATABASE. A balance and the rows that move it must
+ *      live together, or the two halves of a posting land in different places
+ *      and reconcileSupplierBalances() reports drift no one can repair.
+ *   2. Every table this file touches — suppliers, supplier_transactions,
+ *      supplier_allocations — moves to the owner TOGETHER, so one resolution
+ *      per call is correct for the whole statement. This file never joins a
+ *      branch-owned table, which is what makes that true.
+ *   3. siteTransaction still gets ONE connection, so the transaction is real.
+ *      Resolving the owner chooses which database it runs against; it does not
+ *      split it.
+ *
+ * ── AND WHY THE AUDIT LINES MOVED OUT OF THE TRANSACTIONS ────────────────
+ *
+ * activity_log is a BRANCH table. It records what a PERSON did, so it belongs
+ * where the person was, and listActivity reads the caller's own database.
+ * logActivityTx writes on the transaction's connection — which is now the
+ * owner's — so four postings here would have filed their audit trail in head
+ * office's log, attributed to a branch user id that head office's users table
+ * may map to somebody else.
+ *
+ * The debtors ledger hit this exactly and answered it the same way: logActivity
+ * after the commit. It already swallows its own errors, so a failed note cannot
+ * roll back a posted transaction. The ledger row is the fact; the log line is
+ * the note about it.
+ *
+ * With no sharing configured the owner is the caller, so all of this is an
+ * identity function and the file behaves exactly as it always has.
  */
+
+/** The site whose database holds this caller's suppliers. */
+async function owner(siteId: number): Promise<number> {
+  return (await supplierOwnerSite(siteId)).siteId
+}
+
+async function ledgerQuery<T = RowDataPacket>(
+  siteId: number,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  return siteQuery<T>(await owner(siteId), sql, params)
+}
+
+async function ledgerQueryOne<T = RowDataPacket>(
+  siteId: number,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T | null> {
+  return siteQueryOne<T>(await owner(siteId), sql, params)
+}
+
+async function ledgerTransaction<T>(
+  siteId: number,
+  fn: (tx: PoolConnection) => Promise<T>,
+): Promise<T> {
+  return siteTransaction(await owner(siteId), fn)
+}
 
 export type SupplierLedgerLine = {
   id: number
@@ -111,7 +178,7 @@ export async function listSupplierLedger(
   }
 
   const limit = Math.min(Math.max(opts.limit ?? 500, 1), 2000)
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE ${where.join(' AND ')} ORDER BY doc_date ASC, id ASC LIMIT ${limit}`,
     params,
@@ -134,7 +201,7 @@ export async function getSupplierTransaction(
   siteId: number,
   id: number,
 ): Promise<SupplierLedgerLine | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_LINE} WHERE id = ? LIMIT 1`, [id])
+  const row = await ledgerQueryOne<Row>(siteId, `${SELECT_LINE} WHERE id = ? LIMIT 1`, [id])
   return row ? mapLine(row) : null
 }
 
@@ -143,7 +210,7 @@ export async function openSupplierDebits(
   siteId: number,
   supplierId: number,
 ): Promise<SupplierLedgerLine[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE supplier_id = ? AND amount_outstanding > 0 ORDER BY doc_date ASC, id ASC`,
     [supplierId],
@@ -155,7 +222,7 @@ export async function unappliedSupplierCredits(
   siteId: number,
   supplierId: number,
 ): Promise<SupplierLedgerLine[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE supplier_id = ? AND amount_outstanding < 0 ORDER BY doc_date ASC, id ASC`,
     [supplierId],
@@ -165,7 +232,7 @@ export async function unappliedSupplierCredits(
 
 /** Payables aging for one supplier — what is due to them, and how late we are. */
 export async function supplierAgingFor(siteId: number, supplierId: number): Promise<Aging> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `${SELECT_LINE} WHERE supplier_id = ? AND amount_outstanding <> 0`,
     [supplierId],
@@ -210,7 +277,7 @@ export async function supplierAgingAsAt(
 }
 
 export async function supplierAgingSummary(siteId: number): Promise<Aging> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `SELECT due_date, amount_outstanding FROM supplier_transactions WHERE amount_outstanding <> 0`,
   )
@@ -277,7 +344,7 @@ export async function postSupplierTransaction(
   const locked = await guardPosting(siteId, input.docDate ?? today(), 'ledger')
   if (locked) return { ok: false, error: locked }
 
-  const supplier = await siteQueryOne<Row>(
+  const supplier = await ledgerQueryOne<Row>(
     siteId,
     'SELECT id, code, name, payment_terms_days FROM suppliers WHERE id = ? LIMIT 1',
     [input.supplierId],
@@ -291,7 +358,7 @@ export async function postSupplierTransaction(
   // It matters more on this side, if anything — a supplier invoice entered
   // twice gets PAID twice.
   if (input.docNumber?.trim()) {
-    const clash = await siteQueryOne<Row>(
+    const clash = await ledgerQueryOne<Row>(
       siteId,
       `SELECT id FROM supplier_transactions
         WHERE supplier_id = ? AND doc_number = ? AND doc_type = ? LIMIT 1`,
@@ -310,13 +377,13 @@ export async function postSupplierTransaction(
   const signed = signedAmount(input.docType, input.amount)
   const { gross, net, vat } = splitVat(Math.abs(signed), input.vatRatePct ?? 0)
 
-  return siteTransaction(siteId, async (tx) => {
+  return ledgerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO supplier_transactions
          (supplier_id, doc_type, doc_number, doc_date, due_date, reference, description,
           amount_gross, amount_vat, amount_net, amount_signed, amount_outstanding,
-          source, source_doc_id, reverses_id, user_id, user_name)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          source, source_doc_id, origin_site_id, reverses_id, user_id, user_name)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         input.supplierId,
         input.docType,
@@ -332,6 +399,12 @@ export async function postSupplierTransaction(
         signed.toFixed(4),
         input.source ?? 'manual',
         input.sourceDocId ?? null,
+        // source_doc_id names a BRANCH document — a purchase_documents or
+        // expenses id — whose auto-increment is per-database. Pooled into the
+        // owner's table it stops identifying anything on its own, and
+        // purchaseInvoiceMatch would rewrite another branch's invoice number.
+        // See 206.
+        siteId,
         input.reversesId ?? null,
         actor.userId,
         actor.userName.slice(0, 120),
@@ -341,7 +414,10 @@ export async function postSupplierTransaction(
 
     await bumpBalance(tx, input.supplierId, signed)
 
-    await logActivityTx(tx, actor, {
+    return { ok: true as const, id }
+  }).then(async (result) => {
+    // To the BRANCH, outside the transaction — see the header.
+    await logActivity(siteId, actor, {
       entity: 'supplier',
       entityId: input.supplierId,
       action: 'ledger',
@@ -351,8 +427,6 @@ export async function postSupplierTransaction(
       ),
     })
 
-    return { ok: true as const, id }
-  }).then(async (result) => {
     if (result.ok && input.autoAllocate && signed < 0) {
       await autoAllocateSupplier(siteId, actor, result.id)
     }
@@ -379,7 +453,7 @@ export async function reverseSupplierTransaction(
   const original = await getSupplierTransaction(siteId, id)
   if (!original) return { ok: false, error: 'Transaction not found.' }
 
-  const already = await siteQueryOne<RowDataPacket & { id: number }>(
+  const already = await ledgerQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM supplier_transactions WHERE reverses_id = ? LIMIT 1',
     [id],
@@ -404,7 +478,7 @@ export async function reverseSupplierTransaction(
     }
   }
 
-  return siteTransaction(siteId, async (tx) => {
+  return ledgerTransaction(siteId, async (tx) => {
     const reversed = round(-original.amountSigned, 2)
 
     const [res] = await tx.execute(
@@ -451,14 +525,16 @@ export async function reverseSupplierTransaction(
 
     await bumpBalance(tx, original.supplierId, reversed)
 
-    await logActivityTx(tx, actor, {
+    return { ok: true as const, id: newId }
+  }).then(async (result) => {
+    // To the BRANCH, outside the transaction — see the header.
+    await logActivity(siteId, actor, {
       entity: 'supplier',
       entityId: original.supplierId,
       action: 'reverse',
       detail: `Reversed ${original.docLabel} ${original.docNumber ?? `#${original.id}`} — ${reason.trim()}`,
     })
-
-    return { ok: true as const, id: newId }
+    return result
   })
 }
 
@@ -489,7 +565,7 @@ export async function allocateSupplier(
 
   // The balance does NOT move: allocation is bookkeeping about money already
   // posted. Touching it here would double-count the payment.
-  await siteTransaction(siteId, async (tx) => {
+  await ledgerTransaction(siteId, async (tx) => {
     await tx.execute(
       `INSERT INTO supplier_allocations (debit_txn_id, credit_txn_id, amount, user_id, user_name)
             VALUES (?,?,?,?,?)
@@ -515,7 +591,7 @@ export async function unallocateSupplier(
   debitId: number,
   creditId: number,
 ): Promise<AllocateResult> {
-  const row = await siteQueryOne<Row>(
+  const row = await ledgerQueryOne<Row>(
     siteId,
     'SELECT amount FROM supplier_allocations WHERE debit_txn_id = ? AND credit_txn_id = ? LIMIT 1',
     [debitId, creditId],
@@ -524,7 +600,7 @@ export async function unallocateSupplier(
 
   const value = toNum(row.amount)
 
-  await siteTransaction(siteId, async (tx) => {
+  await ledgerTransaction(siteId, async (tx) => {
     await tx.execute(
       'DELETE FROM supplier_allocations WHERE debit_txn_id = ? AND credit_txn_id = ?',
       [debitId, creditId] as never,
@@ -537,12 +613,14 @@ export async function unallocateSupplier(
       'UPDATE supplier_transactions SET amount_outstanding = amount_outstanding - ? WHERE id = ?',
       [value.toFixed(4), creditId] as never,
     )
-    await logActivityTx(tx, actor, {
-      entity: 'supplier',
-      entityId: 0,
-      action: 'unallocate',
-      detail: `Unallocated ${value.toFixed(2)} between #${debitId} and #${creditId}`,
-    })
+  })
+
+  // To the BRANCH, outside the transaction — see the header.
+  await logActivity(siteId, actor, {
+    entity: 'supplier',
+    entityId: 0,
+    action: 'unallocate',
+    detail: `Unallocated ${value.toFixed(2)} between #${debitId} and #${creditId}`,
   })
 
   return { ok: true, allocated: value }
@@ -586,7 +664,7 @@ export type BalanceDrift = {
 
 /** See reconcileBalances in customerLedger.ts — same contract, same reasoning. */
 export async function reconcileSupplierBalances(siteId: number): Promise<BalanceDrift[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await ledgerQuery<Row>(
     siteId,
     `SELECT s.id, s.code, s.name,
             s.balance                     AS stored,

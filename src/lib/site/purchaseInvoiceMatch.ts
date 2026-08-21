@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteExecute, siteQueryOne, siteTransaction } from '../siteDb'
+import { siteExecute, siteQueryOne } from '../siteDb'
+import { supplierQueryOne, supplierExecute } from './customerDb'
 import { formatMoney, round, toNum } from '../decimals'
 import { dueDateFor } from './ledger'
 import { guardPosting } from './periodLocks'
@@ -86,14 +87,19 @@ export async function invoiceMatchState(
   const doc = await getPurchaseDocument(siteId, documentId)
   if (!doc || doc.docType !== 'grv' || doc.status !== 'finalised') return null
 
-  const row = await siteQueryOne<Row>(
+  // Scoped to THIS store's document. source_doc_id names a purchase_documents
+  // id, which is a per-database auto-increment — pooled into a shared creditors
+  // ledger, branch 3's GRV 5001 and branch 7's GRV 5001 both match, and the
+  // UPDATE below would rewrite the other store's invoice number. See 206.
+  const row = await supplierQueryOne<Row>(
     siteId,
     `SELECT id, doc_number, doc_date, due_date, amount_gross, amount_outstanding
        FROM supplier_transactions
       WHERE source = 'purchase' AND source_doc_id = ?
+        AND (origin_site_id IS NULL OR origin_site_id = ?)
         AND supplier_id = ? AND doc_type = 'invoice'
       ORDER BY id LIMIT 1`,
-    [documentId, doc.supplierId],
+    [documentId, siteId, doc.supplierId],
   )
   if (!row) {
     return {
@@ -154,14 +160,17 @@ export async function matchSupplierInvoice(
     return { ok: false, error: 'Only a posted receipt can have its invoice recorded.' }
   }
 
-  const row = await siteQueryOne<Row>(
+  // Scoped to this store's own GRV, for the reason above — this is the lookup
+  // whose result gets UPDATEd.
+  const row = await supplierQueryOne<Row>(
     siteId,
     `SELECT id, doc_number, doc_date, amount_gross, amount_outstanding
        FROM supplier_transactions
       WHERE source = 'purchase' AND source_doc_id = ?
+        AND (origin_site_id IS NULL OR origin_site_id = ?)
         AND supplier_id = ? AND doc_type = 'invoice'
       ORDER BY id LIMIT 1`,
-    [documentId, doc.supplierId],
+    [documentId, siteId, doc.supplierId],
   )
   if (!row) {
     return {
@@ -186,7 +195,7 @@ export async function matchSupplierInvoice(
   // Somebody else's document already answers to this number on this account.
   // The same guard postSupplierTransaction applies at posting time, for the
   // same reason: a supplier invoice on file twice gets paid twice.
-  const clash = await siteQueryOne<Row>(
+  const clash = await supplierQueryOne<Row>(
     siteId,
     `SELECT id FROM supplier_transactions
       WHERE supplier_id = ? AND doc_number = ? AND doc_type = 'invoice' AND id <> ?
@@ -215,7 +224,7 @@ export async function matchSupplierInvoice(
     }
   }
 
-  const supplier = await siteQueryOne<Row>(
+  const supplier = await supplierQueryOne<Row>(
     siteId,
     'SELECT payment_terms_days FROM suppliers WHERE id = ? LIMIT 1',
     [doc.supplierId],
@@ -228,31 +237,55 @@ export async function matchSupplierInvoice(
   if (dateMoves) changed.push('date')
   if (changed.length === 0) return { ok: true, changed: [] }
 
-  await siteTransaction(siteId, async (tx) => {
-    if (dateMoves && newDate) {
-      // The due date follows the invoice date off the supplier's terms, the
-      // same way postSupplierTransaction computed it in the first place.
-      // Leaving it behind would age the invoice from a delivery note date the
-      // supplier never agreed to.
-      const due = dueDateFor('invoice', newDate, terms)
-      await tx.execute(
-        'UPDATE supplier_transactions SET doc_number = ?, doc_date = ?, due_date = ? WHERE id = ?',
-        [invoiceNo, newDate, due, transactionId] as never,
-      )
-    } else {
-      await tx.execute('UPDATE supplier_transactions SET doc_number = ? WHERE id = ?', [
-        invoiceNo,
-        transactionId,
-      ] as never)
-    }
+  /*
+   * ── TWO DATABASES, SO TWO STATEMENTS, AND THE ORDER IS THE SAFETY ────────
+   *
+   * This was one transaction, and its whole point was that the creditor ledger
+   * and the GRV agree about the supplier's invoice number. With a shared
+   * supplier file they are in different databases and no transaction spans
+   * both, so the guarantee cannot be kept by a transaction any more.
+   *
+   * It is not replaced by a compensating write. Both halves are single UPDATEs
+   * of one column on one known row — there is no partial state inside either —
+   * so the only failure is "the second one did not run", and undoing the first
+   * would need a third write that can fail in turn.
+   *
+   * The LEDGER goes first, deliberately. It is the half that carries the money
+   * and the ageing; the GRV's copy is a convenience so the purchasing screen
+   * can show the number without a cross-database join. A failure after the
+   * first leaves the creditor correct and the GRV showing no invoice number —
+   * visible on the screen somebody is already looking at, and fixable by
+   * entering it again. The reverse order would leave the GRV claiming an
+   * invoice number the ledger has never heard of, which nothing surfaces.
+   *
+   * Both are single statements, so with no sharing this is byte-for-byte the
+   * same work the transaction did.
+   */
+  if (dateMoves && newDate) {
+    // The due date follows the invoice date off the supplier's terms, the
+    // same way postSupplierTransaction computed it in the first place.
+    // Leaving it behind would age the invoice from a delivery note date the
+    // supplier never agreed to.
+    const due = dueDateFor('invoice', newDate, terms)
+    await supplierExecute(
+      siteId,
+      'UPDATE supplier_transactions SET doc_number = ?, doc_date = ?, due_date = ? WHERE id = ?',
+      [invoiceNo, newDate, due, transactionId],
+    )
+  } else {
+    await supplierExecute(
+      siteId,
+      'UPDATE supplier_transactions SET doc_number = ? WHERE id = ?',
+      [invoiceNo, transactionId],
+    )
+  }
 
-    // The GRV's own record of their invoice, so the document screen and the
-    // purchasing list agree with the creditor ledger.
-    await tx.execute('UPDATE purchase_documents SET supplier_invoice_no = ? WHERE id = ?', [
-      invoiceNo,
-      documentId,
-    ] as never)
-  })
+  // The GRV's own record of their invoice, so the document screen and the
+  // purchasing list agree with the creditor ledger. A BRANCH table.
+  await siteExecute(siteId, 'UPDATE purchase_documents SET supplier_invoice_no = ? WHERE id = ?', [
+    invoiceNo,
+    documentId,
+  ])
 
   await recordMatch(siteId, actor, documentId, doc.documentNumber, previousNumber, invoiceNo, newDate)
   return { ok: true, changed }

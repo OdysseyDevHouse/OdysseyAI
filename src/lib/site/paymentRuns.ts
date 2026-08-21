@@ -1,6 +1,11 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import {
+  supplierQuery,
+  supplierQueryOne,
+  supplierExecute,
+  supplierTransaction,
+} from './customerDb'
 import { round, toNum } from '../decimals'
 import { postSupplierTransaction, allocateSupplier, openSupplierDebits } from './supplierLedger'
 import { discountFor, addDays } from './interestRules'
@@ -101,7 +106,7 @@ function mapAllocation(r: Row): PaymentAllocation {
 }
 
 export async function getPaymentRun(siteId: number, id: number): Promise<PaymentRun | null> {
-  const row = await siteQueryOne<Row>(
+  const row = await supplierQueryOne<Row>(
     siteId,
     'SELECT * FROM supplier_payment_runs WHERE id = ? LIMIT 1',
     [id],
@@ -111,7 +116,7 @@ export async function getPaymentRun(siteId: number, id: number): Promise<Payment
 
 export async function listPaymentRuns(siteId: number, limit = 20): Promise<PaymentRun[]> {
   const capped = Math.min(Math.max(limit, 1), 100)
-  const rows = await siteQuery<Row>(
+  const rows = await supplierQuery<Row>(
     siteId,
     `SELECT * FROM supplier_payment_runs ORDER BY created_at DESC LIMIT ${capped}`,
   )
@@ -120,12 +125,12 @@ export async function listPaymentRuns(siteId: number, limit = 20): Promise<Payme
 
 export async function listPaymentItems(siteId: number, runId: number): Promise<PaymentItem[]> {
   const [items, allocations] = await Promise.all([
-    siteQuery<Row>(
+    supplierQuery<Row>(
       siteId,
       'SELECT * FROM supplier_payment_items WHERE run_id = ? ORDER BY supplier_name',
       [runId],
     ),
-    siteQuery<Row>(
+    supplierQuery<Row>(
       siteId,
       `SELECT a.* FROM supplier_payment_allocations a
          JOIN supplier_payment_items i ON i.id = a.item_id
@@ -212,7 +217,7 @@ export async function payableSuppliers(
 ): Promise<PayableSupplier[]> {
   const asAt = opts.asAt ?? todayIso()
 
-  const rows = await siteQuery<Row>(
+  const rows = await supplierQuery<Row>(
     siteId,
     `SELECT s.id AS supplier_id, s.code, s.name, s.email, s.balance,
             s.settlement_discount_days, s.settlement_discount_pct,
@@ -352,7 +357,7 @@ export async function createPaymentRun(
   }[] = []
 
   for (const payment of input.payments) {
-    const supplier = await siteQueryOne<Row>(
+    const supplier = await supplierQueryOne<Row>(
       siteId,
       'SELECT id, code, name, email, status FROM suppliers WHERE id = ? LIMIT 1',
       [payment.supplierId],
@@ -370,7 +375,7 @@ export async function createPaymentRun(
     let discountTotal = 0
 
     for (const allocation of payment.allocations) {
-      const txn = await siteQueryOne<Row>(
+      const txn = await supplierQueryOne<Row>(
         siteId,
         `SELECT id, supplier_id, doc_number, doc_date, amount_signed, amount_outstanding
            FROM supplier_transactions WHERE id = ? LIMIT 1`,
@@ -430,11 +435,12 @@ export async function createPaymentRun(
 
   const grandTotal = prepared.reduce((sum, p) => round(sum + p.amount, 2), 0)
 
-  return siteTransaction(siteId, async (tx) => {
+  return supplierTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO supplier_payment_runs
-         (payment_date, reference, total_amount, supplier_count, user_id, user_name, notes)
-       VALUES (?,?,?,?,?,?,?)`,
+         (payment_date, reference, total_amount, supplier_count, user_id, user_name, notes,
+          origin_site_id)
+       VALUES (?,?,?,?,?,?,?,?)`,
       [
         input.paymentDate,
         input.reference?.trim() || null,
@@ -443,6 +449,11 @@ export async function createPaymentRun(
         actor.userId,
         actor.userName.slice(0, 120),
         input.notes?.trim() || null,
+        // The store that ran it, not the store it is stored in. Under sharing
+        // these differ, and without it listPaymentRuns shows every branch one
+        // undifferentiated list and cancelPaymentRun will cancel another
+        // branch's draft. See 206.
+        siteId,
       ] as never,
     )
     const runId = (res as { insertId: number }).insertId
@@ -587,7 +598,7 @@ export async function postPaymentRun(
       }
     }
 
-    await siteExecute(
+    await supplierExecute(
       siteId,
       'UPDATE supplier_payment_items SET transaction_id = ?, discount_txn_id = ? WHERE id = ?',
       [posted.id, discountTxnId, item.id],
@@ -611,7 +622,7 @@ export async function postPaymentRun(
     total = round(total + item.amount, 2)
   }
 
-  await siteExecute(
+  await supplierExecute(
     siteId,
     "UPDATE supplier_payment_runs SET status = 'posted', posted_at = NOW() WHERE id = ?",
     [runId],
@@ -642,7 +653,7 @@ export async function cancelPaymentRun(
     }
   }
 
-  await siteExecute(
+  await supplierExecute(
     siteId,
     "UPDATE supplier_payment_runs SET status = 'cancelled' WHERE id = ?",
     [runId],
@@ -726,7 +737,7 @@ export async function payableInvoicesFor(
 ): Promise<PayableInvoice[]> {
   const [lines, supplier] = await Promise.all([
     openSupplierDebits(siteId, supplierId),
-    siteQueryOne<Row>(
+    supplierQueryOne<Row>(
       siteId,
       'SELECT settlement_discount_days, settlement_discount_pct FROM suppliers WHERE id = ? LIMIT 1',
       [supplierId],

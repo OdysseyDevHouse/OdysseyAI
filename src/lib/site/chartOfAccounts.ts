@@ -551,6 +551,8 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
         break
       }
       case 'creditors': {
+        // Reads the whole shared book when the file is shared, exactly as the
+        // debtors case does — supplierQueryOne resolves the owner.
         const row = await supplierQueryOne<Row>(
           siteId,
           'SELECT COALESCE(SUM(balance), 0) AS total FROM suppliers',
@@ -558,6 +560,17 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
         // Creditors are a liability: positive in the subledger means we owe,
         // which is a CREDIT in the GL, so the sign flips.
         subledgerBalance = -toNum(row?.total)
+
+        // And so must the GL side. Without this the group's creditors were
+        // compared against ONE store's control account and every branch
+        // reported drift equal to the others' creditors, for ever.
+        const group = await creditorsGroupScope(siteId)
+        if (group) {
+          groupScope = group.scope
+          // Replaces this account's own balance, not adds to it: the sum
+          // already includes this store's control account.
+          glBalance = group.controlTotal
+        }
         break
       }
       case 'bank': {
@@ -648,16 +661,57 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
 async function debtorsGroupScope(
   siteId: number,
 ): Promise<{ controlTotal: number; scope: NonNullable<ControlDrift['scope']> } | null> {
-  try {
-    const { customerOwnerSite, customerFileIsShared, groupForSite, membersOfGroup } = await import(
-      '../storeGroups'
-    )
-    if (!(await customerFileIsShared(siteId))) return null
+  const { customerOwnerSite, customerFileIsShared } = await import('../storeGroups')
+  return controlGroupScope(siteId, 'debtors', customerFileIsShared, customerOwnerSite)
+}
 
-    // Where THIS store's debtors actually live. Every member counted below must
-    // agree with it, or their control accounts are being added to a total the
-    // sub-ledger side does not cover.
-    const owner = await customerOwnerSite(siteId)
+/**
+ * The same, for the creditors control account.
+ *
+ * ── WHY THIS DID NOT EXIST, AND WHY THAT WAS A LIVE BUG ──────────────────
+ *
+ * The creditors branch of reconcileControlAccounts already reads its
+ * sub-ledger through supplierQueryOne — so with a shared supplier file it was
+ * ALREADY summing the whole group's creditors — and compared that against this
+ * one store's creditors control account. Every branch would report drift equal
+ * to the other branches' creditors, permanently, with no scope marker to
+ * explain it.
+ *
+ * Exactly the fault the debtors side had at the primary, and it was missed for
+ * the opposite reason: nothing exercises supplier sharing yet, so nobody had
+ * seen the number come out wrong. Fixed now rather than when the supplier
+ * modules land, because the flag column already exists and a group that set it
+ * would meet this today.
+ */
+async function creditorsGroupScope(
+  siteId: number,
+): Promise<{ controlTotal: number; scope: NonNullable<ControlDrift['scope']> } | null> {
+  const { supplierOwnerSite, supplierFileIsShared } = await import('../storeGroups')
+  return controlGroupScope(siteId, 'creditors', supplierFileIsShared, supplierOwnerSite)
+}
+
+/**
+ * One control account summed across every member that shares this file.
+ *
+ * Written once and given the file's resolver, rather than twice: the debtors
+ * version has already been wrong twice — once taking the per-store path at the
+ * primary, once counting members whose flag was set but who did not actually
+ * route here — and a copy would be a third place to get it right.
+ */
+async function controlGroupScope(
+  siteId: number,
+  controlType: 'debtors' | 'creditors',
+  fileIsShared: (siteId: number) => Promise<boolean>,
+  ownerOf: (siteId: number) => Promise<{ siteId: number }>,
+): Promise<{ controlTotal: number; scope: NonNullable<ControlDrift['scope']> } | null> {
+  try {
+    const { groupForSite, membersOfGroup } = await import('../storeGroups')
+    if (!(await fileIsShared(siteId))) return null
+
+    // Where THIS store's sub-ledger actually lives. Every member counted below
+    // must agree with it, or their control accounts are being added to a total
+    // the sub-ledger side does not cover.
+    const owner = await ownerOf(siteId)
 
     const group = await groupForSite(siteId)
     if (!group) return null
@@ -665,7 +719,7 @@ async function debtorsGroupScope(
     const candidates = (await membersOfGroup(group.id)).filter((m) => m.hasDatabase)
     const members: typeof candidates = []
     for (const m of candidates) {
-      const theirOwner = await customerOwnerSite(m.siteId)
+      const theirOwner = await ownerOf(m.siteId)
       if (theirOwner.siteId === owner.siteId) members.push(m)
     }
     if (members.length === 0) return null
@@ -674,12 +728,13 @@ async function debtorsGroupScope(
     const unreadable: number[] = []
     for (const member of members) {
       try {
-        // Summed across every debtors control account in that store, because a
-        // chart may legitimately carry more than one.
+        // Summed across every control account of this type in that store,
+        // because a chart may legitimately carry more than one.
         const row = await siteQueryOne<Row>(
           member.siteId,
           `SELECT COALESCE(SUM(balance), 0) AS total FROM gl_accounts
-            WHERE control_type = 'debtors' AND is_active = TRUE`,
+            WHERE control_type = ? AND is_active = TRUE`,
+          [controlType],
         )
         controlTotal += toNum(row?.total)
       } catch {

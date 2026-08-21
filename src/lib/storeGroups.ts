@@ -406,21 +406,47 @@ async function ownerSiteFor(
  * what customerDbPrefix() does and why it stays correct.
  */
 export async function customerFileIsShared(siteId: number): Promise<boolean> {
-  const owner = await customerOwnerSite(siteId)
+  return fileIsShared(siteId, customerOwnerSite)
+}
+
+/**
+ * The same question for the creditors book, answered separately on purpose.
+ *
+ * A group may share one customer file while each branch keeps its own
+ * suppliers, or the reverse — central buying from one creditors book with
+ * separate debtors. sql/tickets/015_share_customers.sql gives them two columns
+ * for exactly that reason, so they get two functions.
+ */
+export async function supplierFileIsShared(siteId: number): Promise<boolean> {
+  return fileIsShared(siteId, supplierOwnerSite)
+}
+
+/**
+ * "Is this file shared with anyone", for either master file.
+ *
+ * Factored rather than written twice: the customer version was subtly wrong
+ * once already (see the note above), and two copies of this reasoning is two
+ * places for the next person to fix only one of.
+ */
+async function fileIsShared(
+  siteId: number,
+  ownerOf: (siteId: number) => Promise<OwnerDb>,
+): Promise<boolean> {
+  const owner = await ownerOf(siteId)
   // A branch: the file is somewhere else. Answered first and cheaply.
   if (owner.siteId !== siteId) return true
 
-  // Otherwise this store owns its own customers — but that covers two very
-  // different cases, and only one of them is "not shared". A primary hosting
-  // the group's file also resolves to itself, so the question becomes whether
-  // any OTHER member routes its customers here.
+  // Otherwise this store owns its own file — but that covers two very different
+  // cases, and only one of them is "not shared". A primary hosting the group's
+  // file also resolves to itself, so the question becomes whether any OTHER
+  // member routes here.
   try {
     const group = await groupForSite(siteId)
     if (!group) return false
     const members = await membersOfGroup(group.id)
     for (const m of members) {
       if (m.siteId === siteId) continue
-      const theirOwner = await customerOwnerSite(m.siteId)
+      const theirOwner = await ownerOf(m.siteId)
       if (theirOwner.siteId === siteId) return true
     }
     return false

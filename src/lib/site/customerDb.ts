@@ -119,6 +119,15 @@ export async function supplierQueryOne<T = RowDataPacket>(
   return siteQueryOne<T>(await supplierSite(siteId), sql, params)
 }
 
+/**
+ * The creditors twin of customerExecute, absent until the supplier modules
+ * needed it — the supplier wrapper set was built alongside the customer one and
+ * this was the one member nothing had called yet.
+ */
+export async function supplierExecute(siteId: number, sql: string, params: unknown[] = []) {
+  return siteExecute(await supplierSite(siteId), sql, params)
+}
+
 export async function supplierTransaction<T>(
   siteId: number,
   fn: (tx: PoolConnection) => Promise<T>,

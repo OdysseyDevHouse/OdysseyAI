@@ -418,7 +418,12 @@ export type StartResult = { ok: true; session: TrainingSession } | { ok: false; 
 /**
  * Refuses training mode where its cleanup cannot reach the rows it would make.
  *
- * ── WHY A SHARED CUSTOMER FILE BREAKS THE WHOLE SCHEME ────────────────────
+ * ── WHY A SHARED MASTER FILE BREAKS THE WHOLE SCHEME ──────────────────────
+ *
+ * Either file does it — customers or suppliers — and the argument below is
+ * written about customers because that is the one that shipped first. The
+ * creditors side fails identically and carries one extra hazard; see the note
+ * inside the function.
  *
  * Training is built on high-water marks: startTraining records MAX(id) for each
  * table in THIS database, and stopTraining deletes everything above the mark.
@@ -458,26 +463,59 @@ export type StartResult = { ok: true; session: TrainingSession } | { ok: false; 
  * that is not sharing at all. Failing open is the same answer the site gave
  * before sharing existed.
  */
-async function sharedCustomerFileRefusal(siteId: number): Promise<string | null> {
+async function sharedMasterFileRefusal(siteId: number): Promise<string | null> {
   try {
-    const { customerFileIsShared } = await import('../storeGroups')
-    if (!(await customerFileIsShared(siteId))) return null
+    const { customerFileIsShared, supplierFileIsShared } = await import('../storeGroups')
+
+    /*
+     * ── THE SUPPLIER SIDE FAILS THE SAME WAY, AND ONE STATEMENT WORSE ─────
+     *
+     * PURGE_TABLES carries supplier_allocations and supplier_transactions, and
+     * the marks for them are taken against the CALLER's database. With the
+     * creditors book shared, a training GRV posts its supplier invoice to the
+     * OWNER while the marks were read from the branch's own empty tables — so
+     * stopTraining deletes nothing and a pretend invoice sits in the group's
+     * real creditors book, on a real supplier's statement, in the age analysis
+     * and in the next payment run.
+     *
+     * And rebuildLedgerBalances runs
+     *
+     *     UPDATE suppliers SET balance = (SELECT SUM(amount_signed) ...)
+     *
+     * Today that is a harmless no-op against the branch's empty tables. The
+     * moment somebody "fixes" this file by pointing its supplier statements at
+     * the owner, that one statement would rebuild EVERY supplier balance in the
+     * group from a branch's empty ledger — zeroing the whole creditors book.
+     * The refusal has to land before that conversion, not after.
+     */
+    const customers = await customerFileIsShared(siteId)
+    const suppliers = await supplierFileIsShared(siteId)
+    if (!customers && !suppliers) return null
+
+    const which = customers && suppliers ? 'customer and supplier files' : customers ? 'customer file' : 'supplier file'
+    const what = customers && suppliers
+      ? 'Practice sales made on account, and practice purchases, would be written into the group’s real ledgers'
+      : customers
+        ? 'Practice sales made on account would be written into the group’s real customer ledger'
+        : 'Practice purchases and supplier invoices would be written into the group’s real creditors book'
+
+    return (
+      `This store shares its ${which} with the rest of the group, and training ` +
+      `mode cannot be used while it does. ${what}, and switching training off ` +
+      'could not remove them. Cash sales are unaffected.'
+    )
   } catch {
+    // A control-database problem must not block training on a shop that is not
+    // sharing at all. Failing open is what the site did before sharing existed.
     return null
   }
-  return (
-    'This store shares its customer file with the rest of the group, and training ' +
-    'mode cannot be used while it does. Practice sales made on account would be ' +
-    'written into the group’s real customer ledger, and switching training off ' +
-    'could not remove them. Cash sales are unaffected.'
-  )
 }
 
 export async function startTraining(
   siteId: number,
   actor: { userId: number; userName: string },
 ): Promise<StartResult> {
-  const sharedRefusal = await sharedCustomerFileRefusal(siteId)
+  const sharedRefusal = await sharedMasterFileRefusal(siteId)
   if (sharedRefusal) return { ok: false, error: sharedRefusal }
 
   try {
@@ -632,7 +670,7 @@ export type StopResult =
        * can be switched on DURING a session — so a purge can run against a
        * store whose debtor rows went to the group primary, above no mark this
        * database holds. There is nothing safe to do about it here (see
-       * sharedCustomerFileRefusal), so the screen must say so rather than
+       * sharedMasterFileRefusal), so the screen must say so rather than
        * report a clean removal.
        */
       warning?: string
@@ -670,7 +708,7 @@ export async function stopTraining(
   // the debtor rows this purge is about to look for are in another database,
   // above no mark it holds. Stopping is still the right thing to do; saying
   // "removed" without qualification is not.
-  const sharedDuringSession = await sharedCustomerFileRefusal(siteId)
+  const sharedDuringSession = await sharedMasterFileRefusal(siteId)
 
   try {
     return await siteTransaction<StopResult>(siteId, async (tx) => {
