@@ -169,7 +169,11 @@ function mapTier(r: Row): LoyaltyTier {
 }
 
 export async function listTiers(siteId: number, includeInactive = true): Promise<LoyaltyTier[]> {
-  const rows = await siteQuery<Row>(
+  // The owner's ladder. A shared programme has ONE set of tiers — Gold must
+  // mean the same thing at every branch, or a member is promoted by walking
+  // into a different shop. Read from the branch this returned an empty ladder,
+  // which silently untiers everybody rather than failing.
+  const rows = await loyaltyQuery<Row>(
     siteId,
     `SELECT id, name, step, qualifying_spend, multiplier, discount_pct, color, is_active
        FROM loyalty_tiers ${includeInactive ? '' : 'WHERE is_active = 1'}
@@ -197,7 +201,10 @@ export async function saveTiers(
   const cleaned = cleanTierLadder(raw)
   if ('error' in cleaned) return { ok: false, error: cleaned.error }
 
-  await siteTransaction(siteId, async (tx) => {
+  // Every statement in here touches loyalty_tiers alone, so the whole
+  // transaction moves to the owner. Editing the ladder at a branch edits the
+  // GROUP's ladder — which is the intent: one programme, one set of tiers.
+  await loyaltyTransaction(siteId, async (tx) => {
     const [existing] = await tx.query<Row[]>('SELECT id, name FROM loyalty_tiers')
     const byName = new Map(existing.map((r) => [String(r.name).toLowerCase(), Number(r.id)]))
 
@@ -1242,7 +1249,7 @@ export async function expirePoints(
     settings.expiryMode === 'activity'
       ? await loyaltyQuery<Row>(
           siteId,
-          `SELECT m.member_id
+          `SELECT m.id AS member_id
              FROM loyalty_members m
             WHERE m.points_balance > 0
               AND COALESCE(m.last_activity_at, m.joined_at) < ?`,
@@ -1511,9 +1518,12 @@ export async function getLiability(siteId: number): Promise<{
 export async function memberSummaries(
   siteId: number,
 ): Promise<Map<number, { points: number; tierName: string }>> {
-  const rows = await siteQuery<Row>(
+  // loyaltyQuery, not siteQuery: both tables belong to the loyalty owner, and on
+  // a shared programme the branch's own copies are empty — this returned an
+  // empty map rather than failing, which is the quieter of the two bugs here.
+  const rows = await loyaltyQuery<Row>(
     siteId,
-    `SELECT m.member_id, m.points_balance, COALESCE(t.name,'') AS tier_name
+    `SELECT m.id AS member_id, m.points_balance, COALESCE(t.name,'') AS tier_name
        FROM loyalty_members m
        LEFT JOIN loyalty_tiers t ON t.id = m.tier_id`,
   )

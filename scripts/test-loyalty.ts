@@ -17,9 +17,16 @@
  *   NO SALE PAYS TWICE. A retried finalise must not award points or stamps
  *   again — enforced by unique keys, not by a check that races.
  *
- *   AN OVERDRAW IS REFUSED, INSIDE THE SALE'S TRANSACTION. Spending points or
- *   wallet rand that are not there must roll the whole sale back, not sell the
- *   goods and shrug.
+ *   AN OVERDRAW IS REFUSED BEFORE THE SALE OPENS. Spending points or wallet
+ *   rand that are not there must stop the sale, not sell the goods and shrug.
+ *
+ *   This used to say "inside the sale's transaction", and the throw rolled the
+ *   sale back. That guarantee could not survive a shared programme: the loyalty
+ *   rows live in the primary's database and no transaction spans two. So the
+ *   check moved AHEAD of the sale instead — everything that could refuse a
+ *   redemption is asked before a document exists, and the deduction is written
+ *   after the commit. The observable rule is unchanged; only where it is
+ *   enforced moved. See the long note in salesPosting.ts.
  *
  *   A VOUCHER IS SPENT ONCE. A photographed code redeemed at two tills must
  *   fail at the second, and the failure must be the database's decision.
@@ -39,7 +46,7 @@ import { setSetting } from '../src/lib/site/settings'
 import {
   getLoyaltySettings, saveLoyaltySettings, listTiers, saveTiers,
   getMember, listLedger, adjustPoints, expirePoints, listMembers,
-  getLiability, recalcMember, redeemableFor,
+  getLiability, recalcMember, redeemableFor, enrolMember,
 } from '../src/lib/site/loyalty'
 import {
   createCard, listCards, getCardProgress, issueVoucher, listVouchers,
@@ -83,6 +90,16 @@ const ok = (label: string, cond: boolean, extra = '') => {
 const stamp = Date.now().toString().slice(-6)
 const docs: number[] = []
 let customerId = 0
+/**
+ * The MEMBER, which is no longer the same number as the customer.
+ *
+ * Every loyalty call below is keyed on this. Both are `number`, so passing the
+ * wrong one compiles cleanly and quietly reads somebody else's balance — which
+ * is why they are two variables rather than one reused.
+ */
+let memberId = 0
+/** The member number allocated at enrolment, for the search assertions. */
+let memberNumber = ''
 let productId = 0
 // A card is defined in product CODES, not local ids — see loyaltyCards.ts.
 let productCode = ''
@@ -105,14 +122,14 @@ const tier = (over: Partial<LoyaltyTier> = {}): LoyaltyTier => ({
 /** Balance straight from the ledger — the figure everything else must match. */
 async function ledgerBalance(id: number): Promise<number> {
   const row = await siteQueryOne<{ points: string }>(
-    SITE, 'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?', [id],
+    SITE, 'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE member_id = ?', [id],
   )
   return round(toNum(row?.points), 4)
 }
 
 async function cachedBalance(id: number): Promise<number> {
   const row = await siteQueryOne<{ points_balance: string }>(
-    SITE, 'SELECT points_balance FROM loyalty_members WHERE customer_id = ?', [id],
+    SITE, 'SELECT points_balance FROM loyalty_members WHERE id = ?', [id],
   )
   return round(toNum(row?.points_balance), 4)
 }
@@ -166,6 +183,9 @@ async function sell(
   const posted = await finaliseDocument(SITE, actor, {
     documentId: draft.id,
     customerId,
+    // Passed explicitly rather than left to the customer fallback, so these
+    // sales exercise the path the till actually uses.
+    memberId,
     tenders,
     voucherCodes: opts.voucherCodes,
   })
@@ -281,29 +301,43 @@ async function main() {
   customerId = cust.insertId
   ok('a test customer exists', customerId > 0)
 
+  // Joining is now a deliberate act rather than a side effect of being a
+  // customer, so the fixture has to do it. Everything after this point is about
+  // the member, not the account.
+  const joined = await enrolMember(SITE, actor, {
+    name: `Loyalty Customer ${stamp}`,
+    customerId,
+  })
+  ok('the customer joins the programme', joined.ok, joined.ok ? '' : joined.error)
+  if (!joined.ok) throw new Error(`enrolment failed: ${joined.error}`)
+  memberId = joined.memberId
+  memberNumber = joined.memberNumber
+  ok('  and holds an allocated member number', /^M\d{6}$/.test(joined.memberNumber),
+      joined.memberNumber)
+
   console.log('\n── Earning on a real sale ──────────────────────────────────\n')
 
   const sale1 = await sell({ incl: 500, tenders: [{ code: 'CASH', amount: 500 }] })
   ok('a cash sale posts', sale1.ok, sale1.error)
 
-  const afterFirst = await ledgerBalance(customerId)
+  const afterFirst = await ledgerBalance(memberId)
   ok('*** it earned 500 points ***', afterFirst === 500, `${afterFirst}`)
-  ok('  and the cache agrees with the ledger', (await cachedBalance(customerId)) === afterFirst)
+  ok('  and the cache agrees with the ledger', (await cachedBalance(memberId)) === afterFirst)
 
-  const member = await getMember(SITE, customerId)
+  const member = await getMember(SITE, memberId)
   ok('  the member reads back', member !== null)
   ok('  worth R50 at 10 points per rand', member?.pointsValue === 50, `${member?.pointsValue}`)
   ok('  qualifying spend is the RAND value, not the points', member?.qualifyingSpend === 500,
       `${member?.qualifyingSpend}`)
   ok('  and they sit in the entry tier', member?.tier?.name === 'Bronze', member?.tier?.name)
 
-  const ledger = await listLedger(SITE, customerId)
+  const ledger = await listLedger(SITE, memberId)
   ok('the earn is one ledger row', ledger.length === 1 && ledger[0].entryType === 'earn')
   ok('  naming the sale it came from', ledger[0].documentNumber.length > 0)
 
   console.log('\n── Spending points ────────────────────────────────────────\n')
 
-  const quote = await redeemableFor(SITE, customerId, 100)
+  const quote = await redeemableFor(SITE, memberId, 100)
   ok('the till is told R50 is available', quote.maxRand === 50, `${quote.maxRand}`)
 
   // R30 of a R100 sale on points; the rest cash.
@@ -313,16 +347,16 @@ async function main() {
   })
   ok('a part-points sale posts', sale2.ok, sale2.error)
 
-  const afterRedeem = await ledgerBalance(customerId)
+  const afterRedeem = await ledgerBalance(memberId)
   // 500 earned - 300 spent (R30 x 10) + 70 earned on the cash portion.
   ok('*** R30 cost 300 points ***', afterRedeem === 270, `${afterRedeem}`)
-  ok('  the cache still agrees', (await cachedBalance(customerId)) === afterRedeem)
+  ok('  the cache still agrees', (await cachedBalance(memberId)) === afterRedeem)
 
-  const memberAfter = await getMember(SITE, customerId)
+  const memberAfter = await getMember(SITE, memberId)
   ok('*** spending points did NOT reduce qualifying spend ***',
       memberAfter?.qualifyingSpend === 570, `${memberAfter?.qualifyingSpend}`)
 
-  const redeemRow = (await listLedger(SITE, customerId)).find((e) => e.entryType === 'redeem')
+  const redeemRow = (await listLedger(SITE, memberId)).find((e) => e.entryType === 'redeem')
   ok('  and the spend is its own ledger row', redeemRow?.points === -300, `${redeemRow?.points}`)
 
   console.log('\n── What must be refused ────────────────────────────────────\n')
@@ -335,7 +369,7 @@ async function main() {
   ok('  with a message naming what is available',
       (overdraw.error ?? '').includes('Not enough points'), overdraw.error)
 
-  const stillThere = await ledgerBalance(customerId)
+  const stillThere = await ledgerBalance(memberId)
   ok('*** and the refused sale left the balance untouched ***', stillThere === 270, `${stillThere}`)
 
   const refusedDoc = await siteQueryOne<{ status: string }>(
@@ -349,14 +383,14 @@ async function main() {
   const account = await getTenderByCode(SITE, 'ACCOUNT')
 
   const topUp = await topUpWallet(SITE, actor, {
-    customerId, amount: 200, tenderTypeId: cash!.id,
+    memberId, amount: 200, tenderTypeId: cash!.id,
   })
   ok('a card can be loaded with cash', topUp.ok, topUp.ok ? '' : topUp.error)
   ok('  and the balance is R200', topUp.ok && topUp.balance === 200)
 
   if (account) {
     const onAccount = await topUpWallet(SITE, actor, {
-      customerId, amount: 100, tenderTypeId: account.id,
+      memberId, amount: 100, tenderTypeId: account.id,
     })
     ok('*** loading a card on account is refused ***', !onAccount.ok,
         onAccount.ok ? 'allowed' : onAccount.error)
@@ -364,11 +398,11 @@ async function main() {
 
   const walletTender = await getTenderByCode(SITE, 'LOYALTY_WALLET')
   const selfFund = await topUpWallet(SITE, actor, {
-    customerId, amount: 50, tenderTypeId: walletTender!.id,
+    memberId, amount: 50, tenderTypeId: walletTender!.id,
   })
   ok('*** a card cannot be loaded with loyalty money ***', !selfFund.ok)
 
-  const pointsBeforeWallet = await ledgerBalance(customerId)
+  const pointsBeforeWallet = await ledgerBalance(memberId)
   ok('*** loading a card earns NO points ***', pointsBeforeWallet === 270, `${pointsBeforeWallet}`)
 
   const sale3 = await sell({
@@ -376,10 +410,10 @@ async function main() {
     tenders: [{ code: 'LOYALTY_WALLET', amount: 80 }],
   })
   ok('a sale settles from the wallet', sale3.ok, sale3.error)
-  ok('  and the wallet is drawn down', (await getWalletBalance(SITE, customerId)) === 120,
-      `${await getWalletBalance(SITE, customerId)}`)
+  ok('  and the wallet is drawn down', (await getWalletBalance(SITE, memberId)) === 120,
+      `${await getWalletBalance(SITE, memberId)}`)
 
-  const afterWalletSale = await ledgerBalance(customerId)
+  const afterWalletSale = await ledgerBalance(memberId)
   ok('*** wallet rand earns no points either — it was already the customer\'s money ***',
       afterWalletSale === 270, `${afterWalletSale}`)
 
@@ -388,7 +422,7 @@ async function main() {
     tenders: [{ code: 'LOYALTY_WALLET', amount: 9999 }],
   })
   ok('*** overdrawing the wallet is refused ***', !walletOverdraw.ok)
-  ok('  and the wallet is unchanged', (await getWalletBalance(SITE, customerId)) === 120)
+  ok('  and the wallet is unchanged', (await getWalletBalance(SITE, memberId)) === 120)
 
   console.log('\n── Punch cards ─────────────────────────────────────────────\n')
 
@@ -433,14 +467,14 @@ async function main() {
     ok(`  stamp sale ${i} posts`, s.ok, s.error)
   }
 
-  const progress = (await getCardProgress(SITE, customerId)).find((p) => p.cardId === cardId)
+  const progress = (await getCardProgress(SITE, memberId)).find((p) => p.cardId === cardId)
   ok('two stamps show as 2 of 3', progress?.stamps === 2, `${progress?.stamps}`)
 
-  const beforeComplete = (await listVouchers(SITE, { customerId })).length
+  const beforeComplete = (await listVouchers(SITE, { memberId })).length
   const third = await sell({ incl: 50, tenders: [{ code: 'CASH', amount: 50 }], withProduct: true })
   ok('the completing sale posts', third.ok, third.error)
 
-  const vouchersNow = await listVouchers(SITE, { customerId })
+  const vouchersNow = await listVouchers(SITE, { memberId })
   ok('*** completing the card issued a voucher ***', vouchersNow.length === beforeComplete + 1,
       `${beforeComplete} -> ${vouchersNow.length}`)
 
@@ -448,7 +482,7 @@ async function main() {
   ok('  worth what the card promised', issued?.rewardValue === 25, `${issued?.rewardValue}`)
   ok('  and it is spendable', issued?.status === 'issued')
 
-  const resetProgress = (await getCardProgress(SITE, customerId)).find((p) => p.cardId === cardId)
+  const resetProgress = (await getCardProgress(SITE, memberId)).find((p) => p.cardId === cardId)
   ok('  progress rolls back to zero on the next card', resetProgress?.stamps === 0,
       `${resetProgress?.stamps}`)
 
@@ -480,13 +514,13 @@ async function main() {
   ok('  and the message says so', (reuse.error ?? '').includes('already been used'), reuse.error)
 
   // The voucher funded R25 of a R100 basket, so only R75 should earn.
-  const earnedOnVoucherSale = (await listLedger(SITE, customerId))
+  const earnedOnVoucherSale = (await listLedger(SITE, memberId))
     .find((e) => e.entryType === 'earn' && e.documentId === voucherSale.id)
   ok('*** the voucher-funded slice earned nothing ***',
       earnedOnVoucherSale?.points === 75, `${earnedOnVoucherSale?.points}`)
 
   const manual = await issueVoucher(SITE, actor, {
-    customerId, rewardType: 'value', rewardValue: 15,
+    memberId, rewardType: 'value', rewardValue: 15,
     description: 'Goodwill', validDays: 1,
   })
   ok('a voucher can be issued by hand', manual.ok, manual.ok ? '' : manual.error)
@@ -500,26 +534,26 @@ async function main() {
 
   console.log('\n── Reversal ────────────────────────────────────────────────\n')
 
-  const beforeVoid = await ledgerBalance(customerId)
-  const walletBeforeVoid = await getWalletBalance(SITE, customerId)
+  const beforeVoid = await ledgerBalance(memberId)
+  const walletBeforeVoid = await getWalletBalance(SITE, memberId)
 
   // Void the wallet sale: the money must come back.
   const voided = await voidDocument(SITE, actor, sale3.id, { reasonId: VOID_REASON_ID, note: 'Loyalty reversal test' })
   ok('a wallet sale can be voided', voided.ok, voided.ok ? '' : voided.error)
 
-  const walletAfterVoid = await getWalletBalance(SITE, customerId)
+  const walletAfterVoid = await getWalletBalance(SITE, memberId)
   ok('*** voiding a wallet sale puts the money back ***',
       walletAfterVoid === round(walletBeforeVoid + 80, 2), `${walletBeforeVoid} -> ${walletAfterVoid}`)
 
-  const twiceVoided = await getWalletBalance(SITE, customerId)
+  const twiceVoided = await getWalletBalance(SITE, memberId)
   ok('  and it is not credited twice', twiceVoided === walletAfterVoid)
 
   // Void the points sale: earned points clawed back AND spent points returned.
-  const pointsBeforeReversal = await ledgerBalance(customerId)
+  const pointsBeforeReversal = await ledgerBalance(memberId)
   const voidPoints = await voidDocument(SITE, actor, sale2.id, { reasonId: VOID_REASON_ID, note: 'Points reversal test' })
   ok('a part-points sale can be voided', voidPoints.ok, voidPoints.ok ? '' : voidPoints.error)
 
-  const reversalRow = (await listLedger(SITE, customerId))
+  const reversalRow = (await listLedger(SITE, memberId))
     .find((e) => e.entryType === 'reverse' && e.documentId === sale2.id)
   ok('*** the reversal is one visible ledger row ***', reversalRow !== undefined)
   // Sale 2 earned 70 (on the cash portion) and spent 300, so reversing it
@@ -527,50 +561,50 @@ async function main() {
   ok('*** it returns the points spent and claws back those earned ***',
       reversalRow?.points === 230, `${reversalRow?.points}`)
 
-  const afterReversal = await ledgerBalance(customerId)
+  const afterReversal = await ledgerBalance(memberId)
   ok('  the balance moves by exactly that', afterReversal === round(pointsBeforeReversal + 230, 4),
       `${pointsBeforeReversal} -> ${afterReversal}`)
-  ok('  and the cache keeps up', (await cachedBalance(customerId)) === afterReversal)
+  ok('  and the cache keeps up', (await cachedBalance(memberId)) === afterReversal)
 
   const voidAgain = await voidDocument(SITE, actor, sale2.id, { reasonId: VOID_REASON_ID, note: 'again' })
   ok('a second void is refused by the document rules', !voidAgain.ok)
-  ok('*** and the balance did not move again ***', (await ledgerBalance(customerId)) === afterReversal)
+  ok('*** and the balance did not move again ***', (await ledgerBalance(memberId)) === afterReversal)
 
   console.log('\n── Manual movement ─────────────────────────────────────────\n')
 
-  const before = await ledgerBalance(customerId)
-  const grant = await adjustPoints(SITE, actor, customerId, 100, 'Goodwill')
+  const before = await ledgerBalance(memberId)
+  const grant = await adjustPoints(SITE, actor, memberId, 100, 'Goodwill')
   ok('points can be granted by hand', grant.ok, grant.ok ? '' : grant.error)
-  ok('  and land on the balance', (await ledgerBalance(customerId)) === round(before + 100, 4))
+  ok('  and land on the balance', (await ledgerBalance(memberId)) === round(before + 100, 4))
 
-  const noReason = await adjustPoints(SITE, actor, customerId, 50, '   ')
+  const noReason = await adjustPoints(SITE, actor, memberId, 50, '   ')
   ok('*** an adjustment without a reason is refused ***', !noReason.ok)
 
-  const tooFar = await adjustPoints(SITE, actor, customerId, -999999, 'Take everything')
+  const tooFar = await adjustPoints(SITE, actor, memberId, -999999, 'Take everything')
   ok('*** an adjustment cannot push the balance below zero ***', !tooFar.ok,
       tooFar.ok ? 'allowed' : tooFar.error)
 
-  const walletAdjust = await adjustWallet(SITE, actor, customerId, -99999, 'Overdraw')
+  const walletAdjust = await adjustWallet(SITE, actor, memberId, -99999, 'Overdraw')
   ok('*** nor can a wallet adjustment overdraw the card ***', !walletAdjust.ok)
 
   console.log('\n── Cache integrity ─────────────────────────────────────────\n')
 
   // Corrupt the cache deliberately, then prove the repair restores it and that
   // no decision was ever made from the wrong figure.
-  await siteExecute(SITE, 'UPDATE loyalty_members SET points_balance = 999999 WHERE customer_id = ?',
-      [customerId])
+  await siteExecute(SITE, 'UPDATE loyalty_members SET points_balance = 999999 WHERE id = ?',
+      [memberId])
 
-  const trueBalance = await ledgerBalance(customerId)
-  const memberDuringDrift = await getMember(SITE, customerId)
+  const trueBalance = await ledgerBalance(memberId)
+  const memberDuringDrift = await getMember(SITE, memberId)
   ok('*** a member reads its balance from the LEDGER, not the cache ***',
       memberDuringDrift?.points === trueBalance, `${memberDuringDrift?.points} vs ${trueBalance}`)
 
-  const quoteDuringDrift = await redeemableFor(SITE, customerId, 100000)
+  const quoteDuringDrift = await redeemableFor(SITE, memberId, 100000)
   ok('*** and so does the redemption quote ***',
       quoteDuringDrift.points === trueBalance, `${quoteDuringDrift.points}`)
 
-  await recalcMember(SITE, customerId)
-  ok('  recalc repairs the cache', (await cachedBalance(customerId)) === trueBalance)
+  await recalcMember(SITE, memberId)
+  ok('  recalc repairs the cache', (await cachedBalance(memberId)) === trueBalance)
 
   console.log('\n── Tiers ───────────────────────────────────────────────────\n')
 
@@ -583,17 +617,30 @@ async function main() {
   const rewritten = await listTiers(SITE)
   ok('  and reordering does not trip the unique step key', rewritten.length === 2, `${rewritten.length}`)
 
-  await recalcMember(SITE, customerId)
-  const promoted = await getMember(SITE, customerId)
+  await recalcMember(SITE, memberId)
+  const promoted = await getMember(SITE, memberId)
   ok('*** a member is re-placed on the new ladder ***', promoted?.tier?.name === 'Silver',
       promoted?.tier?.name)
 
   console.log('\n── Lists and totals ────────────────────────────────────────\n')
 
-  const members = await listMembers(SITE, { search: `LC${stamp}` })
+  /*
+   * Searched by NAME, not by customer code.
+   *
+   * This looked for `LC${stamp}` — the customer's code — and found the member
+   * because every member was a customer row. The member file has no customer
+   * code to match: a walk-in member never had one, and a search that only found
+   * account holders would hide exactly the people this screen now exists for.
+   * So listMembers searches name, member number and phone.
+   */
+  const members = await listMembers(SITE, { search: `Loyalty Customer ${stamp}` })
   ok('the member appears in the list', members.rows.length === 1, `${members.rows.length}`)
   ok('  with the ledger balance, not the cache',
-      members.rows[0]?.points === (await ledgerBalance(customerId)))
+      members.rows[0]?.points === (await ledgerBalance(memberId)))
+
+  const byNumber = await listMembers(SITE, { search: memberNumber })
+  ok('*** and is findable by member number ***', byNumber.rows.length === 1,
+      `${byNumber.rows.length}`)
 
   const liability = await getLiability(SITE)
   ok('the liability counts outstanding points', liability.points > 0)
@@ -609,17 +656,17 @@ async function main() {
   // Age the account past the window and try again.
   await siteExecute(
     SITE,
-    'UPDATE loyalty_members SET last_activity_at = DATE_SUB(NOW(), INTERVAL 24 MONTH) WHERE customer_id = ?',
-    [customerId],
+    'UPDATE loyalty_members SET last_activity_at = DATE_SUB(NOW(), INTERVAL 24 MONTH) WHERE id = ?',
+    [memberId],
   )
-  const balanceBeforeExpiry = await ledgerBalance(customerId)
+  const balanceBeforeExpiry = await ledgerBalance(memberId)
   const swept = await expirePoints(SITE, actor)
   ok('*** a dormant balance expires ***', swept.customers === 1, `${swept.customers}`)
   ok('  by exactly what was there', swept.points === balanceBeforeExpiry,
       `${swept.points} vs ${balanceBeforeExpiry}`)
-  ok('  leaving a zero balance', (await ledgerBalance(customerId)) === 0)
+  ok('  leaving a zero balance', (await ledgerBalance(memberId)) === 0)
 
-  const expiryRow = (await listLedger(SITE, customerId)).find((e) => e.entryType === 'expire')
+  const expiryRow = (await listLedger(SITE, memberId)).find((e) => e.entryType === 'expire')
   ok('*** and it is VISIBLE in the history, not a silent drop ***', expiryRow !== undefined)
 
   const again = await expirePoints(SITE, actor)
@@ -634,12 +681,14 @@ async function main() {
 async function finish() {
   console.log('\n── Cleaning up ─────────────────────────────────────────────\n')
 
-  // FK order: children before parents.
-  await siteExecute(SITE, 'DELETE FROM loyalty_stamps WHERE customer_id = ?', [customerId])
-  await siteExecute(SITE, 'DELETE FROM loyalty_vouchers WHERE customer_id = ?', [customerId])
-  await siteExecute(SITE, 'DELETE FROM loyalty_ledger WHERE customer_id = ?', [customerId])
-  await siteExecute(SITE, 'DELETE FROM loyalty_wallet WHERE customer_id = ?', [customerId])
-  await siteExecute(SITE, 'DELETE FROM loyalty_members WHERE customer_id = ?', [customerId])
+  // FK order: children before parents. Keyed on member_id now — the loyalty
+  // tables no longer carry customer_id at all, so the old cleanup would have
+  // thrown and left every fixture behind for the next suite to trip over.
+  await siteExecute(SITE, 'DELETE FROM loyalty_stamps WHERE member_id = ?', [memberId])
+  await siteExecute(SITE, 'DELETE FROM loyalty_vouchers WHERE member_id = ?', [memberId])
+  await siteExecute(SITE, 'DELETE FROM loyalty_ledger WHERE member_id = ?', [memberId])
+  await siteExecute(SITE, 'DELETE FROM loyalty_wallet WHERE member_id = ?', [memberId])
+  await siteExecute(SITE, 'DELETE FROM loyalty_members WHERE id = ?', [memberId])
   if (cardId) await siteExecute(SITE, 'DELETE FROM loyalty_cards WHERE id = ?', [cardId])
 
   for (const id of docs) {

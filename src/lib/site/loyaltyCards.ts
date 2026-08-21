@@ -514,8 +514,13 @@ export async function awardSaleStamps(
             // built on them — so without the origin, two stores stamping their
             // own sale 5001 collide and the second customer silently gets no
             // stamp. See 200_loyalty_stamp_origin.sql.
+            // product_CODE, not product_id: a product id means nothing in the
+            // loyalty owner's database when the programme is shared, so the
+            // column carries the portable key. Still null — which line of a
+            // basket earned which stamp was never tracked, and the old column
+            // took null too.
             `INSERT INTO loyalty_stamps
-               (card_id, member_id, document_id, origin_site_id, stamp_seq, product_id)
+               (card_id, member_id, document_id, origin_site_id, stamp_seq, product_code)
              VALUES (?,?,?,?,?,?)`,
             [card.id, input.memberId, input.documentId, siteId, seq, null] as never,
           )
