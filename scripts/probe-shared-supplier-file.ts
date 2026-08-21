@@ -234,6 +234,99 @@ async function main() {
       `branch ${logAtBranch[0]?.n}, primary ${logAtPrimary[0]?.n}`,
     )
 
+    /* ── suppliers.ts: the file's own reads and writes ──────────────────── */
+
+    console.log('\n— The supplier module —')
+
+    const { listSuppliers, getSupplier, updateSupplier } = await import(
+      '../src/lib/site/suppliers'
+    )
+
+    const listed = await listSuppliers(branch, { search: PROBE_TAG })
+    ok(
+      'listSuppliers at the branch finds the shared supplier',
+      listed.items.some((s) => s.id === supplierId),
+      `${listed.items.length} match(es)`,
+    )
+
+    const fetched = await getSupplier(branch, supplierId)
+    ok('getSupplier finds it too', fetched?.id === supplierId)
+
+    /*
+     * product_count is the one that can pass for the wrong reason.
+     *
+     * The subquery runs on the OWNER and has to reach BACK to the branch, where
+     * product_suppliers lives. Without the prefix it reads the owner's own
+     * table — which at a branch is a perfectly plausible zero — and the delete
+     * guard silently stops refusing. So a link is created at the BRANCH first,
+     * and the assertion is that the count sees it.
+     */
+    const prod = await siteQueryOne<Row>(branch, 'SELECT id FROM products ORDER BY id LIMIT 1')
+    if (!prod) {
+      console.log('SKIP  the branch has no products, so product_count cannot be exercised')
+    } else {
+      await siteQuery(
+        branch,
+        `INSERT INTO product_suppliers (product_id, supplier_id, supplier_code)
+         VALUES (?,?,?)
+         ON DUPLICATE KEY UPDATE supplier_code = VALUES(supplier_code)`,
+        [Number(prod.id), supplierId, PROBE_TAG],
+      )
+
+      const linked = await getSupplier(branch, supplierId)
+      ok(
+        'product_count counts the BRANCH’s links, not the owner’s',
+        linked?.productCount === 1,
+        `productCount = ${linked?.productCount}, expected 1`,
+      )
+
+      /*
+       * And the guard that depends on it must refuse FOR THAT REASON.
+       *
+       * Asserting only "it refused" would pass on the balance check that runs
+       * first — this supplier owes 1000 from the posting above — and prove
+       * nothing about product_count at all. So the message has to name the
+       * products, which means clearing the balance first.
+       */
+      const settle = await postSupplierTransaction(branch, actor, {
+        supplierId,
+        docType: 'payment',
+        amount: 1000,
+        reference: PROBE_TAG,
+        description: `${PROBE_TAG} settle`,
+        source: 'manual',
+      })
+      ok('the balance can be settled', settle.ok, settle.ok ? '' : settle.error)
+
+      const { deleteSupplier } = await import('../src/lib/site/suppliers')
+      const refused = await deleteSupplier(branch, actor, supplierId)
+      ok(
+        'deleteSupplier refuses because a PRODUCT is linked',
+        !refused.ok && /product/i.test(refused.ok ? '' : refused.error),
+        refused.ok ? 'IT DELETED' : refused.error.slice(0, 90),
+      )
+
+      await siteQuery(branch, 'DELETE FROM product_suppliers WHERE supplier_code = ?', [PROBE_TAG])
+    }
+
+    const renamed = await updateSupplier(branch, actor, supplierId, {
+      code,
+      name: `${PROBE_TAG} supplier renamed`,
+      paymentTermsDays: 30,
+    })
+    ok('updateSupplier saves from the branch', renamed.ok, renamed.ok ? '' : renamed.error)
+
+    const afterRename = await siteQueryOne<Row>(
+      primary,
+      'SELECT name FROM suppliers WHERE id = ?',
+      [supplierId],
+    )
+    ok(
+      'and the change landed in the OWNER',
+      String(afterRename?.name ?? '').includes('renamed'),
+      String(afterRename?.name ?? '(gone)'),
+    )
+
     /* ── The invariant still holds ──────────────────────────────────────── */
 
     console.log('\n— The invariant —')

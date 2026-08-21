@@ -1,10 +1,17 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import {
+  supplierQuery,
+  supplierQueryOne,
+  supplierExecute,
+  supplierTransaction,
+  supplierBranchDbPrefix,
+  customerTransaction,
+} from './customerDb'
 import { toNum } from '../decimals'
 import { isEmail } from './customerLookups'
 import { resolveMasterCode } from './masterCodes'
-import { logActivityTx, type Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 import { removeDocumentsFor } from './partyDocuments'
 import { removeCommentsFor } from './partyComments'
 import { deleteStoredFile } from '../uploads'
@@ -101,7 +108,35 @@ function mapSupplier(r: Row): Supplier {
   }
 }
 
-const SELECT_SUPPLIER = `
+/**
+ * The supplier row, plus how many products link to it.
+ *
+ * A function rather than a constant because the two halves may be in different
+ * databases and the qualifier is only known at call time.
+ *
+ * ── WHY product_count NEEDS THE BRANCH NAMED ─────────────────────────────
+ *
+ * `suppliers` moves to the owner when the file is shared; `product_suppliers`
+ * does NOT — it keys into `products`, which stay per store (206). So this
+ * statement runs on the OWNER and the subquery has to reach back to the
+ * CALLER's database, which is what branchDbPrefix is for.
+ *
+ * That is not cosmetic. deleteSupplier refuses on productCount > 0, and the
+ * refusal is the only thing standing between a branch and deleting a supplier
+ * that three other branches still buy from. Counted on the owner's own
+ * (empty, at a branch) product_suppliers it would read zero and never refuse.
+ *
+ * It is deliberately THIS branch's links and not the group's. A supplier is
+ * unlinked store by store, because the links themselves are per store — so the
+ * question the screen asks and the question the guard asks are the same one:
+ * "does MY shop still buy from them". A group-wide count would refuse a delete
+ * that this store is entitled to make and could not tell the user where the
+ * remaining links are.
+ *
+ * Both prefixes are empty for an unshared site, so the SQL and its plan are
+ * byte-for-byte what they always were.
+ */
+const selectSupplier = (bdb: string) => `
   SELECT s.id, s.code, s.name, s.status, s.status_reason, s.contact_name, s.email, s.phone,
          s.address_line1, s.address_line2, s.city, s.postal_code, s.vat_number,
          s.account_number, s.payment_terms_days,
@@ -109,7 +144,8 @@ const SELECT_SUPPLIER = `
          s.lead_time_days, s.minimum_order,
          s.bank_name, s.bank_branch, s.bank_account, s.category, s.balance, s.notes,
          s.created_at, s.updated_at,
-         (SELECT COUNT(*) FROM product_suppliers ps WHERE ps.supplier_id = s.id) AS product_count
+         (SELECT COUNT(*) FROM ${bdb}product_suppliers ps WHERE ps.supplier_id = s.id)
+           AS product_count
     FROM suppliers s
 `
 
@@ -180,15 +216,16 @@ export async function listSuppliers(
   const column = SORT_COLUMNS[opts.sort ?? 'name']
   const direction = opts.direction === 'desc' ? 'DESC' : 'ASC'
 
+  const bdb = await supplierBranchDbPrefix(siteId)
   const [rows, countRow] = await Promise.all([
-    siteQuery<Row>(
+    supplierQuery<Row>(
       siteId,
-      `${SELECT_SUPPLIER} ${whereSql}
+      `${selectSupplier(bdb)} ${whereSql}
         ORDER BY ${column} ${direction}, s.id ASC
         LIMIT ${limit} OFFSET ${offset}`,
       params,
     ),
-    siteQueryOne<RowDataPacket & { total: number }>(
+    supplierQueryOne<RowDataPacket & { total: number }>(
       siteId,
       `SELECT COUNT(*) AS total FROM suppliers s ${whereSql}`,
       params,
@@ -206,7 +243,7 @@ export type SupplierSummary = {
 }
 
 export async function supplierSummary(siteId: number): Promise<SupplierSummary> {
-  const row = await siteQueryOne<Row>(
+  const row = await supplierQueryOne<Row>(
     siteId,
     `SELECT COUNT(*)                                                 AS total,
             SUM(CASE WHEN balance > 0 THEN 1 ELSE 0 END)             AS owed,
@@ -225,7 +262,11 @@ export async function supplierSummary(siteId: number): Promise<SupplierSummary> 
 }
 
 export async function getSupplier(siteId: number, id: number): Promise<Supplier | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_SUPPLIER} WHERE s.id = ? LIMIT 1`, [id])
+  const row = await supplierQueryOne<Row>(
+    siteId,
+    `${selectSupplier(await supplierBranchDbPrefix(siteId))} WHERE s.id = ? LIMIT 1`,
+    [id],
+  )
   return row ? mapSupplier(row) : null
 }
 
@@ -345,14 +386,14 @@ export async function createSupplier(
   if (invalid) return { ok: false, error: invalid }
 
   const code = withCode.code.trim()
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+  const clash = await supplierQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM suppliers WHERE code = ? LIMIT 1',
     [code],
   )
   if (clash) return { ok: false, error: `Supplier code "${code}" is already in use.` }
 
-  return siteTransaction(siteId, async (tx) => {
+  return supplierTransaction(siteId, async (tx) => {
     const placeholders = COLUMN_LIST.split(',').length
     const [res] = await tx.execute(
       `INSERT INTO suppliers (${COLUMN_LIST})
@@ -361,14 +402,21 @@ export async function createSupplier(
     )
     const id = (res as { insertId: number }).insertId
 
-    await logActivityTx(tx, actor, {
+    return { ok: true as const, id }
+  }).then(async (result) => {
+    // The audit line goes to THIS store, outside the transaction. activity_log
+    // is a BRANCH table — it records what a person did, so it belongs where the
+    // person was, and logActivityTx would have written it on the owner's
+    // connection. Same trade the customer file made: the supplier row is the
+    // fact, the log line is the note about it, and logActivity swallows its own
+    // errors so a failed note cannot undo a saved supplier.
+    await logActivity(siteId, actor, {
       entity: 'supplier',
-      entityId: id,
+      entityId: result.id,
       action: 'create',
       detail: `${code} — ${input.name.trim()}`,
     })
-
-    return { ok: true as const, id }
+    return result
   })
 }
 
@@ -385,7 +433,7 @@ export async function updateSupplier(
   if (!existing) return { ok: false, error: 'Supplier not found.' }
 
   const code = input.code.trim()
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+  const clash = await supplierQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM suppliers WHERE code = ? AND id <> ? LIMIT 1',
     [code, id],
@@ -394,35 +442,37 @@ export async function updateSupplier(
 
   const nextStatus = input.status ?? 'active'
 
-  return siteTransaction(siteId, async (tx) => {
-    // balance is deliberately absent — see the module comment.
-    await tx.execute(
-      `UPDATE suppliers SET
-         code = ?, name = ?, status = ?, status_reason = ?, contact_name = ?, email = ?,
-         phone = ?, address_line1 = ?, address_line2 = ?, city = ?, postal_code = ?,
-         vat_number = ?, account_number = ?, payment_terms_days = ?,
-         settlement_discount_days = ?, settlement_discount_pct = ?,
-         lead_time_days = ?,
-         minimum_order = ?, bank_name = ?, bank_branch = ?, bank_account = ?,
-         category = ?, notes = ?
-       WHERE id = ?`,
-      [...writableColumns(input), id] as never,
-    )
+  // One statement, so no transaction: the audit line has to be written
+  // separately anyway (it is a branch table) and a transaction around a single
+  // UPDATE guarantees nothing the statement does not guarantee on its own.
+  // balance is deliberately absent from the column list — see the module comment.
+  await supplierExecute(
+    siteId,
+    `UPDATE suppliers SET
+       code = ?, name = ?, status = ?, status_reason = ?, contact_name = ?, email = ?,
+       phone = ?, address_line1 = ?, address_line2 = ?, city = ?, postal_code = ?,
+       vat_number = ?, account_number = ?, payment_terms_days = ?,
+       settlement_discount_days = ?, settlement_discount_pct = ?,
+       lead_time_days = ?,
+       minimum_order = ?, bank_name = ?, bank_branch = ?, bank_account = ?,
+       category = ?, notes = ?
+     WHERE id = ?`,
+    [...writableColumns(input), id],
+  )
 
-    await logActivityTx(tx, actor, {
-      entity: 'supplier',
-      entityId: id,
-      action: existing.status !== nextStatus ? 'status' : 'update',
-      detail:
-        existing.status !== nextStatus
-          ? `${existing.status} → ${nextStatus}${
-              input.statusReason?.trim() ? ` — ${input.statusReason.trim()}` : ''
-            }`
-          : `${code} — ${input.name.trim()}`,
-    })
-
-    return { ok: true as const, id }
+  await logActivity(siteId, actor, {
+    entity: 'supplier',
+    entityId: id,
+    action: existing.status !== nextStatus ? 'status' : 'update',
+    detail:
+      existing.status !== nextStatus
+        ? `${existing.status} → ${nextStatus}${
+            input.statusReason?.trim() ? ` — ${input.statusReason.trim()}` : ''
+          }`
+        : `${code} — ${input.name.trim()}`,
   })
+
+  return { ok: true as const, id }
 }
 
 /**
@@ -458,25 +508,51 @@ export async function deleteSupplier(
     }
   }
 
-  // Contacts cascade with the account; documents and comments do not, because
-  // they hang off the loose (entity, entity_id) pair. Same reasoning as
-  // deleteCustomer — see 028_party_contacts_documents_comments.sql.
-  const orphaned = await siteTransaction(siteId, async (tx) => {
-    const storedNames = await removeDocumentsFor(tx, 'supplier', id)
+  /*
+   * ── THREE TABLES, AND THEY ARE NOT ALL IN THE SAME DATABASE ──────────────
+   *
+   * Contacts cascade with the account and move with it, so they need no
+   * mention. Documents and comments do not cascade — they hang off the loose
+   * (entity, entity_id) pair (028) — and under supplier sharing they are not
+   * even in the same database as the supplier:
+   *
+   *   suppliers        → the SUPPLIER owner
+   *   party_documents  → wherever the CUSTOMER file lives, because that is
+   *   party_comments     where deleteCustomer put them, and one table cannot
+   *                      follow two files
+   *   activity_log     → always the branch; it records what a person did
+   *
+   * That third column is the open question in
+   * docs/shared-customer-file-origin-site.md, and this is the first code that
+   * actually meets it. It is handled rather than solved: the documents are
+   * removed on the connection that holds them, which is correct whichever file
+   * is shared, and the split is made explicit so the eventual fix has one place
+   * to land.
+   *
+   * ORDER: documents first, supplier last. A failure partway leaves the
+   * supplier standing with its documents gone — untidy, visible, and
+   * repairable by deleting again. The reverse would leave documents belonging
+   * to a supplier that no longer exists, which nothing surfaces and nothing
+   * cleans up.
+   */
+  const storedNames = await customerTransaction(siteId, async (tx) => {
+    const names = await removeDocumentsFor(tx, 'supplier', id)
     await removeCommentsFor(tx, 'supplier', id)
-
-    await tx.execute('DELETE FROM suppliers WHERE id = ?', [id] as never)
-    await logActivityTx(tx, actor, {
-      entity: 'supplier',
-      entityId: id,
-      action: 'delete',
-      detail: `${supplier.code} — ${supplier.name}`,
-    })
-    return storedNames
+    return names
   })
 
-  // After the commit, never inside it — see deleteCustomer.
-  await Promise.all(orphaned.map(deleteStoredFile))
+  await supplierExecute(siteId, 'DELETE FROM suppliers WHERE id = ?', [id])
+
+  await logActivity(siteId, actor, {
+    entity: 'supplier',
+    entityId: id,
+    action: 'delete',
+    detail: `${supplier.code} — ${supplier.name}`,
+  })
+
+  // After the row is gone, never before it — see deleteCustomer. A file removed
+  // from disk cannot be put back by a rolled-back transaction.
+  await Promise.all(storedNames.map(deleteStoredFile))
 
   return { ok: true }
 }
@@ -510,9 +586,10 @@ export async function bulkUpdateSuppliers(
     }
   }
 
-  const rows = await siteQuery<Row>(
+  const rows = await supplierQuery<Row>(
     siteId,
-    `${SELECT_SUPPLIER} WHERE s.id IN (${unique.map(() => '?').join(',')})`,
+    `${selectSupplier(await supplierBranchDbPrefix(siteId))}
+      WHERE s.id IN (${unique.map(() => '?').join(',')})`,
     unique,
   )
   const suppliers = rows.map(mapSupplier)
@@ -544,20 +621,22 @@ export async function bulkUpdateSuppliers(
   const { sql, params } = bulkSetClause(change)
   const idList = permitted.map((s) => s.id)
 
-  await siteTransaction(siteId, async (tx) => {
-    await tx.execute(
-      `UPDATE suppliers SET ${sql} WHERE id IN (${idList.map(() => '?').join(',')})`,
-      [...params, ...idList] as never,
-    )
-    for (const supplier of permitted) {
-      await logActivityTx(tx, actor, {
-        entity: 'supplier',
-        entityId: supplier.id,
-        action: change.kind === 'status' ? 'status' : 'bulk',
-        detail: describeBulk(change, supplier),
-      })
-    }
-  })
+  // One UPDATE, so no transaction. The audit lines follow on the branch's own
+  // connection, for the reason given in createSupplier.
+  await supplierExecute(
+    siteId,
+    `UPDATE suppliers SET ${sql} WHERE id IN (${idList.map(() => '?').join(',')})`,
+    [...params, ...idList],
+  )
+
+  for (const supplier of permitted) {
+    await logActivity(siteId, actor, {
+      entity: 'supplier',
+      entityId: supplier.id,
+      action: change.kind === 'status' ? 'status' : 'bulk',
+      detail: describeBulk(change, supplier),
+    })
+  }
 
   return { updated: permitted.length, skipped }
 }
@@ -604,7 +683,7 @@ export async function supplierIdsMatching(
   opts: SupplierListOptions,
 ): Promise<number[]> {
   const { sql: whereSql, params } = buildWhere(opts)
-  const rows = await siteQuery<RowDataPacket & { id: number }>(
+  const rows = await supplierQuery<RowDataPacket & { id: number }>(
     siteId,
     `SELECT s.id FROM suppliers s ${whereSql} LIMIT 5000`,
     params,
@@ -634,7 +713,7 @@ export async function supplierIdsMatching(
 export async function supplierOptions(
   siteId: number,
 ): Promise<{ id: number; name: string }[]> {
-  const rows = await siteQuery<RowDataPacket & { id: number; code: string; name: string }>(
+  const rows = await supplierQuery<RowDataPacket & { id: number; code: string; name: string }>(
     siteId,
     `SELECT id, code, name FROM suppliers WHERE status = 'active' ORDER BY name, code`,
   )

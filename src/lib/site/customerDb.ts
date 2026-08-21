@@ -228,6 +228,33 @@ export async function branchDbPrefix(siteId: number): Promise<string> {
   return `\`${db.databaseName}\`.`
 }
 
+/**
+ * The branch-side mirror for a query that runs against the SUPPLIER owner.
+ *
+ * Not interchangeable with branchDbPrefix above, and the difference is easy to
+ * miss: that one is keyed on the CUSTOMER owner, so on a site that shares only
+ * suppliers it returns empty and a supplier-owner query silently reads the
+ * owner's copy of a branch table.
+ *
+ * The case is product_suppliers and supplier_prices. Both stay in the branch
+ * (206) because they key into `products`, so a statement that has moved to the
+ * supplier owner and needs to reach one of them has to name the caller.
+ *
+ * Empty when the caller owns its own suppliers, so nothing changes for a single
+ * store.
+ */
+export async function supplierBranchDbPrefix(siteId: number): Promise<string> {
+  const owner = await supplierOwnerSite(siteId)
+  if (owner.siteId === siteId) return ''
+
+  const db = await getSiteDatabase(siteId, MASTER)
+  if (!db) throw new Error(`Site ${siteId} has no active database.`)
+  if (!SAFE_DB_NAME.test(db.databaseName)) {
+    throw new Error(`Refusing to build SQL with the database name "${db.databaseName}".`)
+  }
+  return `\`${db.databaseName}\`.`
+}
+
 /** The same, for the creditors book. */
 export async function supplierDbPrefix(siteId: number): Promise<string> {
   const owner = await supplierOwnerSite(siteId)
