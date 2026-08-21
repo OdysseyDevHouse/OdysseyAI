@@ -65,9 +65,16 @@ CREATE TABLE IF NOT EXISTS supplier_prices (
   pack_size      DECIMAL(12,3) NOT NULL DEFAULT 1.000,
 
   -- Their reference for the list this line came off, quoted when querying it.
-  list_reference VARCHAR(60)  NULL,
-  note           VARCHAR(190) NULL,
-
+  --
+  -- Declared ONCE. This pair appeared twice, so the file raised
+  -- ER_DUP_FIELDNAME and could not create the table on a fresh database at all
+  -- — proven by running it against an empty schema, not inferred. The header
+  -- above explains why: the file was reconstructed from SHOW CREATE TABLE
+  -- against the one live database that already had the table, so nothing ever
+  -- executed it.
+  --
+  -- It only mattered once a NEW site had to be provisioned, which is exactly
+  -- what joining a store group requires.
   list_reference VARCHAR(60)  NULL,
   note           VARCHAR(190) NULL,
 
