@@ -3,7 +3,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { customerOwnerSite } from '../storeGroups'
 import { round, toNum } from '../decimals'
-import { logActivityTx, type Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 import {
   AGING_BUCKETS,
   bucketFor,
@@ -490,7 +490,25 @@ export async function postTransaction(
 
     await bumpBalance(tx, input.customerId, signed)
 
-    await logActivityTx(tx, actor, {
+    return { ok: true as const, id }
+  }).then(async (result) => {
+    // The audit line goes to the BRANCH, outside the transaction.
+    //
+    // logActivityTx would write it on the ledger's connection, which under a
+    // shared customer file is the group primary — so a posting made at branch 4
+    // left its audit trail in head office's log, attributed to a branch user id
+    // that head office's users table may map to a different person. Meanwhile
+    // the non-transactional logActivity calls elsewhere in this module wrote to
+    // the branch, so one business action's trail split across two databases
+    // depending on which helper was reached for.
+    //
+    // activity_log stays local by design — it records what a PERSON did, so it
+    // belongs where the person was, and listActivity reads the caller's own
+    // database. customers.ts made the same trade for the same reason: the
+    // ledger row is the fact, the log line is the note about it, and
+    // logActivity already swallows its own errors so a failed note cannot
+    // undo a posted transaction.
+    await logActivity(siteId, actor, {
       entity: 'customer',
       entityId: input.customerId,
       action: 'ledger',
@@ -500,8 +518,6 @@ export async function postTransaction(
       ),
     })
 
-    return { ok: true as const, id }
-  }).then(async (result) => {
     // Auto-allocation runs in its own transaction, after the posting is safely
     // committed. A failure to match must never roll back the payment itself —
     // an unallocated payment is a tidy-up job; a lost one is a phone call.
@@ -648,14 +664,16 @@ export async function reverseTransaction(
 
     await bumpBalance(tx, original.customerId, reversed)
 
-    await logActivityTx(tx, actor, {
+    return { ok: true as const, id }
+  }).then(async (result) => {
+    // To the branch, outside the transaction — see postTransaction above.
+    await logActivity(siteId, actor, {
       entity: 'customer',
       entityId: original.customerId,
       action: 'reverse',
       detail: `Reversed ${original.docLabel} ${original.docNumber ?? `#${original.id}`} — ${reason.trim()}`,
     })
-
-    return { ok: true as const, id }
+    return result
   })
 }
 
@@ -743,12 +761,14 @@ export async function unallocate(
       'UPDATE customer_transactions SET amount_outstanding = amount_outstanding - ? WHERE id = ?',
       [value.toFixed(4), creditId] as never,
     )
-    await logActivityTx(tx, actor, {
-      entity: 'customer',
-      entityId: 0,
-      action: 'unallocate',
-      detail: `Unallocated ${value.toFixed(2)} between #${debitId} and #${creditId}`,
-    })
+  })
+
+  // To the branch, outside the transaction — see postTransaction above.
+  await logActivity(siteId, actor, {
+    entity: 'customer',
+    entityId: 0,
+    action: 'unallocate',
+    detail: `Unallocated ${value.toFixed(2)} between #${debitId} and #${creditId}`,
   })
 
   return { ok: true, allocated: value }
@@ -879,12 +899,14 @@ export async function repairBalance(
       computed.toFixed(4),
       customerId,
     ] as never)
-    await logActivityTx(tx, actor, {
-      entity: 'customer',
-      entityId: customerId,
-      action: 'repair',
-      detail: `Balance corrected from ${stored.toFixed(2)} to ${computed.toFixed(2)} to match the ledger`,
-    })
+  })
+
+  // To the branch, outside the transaction — see postTransaction above.
+  await logActivity(siteId, actor, {
+    entity: 'customer',
+    entityId: customerId,
+    action: 'repair',
+    detail: `Balance corrected from ${stored.toFixed(2)} to ${computed.toFixed(2)} to match the ledger`,
   })
 
   return { ok: true, from: stored, to: computed }

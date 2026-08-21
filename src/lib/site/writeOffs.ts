@@ -2,7 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum } from '../decimals'
-import { logActivity, logActivityTx, type Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 import { postTransaction, openDebits, allocate } from './customerLedger'
 import { today } from './ledger'
 import { guardPosting } from './periodLocks'
@@ -240,14 +240,17 @@ export async function requestWriteOff(
     )
     const writeOffId = (res as { insertId: number }).insertId
 
-    await logActivityTx(tx, actor, {
-      entity: 'customer',
-      entityId: input.customerId,
-      action: 'write_off_requested',
-      detail: `Write-off of ${amount.toFixed(2)} requested — ${input.reason.trim()}${needsApproval ? ' (awaiting approval)' : ''}`,
-    })
-
     return writeOffId
+  })
+
+  // To the branch, outside the transaction — the write-off row goes to the
+  // customer file's owner, the note about who asked for it stays where the
+  // person was. See customerLedger.ts.
+  await logActivity(siteId, actor, {
+    entity: 'customer',
+    entityId: input.customerId,
+    action: 'write_off_requested',
+    detail: `Write-off of ${amount.toFixed(2)} requested — ${input.reason.trim()}${needsApproval ? ' (awaiting approval)' : ''}`,
   })
 
   if (needsApproval) {

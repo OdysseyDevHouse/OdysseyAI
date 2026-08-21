@@ -2,7 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum } from '../decimals'
-import { logActivity, logActivityTx, type Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 import { postTransaction } from './customerLedger'
 import { today } from './ledger'
 import {
@@ -524,12 +524,18 @@ export async function excludeItem(
         WHERE r.id = ?`,
       [Number(item.run_id)] as never,
     )
-    await logActivityTx(tx, actor, {
-      entity: 'customer',
-      entityId: Number(item.customer_id),
-      action: 'interest_excluded',
-      detail: `Excluded from interest run — ${reason.trim() || 'no reason given'}`,
-    })
+  })
+
+  // To the branch, outside the transaction. logActivityTx would have written it
+  // on the customer file's connection — head office under sharing — splitting
+  // one action's audit trail across two databases, since the logActivity calls
+  // elsewhere in this module write locally. activity_log records what a PERSON
+  // did and stays where the person was. See customerLedger.ts.
+  await logActivity(siteId, actor, {
+    entity: 'customer',
+    entityId: Number(item.customer_id),
+    action: 'interest_excluded',
+    detail: `Excluded from interest run — ${reason.trim() || 'no reason given'}`,
   })
 
   return { ok: true }
