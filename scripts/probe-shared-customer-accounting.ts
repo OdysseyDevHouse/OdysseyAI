@@ -442,6 +442,36 @@ async function main() {
       INCONCLUSIVE('the stores agree but neither saw the seeded sale', observedSpend)
     }
 
+    /* ── FINDING 3: training mode at a sharing branch ───────────────────── */
+
+    console.log('\n— Finding 3: training mode purges tables the rows never reached —')
+
+    try {
+      const { startTraining } = await import('../src/lib/site/trainingMode')
+      const started = await startTraining(branch, { userId: 0, userName: PROBE_TAG })
+
+      if (started.ok) {
+        // It started, so the session must now be stopped or the site is left in
+        // training — which would wreck every later run of every other suite.
+        const { stopTraining } = await import('../src/lib/site/trainingMode')
+        const stopped = await stopTraining(branch, { userId: 0, userName: PROBE_TAG })
+        CONFIRMED(
+          'a branch sharing the group customer file was allowed into training mode',
+          `startTraining returned ok; stop ${stopped.ok ? 'succeeded' : 'FAILED — SITE MAY STILL BE IN TRAINING'}`,
+        )
+      } else {
+        NOT_REPRODUCED(
+          'training mode was refused at a sharing branch',
+          `refused with: "${started.error.slice(0, 150)}"`,
+        )
+      }
+    } catch (e) {
+      INCONCLUSIVE(
+        'startTraining',
+        `threw: ${e instanceof Error ? e.message : String(e)}`,
+      )
+    }
+
     /* ── FINDING 7: opening balances plan against the wrong file ────────── */
 
     console.log('\n— Finding 7: opening-balance import matches codes in the caller’s database —')

@@ -415,10 +415,71 @@ export type StartResult = { ok: true; session: TrainingSession } | { ok: false; 
  * COALESCE(MAX(id), 0) — an empty table marks at zero, so everything a training
  * session puts in it is above the mark and gets removed.
  */
+/**
+ * Refuses training mode where its cleanup cannot reach the rows it would make.
+ *
+ * ── WHY A SHARED CUSTOMER FILE BREAKS THE WHOLE SCHEME ────────────────────
+ *
+ * Training is built on high-water marks: startTraining records MAX(id) for each
+ * table in THIS database, and stopTraining deletes everything above the mark.
+ * That is exact, cheap and impossible to get wrong by a row — as long as every
+ * row a training sale writes lands in the database the marks were taken from.
+ *
+ * A shared customer file breaks the premise rather than bending it. An account
+ * sale at a branch posts its debtor row into the GROUP PRIMARY's
+ * customer_transactions, and the same for customer_allocations, loyalty_ledger
+ * and loyalty_wallet. The branch's own copies of those tables are EMPTY — an
+ * emptiness that sharing guarantees, since a store may only join the group's
+ * file while its own is empty.
+ *
+ * So the marks are all zero, stopTraining deletes nothing, rebuildLedgerBalances
+ * rewrites balances in the branch that nothing has moved, and the screen reports
+ * the practice data as removed. Meanwhile R12,000 of pretend invoices sit in
+ * head office's REAL debtors book, on a real customer's statement, in the age
+ * analysis, and in every credit check made anywhere in the group. Nothing in
+ * this module can find them again: they are above no mark it holds.
+ *
+ * ── WHY REFUSED RATHER THAN EXTENDED ──────────────────────────────────────
+ *
+ * Marking and purging the owner's tables too is the obvious repair and it is
+ * the wrong one. The mark would have to be taken across two databases and the
+ * purge run in two transactions, so a crash between them leaves training rows
+ * in a live shared book with the session already closed. Worse, the owner's
+ * tables are receiving REAL rows from every other branch at the same time; a
+ * delete above a mark there would take live sales made by other shops while
+ * this one was practising.
+ *
+ * A branch that wants to practise can leave the group's customer file, or
+ * practise on cash sales — which stay local and are covered by the marks as
+ * they always were. Neither is as convenient as training mode, and both are
+ * better than silently writing into another store's books.
+ *
+ * Never throws: a control-database problem must not block training on a shop
+ * that is not sharing at all. Failing open is the same answer the site gave
+ * before sharing existed.
+ */
+async function sharedCustomerFileRefusal(siteId: number): Promise<string | null> {
+  try {
+    const { customerFileIsShared } = await import('../storeGroups')
+    if (!(await customerFileIsShared(siteId))) return null
+  } catch {
+    return null
+  }
+  return (
+    'This store shares its customer file with the rest of the group, and training ' +
+    'mode cannot be used while it does. Practice sales made on account would be ' +
+    'written into the group’s real customer ledger, and switching training off ' +
+    'could not remove them. Cash sales are unaffected.'
+  )
+}
+
 export async function startTraining(
   siteId: number,
   actor: { userId: number; userName: string },
 ): Promise<StartResult> {
+  const sharedRefusal = await sharedCustomerFileRefusal(siteId)
+  if (sharedRefusal) return { ok: false, error: sharedRefusal }
+
   try {
     return await siteTransaction<StartResult>(siteId, async (tx) => {
       // Re-check inside the transaction. Two managers pressing the switch at the
@@ -560,7 +621,22 @@ export async function trainingSummary(siteId: number): Promise<TrainingSummary> 
 /* ── Stopping ───────────────────────────────────────────────────────────── */
 
 export type StopResult =
-  | { ok: true; removed: { table: string; rows: number }[]; removedTotal: number }
+  | {
+      ok: true
+      removed: { table: string; rows: number }[]
+      removedTotal: number
+      /**
+       * Set when the purge could not have reached everything the session wrote.
+       *
+       * startTraining refuses a store that shares its customer file, but sharing
+       * can be switched on DURING a session — so a purge can run against a
+       * store whose debtor rows went to the group primary, above no mark this
+       * database holds. There is nothing safe to do about it here (see
+       * sharedCustomerFileRefusal), so the screen must say so rather than
+       * report a clean removal.
+       */
+      warning?: string
+    }
   | { ok: false; error: string }
 
 /**
@@ -587,6 +663,14 @@ export async function stopTraining(
 ): Promise<StopResult> {
   const session = await currentSession(siteId)
   if (!session) return { ok: false, error: 'Training mode is not switched on for this store.' }
+
+  // Read BEFORE the purge, not after: this decides what the result may claim.
+  // A session started when the store owned its own customers can still end
+  // while it shares them — somebody switches sharing on mid-session — and then
+  // the debtor rows this purge is about to look for are in another database,
+  // above no mark it holds. Stopping is still the right thing to do; saying
+  // "removed" without qualification is not.
+  const sharedDuringSession = await sharedCustomerFileRefusal(siteId)
 
   try {
     return await siteTransaction<StopResult>(siteId, async (tx) => {
@@ -639,7 +723,20 @@ export async function stopTraining(
         [actor.userId, actor.userName.slice(0, 120), JSON.stringify(removed), session.id] as never,
       )
 
-      return { ok: true, removed, removedTotal }
+      return {
+        ok: true,
+        removed,
+        removedTotal,
+        ...(sharedDuringSession
+          ? {
+              warning:
+                'This store now shares its customer file with the group. Any account ' +
+                'sales, loyalty points or wallet movements made during training were ' +
+                'written to the group’s customer ledger and could NOT be removed from ' +
+                'here — check them at the store that holds the customer file.',
+            }
+          : {}),
+      }
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

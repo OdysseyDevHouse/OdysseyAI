@@ -116,15 +116,22 @@ export async function stopTrainingAction(confirmText: string): Promise<TrainingR
   if (!result.ok) return result
 
   revalidateEverything()
+
+  const removedMessage =
+    result.removedTotal === 0
+      ? 'Training mode is off. Nothing was created during the session, so nothing was removed.'
+      : `Training mode is off. ${result.removedTotal.toLocaleString()} training ${
+          result.removedTotal === 1 ? 'record' : 'records'
+        } removed.`
+
   return {
     ok: true,
     state: await state(ctx.siteId),
-    message:
-      result.removedTotal === 0
-        ? 'Training mode is off. Nothing was created during the session, so nothing was removed.'
-        : `Training mode is off. ${result.removedTotal.toLocaleString()} training ${
-            result.removedTotal === 1 ? 'record' : 'records'
-          } removed.`,
+    // The warning leads when there is one. "Nothing was removed" is the exact
+    // sentence a shared customer file produces — the branch's own tables were
+    // empty — and on its own it reads as "the session was quiet" rather than
+    // "the rows went somewhere this could not reach".
+    message: result.warning ? `${result.warning} ${removedMessage}` : removedMessage,
   }
 }
 
