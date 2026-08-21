@@ -25,6 +25,8 @@ Never move an id. Move the **portable key** and resolve it on the far side:
 | `departments` | `name` | `departmentIdFor()` |
 | `loyalty_cards` scope | product `code`, department `name` | `201_loyalty_central.sql` |
 | a document | `(origin_site_id, id)` | `198_origin_site.sql` |
+| `sales_reps` | `name` | `205_customer_rep_name.sql` |
+| a supplier document | `(origin_site_id, source_doc_id)` | `206_shared_supplier_file.sql` |
 
 ---
 
@@ -82,7 +84,31 @@ agree by accident where ten cannot.
 
 ---
 
-## ⚠ Open: `sales_reps` is NOT replicated — my earlier note was wrong
+## ✅ Fixed: `sales_reps` travels by name
+
+**Answered:** a rep is a group-wide PERSON — they work for the company, not a
+building — so option 2 below was taken. **Fixed:** `205_customer_rep_name.sql`
+adds `customers.rep_name`, backfilled from the rep the customer already points
+at, and every read, filter, bulk-assign and delete-guard resolves through it.
+
+By NAME and not code: `code` is nullable with no unique key, so it does not
+identify a rep even within one store, while `name` carries `uq_sales_rep_name`
+and is already what every lookup in `customerLookups.ts` matches on.
+
+`rep_id` stays — within one store it is a correct indexed FK doing real work,
+and every unshared site keeps using it. Renaming a rep now carries to the
+customers, read before the update while the old name is still knowable.
+
+Verified against genuinely divergent ids: the same rep is id 5 at the primary
+and id 3 at the branch; the branch's own id filters correctly and the count
+crosses the boundary.
+
+The original note is kept below, because the reasoning that made it wrong is
+the part worth remembering.
+
+---
+
+## ⚠ Was open: `sales_reps` is NOT replicated — my earlier note was wrong
 
 `customerDb.ts` used to state that `sales_reps` "is replicated into every store
 rather than moved", and the decision to leave rep joins alone was built on that
@@ -112,10 +138,51 @@ Option 2 matches how documents already snapshot a customer, and how loyalty
 cards name a product `code`. It is the recommendation, but commission is
 involved, so it is the owner's call rather than mine.
 
-## ⚠ Open: `customerFileIsShared()` is defined and never called
+## ✅ Fixed: `customerFileIsShared()` is called, and it was also wrong
 
-`storeGroups.ts:393` exports it; nothing imports it. Whatever guard it was
-written for is not running.
+It was exported and never imported — but the more interesting part is that it
+would not have worked if it had been. It read `owner.siteId !== siteId`, "is my
+file in somebody else's database", which is true at a branch and **false at the
+primary** even though the primary's `customers` table IS the shared file.
+
+That broke the debtors reconciliation at head office — the one place that
+reconciles the whole book — which compared its own control account against the
+GROUP's sub-ledger and reported drift that could not be repaired. Measured at
+55.1m on a two-store demo group.
+
+It now asks whether any other member routes here, so it is true at both ends,
+and `supplierFileIsShared()` shares one implementation with it. Callers that
+genuinely need "is it elsewhere" compare `customerOwnerSite()` themselves, which
+is what `customerDbPrefix()` does and why it stayed correct.
+
+**The general lesson, which keeps recurring:** the primary is the most sharing
+store in the group, not the least. Any "am I special" test written from a
+branch's point of view inverts there, silently.
+
+---
+
+## ✅ Decided: the supplier file is shared, purchasing is not
+
+`shares_suppliers` shares the CREDITORS BOOK — one supplier record, one balance,
+one ledger, one payment run — so a supplier invoiced at branch 3 and paid from
+branch 7 nets off correctly.
+
+`purchase_documents`, `supplier_prices` and `product_suppliers` **stay in the
+branch.** All three key into `products`, and products do not move: where a group
+shares them at all it does so by replication, matched on code, which is a
+different mechanism. `199_loyalty_shared_split.sql` settled the identical
+argument on the customer side by keeping `loyalty_card_items` local for exactly
+this reason.
+
+So this is **not central buying**, whatever `015`'s header suggests. Each branch
+orders for itself, at its own agreed costs, into its own stock, with its own PO
+numbers. Genuine central buying needs a group-wide order document a branch
+receives against — a new flow, not a routing change. See
+`206_shared_supplier_file.sql`.
+
+`product_suppliers` and `supplier_prices` each carry a CASCADE key to `products`
+AND one to `suppliers` — a shape the customer side never met. Keeping them in
+the branch means the products key survives and only the supplier one is dropped.
 
 ---
 

@@ -31,12 +31,60 @@
 -- their children. A bill this shop received, paid from this shop's bank
 -- account, against stock delivered to this shop's shelves.
 --
--- product_suppliers and supplier_prices are NOT decided here. Each carries a
--- CASCADE foreign key to `products` AND one to `suppliers`, so no placement
--- keeps both — a shape 197 never met, since every table that moved with the
--- customer kept all its keys. They keep their current placement (branch) and
--- their supplier-side key is dropped below; whether they should move at all is
--- a separate decision with a schema change behind it.
+-- ── THE THREE THAT COULD HAVE GONE EITHER WAY: THEY STAY ─────────────────
+--
+-- purchase_documents (with its lines, charges and order details),
+-- supplier_prices and product_suppliers. Each is genuinely arguable, and all
+-- three stay in the branch. Decided deliberately, so it is written here rather
+-- than left implicit in what the code happens to do.
+--
+-- WHAT THEY HAVE IN COMMON: every one of them keys into `products`, and
+-- products do not move. Where a store group shares products at all it does so
+-- by REPLICATION — the same product in each database, matched by code, an edit
+-- fanned out (015) — which is a different mechanism from the ownership model
+-- here. A table cannot be owned by the supplier file and keyed to a replicated
+-- product at the same time without one of its ids meaning nothing.
+--
+-- 199 already settled this exact argument on the customer side. loyalty_ledger
+-- and loyalty_wallet moved with the customer; loyalty_card_items stayed,
+-- BECAUSE it has foreign keys to products and departments and "cannot follow
+-- the customer without dragging the product file with it". Same shape, same
+-- answer.
+--
+-- purchase_documents adds its own reason: finaliseDocument moves
+-- products.average_cost and writes stock_movements in the same transaction as
+-- the receipt. The stock arrives at a building. And uq_pdoc_number is
+-- (doc_type, document_number) over a per-store sequence, so pooling ten
+-- branches' orders would collide on the first PO either way.
+--
+-- product_suppliers and supplier_prices each carry a CASCADE key to `products`
+-- AND one to `suppliers` — a shape 197 never met, since every table that moved
+-- with the customer kept all its keys. Keeping them in the branch means the
+-- products key survives and only the supplier one is dropped (below), which is
+-- the half that can be enforced in code.
+--
+-- ── WHAT THIS MEANS THE FEATURE IS, AND IS NOT ───────────────────────────
+--
+-- It is ONE CREDITORS BOOK: one supplier record, one balance, one ledger, one
+-- payment run, one statement — a supplier invoiced at branch 3 and paid from
+-- branch 7 nets off correctly.
+--
+-- It is NOT CENTRAL BUYING. Orders, receipts, agreed prices and the
+-- product-supplier links stay per store. Each branch orders for itself, at its
+-- own agreed costs, into its own stock, with its own PO numbers. A branch's
+-- "what is on order" figure counts only its own orders, which is the right
+-- number for a branch reordering its own shelves and the wrong one for a group
+-- buying centrally.
+--
+-- 015's header offers "central buying from one creditors book" as the
+-- motivation for the switch. That was aspirational; this migration delivers the
+-- creditors book and not the buying. The setup screen must say so plainly
+-- rather than let the phrase imply more than it does — a shop that switched
+-- this on expecting one PO series would find out by using it.
+--
+-- Genuine central buying is a larger, separate feature: it needs a group-wide
+-- purchase order that a branch receives against, which is a new document flow
+-- rather than a routing change.
 --
 -- ── WHAT IS LOST, AND WHAT REPLACES IT ───────────────────────────────────
 --

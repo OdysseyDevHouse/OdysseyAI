@@ -127,6 +127,19 @@ Two options, neither of which needs deciding now:
 The first is more faithful; the second is less work. Decide it with the supplier
 classification, not before.
 
+**Update — the supplier classification is now made (206), and this is still
+open.** Suppliers are shared as a creditors book while purchasing stays per
+store, so a supplier record genuinely does move to the owner, and these two
+tables genuinely cannot follow both files at once. Nothing has broken yet
+because the supplier switch is hidden and no site has both flags on.
+
+It has to be answered before the switch returns. The narrowing is that the
+supplier half of `party_documents` is thinner than the customer half — supplier
+documents are mostly price lists and contracts filed once, where a customer's
+are per-account correspondence — so "keep one table in the branch" costs less on
+the supplier side than it would have on the customer side. That is an argument
+for the cheaper option, not a decision.
+
 ---
 
 ## ⚠ Open: only ever run with two stores

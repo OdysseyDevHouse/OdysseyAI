@@ -323,23 +323,43 @@ export default function StoreCard({
             {/*
               ── "Use head office's supplier file" is HIDDEN, not removed ──────
               ─────────────────────────────────────────────────────────────────
-              The switch worked: supplierOwnerSite() resolves, supplierDbPrefix()
-              builds the right qualifier, and the flag saved. What is missing is
-              everything behind it. supplierLedger.ts and suppliers.ts — the
-              creditors sub-ledger and the supplier file itself — hold no owner
-              resolution at all, nor do purchaseDocuments, purchasePosting,
-              paymentRuns, expenses, supplierPrices, purchaseInvoiceMatch,
-              productSuppliers or reorderSuggestions.
+              The resolver always worked; what was missing was every module
+              behind it. Stage one landed the load-bearing half — supplierLedger,
+              paymentRuns, purchaseInvoiceMatch and the reconciliation now
+              resolve the owner (206, and probe-shared-supplier-file.ts proves
+              it) — so the remaining gap is purchasing: suppliers.ts,
+              purchaseDocuments, purchasePosting, expenses, supplierPrices,
+              productSuppliers and reorderSuggestions still read the branch's
+              own database.
 
-              So switching it on pointed a branch at head office's supplier file
-              while every purchasing query kept reading the branch's own empty
-              tables: no suppliers in the list, no orders raisable, no invoices
-              matchable. Not a subtle wrong answer — purchasing simply stops.
+              Switching it on today points a branch at head office's supplier
+              file while those keep reading their own empty tables: no suppliers
+              in the picker, no orders raisable, no invoices matchable. Not a
+              subtle wrong answer — purchasing stops.
 
               Hidden rather than disabled, because a greyed-out switch invites
               "how do I enable this?" and the answer is not a permission or a
-              setting, it is unwritten code. It comes back when the supplier
-              modules resolve their owner the way the customer ones now do.
+              setting, it is unwritten code.
+
+              ── AND WHEN IT RETURNS, THE LABEL HAS TO BE HONEST ──────────────
+
+              The hint this switch used to carry read "One supplier list and one
+              creditors book, for central buying." The first half is what the
+              feature is; the second half is not what it does.
+
+              purchase_documents, supplier_prices and product_suppliers all STAY
+              in the branch — decided, and argued in 206. So orders, agreed
+              costs and product-supplier links remain per store: each branch
+              orders for itself, at its own costs, into its own stock, with its
+              own PO numbers. What IS shared is the creditors book — one supplier
+              record, one balance, one ledger, one payment run, so a supplier
+              invoiced at branch 3 and paid from branch 7 nets off correctly.
+
+              A shop that switched this on expecting one PO series would find out
+              by using it. Whoever restores the switch should write the hint
+              about the creditors book and leave central buying out of it — that
+              is a separate feature needing a group-wide order document, not a
+              routing change.
 
               THE ACTION NO LONGER SENDS sharesSuppliers — see the note in
               actions.ts. Reading an unrendered field would evaluate to false and
