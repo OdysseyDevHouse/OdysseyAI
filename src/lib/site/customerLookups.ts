@@ -328,9 +328,24 @@ function mapRep(r: Row): SalesRep {
   }
 }
 
-const SELECT_REP = `
+/**
+ * sales_reps lives in THIS store; the customers assigned to a rep may not.
+ *
+ * The count is what deleteSalesRep refuses on, so getting it from the wrong
+ * database is not cosmetic: a branch counted its own empty customers table and
+ * never refused, letting somebody delete a rep who still holds two hundred
+ * accounts in the shared file.
+ *
+ * Counted by NAME rather than rep_id, for the reason 205 gives — the id means
+ * nothing on the other side of the boundary.
+ *
+ * A function rather than a constant because the customer database has to be
+ * named in the SQL, and the name is only known at call time. The prefix is
+ * empty for every unshared site, so the statement is byte-for-byte what it was.
+ */
+const selectRep = (cdb: string) => `
   SELECT r.id, r.name, r.code, r.email, r.phone, r.commission_pct, r.is_active,
-         (SELECT COUNT(*) FROM customers c WHERE c.rep_id = r.id) AS customer_count
+         (SELECT COUNT(*) FROM ${cdb}customers c WHERE c.rep_name = r.name) AS customer_count
     FROM sales_reps r
 `
 
@@ -338,9 +353,10 @@ export async function listSalesReps(
   siteId: number,
   includeInactive = false,
 ): Promise<SalesRep[]> {
+  const { customerDbPrefix } = await import('./customerDb')
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_REP}
+    `${selectRep(await customerDbPrefix(siteId))}
       ${includeInactive ? '' : 'WHERE r.is_active = 1'}
       ORDER BY r.name ASC`,
   )
@@ -348,7 +364,12 @@ export async function listSalesReps(
 }
 
 export async function getSalesRep(siteId: number, id: number): Promise<SalesRep | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_REP} WHERE r.id = ? LIMIT 1`, [id])
+  const { customerDbPrefix } = await import('./customerDb')
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `${selectRep(await customerDbPrefix(siteId))} WHERE r.id = ? LIMIT 1`,
+    [id],
+  )
   return row ? mapRep(row) : null
 }
 
@@ -417,6 +438,27 @@ export async function updateSalesRep(
   )
   if (clash) return { ok: false, error: `A rep called "${name}" already exists.` }
 
+  /*
+   * A rename has to carry to the customers, because the NAME is the link (205).
+   *
+   * Read before the update, while the old name is still knowable. Without this,
+   * renaming "Thabo M" to "Thabo Mokoena" would silently detach every account
+   * assigned to them: the rep row changes, the customers keep the old string,
+   * and the age analysis shows no rep for two hundred accounts.
+   *
+   * Done through the customer wrapper, so it reaches the shared file rather
+   * than the branch's own empty table. Deliberately not one transaction with
+   * the rep update — no transaction spans two databases — so the order matters:
+   * the rep row is renamed first, and a failure here leaves customers pointing
+   * at the old name, which is visible and repairable by renaming again. The
+   * reverse order would leave customers naming a rep that does not exist.
+   */
+  const before = await siteQueryOne<RowDataPacket & { name: string }>(
+    siteId,
+    'SELECT name FROM sales_reps WHERE id = ? LIMIT 1',
+    [id],
+  )
+
   const res = await siteExecute(
     siteId,
     `UPDATE sales_reps
@@ -433,6 +475,15 @@ export async function updateSalesRep(
     ],
   )
   if (res.affectedRows === 0) return { ok: false, error: 'Rep not found.' }
+
+  const oldName = before ? String(before.name) : null
+  if (oldName && oldName !== name) {
+    await customerExecute(siteId, 'UPDATE customers SET rep_name = ? WHERE rep_name = ?', [
+      name,
+      oldName,
+    ])
+  }
+
   return { ok: true, id }
 }
 

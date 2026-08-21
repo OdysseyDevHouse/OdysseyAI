@@ -531,10 +531,6 @@ const CUSTOMER_GROUP_JOIN: JoinUnit = {
   name: 'customerGroup',
   sql: 'LEFT JOIN {C}customer_groups cg ON cg.id = c.group_id',
 }
-const CUSTOMER_REP_JOIN: JoinUnit = {
-  name: 'customerRep',
-  sql: 'LEFT JOIN sales_reps cr ON cr.id = c.rep_id',
-}
 
 /**
  * The two coded reason lists, joined off sales_documents.
@@ -591,8 +587,8 @@ const CUSTOMER_LOOKUP_FIELDS: CatalogField[] = [
     key: 'accountRep',
     label: 'Sales rep',
     type: 'text',
-    expr: 'cr.name',
-    needs: ['customer', 'customerRep'],
+    expr: 'c.rep_name',
+    needs: ['customer'],
     group: FIELD_GROUPS.PEOPLE,
   },
   {
@@ -649,7 +645,6 @@ const SALES_SOURCE: CatalogSource = {
   joins: [
     CUSTOMER_JOIN,
     CUSTOMER_GROUP_JOIN,
-    CUSTOMER_REP_JOIN,
     VOID_REASON_JOIN,
     RETURN_REASON_JOIN,
     REVERSES_JOIN,
@@ -913,7 +908,6 @@ const SALE_LINES_SOURCE: CatalogSource = {
        its own; the whole document has one. */
     { name: 'returnReason', sql: 'LEFT JOIN sales_return_reasons rr ON rr.id = d.return_reason_id' },
     CUSTOMER_GROUP_JOIN,
-    CUSTOMER_REP_JOIN,
   ],
   defaultFilters: [{ field: 'status', op: 'eq', value: 'finalised' }],
   note: 'Starts with finalised documents only. Credit note lines carry negative quantities, so totals net off returns.',
@@ -1680,7 +1674,6 @@ const CUSTOMERS_SOURCE: CatalogSource = {
   ownedBy: 'customer',
   joins: [
     { name: 'group', sql: 'LEFT JOIN {C}customer_groups g ON g.id = t.group_id' },
-    { name: 'rep', sql: 'LEFT JOIN sales_reps r ON r.id = t.rep_id' },
   ],
   note: 'A snapshot of today. Balances are the current figure, not the balance on any past date.',
   fields: [
@@ -1688,7 +1681,7 @@ const CUSTOMERS_SOURCE: CatalogSource = {
     { key: 'name', label: 'Name', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
     enumField('status', 'Status', 't.status', ['active', 'on_hold', 'inactive', 'closed'], { starter: true }),
     { key: 'group', label: 'Customer group', type: 'text', expr: 'g.name', needs: ['group'], group: FIELD_GROUPS.CLASSIFICATION },
-    { key: 'rep', label: 'Sales rep', type: 'text', expr: 'r.name', needs: ['rep'], group: FIELD_GROUPS.PEOPLE },
+    { key: 'rep', label: 'Sales rep', type: 'text', expr: 't.rep_name', needs: [], group: FIELD_GROUPS.PEOPLE },
     { key: 'category', label: 'Category', type: 'text', expr: 't.category', group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'contactName', label: 'Contact', type: 'text', expr: 't.contact_name', group: FIELD_GROUPS.IDENTITY },
     { key: 'email', label: 'Email', type: 'text', expr: 't.email', group: FIELD_GROUPS.IDENTITY },
@@ -1770,7 +1763,6 @@ const CUSTOMER_TXN_SOURCE: CatalogSource = {
   joins: [
     { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' },
     CUSTOMER_GROUP_JOIN,
-    CUSTOMER_REP_JOIN,
   ],
   fields: [
     { key: 'docNumber', label: 'Document number', type: 'document', expr: 't.doc_number', starter: true, group: FIELD_GROUPS.IDENTITY },
@@ -1830,7 +1822,7 @@ const CUSTOMER_TXN_SOURCE: CatalogSource = {
       needs: ['customer', 'customerGroup'],
       group: FIELD_GROUPS.ACCOUNT,
     },
-    { key: 'accountRep', label: 'Sales rep', type: 'text', expr: 'cr.name', needs: ['customer', 'customerRep'], group: FIELD_GROUPS.PEOPLE },
+    { key: 'accountRep', label: 'Sales rep', type: 'text', expr: 'c.rep_name', needs: ['customer'], group: FIELD_GROUPS.PEOPLE },
     ...agedBucketFields(),
     ...timeBuckets('doc_date'),
   ],
@@ -3474,10 +3466,14 @@ const JOB_CARDS_SOURCE: CatalogSource = {
   table: 'job_cards',
   dateColumn: 'reported_at',
   /*
-   * CUSTOMER_REP_JOIN is here because CUSTOMER_LOOKUP_FIELDS includes accountRep,
-   * whose `needs` names it. A spread field set brings its join requirements with
-   * it, and omitting one fails only when somebody picks that single column —
-   * which no template does, so it would have shipped broken.
+   * There used to be a CUSTOMER_REP_JOIN here, because CUSTOMER_LOOKUP_FIELDS
+   * includes accountRep and its `needs` named it — a spread field set brings its
+   * join requirements with it, and omitting one fails only when somebody picks
+   * that single column.
+   *
+   * The join is gone: it read sales_reps in the CALLER's database while `c` came
+   * from the customer file's owner, so under sharing it named a different person
+   * or nobody. accountRep now reads c.rep_name and needs no join at all (205).
    */
   joins: [
     JOB_STATUS_JOIN,
@@ -3485,7 +3481,6 @@ const JOB_CARDS_SOURCE: CatalogSource = {
     JOB_ADDRESS_JOIN,
     CUSTOMER_JOIN,
     CUSTOMER_GROUP_JOIN,
-    CUSTOMER_REP_JOIN,
   ],
   fields: [
     {

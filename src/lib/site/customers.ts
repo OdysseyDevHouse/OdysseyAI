@@ -170,10 +170,14 @@ function mapCustomer(r: Row): Customer {
  * customerOwnerSite() in lib/storeGroups.ts. With no sharing configured the
  * owner IS the caller, so these wrappers are an identity function.
  *
- * customer_groups and sales_reps are joined by SELECT_CUSTOMER below, and both
- * resolve correctly: groups move to the owner alongside customers, and reps are
- * replicated into every store (they are also joined from branch-owned
- * sales_document_lines, so they have to exist on both sides).
+ * customer_groups is joined by SELECT_CUSTOMER below and resolves correctly:
+ * groups move to the owner alongside customers.
+ *
+ * sales_reps is NOT joined there any more, and the claim that used to sit here —
+ * "reps are replicated into every store" — was false. Nothing fans them out;
+ * the only INSERT writes to the caller's own database. So a rep_id was a branch
+ * id being resolved against the owner's rep list. The customer now carries
+ * rep_name, matched the way departments and price structures are (205).
  *
  * ── ONE THING DOES NOT FOLLOW THE CUSTOMER ───────────────────────────────
  *
@@ -227,10 +231,12 @@ const SELECT_CUSTOMER = `
          c.statement_cycle, c.statement_anchor_day, c.statement_anchor_date,
          c.notes, c.created_at, c.updated_at,
          g.name AS group_name,
-         r.name AS rep_name
+         -- From the customer, not joined: sales_reps stays per-store while this
+         -- query may run against the group primary, so the join printed the
+         -- owner's rep of that id — a different person, or nobody. See 205.
+         c.rep_name AS rep_name
     FROM customers c
     LEFT JOIN customer_groups g ON g.id = c.group_id
-    LEFT JOIN sales_reps     r ON r.id = c.rep_id
 `
 
 export type CustomerSort = 'name' | 'code' | 'balance' | 'created'
@@ -241,6 +247,13 @@ export type CustomerListOptions = {
   statuses?: readonly CustomerStatus[]
   groupId?: number
   repId?: number
+  /**
+   * The rep's NAME, resolved from repId by the caller.
+   *
+   * Set internally, not by screens: buildWhere is sync and cannot look it up,
+   * and the name is the only form that survives a shared customer file (205).
+   */
+  repName?: string | null
   category?: string
   /** Only accounts with a non-zero balance. */
   withBalanceOnly?: boolean
@@ -255,6 +268,20 @@ export type CustomerListOptions = {
   direction?: 'asc' | 'desc'
   limit?: number
   offset?: number
+}
+
+/**
+ * Fills in repName from repId, so the sync buildWhere below can filter by name.
+ *
+ * Every list path goes through this. Skipped when there is no rep filter, so
+ * the ordinary list costs nothing extra.
+ */
+async function withRepName(
+  siteId: number,
+  opts: CustomerListOptions,
+): Promise<CustomerListOptions> {
+  if (!opts.repId || opts.repName !== undefined) return opts
+  return { ...opts, repName: await repNameFor(siteId, opts.repId) }
 }
 
 function buildWhere(opts: CustomerListOptions): { sql: string; params: unknown[] } {
@@ -282,9 +309,13 @@ function buildWhere(opts: CustomerListOptions): { sql: string; params: unknown[]
     where.push('c.group_id = ?')
     params.push(opts.groupId)
   }
+  // By name, for the reason given on rep_name in the SELECT above. The name is
+  // resolved by the caller, which has the siteId and can await — this helper is
+  // sync. A rep id naming nobody here matches a name that cannot exist, so the
+  // report comes back empty rather than silently widening to every account.
   if (opts.repId) {
-    where.push('c.rep_id = ?')
-    params.push(opts.repId)
+    where.push('c.rep_name = ?')
+    params.push(opts.repName ?? ' no-such-rep')
   }
   if (opts.category?.trim()) {
     where.push('c.category = ?')
@@ -314,7 +345,7 @@ export async function listCustomers(
   siteId: number,
   opts: CustomerListOptions = {},
 ): Promise<{ items: Customer[]; total: number }> {
-  const { sql: whereSql, params } = buildWhere(opts)
+  const { sql: whereSql, params } = buildWhere(await withRepName(siteId, opts))
 
   // Clamped, then interpolated: mysql2 rejects LIMIT/OFFSET as placeholders.
   // Safe only because both are numbers that have been through Math.
@@ -470,8 +501,32 @@ export function validateCustomer(input: CustomerInput): string | null {
   return null
 }
 
+/**
+ * A rep id in THIS store's sales_reps, as a name.
+ *
+ * siteQuery, not customerQuery: sales_reps does not travel with the customer
+ * file, so an id a caller holds is always this store's and resolving it against
+ * the owner is the bug 205 exists to fix.
+ *
+ * Exported for aging.ts and any other module that has to translate one.
+ */
+export async function repNameFor(siteId: number, repId: number | null): Promise<string | null> {
+  if (!repId) return null
+  try {
+    const { siteQueryOne } = await import('../siteDb')
+    const row = await siteQueryOne<RowDataPacket & { name: string }>(
+      siteId,
+      'SELECT name FROM sales_reps WHERE id = ? LIMIT 1',
+      [repId],
+    )
+    return row ? String(row.name) : null
+  } catch {
+    return null
+  }
+}
+
 /** Columns written by both create and update, in one place so they cannot drift. */
-function writableColumns(input: CustomerInput): unknown[] {
+function writableColumns(input: CustomerInput, repName: string | null): unknown[] {
   return [
     input.code.trim(),
     input.name.trim(),
@@ -489,6 +544,7 @@ function writableColumns(input: CustomerInput): unknown[] {
     input.loyaltyNumber?.trim() || null,
     input.groupId ?? null,
     input.repId ?? null,
+    repName,
     input.category?.trim() || null,
     input.paymentTermsDays ?? 30,
     (input.creditLimit ?? 0).toFixed(4),
@@ -516,7 +572,7 @@ function writableColumns(input: CustomerInput): unknown[] {
 /** MUST stay in the same order as writableColumns above. */
 const COLUMN_LIST = `code, name, status, status_reason, account_type, contact_name, email, phone,
                      address_line1, address_line2, city, postal_code, vat_number, loyalty_number,
-                     group_id, rep_id, category, payment_terms_days, credit_limit,
+                     group_id, rep_id, rep_name, category, payment_terms_days, credit_limit,
                      daily_limit, monthly_limit, auto_email_invoices,
                      price_structure_id, discount_pct,
                      interest_rate_pct, interest_enabled, interest_grace_days,
@@ -547,7 +603,7 @@ export async function createCustomer(
     const [res] = await tx.execute(
       `INSERT INTO customers (${COLUMN_LIST})
        VALUES (${Array.from({ length: placeholders }, () => '?').join(',')})`,
-      writableColumns(withCode) as never,
+      writableColumns(withCode, await repNameFor(siteId, withCode.repId ?? null)) as never,
     )
     const id = (res as { insertId: number }).insertId
 
@@ -619,7 +675,7 @@ export async function updateCustomer(
            .map((column) => `${column.trim()} = ?`)
            .join(', ')}
        WHERE id = ?`,
-      [...writableColumns(input), id] as never,
+      [...writableColumns(input, await repNameFor(siteId, input.repId ?? null)), id] as never,
     )
 
     return { ok: true as const, id }
@@ -812,7 +868,13 @@ export async function bulkUpdateCustomers(
 
   if (permitted.length === 0) return { updated: 0, skipped }
 
-  const { sql, params } = bulkSetClause(change)
+  // Resolved here rather than in bulkSetClause, which is sync: a rep id is this
+  // store's, and writing it into a shared file without the name would reassign
+  // every selected account to whoever holds that id at the owner.
+  const { sql, params } = bulkSetClause(
+    change,
+    change.kind === 'rep' ? await repNameFor(siteId, change.repId ?? null) : null,
+  )
   const idList = permitted.map((c) => c.id)
 
   await customerTransaction(siteId, async (tx) => {
@@ -862,7 +924,10 @@ function refuseBulk(customer: Customer, change: BulkChange): string | null {
   return null
 }
 
-function bulkSetClause(change: BulkChange): { sql: string; params: unknown[] } {
+function bulkSetClause(
+  change: BulkChange,
+  repName: string | null,
+): { sql: string; params: unknown[] } {
   switch (change.kind) {
     case 'status':
       return {
@@ -876,7 +941,9 @@ function bulkSetClause(change: BulkChange): { sql: string; params: unknown[] } {
     case 'group':
       return { sql: 'group_id = ?', params: [change.groupId] }
     case 'rep':
-      return { sql: 'rep_id = ?', params: [change.repId] }
+      // Both, and the name is what survives the boundary. Clearing the rep
+      // clears both, so the two can never disagree about who reps an account.
+      return { sql: 'rep_id = ?, rep_name = ?', params: [change.repId, repName] }
     case 'category':
       return { sql: 'category = ?', params: [change.category?.trim() || null] }
   }
@@ -906,7 +973,7 @@ export async function customerIdsMatching(
   siteId: number,
   opts: CustomerListOptions,
 ): Promise<number[]> {
-  const { sql: whereSql, params } = buildWhere(opts)
+  const { sql: whereSql, params } = buildWhere(await withRepName(siteId, opts))
   const rows = await customerQuery<RowDataPacket & { id: number }>(
     siteId,
     `SELECT c.id FROM customers c ${whereSql} LIMIT 5000`,
