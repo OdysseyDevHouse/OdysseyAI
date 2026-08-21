@@ -327,6 +327,88 @@ async function main() {
       String(afterRename?.name ?? '(gone)'),
     )
 
+    /* ── Purchasing reads the shared file ───────────────────────────────── */
+
+    console.log('\n— Purchasing —')
+
+    // Every one of these used to read the branch's own (empty) suppliers table.
+    // A green line here is the difference between "purchasing works" and "the
+    // picker is empty and nothing can be ordered".
+    const { listProductSuppliers } = await import('../src/lib/site/productSuppliers')
+    const { listSupplierPrices } = await import('../src/lib/site/supplierPrices')
+    const { spendBySupplier } = await import('../src/lib/site/expenseReports')
+
+    try {
+      const links = await listProductSuppliers(branch, Number(prod?.id ?? 0))
+      ok(
+        'listProductSuppliers joins the shared supplier file',
+        Array.isArray(links),
+        `${links.length} link(s)`,
+      )
+    } catch (e) {
+      ok('listProductSuppliers joins the shared supplier file', false, String(e).slice(0, 120))
+    }
+
+    try {
+      const prices = await listSupplierPrices(branch, { supplierId })
+      ok(
+        'listSupplierPrices joins across the boundary',
+        typeof prices.total === 'number',
+        `${prices.total} row(s)`,
+      )
+    } catch (e) {
+      ok('listSupplierPrices joins across the boundary', false, String(e).slice(0, 120))
+    }
+
+    try {
+      const spend = await spendBySupplier(branch, { from: '2020-01-01', to: '2030-12-31' })
+      ok('spendBySupplier joins expenses to the shared file', Array.isArray(spend), `${spend.length} row(s)`)
+    } catch (e) {
+      ok('spendBySupplier joins expenses to the shared file', false, String(e).slice(0, 120))
+    }
+
+    // The report builder's {S} token, on both a supplier-owned source and a
+    // branch-owned one that joins out to it.
+    try {
+      const { runBuilderSpec } = await import('../src/lib/reportBuilder/run')
+      const canAll = () => true
+      for (const [label, spec] of [
+        [
+          'suppliers (owner-side source)',
+          {
+            source: 'suppliers',
+            columns: [{ field: 'code' }, { field: 'name' }],
+            filters: [],
+            period: { kind: 'all' as const },
+            limit: 5,
+          },
+        ],
+        [
+          // supplierStatus, NOT supplierName: the name is a snapshot column on
+          // purchase_documents and would resolve without ever touching the
+          // shared file. The status comes through the {S} join, so it is the
+          // one that actually exercises the qualifier.
+          'purchases joined to the shared supplier file',
+          {
+            source: 'purchases',
+            columns: [{ field: 'documentNumber' }, { field: 'supplierStatus' }],
+            filters: [],
+            period: { kind: 'all' as const },
+            limit: 5,
+          },
+        ],
+      ] as const) {
+        try {
+          const res = await runBuilderSpec(branch, spec as never, canAll, { limit: 5 })
+          ok(`report: ${label}`, true, `${res.rows.length} row(s)`)
+        } catch (e) {
+          ok(`report: ${label}`, false, e instanceof Error ? e.message.slice(0, 120) : String(e))
+        }
+      }
+    } catch (e) {
+      console.log(`SKIP  report builder: ${e instanceof Error ? e.message : String(e)}`)
+    }
+
     /* ── The invariant still holds ──────────────────────────────────────── */
 
     console.log('\n— The invariant —')

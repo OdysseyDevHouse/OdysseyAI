@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { supplierDbPrefix, supplierQueryOne } from './customerDb'
 import { round, toNum } from '../decimals'
 import { todayIso } from './purchaseDocuments'
 
@@ -71,12 +72,17 @@ export async function priceFor(
   productId: number,
   asAt?: string,
 ): Promise<SupplierPrice | null> {
+  // supplier_prices and products BOTH stay in the branch (206) — an agreed cost
+  // is this shop's, and the price list keys into a product. Only the supplier's
+  // name is remote, so the statement runs on this connection and names one
+  // table. Empty for an unshared site.
+  const sdb = await supplierDbPrefix(siteId)
   const on = asAt ?? todayIso()
   const row = await siteQueryOne<Row>(
     siteId,
     `SELECT sp.*, s.name AS supplier_name, p.code AS product_code, p.description AS product_description
        FROM supplier_prices sp
-       JOIN suppliers s ON s.id = sp.supplier_id
+       JOIN ${sdb}suppliers s ON s.id = sp.supplier_id
        JOIN products  p ON p.id = sp.product_id
       WHERE sp.supplier_id = ? AND sp.product_id = ? AND sp.effective_from <= ?
       ORDER BY sp.effective_from DESC, sp.id DESC
@@ -105,12 +111,13 @@ export async function pricesFor(
   const ids = [...new Set(productIds.filter((id) => Number.isInteger(id) && id > 0))]
   if (ids.length === 0) return new Map()
 
+  const sdb = await supplierDbPrefix(siteId)
   const on = asAt ?? todayIso()
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT sp.*, s.name AS supplier_name, p.code AS product_code, p.description AS product_description
        FROM supplier_prices sp
-       JOIN suppliers s ON s.id = sp.supplier_id
+       JOIN ${sdb}suppliers s ON s.id = sp.supplier_id
        JOIN products  p ON p.id = sp.product_id
       WHERE sp.supplier_id = ?
         AND sp.product_id IN (${ids.map(() => '?').join(',')})
@@ -174,12 +181,13 @@ export async function listSupplierPrices(
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 1000)
   const offset = Math.max(opts.offset ?? 0, 0)
 
+  const sdb = await supplierDbPrefix(siteId)
   const [rows, countRow] = await Promise.all([
     siteQuery<Row>(
       siteId,
       `SELECT sp.*, s.name AS supplier_name, p.code AS product_code, p.description AS product_description
          FROM supplier_prices sp
-         JOIN suppliers s ON s.id = sp.supplier_id
+         JOIN ${sdb}suppliers s ON s.id = sp.supplier_id
          JOIN products  p ON p.id = sp.product_id
          ${whereSql}
         ORDER BY p.description, sp.effective_from DESC, sp.id DESC
@@ -190,7 +198,7 @@ export async function listSupplierPrices(
       siteId,
       `SELECT COUNT(*) AS total
          FROM supplier_prices sp
-         JOIN suppliers s ON s.id = sp.supplier_id
+         JOIN ${sdb}suppliers s ON s.id = sp.supplier_id
          JOIN products  p ON p.id = sp.product_id
          ${whereSql}`,
       params,
@@ -267,7 +275,7 @@ export async function saveSupplierPrice(
   )
   if (!product) return { ok: false, error: 'That product no longer exists.' }
 
-  const supplier = await siteQueryOne<Row>(
+  const supplier = await supplierQueryOne<Row>(
     siteId,
     'SELECT id, status FROM suppliers WHERE id = ? LIMIT 1',
     [input.supplierId],

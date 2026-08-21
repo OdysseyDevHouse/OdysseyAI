@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
+import { supplierDbPrefix, supplierQuery } from './customerDb'
 import { round, toNum } from '../decimals'
 import { stockedReferSql } from './productComposition'
 
@@ -164,6 +165,18 @@ export async function reorderSuggestions(
     params.push(opts.supplierId)
   }
 
+  /*
+   * Five branch tables and one remote one, in a single plan.
+   *
+   * products, product_location_stock, departments, stock_movements,
+   * purchase_document* and product_suppliers ALL stay in the branch — this
+   * question is "what does MY shop need to reorder", and every input to it is
+   * local. Only the supplier's name and minimum order live in the shared file.
+   *
+   * So it must stay on this connection. Moved to the owner it would read head
+   * office's stock levels and suggest reordering another store's shelves.
+   */
+  const sdb = await supplierDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT p.id, p.code, p.description, p.product_type, p.department_id, p.last_cost,
@@ -216,7 +229,7 @@ export async function reorderSuggestions(
                     ORDER BY x.is_preferred DESC, x.supplier_id
                     LIMIT 1
                  )
-       LEFT JOIN suppliers s ON s.id = ps.supplier_id
+       LEFT JOIN ${sdb}suppliers s ON s.id = ps.supplier_id
       WHERE ${where.join(' AND ')}
       -- When the LIMIT truncates, WHICH rows survive matters: a below-minimum
       -- list must keep its worst shortages, not its earliest letters. The
@@ -354,7 +367,7 @@ export async function reorderBySupplier(
   // whole set rather than one per group.
   const ids = [...groups.keys()].filter((id): id is number => id !== null)
   if (ids.length > 0) {
-    const rows = await siteQuery<Row>(
+    const rows = await supplierQuery<Row>(
       siteId,
       `SELECT id, minimum_order FROM suppliers WHERE id IN (${ids.map(() => '?').join(',')})`,
       ids,

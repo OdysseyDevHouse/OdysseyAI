@@ -1,7 +1,12 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
-import { customerDbPrefix, branchDbPrefix } from '../site/customerDb'
+import {
+  customerDbPrefix,
+  branchDbPrefix,
+  supplierDbPrefix,
+  supplierBranchDbPrefix,
+} from '../site/customerDb'
 import type { Capability } from '../site/permissions'
 // The grand total and a band subtotal have to be the same arithmetic, so the
 // function lives with the banding rather than here. See shape.ts.
@@ -170,19 +175,37 @@ export async function runBuilderSpec(
    * sorts against the remote table (measured in
    * scripts/probe-shared-customer-file.ts). No two-phase fetch is needed.
    *
-   *   ownedBy: 'customer'  the source's own table is on the OWNER, so its FROM
-   *                        is qualified too
+   *   ownedBy: 'customer'  the source's own table is on the CUSTOMER owner, so
+   *                        its FROM is qualified too
+   *   ownedBy: 'supplier'   the same, for the creditors book
    *   otherwise            the source's table is this branch's own
    *
-   * `{C}` and `{B}` in the catalogue mark which side each joined table is on.
-   * Both resolve to '' for a store that owns its own customers, so a single-shop
-   * site's SQL — and its query plan — are exactly what they always were.
+   * `{C}`, `{S}` and `{B}` in the catalogue mark which side each joined table
+   * is on. All resolve to '' for a store that owns its own files, so a
+   * single-shop site's SQL — and its query plan — are exactly what they always
+   * were.
+   *
+   * The two files are answered SEPARATELY, because a group may share one and
+   * not the other (015). A report joining sales to both a customer and a
+   * supplier can therefore have three databases in one plan, which MariaDB
+   * resolves the same way it resolves two.
    */
-  const ownerSide = source.ownedBy === 'customer'
-  const [customerPrefix, branchPrefix] = await Promise.all([
+  const ownerSide = source.ownedBy === 'customer' || source.ownedBy === 'supplier'
+  const [customerPrefix, supplierPrefix, customerBranch, supplierBranch] = await Promise.all([
     customerDbPrefix(siteId),
+    supplierDbPrefix(siteId),
     branchDbPrefix(siteId),
+    supplierBranchDbPrefix(siteId),
   ])
+
+  /*
+   * `{B}` means "this branch's own database", but WHICH resolver answers that
+   * depends on which owner the source sits on — branchDbPrefix is keyed on the
+   * customer owner and returns '' on a site that shares only suppliers, which
+   * would leave a supplier-owned source reading the owner's copy of a branch
+   * table. So the supplier twin answers for a supplier-owned source.
+   */
+  const branchPrefix = source.ownedBy === 'supplier' ? supplierBranch : customerBranch
 
   /*
    * The query always runs on the CALLER's connection — a report is a read, and
@@ -195,11 +218,18 @@ export async function runBuilderSpec(
    * table there needs no prefix at all.
    */
   const qualify = (text: string) =>
-    text.split('{C}').join(customerPrefix).split('{B}').join(ownerSide ? branchPrefix : '')
+    text
+      .split('{C}')
+      .join(customerPrefix)
+      .split('{S}')
+      .join(supplierPrefix)
+      .split('{B}')
+      .join(ownerSide ? branchPrefix : '')
 
   const sql = [
     `SELECT ${selectSql.map((s) => s.sql).join(', ')}`,
-    `FROM ${ownerSide ? customerPrefix : ''}\`${source.table}\` t`,
+    // The source's own table, on whichever owner holds it.
+    `FROM ${source.ownedBy === 'supplier' ? supplierPrefix : source.ownedBy === 'customer' ? customerPrefix : ''}\`${source.table}\` t`,
     ...joins.map(qualify),
     where.sql ? `WHERE ${where.sql}` : '',
     summarised

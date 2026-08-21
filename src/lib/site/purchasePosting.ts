@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { supplierQueryOne } from './customerDb'
 import { round, toNum } from '../decimals'
 import { apportionDiscount, weightedAverageCost } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
@@ -347,7 +348,8 @@ export async function saveDraftReceipt(
 ): Promise<DraftResult> {
   if (!input.supplierId) return { ok: false, error: 'Choose who this delivery came from.' }
 
-  const supplier = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+  // The supplier file may be the group's; the receipt is always this shop's.
+  const supplier = await supplierQueryOne<RowDataPacket & Record<string, unknown>>(
     siteId,
     'SELECT id, code, name, status FROM suppliers WHERE id = ? LIMIT 1',
     [input.supplierId],
@@ -572,7 +574,7 @@ export async function receiveGoods(
   const invalid = validateReceive(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const supplier = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+  const supplier = await supplierQueryOne<RowDataPacket & Record<string, unknown>>(
     siteId,
     'SELECT id, code, name, status, payment_terms_days FROM suppliers WHERE id = ? LIMIT 1',
     [input.supplierId],

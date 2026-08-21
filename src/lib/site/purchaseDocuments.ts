@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { supplierQueryOne } from './customerDb'
 import { formatMoney, round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { getNumericSetting } from './settings'
@@ -501,7 +502,8 @@ export async function saveOrder(
   const invalid = validateOrder(input)
   if (invalid) return { ok: false, error: invalid }
 
-  const supplier = await siteQueryOne<Row>(
+  // The supplier file may be the group's; the order is always this shop's.
+  const supplier = await supplierQueryOne<Row>(
     siteId,
     'SELECT id, code, name, status FROM suppliers WHERE id = ? LIMIT 1',
     [input.supplierId],

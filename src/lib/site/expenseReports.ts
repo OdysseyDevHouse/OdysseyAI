@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
+import { supplierDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 import { CATEGORY_TYPE_LABELS, type ExpenseCategoryType } from '../expenseModel'
 
@@ -173,6 +174,11 @@ export async function spendBySupplier(
   limit = 20,
 ): Promise<SupplierSpend[]> {
   const capped = Math.min(Math.max(limit, 1), 100)
+  // `expenses` is a bill THIS shop received and stays here; `suppliers` may be
+  // the group's. So the statement stays on this connection and names the far
+  // side — run against the owner instead it would read head office's expenses,
+  // which is another store's spend entirely. Empty for an unshared site.
+  const sdb = await supplierDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT e.supplier_id,
@@ -180,7 +186,7 @@ export async function spendBySupplier(
             COALESCE(SUM(e.subtotal_excl), 0) AS total,
             COUNT(*) AS n
        FROM expenses e
-       LEFT JOIN suppliers s ON s.id = e.supplier_id
+       LEFT JOIN ${sdb}suppliers s ON s.id = e.supplier_id
       WHERE e.status = 'finalised' AND e.expense_date BETWEEN ? AND ?
       GROUP BY e.supplier_id, supplier_name
       ORDER BY total DESC
@@ -225,6 +231,9 @@ export type ExpenseSummary = {
  * costs rather than inside them is what makes the mistake visible.
  */
 export async function expenseSummary(siteId: number, range: DateRange): Promise<ExpenseSummary> {
+  // The unpaid figures below join this shop's expenses to the creditors ledger,
+  // which may be the group's. Same reasoning as spendBySupplier above.
+  const sdb = await supplierDbPrefix(siteId)
   const [byType, states] = await Promise.all([
     siteQuery<Row>(
       siteId,
@@ -249,7 +258,7 @@ export async function expenseSummary(siteId: number, range: DateRange): Promise<
          COALESCE(SUM(CASE WHEN e.status = 'finalised' AND e.payment_type = 'on_account'
                      THEN t.amount_outstanding END), 0) AS unpaid_total
        FROM expenses e
-       LEFT JOIN supplier_transactions t ON t.id = e.supplier_txn_id
+       LEFT JOIN ${sdb}supplier_transactions t ON t.id = e.supplier_txn_id
       WHERE e.expense_date BETWEEN ? AND ?`,
       [range.from, range.to],
     ),

@@ -204,10 +204,13 @@ export interface CatalogSource {
    * file. Omitted means the caller's own, which is every source but the four
    * built on the debtors book and loyalty balances.
    *
-   * This decides WHERE the query runs. The {C} / {B} tokens above decide how
-   * the tables on the other side are named once it is running.
+   * This decides WHERE the query runs. The {C} / {S} / {B} tokens above decide
+   * how the tables on the other side are named once it is running.
+   *
+   * 'supplier' is the creditors twin, answered separately because a group may
+   * share one file and not the other (015).
    */
-  ownedBy?: 'customer'
+  ownedBy?: 'customer' | 'supplier'
   /** TIMELINE only: the column the date range filters on. */
   dateColumn?: string
   /**
@@ -1838,6 +1841,8 @@ const SUPPLIERS_SOURCE: CatalogSource = {
   permission: 'suppliers.view',
   shape: 'snapshot',
   table: 'suppliers',
+  // The supplier file may be the group's — see 206.
+  ownedBy: 'supplier',
   fields: [
     { key: 'code', label: 'Supplier code', type: 'text', expr: 't.code', starter: true, group: FIELD_GROUPS.IDENTITY },
     { key: 'name', label: 'Name', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
@@ -1869,7 +1874,9 @@ const PURCHASES_SOURCE: CatalogSource = {
   shape: 'timeline',
   table: 'purchase_documents',
   dateColumn: 'document_date',
-  joins: [{ name: 'supplier', sql: 'LEFT JOIN suppliers s ON s.id = t.supplier_id' }],
+  // purchase_documents stays in the branch (206) while the supplier file may
+  // not, so the join names the far side.
+  joins: [{ name: 'supplier', sql: 'LEFT JOIN {S}suppliers s ON s.id = t.supplier_id' }],
   defaultFilters: [{ field: 'status', op: 'eq', value: 'finalised' }],
   fields: [
     { key: 'documentNumber', label: 'Document number', type: 'document', expr: 't.document_number', starter: true, group: FIELD_GROUPS.IDENTITY },
@@ -3298,7 +3305,7 @@ const PRODUCT_SUPPLIERS_SOURCE: CatalogSource = {
   shape: 'snapshot',
   table: 'product_suppliers',
   joins: [
-    { name: 'supplier', sql: 'INNER JOIN suppliers s ON s.id = t.supplier_id', always: true },
+    { name: 'supplier', sql: 'INNER JOIN {S}suppliers s ON s.id = t.supplier_id', always: true },
     { name: 'product', sql: 'INNER JOIN products pm ON pm.id = t.product_id', always: true },
     PRODUCT_DEPT_JOIN,
     {
@@ -4075,7 +4082,11 @@ const SUPPLIER_TXN_SOURCE: CatalogSource = {
   permission: 'suppliers.view',
   shape: 'timeline',
   table: 'supplier_transactions',
+  // The creditors ledger moves with the file it belongs to.
+  ownedBy: 'supplier',
   dateColumn: 'doc_date',
+  // Unprefixed on purpose: both tables are on the same owner, so naming the
+  // database here would be right but redundant.
   joins: [{ name: 'supplier', sql: 'LEFT JOIN suppliers s ON s.id = t.supplier_id' }],
   fields: [
     { key: 'docNumber', label: 'Document number', type: 'document', expr: 't.doc_number', starter: true, group: FIELD_GROUPS.IDENTITY },
@@ -4265,7 +4276,10 @@ const JOURNAL_LINES_SOURCE: CatalogSource = {
     { name: 'account', sql: 'INNER JOIN gl_accounts a ON a.id = t.account_id', always: true },
     { name: 'dept', sql: 'LEFT JOIN departments jd ON jd.id = t.department_id' },
     { name: 'customer', sql: 'LEFT JOIN {C}customers jc ON jc.id = t.customer_id' },
-    { name: 'supplier', sql: 'LEFT JOIN suppliers js ON js.id = t.supplier_id' },
+    // The {C} above was already here; this is its creditors twin, left
+    // unqualified when the customer side was done because suppliers were not
+    // shared yet. journal_lines is a BRANCH table naming an owner supplier.
+    { name: 'supplier', sql: 'LEFT JOIN {S}suppliers js ON js.id = t.supplier_id' },
   ],
   /* Drafts have moved nothing and voids are reversals' tombstones. Only a
      posted batch is a fact about the ledger — same rule every statement

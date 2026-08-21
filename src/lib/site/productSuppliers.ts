@@ -1,5 +1,6 @@
 import 'server-only'
 import { siteQuery, siteTransaction } from '@/lib/siteDb'
+import { supplierDbPrefix, supplierQuery } from '@/lib/site/customerDb'
 import { round, toNum } from '@/lib/decimals'
 
 /**
@@ -55,13 +56,16 @@ export async function listProductSuppliers(
   siteId: number,
   productId: number,
 ): Promise<ProductSupplier[]> {
+  // product_suppliers stays in the branch (206); the supplier's name may be the
+  // group's. So this runs here and names the far side.
+  const sdb = await supplierDbPrefix(siteId)
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT ps.product_id, ps.supplier_id, ps.supplier_code, ps.last_cost,
             ps.pack_size, ps.is_preferred,
             s.name AS supplier_name, s.code AS supplier_account_code
        FROM product_suppliers ps
-       JOIN suppliers s ON s.id = ps.supplier_id
+       JOIN ${sdb}suppliers s ON s.id = ps.supplier_id
       WHERE ps.product_id = ?
       ORDER BY ps.is_preferred DESC, s.name`,
     [productId],
@@ -123,7 +127,11 @@ export async function saveProductSuppliers(
   // that has since been deleted must fail with a clear message, not an FK error.
   if (links.length > 0) {
     const ids = [...seen]
-    const found = await siteQuery<Row>(
+    // Against the file that actually holds them. Read locally under sharing
+    // this finds nothing and every save is refused as "no longer exists" —
+    // and the FK that used to catch a genuinely missing supplier is gone (206),
+    // so this check IS the integrity now.
+    const found = await supplierQuery<Row>(
       siteId,
       `SELECT id FROM suppliers WHERE id IN (${ids.map(() => '?').join(',')})`,
       ids,

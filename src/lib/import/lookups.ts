@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '@/lib/siteDb'
+import { supplierQuery } from '@/lib/site/customerDb'
 import { emptyLookups, type LookupTables } from './spec'
 
 /**
@@ -107,7 +108,7 @@ export async function loadLookups(
 
   if (want.suppliers) {
     // Every supplier, closed ones included — see the note on existingIdByCode.
-    const rows = await siteQuery<IdCode>(siteId, 'SELECT id, code FROM suppliers')
+    const rows = await supplierQuery<IdCode>(siteId, 'SELECT id, code FROM suppliers')
     for (const row of rows) {
       if (row.code) lookups.supplierByCode.set(norm(String(row.code)), Number(row.id))
     }

@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { supplierQueryOne } from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { nextDocumentNumber } from './sequences'
@@ -611,7 +612,7 @@ async function supplierDueDate(
   supplierId: number,
   docDate: string,
 ): Promise<string | null> {
-  const row = await siteQueryOne<Row>(
+  const row = await supplierQueryOne<Row>(
     siteId,
     'SELECT payment_terms_days FROM suppliers WHERE id = ? LIMIT 1',
     [supplierId],
@@ -654,7 +655,10 @@ export async function voidExpense(
   }
 
   if (expense.supplierTxnId) {
-    const txn = await siteQueryOne<Row>(
+    // The creditors ledger, wherever it lives. Read locally under sharing this
+    // finds nothing, and the guard below — "has this bill been paid against?" —
+    // would silently answer no and let a settled expense be reopened.
+    const txn = await supplierQueryOne<Row>(
       siteId,
       'SELECT amount_signed, amount_outstanding FROM supplier_transactions WHERE id = ? LIMIT 1',
       [expense.supplierTxnId],

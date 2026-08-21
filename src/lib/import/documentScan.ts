@@ -2,6 +2,7 @@ import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '@/lib/siteDb'
+import { supplierQuery } from '@/lib/site/customerDb'
 import { norm } from './lookups'
 
 /**
@@ -647,7 +648,7 @@ async function matchSupplier(siteId: number, name: string | null): Promise<numbe
   // same four-state enum customers do, and a closed one is the only state that
   // must never be proposed. An on-hold supplier still gets deliveries for what
   // was already booked, so it stays matchable.
-  const rows = await siteQuery<RowDataPacket & { id: number }>(
+  const rows = await supplierQuery<RowDataPacket & { id: number }>(
     siteId,
     `SELECT id FROM suppliers
       WHERE status <> 'closed' AND (UPPER(name) = ? OR UPPER(code) = ?)
