@@ -1,0 +1,53 @@
+-- ── customers.loyalty_number goes ────────────────────────────────────────
+--
+-- 052 rewrote loyalty around a member file and deliberately LEFT this column
+-- standing, with a note saying why. This is the change that note pointed at.
+--
+-- ── WHY IT COULD NOT GO IN 052 ───────────────────────────────────────────
+--
+-- It was dropped there once, and every suite that creates a customer failed —
+-- accounting, sales posting, account sales, duplicates, the sharing probes.
+-- Seven of them, none about loyalty. `createCustomer` wrote the column, so the
+-- moment it disappeared the INSERT broke, and the failure surfaced everywhere
+-- that touches a customer rather than anywhere near the feature that moved.
+--
+-- The lesson is recorded in 052 and is worth keeping: a schema change that
+-- lands ahead of the code answering it does not fail where you are looking.
+--
+-- ── WHAT ANSWERS IT NOW ──────────────────────────────────────────────────
+--
+-- `loyalty_members.member_number`, which is UNIQUE and is what the till matches
+-- on. All eight readers of this column are ported in the same commit:
+--
+--   customers.ts            the type, the mapper, the SELECT list, the INSERT
+--                           column list and its value array, and the search
+--   tillCustomers.ts        the till's customer search no longer matches a card
+--   CustomerForm.tsx        the "Loyalty number" field
+--   customers/actions.ts    the form field it read
+--   import/specs/customers  the "Card Number" mapping
+--   reportBuilder/catalog   the loyaltyNumber field on the customers source
+--
+-- ── WHY THE DATA IS NOT MIGRATED INTO THE MEMBER FILE ────────────────────
+--
+-- Because there is none. No site is live (see docs), so every value in this
+-- column belongs to a test fixture. A migration that enrolled a member per
+-- non-null loyalty_number would be untested code written for zero rows, and it
+-- would invent a member NAME — the one field enrolment requires — by copying
+-- the customer's, which is a guess this file has no business making.
+--
+-- A shop arriving later with a real card base needs an importer, not a
+-- migration. That gap is named in import/specs/customers.ts.
+--
+-- ── WHY NOT KEEP IT, HARMLESS AND UNUSED ─────────────────────────────────
+--
+-- Two columns holding the same claim is how they drift. A card number on a
+-- customer that the till stopped reading is worse than no card number: it looks
+-- authoritative on the customer screen, in an export, and in anything anyone
+-- writes against the table later — while the actual programme uses the other
+-- one. It also cannot represent a walk-in member, which is the case the member
+-- file exists for.
+
+-- The index goes first. MariaDB would drop it along with the column anyway,
+-- but naming it says what is happening rather than leaving it to a side effect.
+ALTER TABLE customers DROP INDEX IF EXISTS ix_customer_loyalty;
+ALTER TABLE customers DROP COLUMN IF EXISTS loyalty_number;

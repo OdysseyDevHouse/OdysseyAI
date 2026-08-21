@@ -153,12 +153,23 @@ export const customerSpec: ImportSpec<CustomerDraft> = {
       example: '4123456789',
       max: 40,
     }),
-    text<CustomerDraft>({
-      key: 'loyaltyNumber',
-      label: 'Loyalty number',
-      aliases: ['Loyalty Number', 'Loyalty', 'Card Number'],
-      max: 60,
-    }),
+    /*
+     * NO LOYALTY NUMBER. It moved to the member file.
+     *
+     * A card number is a member's, and a member need not be a customer at all —
+     * so importing one onto a customer row would put it where the till no longer
+     * looks.
+     *
+     * There is NO member importer yet. Until there is, a shop bringing across an
+     * existing card base has no bulk route, and enrolMember one at a time is the
+     * only way in. That is a real gap and it is named here rather than papered
+     * over — but it is not a reason to keep writing card numbers onto a column
+     * nothing reads.
+     *
+     * Left as a note rather than silently absent: a spreadsheet with a "Card
+     * Number" column now leaves it unmapped, and whoever maps it should know
+     * where it went.
+     */
     reference<CustomerDraft>({
       key: 'groupId',
       label: 'Group',

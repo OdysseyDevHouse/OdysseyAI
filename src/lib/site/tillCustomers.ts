@@ -253,17 +253,30 @@ export async function searchCustomersForTill(
   const like = `%${needle}%`
   const capped = Math.min(Math.max(limit, 1), 50)
 
+  /*
+   * NO LOYALTY CLAUSE. This searches the debtors book, and a card number is not
+   * in it.
+   *
+   * It used to match c.loyalty_number, because a member WAS a customer row. A
+   * scanned card now identifies a MEMBER, who may have no account at all — so
+   * looking for one here would find nothing for exactly the people who scan
+   * most, and looking in another database would make this a mixed query for a
+   * result the caller cannot use anyway (a member is not a TillCustomer).
+   *
+   * findTillMember answers the card. The till attaches the two separately, and
+   * attaching a customer pulls their membership along — see PosShell.
+   */
   const rows = await customerQuery<Row>(
     siteId,
     `${SELECT_CUSTOMER}
       WHERE c.status <> 'closed'
-        AND (c.code LIKE ? OR c.name LIKE ? OR c.phone LIKE ? OR c.loyalty_number = ?)
+        AND (c.code LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)
       ORDER BY
-        -- An exact code or loyalty match is what was meant; put it first.
-        CASE WHEN c.code = ? OR c.loyalty_number = ? THEN 0 ELSE 1 END,
+        -- An exact code is what was meant; put it first.
+        CASE WHEN c.code = ? THEN 0 ELSE 1 END,
         c.name ASC
       LIMIT ${capped}`,
-    [like, like, like, needle, needle, needle],
+    [like, like, like, needle],
   )
 
   return mapWithSpend(siteId, rows)

@@ -48,7 +48,6 @@ export type Customer = {
   city: string | null
   postalCode: string | null
   vatNumber: string | null
-  loyaltyNumber: string | null
   groupId: number | null
   groupName: string | null
   repId: number | null
@@ -124,7 +123,6 @@ function mapCustomer(r: Row): Customer {
     city: (r.city as string | null) ?? null,
     postalCode: (r.postal_code as string | null) ?? null,
     vatNumber: (r.vat_number as string | null) ?? null,
-    loyaltyNumber: (r.loyalty_number as string | null) ?? null,
     groupId: r.group_id === null ? null : Number(r.group_id),
     groupName: (r.group_name as string | null) ?? null,
     repId: r.rep_id === null ? null : Number(r.rep_id),
@@ -223,7 +221,7 @@ async function customerTransaction<T>(
 const SELECT_CUSTOMER = `
   SELECT c.id, c.code, c.name, c.status, c.status_reason, c.account_type,
          c.contact_name, c.email, c.phone, c.address_line1, c.address_line2,
-         c.city, c.postal_code, c.vat_number, c.loyalty_number,
+         c.city, c.postal_code, c.vat_number,
          c.group_id, c.rep_id, c.category, c.payment_terms_days,
          c.credit_limit, c.daily_limit, c.monthly_limit, c.auto_email_invoices,
          c.balance, c.price_structure_id, c.discount_pct,
@@ -300,9 +298,9 @@ function buildWhere(opts: CustomerListOptions): { sql: string; params: unknown[]
   if (opts.search?.trim()) {
     const term = `%${opts.search.trim()}%`
     where.push(
-      '(c.name LIKE ? OR c.code LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.contact_name LIKE ? OR c.loyalty_number = ?)',
+      '(c.name LIKE ? OR c.code LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.contact_name LIKE ?)',
     )
-    params.push(term, term, term, term, term, opts.search.trim())
+    params.push(term, term, term, term, term)
   }
 
   if (opts.groupId) {
@@ -423,7 +421,6 @@ export type CustomerInput = {
   city?: string | null
   postalCode?: string | null
   vatNumber?: string | null
-  loyaltyNumber?: string | null
   groupId?: number | null
   repId?: number | null
   category?: string | null
@@ -684,7 +681,6 @@ function writableColumns(input: CustomerInput, repName: string | null): unknown[
     input.city?.trim() || null,
     input.postalCode?.trim() || null,
     input.vatNumber?.trim() || null,
-    input.loyaltyNumber?.trim() || null,
     input.groupId ?? null,
     input.repId ?? null,
     repName,
@@ -714,7 +710,7 @@ function writableColumns(input: CustomerInput, repName: string | null): unknown[
 
 /** MUST stay in the same order as writableColumns above. */
 const COLUMN_LIST = `code, name, status, status_reason, account_type, contact_name, email, phone,
-                     address_line1, address_line2, city, postal_code, vat_number, loyalty_number,
+                     address_line1, address_line2, city, postal_code, vat_number,
                      group_id, rep_id, rep_name, category, payment_terms_days, credit_limit,
                      daily_limit, monthly_limit, auto_email_invoices,
                      price_structure_id, discount_pct,

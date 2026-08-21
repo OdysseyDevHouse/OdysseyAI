@@ -112,7 +112,6 @@ function readInput(form: FormData): CustomerInput {
     city: text(form, 'city'),
     postalCode: text(form, 'postalCode'),
     vatNumber: text(form, 'vatNumber'),
-    loyaltyNumber: text(form, 'loyaltyNumber'),
     groupId: optionalId(form, 'groupId'),
     repId: optionalId(form, 'repId'),
     category: text(form, 'category'),

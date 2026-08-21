@@ -1752,7 +1752,6 @@ const CUSTOMERS_SOURCE: CatalogSource = {
       'cash',
       'lay_by',
     ]),
-    { key: 'loyaltyNumber', label: 'Loyalty number', type: 'text', expr: 't.loyalty_number', group: FIELD_GROUPS.OTHER },
     { key: 'createdAt', label: 'Account opened', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
   ],
 }

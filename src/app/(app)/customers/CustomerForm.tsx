@@ -660,9 +660,6 @@ export default function CustomerForm({
               <Field label="VAT number" hint="Required on a tax invoice.">
                 <Input name="vatNumber" defaultValue={customer?.vatNumber ?? ''} maxLength={40} />
               </Field>
-              <Field label="Loyalty number">
-                <Input name="loyaltyNumber" defaultValue={customer?.loyaltyNumber ?? ''} maxLength={60} />
-              </Field>
             </div>
           </CardBody>
         </Card>

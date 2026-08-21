@@ -294,9 +294,11 @@ async function main() {
 
   const cust = await siteExecute(
     SITE,
-    `INSERT INTO customers (code, name, status, account_type, loyalty_number)
-     VALUES (?,?,'active','cash',?)`,
-    [`LC${stamp}`, `Loyalty Customer ${stamp}`, `LOY${stamp}`],
+    // No loyalty_number: the column is gone, and the card number now lives on
+    // the member this customer enrols as, a few lines below.
+    `INSERT INTO customers (code, name, status, account_type)
+     VALUES (?,?,'active','cash')`,
+    [`LC${stamp}`, `Loyalty Customer ${stamp}`],
   )
   customerId = cust.insertId
   ok('a test customer exists', customerId > 0)
