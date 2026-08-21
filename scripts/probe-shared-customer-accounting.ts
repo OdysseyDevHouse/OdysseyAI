@@ -472,6 +472,88 @@ async function main() {
       )
     }
 
+    /* ── FINDING 16: a price structure id crosses the boundary ──────────── */
+
+    console.log('\n— Finding 16: customers.price_structure_id is an owner id used at a branch —')
+
+    // Both dev sites happen to hold an identical price_structures list, which
+    // would make any comparison pass for the wrong reason. So the divergence is
+    // created deliberately: a structure that exists at the PRIMARY under an id
+    // that means something different at the branch.
+    const psPrimary = await siteQuery<Row>(primary, 'SELECT id, name FROM price_structures')
+    const psBranch = await siteQuery<Row>(branch, 'SELECT id, name FROM price_structures')
+
+    await siteExecute(primary, 'INSERT INTO price_structures (name, position) VALUES (?, 99)', [
+      `${PROBE_TAG} Wholesale`,
+    ])
+    const wholesale = await siteQueryOne<Row>(
+      primary,
+      'SELECT id, name FROM price_structures WHERE name = ? LIMIT 1',
+      [`${PROBE_TAG} Wholesale`],
+    )
+
+    if (!wholesale) {
+      INCONCLUSIVE('price structure', 'could not create a structure at the primary')
+    } else {
+      const wholesaleId = Number(wholesale.id)
+      await customerExecute(branch, 'UPDATE customers SET price_structure_id = ? WHERE id = ?', [
+        wholesaleId,
+        customerId,
+      ])
+
+      // What the id means in the BRANCH's own table, raw — the number the till
+      // used to price against before any translation.
+      const rawAtBranch = await siteQueryOne<Row>(
+        branch,
+        'SELECT id, name FROM price_structures WHERE id = ? LIMIT 1',
+        [wholesaleId],
+      )
+
+      // And what the TILL actually reports now. This is the real question: the
+      // raw id above is only a bug if it reaches pricing.
+      const { getTillCustomer } = await import('../src/lib/site/tillCustomers')
+      const tillView = await getTillCustomer(branch, customerId)
+
+      // The structure with the same NAME at the branch, which is what a correct
+      // translation should land on. Absent here on purpose — the seeded
+      // structure exists only at the primary — so the right answer is null.
+      const sameNameAtBranch = await siteQueryOne<Row>(
+        branch,
+        'SELECT id FROM price_structures WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1',
+        [String(wholesale.name)],
+      )
+
+      const observed =
+        `primary has ${psPrimary.length} structure(s), branch has ${psBranch.length}; ` +
+        `customer set to id ${wholesaleId} ("${String(wholesale.name)}") at the primary; ` +
+        `that id raw at the branch = ${rawAtBranch ? `"${String(rawAtBranch.name)}"` : 'NOTHING'}; ` +
+        `the till reports priceStructureId=${tillView ? String(tillView.priceStructureId) : 'no customer found'}`
+
+      const expected = sameNameAtBranch ? Number(sameNameAtBranch.id) : null
+
+      if (!tillView) {
+        INCONCLUSIVE('price structure', `the till could not find the probe customer: ${observed}`)
+      } else if (tillView.priceStructureId === wholesaleId && !rawAtBranch) {
+        CONFIRMED(
+          'the till carries an owner-only price structure id the branch cannot resolve',
+          observed,
+        )
+      } else if (tillView.priceStructureId === expected) {
+        NOT_REPRODUCED(
+          expected === null
+            ? 'the till falls back to site default rather than using an id that means nothing here'
+            : 'the till translated the owner id to the branch structure of the same name',
+          observed,
+        )
+      } else {
+        CONFIRMED('the till priced against the wrong structure', observed)
+      }
+
+      await customerExecute(branch, 'UPDATE customers SET price_structure_id = NULL WHERE id = ?', [
+        customerId,
+      ])
+    }
+
     /* ── FINDING 12: two branches charge the same interest period ───────── */
 
     console.log('\n— Finding 12: a second interest run over a charged period —')
@@ -569,6 +651,16 @@ async function main() {
         // but the document itself does not, so it is deleted by name — a
         // leaked finalised sale would inflate every later spend measurement.
         await siteExecute(site, 'DELETE FROM sales_documents WHERE reference = ?', [PROBE_TAG])
+        // Cleared off the customer before the structure it points at goes, so
+        // the FK at the owner cannot refuse the delete.
+        await siteExecute(
+          site,
+          `UPDATE customers SET price_structure_id = NULL
+            WHERE price_structure_id IN (SELECT id FROM (
+                    SELECT id FROM price_structures WHERE name LIKE ?) x)`,
+          [`${PROBE_TAG}%`],
+        )
+        await siteExecute(site, 'DELETE FROM price_structures WHERE name LIKE ?', [`${PROBE_TAG}%`])
         await siteExecute(site, 'DELETE FROM customer_transactions WHERE reference = ?', [
           PROBE_TAG,
         ])

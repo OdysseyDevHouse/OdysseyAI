@@ -139,7 +139,88 @@ async function mapWithSpend(siteId: number, rows: Row[]): Promise<TillCustomer[]
     .map((r) => Number(r.id))
 
   const spend = capped.length > 0 ? await accountSpendFor(siteId, capped) : new Map()
-  return rows.map((r) => mapCustomer(r, spend.get(Number(r.id)) ?? NO_SPEND))
+  const structures = await priceStructureTranslation(siteId, rows)
+  return rows.map((r) => {
+    const mapped = mapCustomer(r, spend.get(Number(r.id)) ?? NO_SPEND)
+    return mapped.priceStructureId === null
+      ? mapped
+      : { ...mapped, priceStructureId: structures.get(mapped.priceStructureId) ?? null }
+  })
+}
+
+/**
+ * Turns the customer file's price-structure ids into THIS store's ids.
+ *
+ * ── WHY A TRANSLATION AND NOT A LOOKUP ────────────────────────────────────
+ *
+ * price_structures is per-store (001_products.sql): each shop defines its own
+ * list and the ids increment independently. customers.price_structure_id and
+ * customer_groups.price_structure_id move to the group primary WITH the
+ * customer file, so a branch till reads an id that means something in head
+ * office's list and prices against its own.
+ *
+ * Head office 1=Retail, 2=Wholesale, 3=Staff; branch 1=Retail, 2=Staff. A
+ * wholesale customer set up centrally carries id 2 and every sale to them at
+ * that branch prices at STAFF rates. Nothing errors and the margin simply
+ * disappears. Where the id does not exist at all the till falls back to default
+ * pricing — reproduced in probe-shared-customer-accounting.ts, where a
+ * primary-only structure resolved to nothing at the branch.
+ *
+ * ── MATCHED BY NAME, WHICH IS THE ONLY THING THAT TRAVELS ────────────────
+ *
+ * The same reasoning as product sharing, which matches on CODE for exactly
+ * this reason: an auto-increment id identifies a row within one database and
+ * nothing across two. price_structures has no code column, so the name is what
+ * there is. Compared case-insensitively and trimmed, because "Wholesale" and
+ * "wholesale " are the same commercial decision typed by two people.
+ *
+ * A name with no match at this branch returns null — the site default — which
+ * is the same outcome as before and the honest one: this shop does not offer
+ * that price structure, so it cannot price at it. Guessing the nearest match
+ * would silently sell at a rate nobody chose.
+ *
+ * Empty map when the store owns its own customers, so every single-store site
+ * and every unshared group does no extra work and gets identical ids back.
+ */
+async function priceStructureTranslation(
+  siteId: number,
+  rows: Row[],
+): Promise<Map<number, number | null>> {
+  const wanted = new Set<number>()
+  for (const r of rows) {
+    const id = r.price_structure_id ?? r.group_price_structure_id
+    if (id !== null && id !== undefined) wanted.add(Number(id))
+  }
+  if (wanted.size === 0) return new Map()
+
+  const { customerOwnerSite } = await import('../storeGroups')
+  const owner = await customerOwnerSite(siteId)
+  if (owner.siteId === siteId) {
+    // Not shared: the ids are already this store's own.
+    return new Map([...wanted].map((id) => [id, id]))
+  }
+
+  const { siteQuery } = await import('../siteDb')
+  const holes = [...wanted].map(() => '?').join(',')
+  const [ownerRows, mine] = await Promise.all([
+    siteQuery<Row>(
+      owner.siteId,
+      `SELECT id, name FROM price_structures WHERE id IN (${holes})`,
+      [...wanted],
+    ),
+    siteQuery<Row>(siteId, 'SELECT id, name FROM price_structures'),
+  ])
+
+  const byName = new Map(
+    mine.map((r) => [String(r.name).trim().toLowerCase(), Number(r.id)]),
+  )
+  const translation = new Map<number, number | null>()
+  for (const r of ownerRows) {
+    translation.set(Number(r.id), byName.get(String(r.name).trim().toLowerCase()) ?? null)
+  }
+  // An id the owner does not have either — a stale reference. Null, not kept.
+  for (const id of wanted) if (!translation.has(id)) translation.set(id, null)
+  return translation
 }
 
 const SELECT_CUSTOMER = `
