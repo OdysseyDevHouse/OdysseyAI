@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
+import { customerQuery, customerDbPrefix } from './customerDb'
 import { recordCustomerReceipt } from './cashbook'
 import { logActivity, type Actor } from './activityLog'
 import { toNum } from '../decimals'
@@ -90,7 +91,16 @@ export type DepositResult = { ok: true; transactionId: number } | { ok: false; e
  */
 export async function jobDeposits(siteId: number, jobId: number): Promise<JobDeposit[]> {
   try {
-    const rows = await siteQuery<Row>(
+    // The deposits are in the customer ledger, which a store group may keep in
+    // the primary's database — recordCustomerReceipt already writes them there.
+    // Read locally this returned nothing at every branch, so a job card showed
+    // "no deposits" for money the customer had actually paid and the technician
+    // invoiced the full amount again on completion.
+    //
+    // Only customer_transactions is named here, so the whole statement moves to
+    // the owner. The origin_site_id scoping below is what keeps it correct once
+    // it gets there.
+    const rows = await customerQuery<Row>(
       siteId,
       `SELECT id, doc_number, doc_date, amount_gross, amount_outstanding,
               reference, description, user_name
@@ -273,16 +283,43 @@ export type DepositDrift = {
   orphaned: { transactionId: number; jobId: number; amount: number; docDate: string }[]
 }
 
-/** Reports, never repairs. */
+/**
+ * Reports, never repairs.
+ *
+ * ── THE QUERY THAT NEITHER DATABASE CAN ANSWER ALONE ─────────────────────
+ *
+ * This is the textbook mixed statement: customer_transactions may live in the
+ * group primary while job_cards stays in the branch that opened the job. Run on
+ * either connection alone it gives a confident wrong answer rather than an
+ * error, and the two wrong answers are opposites:
+ *
+ *   · on the BRANCH, customer_transactions is empty, so it reports zero
+ *     orphans — a clean bill of health for a store it never looked at.
+ *   · on the OWNER, every branch's deposit is compared against head office's
+ *     job_cards, so every one of them looks orphaned.
+ *
+ * So it stays on the caller's connection and names the owner's database in the
+ * FROM, with origin_site_id narrowing the ledger to deposits this store took.
+ * That last part is what makes the NOT IN meaningful: job ids are per-database,
+ * so comparing another branch's job id against this store's job_cards would
+ * manufacture an orphan out of a perfectly good deposit.
+ *
+ * Both prefixes are empty for a single store, so the SQL is what it always was.
+ */
 export async function reconcileJobDeposits(siteId: number): Promise<DepositDrift> {
   try {
+    // Only the customer side needs naming: the statement runs on the caller's
+    // own connection, so job_cards resolves here without a qualifier.
+    const cdb = await customerDbPrefix(siteId)
     const rows = await siteQuery<Row>(
       siteId,
-      `SELECT id, source_doc_id, amount_gross, doc_date
-         FROM customer_transactions
-        WHERE source = 'job_deposit'
-          AND source_doc_id IS NOT NULL
-          AND source_doc_id NOT IN (SELECT id FROM job_cards)`,
+      `SELECT t.id, t.source_doc_id, t.amount_gross, t.doc_date
+         FROM ${cdb}customer_transactions t
+        WHERE t.source = 'job_deposit'
+          AND t.source_doc_id IS NOT NULL
+          AND (t.origin_site_id IS NULL OR t.origin_site_id = ?)
+          AND t.source_doc_id NOT IN (SELECT id FROM job_cards)`,
+      [siteId],
     )
     return {
       orphaned: rows.map((r) => ({
