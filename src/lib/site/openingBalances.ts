@@ -1,6 +1,6 @@
 import 'server-only'
-import { siteQuery } from '@/lib/siteDb'
 import { round } from '@/lib/decimals'
+import { customerQuery, supplierQuery } from './customerDb'
 import {
   splitCsvLine,
   sniffDelimiter,
@@ -11,6 +11,28 @@ import {
 import { postTransaction } from './customerLedger'
 import { postSupplierTransaction } from './supplierLedger'
 import type { Actor } from './activityLog'
+
+/**
+ * Reads the file this import is aimed at, wherever it lives.
+ *
+ * Every query in this module touches ONE cluster — customers with
+ * customer_transactions, or suppliers with supplier_transactions — and never
+ * joins a branch-owned table, so moving the whole statement to the owner is
+ * correct for all of them. See the rule in customerDb.ts.
+ *
+ * It used to call siteQuery directly, which broke the import at every branch of
+ * a group sharing its debtors book. Both halves failed, and the worse one
+ * failed silently: planOpeningBalances matched codes against the branch's own
+ * empty customers table so every row was rejected as unknown, while
+ * existingOpenings read the branch's empty customer_transactions and so found
+ * nothing already imported — killing the only guard against posting a book
+ * twice. applyOpeningBalances always resolved the owner correctly through
+ * postTransaction, so the write half was aimed at a file the read half could
+ * not see.
+ */
+function fileQuery(side: OpeningSide) {
+  return side === 'customer' ? customerQuery : supplierQuery
+}
 
 /**
  * Opening balances — carrying in what is already owed on the day you switch.
@@ -89,7 +111,7 @@ export async function planOpeningBalances(
   const problems: RowProblem[] = []
 
   const table = side === 'customer' ? 'customers' : 'suppliers'
-  const accounts = await siteQuery<Record<string, unknown>>(
+  const accounts = await fileQuery(side)<Record<string, unknown>>(
     siteId,
     `SELECT id, code, name, status FROM ${table}`,
   )
@@ -194,7 +216,7 @@ async function existingOpenings(
   const acTable = side === 'customer' ? 'customers' : 'suppliers'
   const fk = side === 'customer' ? 'customer_id' : 'supplier_id'
 
-  const rows = await siteQuery<Record<string, unknown>>(
+  const rows = await fileQuery(side)<Record<string, unknown>>(
     siteId,
     `SELECT a.code, a.name, COUNT(*) AS count
        FROM ${txTable} t
