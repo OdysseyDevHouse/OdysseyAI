@@ -118,13 +118,7 @@ export async function updateSharingAction(
     // customer file off by accident — but this form OWNS these switches, so
     // omitting them here would make them impossible to turn off.
     sharesCustomers: form.get('sharesCustomers') === 'on',
-    // sharesSuppliers is deliberately NOT sent while the switch is hidden.
-    //
-    // Reading `form.get(...) === 'on'` from a field that is no longer rendered
-    // would evaluate to false and switch the supplier file OFF for any store
-    // that already had it on — the exact accident the comment above warns
-    // about, arriving from the other direction. MemberSharing leaves an omitted
-    // flag alone, so this preserves whatever is set until the switch returns.
+    sharesSuppliers: form.get('sharesSuppliers') === 'on',
   })
 
   // The "store must be empty" rule, the same-server check and the "choose a

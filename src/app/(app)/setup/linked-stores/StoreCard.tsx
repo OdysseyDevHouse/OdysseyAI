@@ -103,8 +103,8 @@ export default function StoreCard({
     !member.sharesCustomers &&
     contents !== null &&
     contents.customers > 0
-  // No suppliersBlocked: the supplier switch is hidden until the purchasing
-  // modules resolve their owner — see the note where it used to be rendered.
+  const suppliersBlocked =
+    !ownsSharedFiles && !member.sharesSuppliers && contents !== null && contents.suppliers > 0
 
   return (
     <Card>
@@ -320,53 +320,42 @@ export default function StoreCard({
               disabled={unreadable || customersBlocked || !hasPrimary || !entityAllows}
             />
 
+            {suppliersBlocked && (
+              <Callout tone="warning">
+                This store has <strong>{contents?.suppliers} supplier(s)</strong> of its own.
+                Remove them first, or leave this store with its own creditors book.
+              </Callout>
+            )}
+
             {/*
-              ── "Use head office's supplier file" is HIDDEN, not removed ──────
+              ── THE HINT SAYS THE CREDITORS BOOK, NOT CENTRAL BUYING ─────────
               ─────────────────────────────────────────────────────────────────
-              The resolver always worked; what was missing was every module
-              behind it. Stage one landed the load-bearing half — supplierLedger,
-              paymentRuns, purchaseInvoiceMatch and the reconciliation now
-              resolve the owner (206, and probe-shared-supplier-file.ts proves
-              it) — so the remaining gap is purchasing: suppliers.ts,
-              purchaseDocuments, purchasePosting, expenses, supplierPrices,
-              productSuppliers and reorderSuggestions still read the branch's
-              own database.
-
-              Switching it on today points a branch at head office's supplier
-              file while those keep reading their own empty tables: no suppliers
-              in the picker, no orders raisable, no invoices matchable. Not a
-              subtle wrong answer — purchasing stops.
-
-              Hidden rather than disabled, because a greyed-out switch invites
-              "how do I enable this?" and the answer is not a permission or a
-              setting, it is unwritten code.
-
-              ── AND WHEN IT RETURNS, THE LABEL HAS TO BE HONEST ──────────────
-
-              The hint this switch used to carry read "One supplier list and one
-              creditors book, for central buying." The first half is what the
-              feature is; the second half is not what it does.
+              This switch was hidden while the supplier modules were converted,
+              and its old hint read "One supplier list and one creditors book,
+              for central buying." The first half is what the feature is. The
+              second half is not what it does, and the difference is the kind a
+              shop only discovers by using it.
 
               purchase_documents, supplier_prices and product_suppliers all STAY
-              in the branch — decided, and argued in 206. So orders, agreed
-              costs and product-supplier links remain per store: each branch
-              orders for itself, at its own costs, into its own stock, with its
-              own PO numbers. What IS shared is the creditors book — one supplier
-              record, one balance, one ledger, one payment run, so a supplier
-              invoiced at branch 3 and paid from branch 7 nets off correctly.
+              in the branch — decided, and argued at length in 206. So orders,
+              agreed costs and product-supplier links remain per store: each
+              branch orders for itself, at its own costs, into its own stock,
+              with its own PO numbers. Genuine central buying needs a group-wide
+              order document a branch receives against, which is a new flow
+              rather than a routing change.
 
-              A shop that switched this on expecting one PO series would find out
-              by using it. Whoever restores the switch should write the hint
-              about the creditors book and leave central buying out of it — that
-              is a separate feature needing a group-wide order document, not a
-              routing change.
-
-              THE ACTION NO LONGER SENDS sharesSuppliers — see the note in
-              actions.ts. Reading an unrendered field would evaluate to false and
-              quietly switch the file off for anyone who had it on.
-
-              Customer sharing above is unaffected and stays available.
+              What IS shared is the creditors book, and that is worth having on
+              its own: one supplier record, one balance, one ledger, one payment
+              run, so a supplier invoiced at branch 3 and paid from branch 7
+              nets off correctly.
             */}
+            <SharingSwitch
+              name="sharesSuppliers"
+              label="Use head office’s supplier file"
+              hint="One supplier list and one creditors book — a supplier invoiced at one store can be paid from another. Orders and agreed costs stay with each store."
+              defaultChecked={member.sharesSuppliers}
+              disabled={unreadable || suppliersBlocked || !hasPrimary || !entityAllows}
+            />
           </div>
           )}
         </CardBody>
