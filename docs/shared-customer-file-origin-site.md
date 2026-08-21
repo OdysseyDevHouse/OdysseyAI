@@ -108,7 +108,43 @@ card, and nobody at that store would ever see the difference.
 
 ---
 
-## ⚠ Open: two tables serve both customers and suppliers
+## ✅ Fixed: each entity has its own documents and comments
+
+**Answered:** split the tables. **Fixed:** `sql/site/207_party_files_per_entity.sql`
+plus `src/lib/site/partyStore.ts`, which is the single place that decides which
+entity lands where.
+
+The framing below was wrong in a way worth recording: it said "two tables serve
+both customers and suppliers", but `CommentEntity` is
+`'customer' | 'supplier' | 'job_card' | 'ticket'` — **four** entities, and two of
+them are branch-local by nature. A table already straddling three ownership
+answers was never going to follow one file cleanly, which made the split the
+obvious answer rather than the expensive one.
+
+    customer_documents / customer_comments   →  the customer owner
+    supplier_documents / supplier_comments   →  the supplier owner
+    job_documents      / job_comments        →  the branch (jobs and tickets)
+
+The bytes needed nothing. `UPLOADS_ROOT` is resolved once per **process** and
+takes no `siteId`, and sharing already requires every member to be on the same
+MariaDB instance as the primary — so branch and owner are the same machine and
+the same uploads directory. Only metadata moved.
+
+Both tables were empty on every database, so the `INSERT…SELECT` copies in 207
+are no-ops that exist only for a site which accumulates rows before running it.
+The old tables are left in place: an empty table costs nothing, and dropping one
+holding a signed contract because a migration assumed it was empty is not
+recoverable.
+
+Verified with suppliers shared and customers NOT: three `createComment` calls
+from one branch landed in three different places, which one table could not have
+done.
+
+The original note is kept below.
+
+---
+
+## ⚠ Was open: two tables serve both customers and suppliers
 
 `party_documents` and `party_comments` are keyed by a loose
 `(entity, entity_id)` pair with no foreign key, and the entity is `'customer'`

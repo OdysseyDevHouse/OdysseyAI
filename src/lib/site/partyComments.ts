@@ -1,7 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { logActivity, type Actor } from './activityLog'
+import { partyDb, partyTables } from './partyStore'
 /**
  * What a comment or a document can be ABOUT.
  *
@@ -82,10 +82,16 @@ function mapComment(r: Row): PartyComment {
   }
 }
 
-const SELECT_COMMENT = `
+/**
+ * The column list, against whichever table this entity's comments live in.
+ *
+ * A function since 207 split the one table into three — see partyStore.ts. The
+ * table name comes from partyTables() and never from a caller.
+ */
+const selectComment = (entity: CommentEntity) => `
   SELECT id, entity, entity_id, body, is_pinned, is_edited, author_id, author_name,
          created_at, updated_at
-    FROM party_comments
+    FROM ${partyTables(entity).comments}
 `
 
 /**
@@ -100,9 +106,9 @@ export async function listComments(
   limit = 200,
 ): Promise<PartyComment[]> {
   const capped = Math.min(Math.max(limit, 1), 500)
-  const rows = await siteQuery<Row>(
+  const rows = await partyDb(entity).query<Row>(
     siteId,
-    `${SELECT_COMMENT}
+    `${selectComment(entity)}
       WHERE entity = ? AND entity_id = ?
       ORDER BY is_pinned DESC, created_at DESC, id DESC
       LIMIT ${capped}`,
@@ -132,9 +138,9 @@ export async function createComment(
   const invalid = validateBody(body)
   if (invalid) return { ok: false, error: invalid }
 
-  const res = await siteExecute(
+  const res = await partyDb(entity).execute(
     siteId,
-    `INSERT INTO party_comments (entity, entity_id, body, is_pinned, author_id, author_name)
+    `INSERT INTO ${partyTables(entity).comments} (entity, entity_id, body, is_pinned, author_id, author_name)
      VALUES (?,?,?,?,?,?)`,
     [entity, entityId, body.trim(), isPinned ? 1 : 0, actor.userId, actor.userName.slice(0, 120)],
   )
@@ -170,14 +176,14 @@ export async function updateComment(
   const invalid = validateBody(body)
   if (invalid) return { ok: false, error: invalid }
 
-  const existing = await siteQueryOne<Row>(
+  const existing = await partyDb(entity).queryOne<Row>(
     siteId,
-    'SELECT id FROM party_comments WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1',
+    `SELECT id FROM ${partyTables(entity).comments} WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1`,
     [id, entity, entityId],
   )
   if (!existing) return { ok: false, error: 'That comment no longer exists.' }
 
-  await siteExecute(siteId, 'UPDATE party_comments SET body = ?, is_edited = 1 WHERE id = ?', [
+  await partyDb(entity).execute(siteId, `UPDATE ${partyTables(entity).comments} SET body = ?, is_edited = 1 WHERE id = ?`, [
     body.trim(),
     id,
   ])
@@ -194,9 +200,9 @@ export async function setCommentPinned(
   id: number,
   pinned: boolean,
 ): Promise<SaveResult> {
-  const existing = await siteQueryOne<Row>(
+  const existing = await partyDb(entity).queryOne<Row>(
     siteId,
-    'SELECT id FROM party_comments WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1',
+    `SELECT id FROM ${partyTables(entity).comments} WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1`,
     [id, entity, entityId],
   )
   if (!existing) return { ok: false, error: 'That comment no longer exists.' }
@@ -204,7 +210,7 @@ export async function setCommentPinned(
   // is_edited is deliberately not touched: pinning is not editing. Now that the
   // flag is stored rather than inferred from updated_at, this needs no trick to
   // hold the timestamp still.
-  await siteExecute(siteId, 'UPDATE party_comments SET is_pinned = ? WHERE id = ?', [
+  await partyDb(entity).execute(siteId, `UPDATE ${partyTables(entity).comments} SET is_pinned = ? WHERE id = ?`, [
     pinned ? 1 : 0,
     id,
   ])
@@ -219,14 +225,14 @@ export async function deleteComment(
   entityId: number,
   id: number,
 ): Promise<DeleteResult> {
-  const existing = await siteQueryOne<Row>(
+  const existing = await partyDb(entity).queryOne<Row>(
     siteId,
-    'SELECT id FROM party_comments WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1',
+    `SELECT id FROM ${partyTables(entity).comments} WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1`,
     [id, entity, entityId],
   )
   if (!existing) return { ok: false, error: 'That comment no longer exists.' }
 
-  await siteExecute(siteId, 'DELETE FROM party_comments WHERE id = ?', [id])
+  await partyDb(entity).execute(siteId, `DELETE FROM ${partyTables(entity).comments} WHERE id = ?`, [id])
 
   await logActivity(siteId, actor, {
     entity,
@@ -249,7 +255,7 @@ export async function removeCommentsFor(
   entity: CommentEntity,
   entityId: number,
 ): Promise<void> {
-  await tx.execute('DELETE FROM party_comments WHERE entity = ? AND entity_id = ?', [
+  await tx.execute(`DELETE FROM ${partyTables(entity).comments} WHERE entity = ? AND entity_id = ?`, [
     entity,
     entityId,
   ] as never)

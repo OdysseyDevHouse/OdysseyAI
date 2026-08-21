@@ -1,7 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { logActivity, type Actor } from './activityLog'
+import { partyDb, partyTables } from './partyStore'
 import type { CommentEntity } from './partyComments'
 
 /**
@@ -63,10 +63,17 @@ function mapDocument(r: Row): PartyDocument {
   }
 }
 
-const SELECT_DOCUMENT = `
+/**
+ * The column list, against whichever table this entity's documents live in.
+ *
+ * A function rather than a constant since 207 split the one table into three —
+ * see partyStore.ts for which entity lands where and why. The table name comes
+ * from partyTables() and never from a caller, so it cannot be user input.
+ */
+const selectDocument = (entity: CommentEntity) => `
   SELECT id, entity, entity_id, filename, stored_name, mime_type, size_bytes,
          description, uploaded_by, uploaded_name, created_at
-    FROM party_documents
+    FROM ${partyTables(entity).documents}
 `
 
 /** One account's documents, newest first. */
@@ -75,9 +82,9 @@ export async function listDocuments(
   entity: CommentEntity,
   entityId: number,
 ): Promise<PartyDocument[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await partyDb(entity).query<Row>(
     siteId,
-    `${SELECT_DOCUMENT}
+    `${selectDocument(entity)}
       WHERE entity = ? AND entity_id = ?
       ORDER BY created_at DESC, id DESC`,
     [entity, entityId],
@@ -98,9 +105,9 @@ export async function getDocument(
   entityId: number,
   id: number,
 ): Promise<PartyDocument | null> {
-  const row = await siteQueryOne<Row>(
+  const row = await partyDb(entity).queryOne<Row>(
     siteId,
-    `${SELECT_DOCUMENT} WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1`,
+    `${selectDocument(entity)} WHERE id = ? AND entity = ? AND entity_id = ? LIMIT 1`,
     [id, entity, entityId],
   )
   return row ? mapDocument(row) : null
@@ -120,9 +127,9 @@ export async function createDocument(
   entityId: number,
   input: DocumentInput,
 ): Promise<SaveResult> {
-  const res = await siteExecute(
+  const res = await partyDb(entity).execute(
     siteId,
-    `INSERT INTO party_documents
+    `INSERT INTO ${partyTables(entity).documents}
        (entity, entity_id, filename, stored_name, mime_type, size_bytes,
         description, uploaded_by, uploaded_name)
      VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -164,9 +171,9 @@ export async function updateDocument(
   const filename = patch.filename?.trim() || existing.filename
   if (!filename) return { ok: false, error: 'A document needs a name.' }
 
-  await siteExecute(
+  await partyDb(entity).execute(
     siteId,
-    'UPDATE party_documents SET filename = ?, description = ? WHERE id = ?',
+    `UPDATE ${partyTables(entity).documents} SET filename = ?, description = ? WHERE id = ?`,
     [filename.slice(0, 255), patch.description?.trim().slice(0, 400) || null, id],
   )
 
@@ -198,7 +205,11 @@ export async function deleteDocument(
   const existing = await getDocument(siteId, entity, entityId, id)
   if (!existing) return { ok: false, error: 'That document no longer exists.' }
 
-  await siteExecute(siteId, 'DELETE FROM party_documents WHERE id = ?', [id])
+  await partyDb(entity).execute(
+    siteId,
+    `DELETE FROM ${partyTables(entity).documents} WHERE id = ?`,
+    [id],
+  )
 
   await logActivity(siteId, actor, {
     entity,
@@ -214,9 +225,22 @@ export async function deleteDocument(
  * Every stored name for one account, then the rows.
  *
  * For deleting an account. No foreign key means no CASCADE, so this runs inside
- * the same transaction as the account delete — see deleteCustomer. The names
- * are returned rather than unlinked here because the files must not be removed
- * until that transaction has actually committed.
+ * a transaction — see deleteCustomer. The names are returned rather than
+ * unlinked here because the files must not be removed until that transaction
+ * has actually committed.
+ *
+ * ── THE CONNECTION MUST MATCH THE ENTITY ─────────────────────────────────
+ *
+ * `tx` comes from the caller, and since 207 the table this writes to depends on
+ * the entity — customer rows are on the customer owner, supplier rows on the
+ * supplier owner. Passing a transaction opened against the wrong database is
+ * not a type error and not a crash: the table simply is not there, or worse, is
+ * there and empty.
+ *
+ * So a caller must open its transaction with the matching helper —
+ * customerTransaction for 'customer', supplierTransaction for 'supplier',
+ * siteTransaction for anything branch-local. partyDb(entity).transaction gives
+ * exactly that, and is what deleteCustomer and deleteSupplier use.
  */
 export async function removeDocumentsFor(
   tx: PoolConnection,
@@ -224,15 +248,16 @@ export async function removeDocumentsFor(
   entityId: number,
 ): Promise<string[]> {
   const [rows] = await tx.execute(
-    'SELECT stored_name FROM party_documents WHERE entity = ? AND entity_id = ?',
+    `SELECT stored_name FROM ${partyTables(entity).documents}
+      WHERE entity = ? AND entity_id = ?`,
     [entity, entityId] as never,
   )
   const names = (rows as Row[]).map((r) => String(r.stored_name))
 
-  await tx.execute('DELETE FROM party_documents WHERE entity = ? AND entity_id = ?', [
-    entity,
-    entityId,
-  ] as never)
+  await tx.execute(
+    `DELETE FROM ${partyTables(entity).documents} WHERE entity = ? AND entity_id = ?`,
+    [entity, entityId] as never,
+  )
 
   return names
 }

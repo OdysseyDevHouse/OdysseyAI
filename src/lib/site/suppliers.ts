@@ -12,6 +12,7 @@ import { toNum } from '../decimals'
 import { isEmail } from './customerLookups'
 import { resolveMasterCode } from './masterCodes'
 import { logActivity, type Actor } from './activityLog'
+import { partyDb } from './partyStore'
 import { removeDocumentsFor } from './partyDocuments'
 import { removeCommentsFor } from './partyComments'
 import { deleteStoredFile } from '../uploads'
@@ -513,21 +514,18 @@ export async function deleteSupplier(
    *
    * Contacts cascade with the account and move with it, so they need no
    * mention. Documents and comments do not cascade — they hang off the loose
-   * (entity, entity_id) pair (028) — and under supplier sharing they are not
-   * even in the same database as the supplier:
+   * (entity, entity_id) pair (028) — so they are removed explicitly:
    *
-   *   suppliers        → the SUPPLIER owner
-   *   party_documents  → wherever the CUSTOMER file lives, because that is
-   *   party_comments     where deleteCustomer put them, and one table cannot
-   *                      follow two files
-   *   activity_log     → always the branch; it records what a person did
+   *   suppliers            → the SUPPLIER owner
+   *   supplier_documents   → the SUPPLIER owner too, since 207 gave each
+   *   supplier_comments      entity its own pair of tables
+   *   activity_log         → always the branch; it records what a person did
    *
-   * That third column is the open question in
-   * docs/shared-customer-file-origin-site.md, and this is the first code that
-   * actually meets it. It is handled rather than solved: the documents are
-   * removed on the connection that holds them, which is correct whichever file
-   * is shared, and the split is made explicit so the eventual fix has one place
-   * to land.
+   * This used to open a customerTransaction, which was right when one shared
+   * party_documents sat wherever the customer file lived and wrong the moment
+   * suppliers could be shared separately. partyDb('supplier').transaction is
+   * the connection that matches the table, and asking for it by entity rather
+   * than naming a helper is what stops the two drifting apart again.
    *
    * ORDER: documents first, supplier last. A failure partway leaves the
    * supplier standing with its documents gone — untidy, visible, and
@@ -535,7 +533,7 @@ export async function deleteSupplier(
    * to a supplier that no longer exists, which nothing surfaces and nothing
    * cleans up.
    */
-  const storedNames = await customerTransaction(siteId, async (tx) => {
+  const storedNames = await partyDb('supplier').transaction(siteId, async (tx) => {
     const names = await removeDocumentsFor(tx, 'supplier', id)
     await removeCommentsFor(tx, 'supplier', id)
     return names

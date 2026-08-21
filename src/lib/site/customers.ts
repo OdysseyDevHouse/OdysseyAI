@@ -908,12 +908,14 @@ export async function deleteCustomer(
   // key — so nothing removes them unless this does. See the header of
   // 028_party_contacts_documents_comments.sql.
   //
-  // party_documents and party_comments are keyed by (entity, entity_id) and
-  // serve BOTH customers and suppliers, so they cannot simply follow one of
-  // them. They live in the owner's database alongside customers, which is
-  // right while customers are shared and suppliers are not; sharing suppliers
-  // as well will need the two entities separated. Recorded in
-  // docs/shared-customer-file-origin-site.md.
+  // That "sharing suppliers as well will need the two entities separated" note
+  // has been acted on: 207 gave each entity its own pair, so customer_documents
+  // and customer_comments live on the customer owner beside `customers` and the
+  // supplier half follows the supplier file independently.
+  //
+  // customerTransaction is still the right connection — it is what
+  // partyDb('customer').transaction resolves to — and it also carries the
+  // DELETE below, so all three statements stay in one real transaction.
   const orphaned = await customerTransaction(siteId, async (tx) => {
     const storedNames = await removeDocumentsFor(tx, 'customer', id)
     await removeCommentsFor(tx, 'customer', id)
