@@ -2350,7 +2350,8 @@ export const TEMPLATES: ReportTemplate[] = [
       source: 'loyaltyLedger',
       columns: [
         { field: 'happenedAt' },
-        { field: 'customerName' },
+        // The member, for the same reason as the members template below.
+        { field: 'memberName' },
         { field: 'entryType' },
         { field: 'documentNumber' },
         { field: 'tierName' },
@@ -2387,9 +2388,13 @@ export const TEMPLATES: ReportTemplate[] = [
     spec: spec({
       source: 'loyaltyMembers',
       limit: MAX_ROWS,
+      // The MEMBER's own number and name lead. They used to be the customer's,
+      // which is blank for every member who never opened an account — so the
+      // report that answers "who is on the programme" would have shown a column
+      // of gaps for exactly the people it is about.
       columns: [
-        { field: 'customerCode' },
-        { field: 'customerName' },
+        { field: 'memberNumber' },
+        { field: 'memberName' },
         { field: 'phone' },
         { field: 'tierName' },
         { field: 'pointsBalance' },

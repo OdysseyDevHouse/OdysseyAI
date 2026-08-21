@@ -4,6 +4,8 @@ import { requireSite, requireCapability } from '@/lib/auth'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { getSetting } from '@/lib/site/settings'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
+import { loyaltyQueryOne } from '@/lib/site/loyaltyDb'
+import { memberIdForCustomer } from '@/lib/site/loyalty'
 import { toNum } from '@/lib/decimals'
 import { receiptDataFor, type ReceiptTender } from '@/lib/receiptData'
 import { ReceiptSlip } from '@/components/pos/ReceiptSlip'
@@ -62,19 +64,30 @@ export default async function SlipPage({
   /* The loyalty footer — best-effort, a slip must print even if loyalty
      hiccups, so both reads collapse to null on any failure. */
   let loyalty: { pointsEarned: number; balance: number } | null = null
-  if (doc.customerId) {
+  /*
+   * The MEMBER's points, read from the loyalty owner.
+   *
+   * Three things were wrong here and all three were silent, because the whole
+   * block is wrapped in a catch that leaves the slip unprinted-with-points
+   * rather than failing: the ledger no longer has customer_id; siteQueryOne
+   * reads the branch's own empty table on a shared programme; and the earn
+   * query matched document_id alone, so branch 2 printing its sale 5001 would
+   * show the points from branch 1's sale 5001.
+   */
+  const memberId = doc.customerId ? await memberIdForCustomer(site.id, doc.customerId) : null
+  if (memberId) {
     try {
       const [earn, balance] = await Promise.all([
-        siteQueryOne<Record<string, unknown>>(
+        loyaltyQueryOne<Record<string, unknown>>(
           site.id,
           `SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger
-            WHERE document_id = ? AND entry_type = 'earn'`,
-          [id],
+            WHERE document_id = ? AND origin_site_id = ? AND entry_type = 'earn'`,
+          [id, site.id],
         ),
-        siteQueryOne<Record<string, unknown>>(
+        loyaltyQueryOne<Record<string, unknown>>(
           site.id,
-          'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE customer_id = ?',
-          [doc.customerId],
+          'SELECT COALESCE(SUM(points),0) AS points FROM loyalty_ledger WHERE member_id = ?',
+          [memberId],
         ),
       ])
       const earned = Math.round(toNum(earn?.points))

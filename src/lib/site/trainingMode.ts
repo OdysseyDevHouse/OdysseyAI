@@ -465,7 +465,8 @@ export type StartResult = { ok: true; session: TrainingSession } | { ok: false; 
  */
 async function sharedMasterFileRefusal(siteId: number): Promise<string | null> {
   try {
-    const { customerFileIsShared, supplierFileIsShared } = await import('../storeGroups')
+    const { customerFileIsShared, supplierFileIsShared, loyaltyFileIsShared } =
+      await import('../storeGroups')
 
     /*
      * ── THE SUPPLIER SIDE FAILS THE SAME WAY, AND ONE STATEMENT WORSE ─────
@@ -490,14 +491,43 @@ async function sharedMasterFileRefusal(siteId: number): Promise<string | null> {
      */
     const customers = await customerFileIsShared(siteId)
     const suppliers = await supplierFileIsShared(siteId)
-    if (!customers && !suppliers) return null
+    /*
+     * LOYALTY COUNTS TOO, and it is the easiest of the three to miss.
+     *
+     * The flags are independent, so a store can share the programme while
+     * keeping its own debtors and creditors books — and that store passed this
+     * check. Every practice sale would then earn REAL points on a REAL member's
+     * card in the group's live programme, and every practice redemption would
+     * spend them. The watermark cannot find any of it afterwards, for exactly
+     * the reason described above: those rows are in the owner's database, not
+     * this branch's, and the marks were taken here.
+     *
+     * Worse than the debtor case in one respect. A pretend invoice is at least
+     * visible on a statement somebody can query. Points quietly appearing on a
+     * member's card look like points they earned.
+     */
+    const loyalty = await loyaltyFileIsShared(siteId)
+    if (!customers && !suppliers && !loyalty) return null
 
-    const which = customers && suppliers ? 'customer and supplier files' : customers ? 'customer file' : 'supplier file'
-    const what = customers && suppliers
-      ? 'Practice sales made on account, and practice purchases, would be written into the group’s real ledgers'
-      : customers
-        ? 'Practice sales made on account would be written into the group’s real customer ledger'
-        : 'Practice purchases and supplier invoices would be written into the group’s real creditors book'
+    const files = [
+      customers ? 'customer file' : null,
+      suppliers ? 'supplier file' : null,
+      loyalty ? 'loyalty programme' : null,
+    ].filter(Boolean) as string[]
+    const which =
+      files.length === 1
+        ? files[0]
+        : `${files.slice(0, -1).join(', ')} and ${files[files.length - 1]}`
+
+    const effects = [
+      customers ? 'practice sales made on account would land in the group’s real customer ledger' : null,
+      suppliers ? 'practice purchases would land in the group’s real creditors book' : null,
+      loyalty ? 'practice sales would earn and spend real points on real members’ cards' : null,
+    ].filter(Boolean) as string[]
+    const what =
+      effects.length === 1
+        ? `Here, ${effects[0]}`
+        : `Here, ${effects.slice(0, -1).join('; ')}; and ${effects[effects.length - 1]}`
 
     return (
       `This store shares its ${which} with the rest of the group, and training ` +

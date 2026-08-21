@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
 import { customerDbPrefix, customerQuery } from './customerDb'
+import { loyaltyQuery } from './loyaltyDb'
 import { round, toNum } from '../decimals'
 import { getShift, shiftPosition } from './shifts'
 
@@ -275,12 +276,21 @@ export async function tenderBreakdown(
     // ids: without the origin scope this would pull in another store's shift
     // that happens to share the number, into a figure a drawer is counted
     // against.
-    customerQuery<Row>(
+    /*
+     * On the LOYALTY owner, and named by the member.
+     *
+     * Was customerQuery joining c.id = w.customer_id: the wrong owner under
+     * independent flags, and a column the wallet no longer has. The name shown
+     * beside a top-up is now the member's own, which is also the only name a
+     * walk-in member has — and a walk-in topping up their card is precisely the
+     * row a cashier needs to see when counting the drawer.
+     */
+    loyaltyQuery<Row>(
       siteId,
       `SELECT w.amount, w.note, w.user_name, w.created_at, w.document_number,
-              c.name AS customer_name
+              m.name AS customer_name
          FROM loyalty_wallet w
-         LEFT JOIN customers c ON c.id = w.customer_id
+         LEFT JOIN loyalty_members m ON m.id = w.member_id
         WHERE w.shift_id = ? AND w.tender_type_id = ? AND w.entry_type = 'topup'
           AND (w.origin_site_id IS NULL OR w.origin_site_id = ?)
         ORDER BY w.created_at, w.id`,

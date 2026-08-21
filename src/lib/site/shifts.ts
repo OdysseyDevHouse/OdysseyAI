@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
+import { loyaltyDbPrefix } from './loyaltyDb'
 import { getNumericSetting, getSetting } from './settings'
 import type { Actor } from './activityLog'
 
@@ -349,6 +350,9 @@ export type ShiftPosition = {
  *
  */
 export async function offLedgerCash(siteId: number, shiftId: number): Promise<number> {
+  // Empty for a shop that owns its own programme, so its SQL is unchanged.
+  const loyaltyPrefix = await loyaltyDbPrefix(siteId)
+
   /* One query per source rather than a union: the three tables agree on nothing
      but `shift_id` and `tender_type_id`, and a union would need every column
      list padded to match. Read in parallel, so this costs one round trip. */
@@ -373,14 +377,26 @@ export async function offLedgerCash(siteId: number, shiftId: number): Promise<nu
           AND d.kind IN ('deposit', 'refund')`,
       [shiftId],
     ),
+    /*
+     * MIXED, so it is qualified rather than routed.
+     *
+     * loyalty_wallet belongs to the programme's owner and tender_types is this
+     * branch's own — one query, two databases, so neither wrapper can carry it.
+     * The prefix names the far table and the query stays on the caller's
+     * connection, which is where the branch's tender rows are.
+     *
+     * shift_id is a branch id, and origin_site_id is what keeps branch 2's
+     * shift 7 out of branch 1's drawer count.
+     */
     siteQueryOne<Row>(
       siteId,
       `SELECT COALESCE(SUM(w.amount), 0) AS total
-         FROM loyalty_wallet w
+         FROM ${loyaltyPrefix}loyalty_wallet w
          JOIN tender_types tt ON tt.id = w.tender_type_id
         WHERE w.shift_id = ? AND tt.counts_as_drawer_cash = 1
-          AND w.entry_type = 'topup'`,
-      [shiftId],
+          AND w.entry_type = 'topup'
+          AND (w.origin_site_id IS NULL OR w.origin_site_id = ?)`,
+      [shiftId, siteId],
     ),
   ])
 

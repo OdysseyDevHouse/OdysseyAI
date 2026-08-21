@@ -7,6 +7,7 @@ import {
   supplierDbPrefix,
   supplierBranchDbPrefix,
 } from '../site/customerDb'
+import { loyaltyDbPrefix, loyaltyBranchDbPrefix } from '../site/loyaltyDb'
 import type { Capability } from '../site/permissions'
 // The grand total and a band subtotal have to be the same arithmetic, so the
 // function lives with the banding rather than here. See shape.ts.
@@ -178,25 +179,30 @@ export async function runBuilderSpec(
    *   ownedBy: 'customer'  the source's own table is on the CUSTOMER owner, so
    *                        its FROM is qualified too
    *   ownedBy: 'supplier'   the same, for the creditors book
+   *   ownedBy: 'loyalty'    the same, for the programme
    *   otherwise            the source's table is this branch's own
    *
-   * `{C}`, `{S}` and `{B}` in the catalogue mark which side each joined table
-   * is on. All resolve to '' for a store that owns its own files, so a
+   * `{C}`, `{S}`, `{L}` and `{B}` in the catalogue mark which side each joined
+   * table is on. All resolve to '' for a store that owns its own files, so a
    * single-shop site's SQL — and its query plan — are exactly what they always
    * were.
    *
-   * The two files are answered SEPARATELY, because a group may share one and
-   * not the other (015). A report joining sales to both a customer and a
-   * supplier can therefore have three databases in one plan, which MariaDB
-   * resolves the same way it resolves two.
+   * The three files are answered SEPARATELY, because a group may share any
+   * combination of them (015, 017). A report joining sales to a customer, a
+   * supplier and a member can therefore have four databases in one plan, which
+   * MariaDB resolves the same way it resolves two.
    */
-  const ownerSide = source.ownedBy === 'customer' || source.ownedBy === 'supplier'
-  const [customerPrefix, supplierPrefix, customerBranch, supplierBranch] = await Promise.all([
-    customerDbPrefix(siteId),
-    supplierDbPrefix(siteId),
-    branchDbPrefix(siteId),
-    supplierBranchDbPrefix(siteId),
-  ])
+  const ownerSide =
+    source.ownedBy === 'customer' || source.ownedBy === 'supplier' || source.ownedBy === 'loyalty'
+  const [customerPrefix, supplierPrefix, loyaltyPrefix, customerBranch, supplierBranch, loyaltyBranch] =
+    await Promise.all([
+      customerDbPrefix(siteId),
+      supplierDbPrefix(siteId),
+      loyaltyDbPrefix(siteId),
+      branchDbPrefix(siteId),
+      supplierBranchDbPrefix(siteId),
+      loyaltyBranchDbPrefix(siteId),
+    ])
 
   /*
    * `{B}` means "this branch's own database", but WHICH resolver answers that
@@ -205,7 +211,12 @@ export async function runBuilderSpec(
    * would leave a supplier-owned source reading the owner's copy of a branch
    * table. So the supplier twin answers for a supplier-owned source.
    */
-  const branchPrefix = source.ownedBy === 'supplier' ? supplierBranch : customerBranch
+  const branchPrefix =
+    source.ownedBy === 'supplier'
+      ? supplierBranch
+      : source.ownedBy === 'loyalty'
+        ? loyaltyBranch
+        : customerBranch
 
   /*
    * The query always runs on the CALLER's connection — a report is a read, and
@@ -223,13 +234,23 @@ export async function runBuilderSpec(
       .join(customerPrefix)
       .split('{S}')
       .join(supplierPrefix)
+      .split('{L}')
+      .join(loyaltyPrefix)
       .split('{B}')
       .join(ownerSide ? branchPrefix : '')
 
   const sql = [
     `SELECT ${selectSql.map((s) => s.sql).join(', ')}`,
     // The source's own table, on whichever owner holds it.
-    `FROM ${source.ownedBy === 'supplier' ? supplierPrefix : source.ownedBy === 'customer' ? customerPrefix : ''}\`${source.table}\` t`,
+    `FROM ${
+      source.ownedBy === 'supplier'
+        ? supplierPrefix
+        : source.ownedBy === 'loyalty'
+          ? loyaltyPrefix
+          : source.ownedBy === 'customer'
+            ? customerPrefix
+            : ''
+    }\`${source.table}\` t`,
     ...joins.map(qualify),
     where.sql ? `WHERE ${where.sql}` : '',
     summarised

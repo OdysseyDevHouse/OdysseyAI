@@ -545,11 +545,28 @@ export async function supplierFileIsShared(siteId: number): Promise<boolean> {
 }
 
 /**
- * "Is this file shared with anyone", for either master file.
+ * And the same for the loyalty programme — the third independent flag.
  *
- * Factored rather than written twice: the customer version was subtly wrong
- * once already (see the note above), and two copies of this reasoning is two
- * places for the next person to fix only one of.
+ * Worth having even though it looks like a third copy of the same line, because
+ * the alternative is what callers reach for instead: `owner.siteId !== siteId`,
+ * which is FALSE at the primary. The primary is the store doing the most
+ * sharing, so that test reports "not shared" for the one site where sharing
+ * matters most. fileIsShared asks the group, not the id.
+ */
+export async function loyaltyFileIsShared(siteId: number): Promise<boolean> {
+  return fileIsShared(siteId, loyaltyOwnerSite)
+}
+
+/**
+ * "Is this file shared with anyone", for any of the three master files.
+ *
+ * Factored rather than written three times: the customer version was subtly
+ * wrong once already (see the note above), and three copies of this reasoning
+ * is three places for the next person to fix only one of.
+ *
+ * Generic over the RESOLVER, not over a flag name, which is what lets loyalty
+ * reuse it despite being the one file exempt from the legal-entity gate — that
+ * exemption lives in ownerSiteFor, so a resolver already carries it.
  */
 async function fileIsShared(
   siteId: number,

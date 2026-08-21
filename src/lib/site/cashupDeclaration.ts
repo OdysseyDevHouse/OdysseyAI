@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
+import { loyaltyQueryOne } from './loyaltyDb'
 import { getNumericSetting } from './settings'
 import { cashupMode, getShift, shiftPosition } from './shifts'
 import type { Actor } from './activityLog'
@@ -318,11 +319,15 @@ export async function declarationView(
        FROM gift_card_events WHERE shift_id = ?`,
       [shiftId],
     ),
-    siteQueryOne<Row>(
+    // The owner's wallet table, and this branch's own top-ups within it:
+    // shift_id is a branch id, so without origin_site_id a shared programme
+    // adds another store's shift 7 to this drawer.
+    loyaltyQueryOne<Row>(
       siteId,
       `SELECT COALESCE(SUM(CASE WHEN entry_type = 'topup' THEN amount END), 0) AS topups
-         FROM loyalty_wallet WHERE shift_id = ?`,
-      [shiftId],
+         FROM loyalty_wallet
+        WHERE shift_id = ? AND (origin_site_id IS NULL OR origin_site_id = ?)`,
+      [shiftId, siteId],
     ),
     /*
      * Sales paid by ONE method only.

@@ -200,17 +200,21 @@ export interface CatalogSource {
   /** The primary table, aliased `t`. */
   table: string
   /**
-   * Which database the primary table lives in when a group shares its customer
-   * file. Omitted means the caller's own, which is every source but the four
-   * built on the debtors book and loyalty balances.
+   * Which shared file the primary table belongs to. Omitted means the caller's
+   * own database, which is every source but those built on the debtors book,
+   * the creditors book, and the loyalty programme.
    *
-   * This decides WHERE the query runs. The {C} / {S} / {B} tokens above decide
-   * how the tables on the other side are named once it is running.
+   * This decides WHERE the query runs. The {C} / {S} / {L} / {B} tokens above
+   * decide how the tables on the other side are named once it is running.
    *
-   * 'supplier' is the creditors twin, answered separately because a group may
-   * share one file and not the other (015).
+   * THREE, not two, and each answered separately — a group may share any
+   * combination (015, 017). 'loyalty' is the newest and the least like the
+   * others: it is exempt from the legal-entity gate, so a group of separately
+   * owned shops can run one programme while keeping three separate debtors
+   * books. A loyalty source marked 'customer' would read the wrong database
+   * for exactly that group.
    */
-  ownedBy?: 'customer' | 'supplier'
+  ownedBy?: 'customer' | 'supplier' | 'loyalty'
   /** TIMELINE only: the column the date range filters on. */
   dateColumn?: string
   /**
@@ -4156,12 +4160,30 @@ const LOYALTY_LEDGER_SOURCE: CatalogSource = {
   permission: 'customers.view',
   shape: 'timeline',
   table: 'loyalty_ledger',
-  ownedBy: 'customer',
+  ownedBy: 'loyalty',
   dateColumn: 'created_at',
-  joins: [{ name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' }],
+  /*
+   * Through the MEMBER, and only then to the customer.
+   *
+   * The ledger carried customer_id and joined customers directly. It no longer
+   * has that column — the report would 500 at request time — and the indirection
+   * is not merely mechanical: a walk-in member has no customer row, so the
+   * customer join must be LEFT or every walk-in's points vanish from the report
+   * that is supposed to account for the programme's liability.
+   */
+  joins: [
+    { name: 'member', sql: 'LEFT JOIN {L}loyalty_members m ON m.id = t.member_id' },
+    {
+      name: 'customer',
+      sql: 'LEFT JOIN {C}customers c ON c.id = m.customer_id',
+      needs: ['member'],
+    },
+  ],
   fields: [
     { key: 'happenedAt', label: 'When', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },
-    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'memberName', label: 'Member', type: 'text', expr: 'm.name', needs: ['member'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'memberNumber', label: 'Member number', type: 'text', expr: 'm.member_number', needs: ['member'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], group: FIELD_GROUPS.IDENTITY, hint: 'Blank for a member with no debtors account, which is ordinary.' },
     { key: 'customerCode', label: 'Account code', type: 'text', expr: 'c.code', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
     enumField('entryType', 'Type', 't.entry_type', ['earn', 'redeem', 'expire', 'adjust', 'reverse'], {
       starter: true,
@@ -4196,15 +4218,29 @@ const LOYALTY_MEMBERS_SOURCE: CatalogSource = {
   permission: 'customers.view',
   shape: 'snapshot',
   table: 'loyalty_members',
-  ownedBy: 'customer',
+  ownedBy: 'loyalty',
+  /*
+   * The customer join is LEFT and no longer `always`.
+   *
+   * It was an INNER JOIN forced on every query, which was right when a member
+   * WAS a customer row. It is now the bug that would hide the people this
+   * report exists to count: every walk-in member would be dropped from
+   * "who is on the programme", silently and without an empty result to notice.
+   *
+   * The tier join reads {L}, not {B} — one shared programme has one ladder, on
+   * the owner alongside the members.
+   */
   joins: [
-    { name: 'customer', sql: 'INNER JOIN {C}customers c ON c.id = t.customer_id', always: true },
-    { name: 'tier', sql: 'LEFT JOIN {B}loyalty_tiers lt ON lt.id = t.tier_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' },
+    { name: 'tier', sql: 'LEFT JOIN {L}loyalty_tiers lt ON lt.id = t.tier_id' },
   ],
   fields: [
-    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', starter: true, group: FIELD_GROUPS.IDENTITY },
-    { key: 'customerCode', label: 'Account code', type: 'text', expr: 'c.code', starter: true, group: FIELD_GROUPS.IDENTITY },
-    { key: 'phone', label: 'Phone', type: 'text', expr: 'c.phone', group: FIELD_GROUPS.IDENTITY },
+    { key: 'memberName', label: 'Member', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'memberNumber', label: 'Member number', type: 'text', expr: 't.member_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], group: FIELD_GROUPS.IDENTITY, hint: 'Blank for a member with no debtors account, which is ordinary.' },
+    { key: 'customerCode', label: 'Account code', type: 'text', expr: 'c.code', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
+    { key: 'phone', label: 'Phone', type: 'text', expr: 't.phone', group: FIELD_GROUPS.IDENTITY },
+    { key: 'email', label: 'Email', type: 'text', expr: 't.email', group: FIELD_GROUPS.IDENTITY },
     { key: 'tierName', label: 'Tier', type: 'text', expr: 'lt.name', needs: ['tier'], starter: true, group: FIELD_GROUPS.CLASSIFICATION },
     {
       key: 'pointsBalance',
