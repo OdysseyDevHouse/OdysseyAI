@@ -219,8 +219,8 @@ export async function createRun(
   return customerTransaction(siteId, async (tx) => {
     const [res] = await tx.execute(
       `INSERT INTO customer_statement_runs
-         (period_from, period_to, format, total_count, user_id, user_name)
-       VALUES (?,?,?,?,?,?)`,
+         (period_from, period_to, format, total_count, user_id, user_name, origin_site_id)
+       VALUES (?,?,?,?,?,?,?)`,
       [
         input.periodFrom,
         input.periodTo,
@@ -228,6 +228,10 @@ export async function createRun(
         customers.length,
         actor.userId,
         actor.userName.slice(0, 120),
+        // The store that ran it. Under a shared customer file these runs pool
+        // into the primary's table, so without this a branch cannot tell its
+        // own runs from the four other branches' — see 204.
+        siteId,
       ] as never,
     )
     const runId = (res as { insertId: number }).insertId

@@ -221,8 +221,8 @@ export async function requestWriteOff(
     const [res] = await tx.execute(
       `INSERT INTO debt_write_offs
          (customer_id, amount, write_off_date, category, reason,
-          requires_approval, status, user_id, user_name)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+          requires_approval, status, user_id, user_name, origin_site_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [
         input.customerId,
         amount.toFixed(4),
@@ -233,6 +233,9 @@ export async function requestWriteOff(
         needsApproval ? 'pending' : 'pending',
         actor.userId,
         actor.userName.slice(0, 120),
+        // Bad debt belongs to the branch that incurred it, so this is read by
+        // writeOffSummary as well as shown on screen — see 204.
+        siteId,
       ] as never,
     )
     const writeOffId = (res as { insertId: number }).insertId
@@ -458,26 +461,60 @@ export type WriteOffSummary = {
 /**
  * Write-offs by category for a period — the figure a provision is built from
  * and the one an auditor asks for by name.
+ *
+ * ── WHOSE BAD DEBT, UNDER A SHARED CUSTOMER FILE ─────────────────────────
+ *
+ * `scope` decides, and it has no safe default, which is why it is a parameter
+ * rather than an assumption.
+ *
+ * Every branch writing to one shared file puts its write-offs in one table, so
+ * this used to return the GROUP's total on every branch's screen while the
+ * screen said nothing about it — and a branch's own bad-debt figure could not
+ * be obtained at all. Both numbers are legitimate and they answer different
+ * questions:
+ *
+ *   'store' — what THIS branch wrote off. Bad debt is charged to the branch
+ *             that incurred it, so this is the figure that belongs in a
+ *             branch's own income statement and in its manager's review.
+ *   'group' — what the whole shared book wrote off. The figure a consolidated
+ *             provision is built from, and what an auditor of the company
+ *             (one legal entity, per 016) asks for.
+ *
+ * Defaults to 'store', because a caller that has not thought about it is
+ * nearly always a branch screen: showing one store the group's bad debt under
+ * its own heading overstates its losses, and overstating is the direction that
+ * gets acted on. A single store and an unshared group are unaffected either
+ * way — their origin_site_id is their own, so both scopes return the same rows.
+ *
+ * Rows written before 204 carry a NULL origin and are counted in 'store' as
+ * well, deliberately: on a site that has just migrated they are that store's
+ * own history, since nothing else could have written them.
  */
 export async function writeOffSummary(
   siteId: number,
   range: { from: string; to: string },
+  scope: 'store' | 'group' = 'store',
 ): Promise<{ rows: WriteOffSummary[]; total: number; recovered: number }> {
+  const mine = scope === 'store' ? 'AND (origin_site_id = ? OR origin_site_id IS NULL)' : ''
+  const scopeParams = scope === 'store' ? [siteId] : []
+
   const [rows, recovered] = await Promise.all([
     customerQuery<Row>(
       siteId,
       `SELECT category, COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total
          FROM debt_write_offs
         WHERE status = 'posted' AND write_off_date BETWEEN ? AND ?
+          ${mine}
         GROUP BY category
         ORDER BY total DESC`,
-      [range.from, range.to],
+      [range.from, range.to, ...scopeParams],
     ),
     customerQueryOne<Row>(
       siteId,
       `SELECT COALESCE(SUM(amount), 0) AS total FROM debt_write_offs
-        WHERE recovered_at IS NOT NULL AND write_off_date BETWEEN ? AND ?`,
-      [range.from, range.to],
+        WHERE recovered_at IS NOT NULL AND write_off_date BETWEEN ? AND ?
+          ${mine}`,
+      [range.from, range.to, ...scopeParams],
     ),
   ])
 

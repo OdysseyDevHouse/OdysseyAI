@@ -181,6 +181,57 @@ export async function proposeRun(
   const ids = [...new Set(input.customerIds ?? [])].filter((id) => Number.isFinite(id) && id > 0)
   const scoped = ids.length > 0
 
+  /*
+   * ── HAS THIS PERIOD ALREADY BEEN CHARGED? ─────────────────────────────
+   *
+   * The only guard used to be `run.status === 'posted'` in postRun, which
+   * refuses posting the SAME run twice and says nothing about a second run
+   * over the same days. Proposing again produces a fresh row that posts
+   * happily, and every eligible account is charged interest twice.
+   *
+   * A shared customer file makes that the expected outcome rather than a
+   * mistake somebody has to make. The runs live in the group primary and carry
+   * no origin store, so branch 3 charges interest on the 25th and branch 7 —
+   * seeing an unexplained run in a shared list, with no way to tell whose it
+   * was — charges it again on the 26th. Both are acting reasonably. The in
+   * duplum ceiling in interestRules.ts caps the total but does not stop the
+   * second charge.
+   *
+   * Refused rather than warned: interest on a customer's account is money they
+   * are asked to pay, and "are you sure" on a screen somebody runs monthly is
+   * a click, not a decision. An overlapping period is nearly always the second
+   * person not knowing about the first.
+   *
+   * Cancelled runs are ignored — cancelling is exactly how you say "that one
+   * did not happen". Draft runs DO block: two drafts over one period is how
+   * the double charge gets staged, and the message says which to post.
+   */
+  const clash = await customerQueryOne<Row>(
+    siteId,
+    `SELECT id, status, period_from, period_to, user_name, created_at
+       FROM interest_runs
+      WHERE status IN ('draft','posted')
+        AND period_from <= ? AND period_to >= ?
+      ORDER BY status = 'posted' DESC, id DESC
+      LIMIT 1`,
+    [input.periodTo, input.periodFrom],
+  )
+  if (clash) {
+    const who = String(clash.user_name ?? '').trim()
+    const when = `${String(clash.period_from).slice(0, 10)} to ${String(clash.period_to).slice(0, 10)}`
+    return {
+      ok: false,
+      error:
+        String(clash.status) === 'posted'
+          ? `Interest for ${when} has already been charged${who ? ` by ${who}` : ''}. ` +
+            'Charging it again would put the same interest on every account twice. ' +
+            'Choose a period that has not been charged.'
+          : `There is already a draft interest run for ${when}${who ? `, started by ${who}` : ''}. ` +
+            'Post or cancel that one rather than starting a second — two runs over ' +
+            'the same days charge every account twice.',
+    }
+  }
+
   // Eligible accounts, with their terms resolved against the group's defaults.
   const customers = await customerQuery<Row>(
     siteId,
@@ -275,8 +326,8 @@ export async function proposeRun(
     const [res] = await tx.execute(
       `INSERT INTO interest_runs
          (as_at_date, period_from, period_to, total_amount, account_count,
-          minimum_charge, notes, user_id, user_name)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+          minimum_charge, notes, user_id, user_name, origin_site_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [
         asAt,
         input.periodFrom,
@@ -287,6 +338,10 @@ export async function proposeRun(
         input.notes?.trim() || null,
         actor.userId,
         actor.userName.slice(0, 120),
+        // The store that ran it, not the store it is stored in. Under sharing
+        // these differ, and without it a shared list cannot say whose run this
+        // is — which is how the same period gets charged twice.
+        siteId,
       ] as never,
     )
     const id = (res as { insertId: number }).insertId

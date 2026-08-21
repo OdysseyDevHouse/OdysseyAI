@@ -472,6 +472,44 @@ async function main() {
       )
     }
 
+    /* ── FINDING 12: two branches charge the same interest period ───────── */
+
+    console.log('\n— Finding 12: a second interest run over a charged period —')
+
+    try {
+      const { proposeRun, cancelRun } = await import('../src/lib/site/interestRuns')
+      const period = { periodFrom: '2026-02-01', periodTo: '2026-02-28', asAtDate: '2026-02-28' }
+
+      // Branch 3 proposes. Whether it finds anything to charge depends on the
+      // demo data, so both outcomes are handled — what is being tested is
+      // whether a SECOND proposal over the same days is refused.
+      const first = await proposeRun(branch, actor, period)
+
+      if (!first.ok) {
+        INCONCLUSIVE(
+          'a second interest run',
+          `the first proposal did not succeed, so there is nothing to clash with: "${first.error.slice(0, 120)}"`,
+        )
+      } else {
+        const second = await proposeRun(primary, actor, period)
+        if (second.ok) {
+          CONFIRMED(
+            'a second run over an already-proposed period was allowed from another store',
+            `runs ${first.runId} (branch) and ${second.runId} (primary) both cover ${period.periodFrom}..${period.periodTo}`,
+          )
+          await cancelRun(primary, actor, second.runId)
+        } else {
+          NOT_REPRODUCED(
+            'the second run was refused',
+            `refused with: "${second.error.slice(0, 160)}"`,
+          )
+        }
+        await cancelRun(branch, actor, first.runId)
+      }
+    } catch (e) {
+      INCONCLUSIVE('interest runs', `threw: ${e instanceof Error ? e.message : String(e)}`)
+    }
+
     /* ── FINDING 7: opening balances plan against the wrong file ────────── */
 
     console.log('\n— Finding 7: opening-balance import matches codes in the caller’s database —')
