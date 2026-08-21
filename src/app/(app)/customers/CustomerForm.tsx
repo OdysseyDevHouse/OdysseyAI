@@ -145,12 +145,22 @@ function isoDate(value: Date): string {
   return `${value.getFullYear()}-${month}-${day}`
 }
 
-function SubmitButton({ isNew }: { isNew: boolean }) {
+function SubmitButton({ isNew, confirming }: { isNew: boolean; confirming: boolean }) {
   const { pending } = useFormStatus()
+  // The label changes while a duplicate warning stands, so the button says what
+  // pressing it now means. "Create customer" twice in a row reads as though the
+  // first press failed.
+  const label = confirming
+    ? isNew
+      ? 'Create anyway'
+      : 'Save anyway'
+    : isNew
+      ? 'Create customer'
+      : 'Save changes'
   return (
     <Button type="submit" form={FORM_ID} variant="primary" disabled={pending}>
       <Icons.Save size={15} />
-      {pending ? 'Saving…' : isNew ? 'Create customer' : 'Save changes'}
+      {pending ? 'Saving…' : label}
     </Button>
   )
 }
@@ -214,21 +224,67 @@ export default function CustomerForm({
    */
   const seedKey = isNew ? `group-${groupId || 'none'}` : 'existing'
 
+  /*
+   * PUTTING BACK WHAT WAS TYPED, AFTER A DUPLICATE WARNING.
+   *
+   * The warning returns to this same mounted form instead of redirecting, and
+   * by the note above an uncontrolled input ignores a changed defaultValue —
+   * so every field snapped back to its page-load value and the second press
+   * posted an empty form. Measured over CDP: `code= name= ack=1`.
+   *
+   * `values` carries the submission back. `typed()` is what the fields read, so
+   * a field with a returned value shows it and every other field keeps the
+   * default it always had. Appending the warning to the remount key is what
+   * makes the already-mounted inputs actually pick them up — the same trick,
+   * for the same reason, as the group seeding above.
+   */
+  const returned = state.values ?? null
+  const typed = (name: string, fallback: string): string => returned?.[name] ?? fallback
+
   return (
     <>
       {/* Gutters come from the page's <PageBody>, not from here. */}
       <div className="flex items-center justify-end gap-2">
         {rowActions}
-        <SubmitButton isNew={isNew} />
+        <SubmitButton isNew={isNew} confirming={Boolean(state.duplicateWarning)} />
       </div>
 
-      <form id={FORM_ID} action={formAction} className="flex flex-col gap-5">
+      {/*
+        Keyed on whether a warning stands, so the whole form REMOUNTS when one
+        arrives. Without it the defaultValues above are ignored — React applies
+        a defaultValue only on first mount (see the seedKey note), so the
+        returned values would be computed correctly and never reach the DOM.
+        One flip, on a form the user is already looking at, and only ever
+        between "clean" and "warned".
+      */}
+      <form
+        key={state.duplicateWarning ? 'warned' : 'clean'}
+        id={FORM_ID}
+        action={formAction}
+        className="flex flex-col gap-5"
+      >
         {customer && <input type="hidden" name="id" value={customer.id} />}
 
         {state.error && (
           <Callout tone="danger" title="Could not save">
             {state.error}
           </Callout>
+        )}
+
+        {/*
+          A pause, not a refusal — hence 'warning' rather than 'danger', and
+          "might" rather than "is". The hidden field below carries the
+          acknowledgement back on the next submit, so pressing Save a second
+          time goes through. Rendered only while the warning stands, so a form
+          that has never seen one submits without it.
+        */}
+        {state.duplicateWarning && (
+          <>
+            <Callout tone="warning" title="This customer may already exist">
+              {state.duplicateWarning}
+            </Callout>
+            <input type="hidden" name="confirmedDuplicate" value="1" />
+          </>
         )}
 
         <Card>
@@ -249,13 +305,18 @@ export default function CustomerForm({
                     a blank code has nothing to become. */}
                 <Input
                   name="code"
-                  defaultValue={customer?.code ?? suggestedCode ?? ''}
+                  defaultValue={typed('code', customer?.code ?? suggestedCode ?? '')}
                   required={!(isNew && suggestedCode)}
                   maxLength={32}
                 />
               </Field>
               <Field label="Name">
-                <Input name="name" defaultValue={customer?.name ?? ''} required maxLength={160} />
+                <Input
+                  name="name"
+                  defaultValue={typed('name', customer?.name ?? '')}
+                  required
+                  maxLength={160}
+                />
               </Field>
             </div>
 
@@ -538,13 +599,30 @@ export default function CustomerForm({
           <CardBody className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Contact name">
-                <Input name="contactName" defaultValue={customer?.contactName ?? ''} maxLength={120} />
+                <Input
+                  name="contactName"
+                  defaultValue={typed('contactName', customer?.contactName ?? '')}
+                  maxLength={120}
+                />
               </Field>
+              {/* Email and phone carry typed() for a reason beyond tidiness:
+                  they are the two fields a duplicate warning is ABOUT, so
+                  losing them would make the warning unactionable — the person
+                  could not see, or correct, the number it objected to. */}
               <Field label="Email" hint="Where statements are sent.">
-                <Input name="email" type="email" defaultValue={customer?.email ?? ''} maxLength={190} />
+                <Input
+                  name="email"
+                  type="email"
+                  defaultValue={typed('email', customer?.email ?? '')}
+                  maxLength={190}
+                />
               </Field>
               <Field label="Phone">
-                <Input name="phone" defaultValue={customer?.phone ?? ''} maxLength={40} />
+                <Input
+                  name="phone"
+                  defaultValue={typed('phone', customer?.phone ?? '')}
+                  maxLength={40}
+                />
               </Field>
             </div>
 

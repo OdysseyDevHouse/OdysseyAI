@@ -525,6 +525,149 @@ export async function repNameFor(siteId: number, repId: number | null): Promise<
   }
 }
 
+/* ── Might this person already be on file? ────────────────────────────────
+ *
+ * The customer CODE is unique and createCustomer refuses a repeat outright —
+ * that is a fact about the database, and there is nothing to decide.
+ *
+ * A repeated cell number or email address is different. It is a STRONG HINT
+ * and not an error, because both are legitimately shared: a husband and wife on
+ * one mobile, a father and son at one shop, two departments of one company
+ * billed separately through one switchboard address. Refusing those would make
+ * the system wrong about real customers, and staff would work around it by
+ * typing a fake number — which destroys the very signal this is built on.
+ *
+ * So it warns, names what it matched, and lets the person decide. The decision
+ * is theirs because they are the one standing in front of the customer.
+ *
+ * ── WHY AT CREATION AND NOT AS A MERGE TOOL ──────────────────────────────
+ *
+ * A duplicate caught here costs nothing to resolve: nobody has a balance, a
+ * ledger, loyalty points or a statement yet. The same duplicate found in six
+ * months is a merge, and merging two customers means merging two running
+ * totals and the audit trail of both — a ledger event, not a data cleanup.
+ * This is the cheap end of the same problem.
+ */
+
+export type DuplicateMatch = {
+  id: number
+  code: string
+  name: string
+  /** Which field matched. Both when the same account matches on both. */
+  matchedOn: ('phone' | 'email')[]
+}
+
+/**
+ * Digits only, last nine.
+ *
+ * Phone numbers are stored exactly as typed — there is no normalisation on
+ * write — so "082 123 4567", "0821234567" and "+27 82 123 4567" are three
+ * different strings for one phone. Comparing them raw would miss most real
+ * duplicates, which is the whole point of the check.
+ *
+ * Last NINE digits, because that is what survives the two ways a South African
+ * number gets written: the local form drops the country code and keeps a
+ * leading 0 (0821234567 → 821234567), and the international form drops the 0
+ * and adds 27 (+27821234567 → 821234567). Both land on the same nine.
+ *
+ * Returns null below nine digits — an extension or a partial number, which
+ * would match far too much. Long numbers keep their last nine, so a stray
+ * prefix does not defeat the comparison.
+ */
+export function phoneKey(value: string | null | undefined): string | null {
+  const digits = String(value ?? '').replace(/\D/g, '')
+  return digits.length >= 9 ? digits.slice(-9) : null
+}
+
+/**
+ * Existing accounts that share this one's cell number or email address.
+ *
+ * Reads through customerQuery, so under a shared customer file it looks in the
+ * group's book rather than the branch's own. A local check would find nothing
+ * and cheerfully create the duplicate it exists to prevent — the same class of
+ * mistake as the opening-balance and spend-limit findings.
+ *
+ * `excludeId` skips the account being edited, so saving a customer without
+ * changing anything cannot warn about itself.
+ *
+ * The phone comparison happens in SQL on the last nine digits, so it uses no
+ * index — deliberate, and bounded: it runs once when somebody presses Save on
+ * a customer form, not on any list or till path. The email side is an indexed
+ * equality on the already-lowercased column.
+ */
+export async function possibleDuplicates(
+  siteId: number,
+  input: { phone?: string | null; email?: string | null },
+  excludeId?: number,
+): Promise<DuplicateMatch[]> {
+  const phone = phoneKey(input.phone)
+  const email = input.email?.trim().toLowerCase() || null
+  if (!phone && !email) return []
+
+  const clauses: string[] = []
+  const params: unknown[] = []
+
+  if (phone) {
+    // RIGHT(digits-only, 9) — the same key phoneKey() builds, computed in SQL.
+    clauses.push(
+      `(c.phone IS NOT NULL AND c.phone <> '' AND RIGHT(REGEXP_REPLACE(c.phone, '[^0-9]', ''), 9) = ?)`,
+    )
+    params.push(phone)
+  }
+  if (email) {
+    clauses.push('(c.email IS NOT NULL AND c.email = ?)')
+    params.push(email)
+  }
+
+  let sql = `SELECT c.id, c.code, c.name, c.phone, c.email
+               FROM customers c
+              WHERE (${clauses.join(' OR ')})`
+  if (excludeId) {
+    sql += ' AND c.id <> ?'
+    params.push(excludeId)
+  }
+  // A closed account is finished with; warning about one would send somebody to
+  // a record they cannot use. Still bounded, because a shared book is large.
+  sql += " AND c.status <> 'closed' ORDER BY c.name LIMIT 5"
+
+  const rows = await customerQuery<Row>(siteId, sql, params)
+
+  return rows.map((r) => {
+    const matchedOn: DuplicateMatch['matchedOn'] = []
+    // Recomputed per row rather than trusted from the WHERE: with both fields
+    // supplied the query is an OR, so a row may have matched on either, and the
+    // message has to say which.
+    if (phone && phoneKey(r.phone as string | null) === phone) matchedOn.push('phone')
+    if (email && String(r.email ?? '').toLowerCase() === email) matchedOn.push('email')
+    return {
+      id: Number(r.id),
+      code: String(r.code),
+      name: String(r.name),
+      matchedOn,
+    }
+  })
+}
+
+/** The sentence shown to the person saving. Named so the wording lives in one place. */
+export function duplicateWarning(matches: DuplicateMatch[]): string {
+  if (matches.length === 0) return ''
+
+  const describe = (m: DuplicateMatch) => {
+    const on =
+      m.matchedOn.length === 2
+        ? 'same cell number and email'
+        : m.matchedOn[0] === 'phone'
+          ? 'same cell number'
+          : 'same email'
+    return `${m.code} — ${m.name} (${on})`
+  }
+
+  return matches.length === 1
+    ? `This might already be on file: ${describe(matches[0])}. Save anyway to create a separate account.`
+    : `This might already be on file: ${matches.map(describe).join('; ')}. ` +
+        'Save anyway to create a separate account.'
+}
+
 /** Columns written by both create and update, in one place so they cannot drift. */
 function writableColumns(input: CustomerInput, repName: string | null): unknown[] {
   return [

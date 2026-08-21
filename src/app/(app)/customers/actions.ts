@@ -14,6 +14,8 @@ import {
   deleteCustomer,
   bulkUpdateCustomers,
   toCustomerStatus,
+  possibleDuplicates,
+  duplicateWarning,
   type BulkChange,
   type BulkResult,
   type CustomerInput,
@@ -24,7 +26,56 @@ import {
   type CustomerAddressInput,
 } from '@/lib/site/customerAddresses'
 
-export type CustomerFormState = { error: string | null }
+export type CustomerFormState = {
+  error: string | null
+  /**
+   * "This might already be on file" — a cell number or email already used by
+   * another account.
+   *
+   * Distinct from `error`, and the difference is the whole design: an error
+   * means the save was refused, this means it was PAUSED and pressing Save
+   * again will go through. A duplicate code is an error, because the code is
+   * unique and there is nothing to decide; a shared cell number is this,
+   * because a husband and wife on one mobile are two real customers.
+   *
+   * The form echoes it back as `confirmedDuplicate` on the next submit, which
+   * is what makes the second press mean "yes, I read it".
+   */
+  duplicateWarning?: string | null
+  /**
+   * Everything that was typed, so the form can put it back.
+   *
+   * The customer form's inputs are UNCONTROLLED — defaultValue, read out of
+   * FormData on submit — which is right for a form that either saves and
+   * redirects or fails outright. A warning does neither: it returns to the same
+   * mounted form, React re-renders, and every defaultValue snaps back to what
+   * it held when the page loaded.
+   *
+   * Measured rather than assumed. Driving the real screen over CDP, the second
+   * press posted `code= name= ack=1` — an empty form that then failed
+   * validation on a blank name, so the warning made the customer harder to
+   * create rather than easier.
+   *
+   * Only set alongside duplicateWarning. A successful save redirects and a
+   * refused one keeps the live DOM values, because neither re-keys the inputs.
+   */
+  values?: Record<string, string> | null
+}
+
+/**
+ * The submitted form as plain strings, for echoing back with a warning.
+ *
+ * Files and the acknowledgement itself are dropped: the ack is re-rendered from
+ * the warning, and a File has no defaultValue to restore.
+ */
+function formValues(form: FormData): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const [key, value] of form.entries()) {
+    if (key === 'confirmedDuplicate') continue
+    if (typeof value === 'string') values[key] = value
+  }
+  return values
+}
 
 function optionalId(form: FormData, key: string): number | null {
   const raw = String(form.get(key) ?? '').trim()
@@ -99,6 +150,33 @@ export async function saveCustomerAction(
   const { siteId, actor } = ctx
   const idRaw = String(form.get('id') ?? '').trim()
   const input = readInput(form)
+
+  /*
+   * The duplicate check, before either write.
+   *
+   * Skipped once the person has seen the warning and pressed Save again — the
+   * hidden field carries that acknowledgement back. Without the skip the same
+   * warning would reappear forever and the account could never be created,
+   * which is worse than no check at all.
+   *
+   * It runs on EDIT as well as create: changing a customer's cell number to one
+   * another account already uses is the same mistake arriving by a different
+   * road. excludeId keeps an unchanged save from warning about itself.
+   */
+  if (form.get('confirmedDuplicate') === null) {
+    const matches = await possibleDuplicates(
+      siteId,
+      { phone: input.phone, email: input.email },
+      idRaw ? Number(idRaw) : undefined,
+    )
+    if (matches.length > 0) {
+      return {
+        error: null,
+        duplicateWarning: duplicateWarning(matches),
+        values: formValues(form),
+      }
+    }
+  }
 
   const result = idRaw
     ? await updateCustomer(siteId, actor, Number(idRaw), input)
