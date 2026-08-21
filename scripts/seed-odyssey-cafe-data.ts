@@ -353,6 +353,34 @@ async function main() {
     const uplift = 1 + (n % 5) * 0.04
 
     /*
+     * ── IDS MUST DIVERGE BETWEEN STORES, OR THE FIXTURE PROVES NOTHING ────
+     *
+     * Seeded identically, every store ends up with "Bakery" as department 10
+     * and CAF0001 as product 1 — measured, on the first run of this script.
+     * That makes the whole cross-store id-collision class INVISIBLE: a bug
+     * that reads store 7's department id against store 3's table gets the
+     * right answer by accident, which is exactly what
+     * docs/cross-store-id-conflicts.md warns about when it says "two stores
+     * can agree by accident where ten cannot".
+     *
+     * So each store's auto-increments are pushed apart before anything is
+     * written. Store n starts its departments at n*7 and its products at
+     * n*13+100 — coprime strides, so no two stores line up on either table.
+     * Now a cross-store id bug produces a wrong row rather than a right one.
+     *
+     * Only on a store with nothing in it yet: raising AUTO_INCREMENT on a
+     * populated table would be a change to real data rather than to a fixture.
+     */
+    const empty = await siteQueryOne<Row>(
+      siteId,
+      'SELECT (SELECT COUNT(*) FROM departments) AS d, (SELECT COUNT(*) FROM products) AS p',
+    )
+    if (Number(empty?.d) === 0 && Number(empty?.p) === 0) {
+      await siteQuery(siteId, `ALTER TABLE departments AUTO_INCREMENT = ${(n + 1) * 7}`)
+      await siteQuery(siteId, `ALTER TABLE products AUTO_INCREMENT = ${(n + 1) * 13 + 100}`)
+    }
+
+    /*
      * Re-runnable, because a catalogue grows. createDepartment and
      * createProduct both refuse a duplicate — a name and a code are unique —
      * so a second run would otherwise report a screen of failures and add

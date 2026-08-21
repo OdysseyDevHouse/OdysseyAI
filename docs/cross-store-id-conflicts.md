@@ -76,7 +76,38 @@ per-product department now travels regardless of it.
 because a brand is a label rather than a routing decision: a product with no
 brand is untidy, a product with no department is missing from the till.
 
-## ⚠ Open: never run with more than two stores
+## ✅ Closed: now run against twenty stores
+
+`scripts/seed-odyssey-cafe.mjs` builds Odyssey Cafe — twenty branches of one
+company, 288 products and 14 departments each — and
+`npm run test:group-at-scale` exercises the shared files across all of them.
+
+**The fixture had to be made adversarial first, and that is the part worth
+remembering.** Seeded straight, all twenty stores ended up with "Bakery" as
+department 10 and CAF0001 as product 1 — measured, not assumed. Identical ids
+make this entire class INVISIBLE: a bug reading store 7's id against store 3's
+table gets the right answer by accident, which is exactly what the note below
+warned about. Twenty stores seeded carelessly hide a collision just as well as
+two.
+
+The seed now pushes each store's `AUTO_INCREMENT` apart on coprime strides.
+Today the probe measures **19 wrong of 19 that resolve, over 380 pairs** — every
+cross-store id lookup that finds a row finds the wrong one. The probe asserts
+that divergence before anything else, because a fixture that quietly stopped
+diverging would turn every later case green while testing nothing.
+
+What it proves at twenty: all twenty branches route both files to head office
+and see the same 25 customers and 12 suppliers; a posting from the twentieth
+lands in head office's books with its origin recorded; the group reconciliation
+reaches ONE answer from all twenty ends with a 20-store scope and none
+unreadable, at ~52ms each; and reports from the far branch read 25 and 12 rows
+across the boundary.
+
+The original note is kept below.
+
+---
+
+## ⚠ Was open: never run with more than two stores
 
 Everything above is reasoned from two dev sites. Ids collide far more readily at
 ten, and a third store is the cheapest way to find what two hid — two stores can

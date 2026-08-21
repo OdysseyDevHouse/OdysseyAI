@@ -30,6 +30,7 @@
     "test:customer-duplicates": "tsx --conditions=react-server --env-file=.env scripts/test-customer-duplicates.ts",
     "test:shared-supplier-file": "tsx --conditions=react-server --env-file=.env scripts/probe-shared-supplier-file.ts",
     "test:both-files-shared": "tsx --conditions=react-server --env-file=.env scripts/probe-both-files-shared.ts",
+    "test:group-at-scale": "tsx --conditions=react-server --env-file=.env scripts/probe-group-at-scale.ts",
     "test:modules": "tsx --conditions=react-server --env-file=.env scripts/test-modules.ts",
     "test:unlock-code": "tsx scripts/test-unlock-code.ts",
     "test:unlock-exchange": "tsx scripts/test-unlock-exchange.ts",

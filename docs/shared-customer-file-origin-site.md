@@ -178,7 +178,34 @@ for the cheaper option, not a decision.
 
 ---
 
-## ⚠ Open: only ever run with two stores
+## ✅ Closed: twenty stores, and it holds
+
+`npm run test:group-at-scale` runs the shared files across the twenty-branch
+Odyssey Cafe fixture (`scripts/seed-odyssey-cafe.mjs`). The two specific
+worries named below were the ones measured:
+
+**The fan-out.** The group reconciliation opens one query per member, so at
+twenty it opens twenty. All twenty ends reach ONE answer, with a scope naming
+all twenty stores and none unreadable, at ~52ms each — about a second for the
+whole group. A single member resolving differently would have shown up as a
+second distinct answer, and none did.
+
+**The per-request cache.** `customerOwnerSite` is wrapped in React's `cache()`,
+which memoises per request and therefore not at all in a script — so the probe
+resolves the owner twenty times over rather than once, which is the harsher
+case, not the softer one.
+
+The stronger finding was about the FIXTURE rather than the code: seeded
+straight, twenty stores hide an id collision exactly as well as two, because
+they all get the same auto-increments. See
+`docs/cross-store-id-conflicts.md` — the seed now forces the ids apart, and the
+probe asserts they are apart before it asserts anything else.
+
+The original note is kept below.
+
+---
+
+## ⚠ Was open: only ever run with two stores
 
 Everything above is verified on a two-site dev database. Ten branches is the
 actual use case, and things that hold at two sometimes do not at ten — the group
