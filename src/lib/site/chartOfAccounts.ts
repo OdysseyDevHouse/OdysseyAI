@@ -542,7 +542,24 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
         subledgerBalance = toNum(row?.total)
 
         const group = await debtorsGroupScope(siteId)
-        if (group) {
+        /*
+         * ── `group !== null`, NOT `if (group)` — AND THAT IS LOAD-BEARING ──
+         *
+         * `if (group)` here compiled to something that entered its own body
+         * with `group === null`, and threw on the next line reading .scope.
+         * Not a theory: a console.log INSIDE the guard printed `null`, one
+         * line after the guard was supposed to have excluded it, and the
+         * trial balance 500ed for every store because of it.
+         *
+         * It reproduces only under the dev server (Next 16 / Turbopack), on
+         * a clean .next — calling this function directly from a script, even
+         * concurrently exactly as the page does, passes every time. So it is
+         * a codegen fault rather than anything about this logic.
+         *
+         * The explicit comparison is immune, and it is the whole fix. Do not
+         * shorten it back to a truthiness check because a linter suggests it.
+         */
+        if (group !== null && group !== undefined) {
           groupScope = group.scope
           // Replaces this account's own balance, not adds to it: the sum
           // already includes this store's control account.
@@ -565,7 +582,8 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
         // compared against ONE store's control account and every branch
         // reported drift equal to the others' creditors, for ever.
         const group = await creditorsGroupScope(siteId)
-        if (group) {
+        // Explicit, for the reason spelled out on the debtors branch above.
+        if (group !== null && group !== undefined) {
           groupScope = group.scope
           // Replaces this account's own balance, not adds to it: the sum
           // already includes this store's control account.
@@ -599,7 +617,7 @@ export async function reconcileControlAccounts(siteId: number): Promise<ControlD
         glBalance,
         subledgerBalance,
         drift,
-        ...(groupScope ? { scope: groupScope } : {}),
+        ...(groupScope !== undefined ? { scope: groupScope } : {}),
       })
     }
   }
