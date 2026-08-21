@@ -1,7 +1,12 @@
 import 'server-only'
 import { randomInt } from 'crypto'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
-import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import {
+  giftCardQuery,
+  giftCardQueryOne,
+  giftCardExecute,
+  giftCardTransaction,
+} from './giftCardDb'
 import { round, toNum } from '../decimals'
 import { VOUCHER_ALPHABET } from '../loyaltyRules'
 import { logActivity, type Actor } from './activityLog'
@@ -20,14 +25,32 @@ import { today as localToday } from './ledger'
  * `sales_tenders` like any payment, because the money was already paid in
  * when the card sold; the till never nets it off what is owed.
  *
+ * ── WHERE THE CARDS LIVE ─────────────────────────────────────────────────
+ *
+ * Not necessarily in this store's database. Gift cards follow `shares_loyalty`
+ * so a group runs one card scheme, and giftCardDb.ts routes every statement
+ * here to whichever site owns them. The exception is a group of separate
+ * companies that has not agreed to pool stored value — see giftCardOwnerSite.
+ *
  * ── WHAT THE TWO TX FUNCTIONS PROMISE ────────────────────────────────────
  *
- * `activateGiftCardForSale` and `redeemGiftCardForSale` JOIN THE SALE'S
- * TRANSACTION and THROW on refusal — the redeemVoucherForSale contract — so
- * an unaffordable redemption rolls the whole sale back, stock, number and
- * all. The real concurrency guard is the conditional UPDATE under FOR
- * UPDATE, not the SELECT: two tills can both read a balance of 100; only
- * one gets affectedRows = 1.
+ * `activateGiftCardForSale` and `redeemGiftCardForSale` take a `tx` and THROW
+ * on refusal. They no longer join the SALE'S transaction, and could not: under
+ * a shared scheme the cards are in another database, and no transaction spans
+ * two. They join a GIFT CARD transaction, opened by the caller after the sale
+ * commits.
+ *
+ * The refusal is still asked first — salesPosting's pre-flight checks every
+ * code and balance before the sale opens, which it already did. What changed is
+ * that a throw here no longer rolls the sale back. That is a real loss and the
+ * better half of the trade: the alternative is a till that cannot take a gift
+ * card at all in a group.
+ *
+ * The real concurrency guard is unaffected, and it is the reason this is safer
+ * than the loyalty equivalent: the conditional UPDATE
+ * (`WHERE balance >= ?`) is arbitrated by the database wherever it runs. Two
+ * tills can both read a balance of 100; only one gets affectedRows = 1. That
+ * holds across databases exactly as it held within one.
  *
  * Codes are 12 characters of the no-vowel no-confusable alphabet, drawn
  * from crypto.randomInt — a bearer code IS money, so it gets a CSPRNG where
@@ -109,7 +132,7 @@ function mapCard(r: Row): GiftCard {
 export async function findGiftCard(siteId: number, code: string): Promise<GiftCard | null> {
   const normalised = normaliseGiftCardCode(code)
   if (!normalised) return null
-  const row = await siteQueryOne<Row>(siteId, 'SELECT * FROM gift_cards WHERE code = ? LIMIT 1', [
+  const row = await giftCardQueryOne<Row>(siteId, 'SELECT * FROM gift_cards WHERE code = ? LIMIT 1', [
     normalised,
   ])
   return row ? mapCard(row) : null
@@ -155,7 +178,7 @@ export async function generateGiftCards(
   }
 
   const codes: string[] = []
-  await siteTransaction(siteId, async (tx) => {
+  await giftCardTransaction(siteId, async (tx) => {
     for (let i = 0; i < count; i++) {
       for (let attempt = 0; ; attempt++) {
         const code = makeCode()
@@ -400,7 +423,7 @@ export async function restoreGiftCardsForDocument(
   documentId: number,
 ): Promise<number> {
   let touched = 0
-  await siteTransaction(siteId, async (tx) => {
+  await giftCardTransaction(siteId, async (tx) => {
     const [events] = await tx.query<Row[]>(
       `SELECT e.*, c.code, c.status AS card_status, c.balance AS card_balance, c.initial_value
          FROM gift_card_events e JOIN gift_cards c ON c.id = e.card_id
@@ -461,7 +484,7 @@ export async function adjustGiftCard(
   if (!note.trim()) return { ok: false, error: 'Say why the balance is being adjusted.' }
 
   try {
-    await siteTransaction(siteId, async (tx) => {
+    await giftCardTransaction(siteId, async (tx) => {
       const [[row]] = await tx.query<Row[]>('SELECT * FROM gift_cards WHERE id = ? FOR UPDATE', [
         id,
       ] as never)
@@ -514,7 +537,7 @@ export async function adjustGiftCard(
 }
 
 export async function voidGiftCard(siteId: number, actor: Actor, id: number): Promise<Result> {
-  const res = await siteExecute(
+  const res = await giftCardExecute(
     siteId,
     `UPDATE gift_cards SET status = 'void', balance = 0 WHERE id = ? AND status IN ('pending','active')`,
     [id],
@@ -549,7 +572,7 @@ export async function expireGiftCards(
   let cards = 0
   let value = 0
 
-  await siteTransaction(siteId, async (tx) => {
+  await giftCardTransaction(siteId, async (tx) => {
     const [rows] = await tx.query<Row[]>(
       `SELECT id, balance FROM gift_cards
         WHERE status = 'active' AND expires_on IS NOT NULL AND expires_on < ? FOR UPDATE`,
@@ -607,7 +630,7 @@ export async function listGiftCards(
     params.push(term, `%${opts.search.trim()}%`, `%${opts.search.trim()}%`)
   }
   const limit = Math.min(Math.max(1, Math.floor(opts.limit ?? 200)), 1000)
-  const rows = await siteQuery<Row>(
+  const rows = await giftCardQuery<Row>(
     siteId,
     `SELECT * FROM gift_cards ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY id DESC LIMIT ${limit}`,
@@ -617,7 +640,7 @@ export async function listGiftCards(
 }
 
 export async function giftCardEvents(siteId: number, cardId: number): Promise<GiftCardEvent[]> {
-  const rows = await siteQuery<Row>(
+  const rows = await giftCardQuery<Row>(
     siteId,
     `SELECT * FROM gift_card_events WHERE card_id = ? ORDER BY id`,
     [cardId],
@@ -635,7 +658,7 @@ export async function giftCardEvents(siteId: number, cardId: number): Promise<Gi
 
 /** The subledger figure reconciliation compares to account 2500. */
 export async function giftCardLiability(siteId: number): Promise<number> {
-  const row = await siteQueryOne<Row>(
+  const row = await giftCardQueryOne<Row>(
     siteId,
     `SELECT COALESCE(SUM(balance), 0) AS held FROM gift_cards WHERE status = 'active'`,
   )

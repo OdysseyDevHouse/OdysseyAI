@@ -465,7 +465,7 @@ export type StartResult = { ok: true; session: TrainingSession } | { ok: false; 
  */
 async function sharedMasterFileRefusal(siteId: number): Promise<string | null> {
   try {
-    const { customerFileIsShared, supplierFileIsShared, loyaltyFileIsShared } =
+    const { customerFileIsShared, supplierFileIsShared, loyaltyFileIsShared, giftCardFileIsShared } =
       await import('../storeGroups')
 
     /*
@@ -507,12 +507,28 @@ async function sharedMasterFileRefusal(siteId: number): Promise<string | null> {
      * member's card look like points they earned.
      */
     const loyalty = await loyaltyFileIsShared(siteId)
-    if (!customers && !suppliers && !loyalty) return null
+    /*
+     * Gift cards are asked SEPARATELY, not inferred from loyalty.
+     *
+     * They follow shares_loyalty, so it is tempting to treat the loyalty
+     * answer as covering both. It does not, in exactly one case: a group of
+     * separate companies that has not agreed to pool stored value shares the
+     * programme while each store keeps its own cards. Inferring would refuse
+     * training there for a reason that does not apply.
+     *
+     * And the risk is the sharper of the two. Practice points are a promise
+     * nobody has to honour; a practice gift card is spendable value sitting in
+     * the group’s real scheme, and the watermark cannot reach another
+     * database to remove it.
+     */
+    const giftCards = await giftCardFileIsShared(siteId)
+    if (!customers && !suppliers && !loyalty && !giftCards) return null
 
     const files = [
       customers ? 'customer file' : null,
       suppliers ? 'supplier file' : null,
       loyalty ? 'loyalty programme' : null,
+      giftCards ? 'gift cards' : null,
     ].filter(Boolean) as string[]
     const which =
       files.length === 1
@@ -523,6 +539,9 @@ async function sharedMasterFileRefusal(siteId: number): Promise<string | null> {
       customers ? 'practice sales made on account would land in the group’s real customer ledger' : null,
       suppliers ? 'practice purchases would land in the group’s real creditors book' : null,
       loyalty ? 'practice sales would earn and spend real points on real members’ cards' : null,
+      giftCards
+        ? 'practice sales would issue and drain real gift cards, which are spendable money'
+        : null,
     ].filter(Boolean) as string[]
     const what =
       effects.length === 1

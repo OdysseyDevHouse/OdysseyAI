@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { loyaltyQueryOne } from './loyaltyDb'
+import { giftCardQueryOne } from './giftCardDb'
 import { getNumericSetting } from './settings'
 import { cashupMode, getShift, shiftPosition } from './shifts'
 import type { Actor } from './activityLog'
@@ -311,13 +312,18 @@ export async function declarationView(
        FROM sale_deposits WHERE shift_id = ?`,
       [shiftId],
     ),
-    siteQueryOne<Row>(
+    // The owner's card table, and this branch's own events within it. Same
+    // shape and same reason as the wallet read below: shift_id is a BRANCH id,
+    // so on a shared card scheme this would otherwise add store 7's shift 7 to
+    // store 3's cash-up.
+    giftCardQueryOne<Row>(
       siteId,
       `SELECT
          COALESCE(SUM(CASE WHEN entry_type IN ('activation','reload') THEN amount END), 0) AS sold,
          COALESCE(SUM(CASE WHEN entry_type = 'redeem' THEN ABS(amount) END), 0)            AS redeemed
-       FROM gift_card_events WHERE shift_id = ?`,
-      [shiftId],
+       FROM gift_card_events
+        WHERE shift_id = ? AND (origin_site_id IS NULL OR origin_site_id = ?)`,
+      [shiftId, siteId],
     ),
     // The owner's wallet table, and this branch's own top-ups within it:
     // shift_id is a branch id, so without origin_site_id a shared programme

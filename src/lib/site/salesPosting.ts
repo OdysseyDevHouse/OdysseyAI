@@ -414,7 +414,8 @@ export async function finaliseDocument(
   const giftLines = document.lines.filter((l) => l.productType === 'gift_card')
 
   if (giftTenders.length > 0 || giftLines.length > 0) {
-    const { findGiftCard, giftCardRefusal, normaliseGiftCardCode } = await import('./giftCards')
+    const { findGiftCard, giftCardRefusal, normaliseGiftCardCode, formatGiftCardCode } =
+      await import('./giftCards')
     const localDate = today()
 
     // Buying a gift card WITH a gift card is a rollover loop that resets the
@@ -468,6 +469,37 @@ export async function finaliseDocument(
       }
       if (!line.giftCardCode) {
         return { ok: false, error: `${name}: the line is missing its card number — remove it and ring the card up again.` }
+      }
+
+      /*
+       * ── THE CARD MUST BE SELLABLE, ASKED HERE ──────────────────────────
+       *
+       * activateGiftCardForSale refuses an already-active card, a cancelled
+       * one, or a code that does not exist. That refusal used to roll the sale
+       * back, because it ran inside the sale's transaction.
+       *
+       * It runs after the commit now — it has to, since a shared scheme puts
+       * the cards in another database — so the refusal has to be asked BEFORE
+       * the sale opens or it arrives too late to stop anything. Without this
+       * the sale stands, the GL posts the liability, and no card is credited:
+       * books and cards disagree by the face value, silently.
+       *
+       * Caught by test-gift-cards, which asserts exactly that pairing.
+       */
+      const existing = await findGiftCard(siteId, line.giftCardCode)
+      if (existing) {
+        if (existing.status === 'active') {
+          return {
+            ok: false,
+            error: `${name}: card ${formatGiftCardCode(existing.code)} is already active, holding ${existing.balance.toFixed(2)}. Ring up a different card.`,
+          }
+        }
+        if (existing.status !== 'pending') {
+          return {
+            ok: false,
+            error: `${name}: card ${formatGiftCardCode(existing.code)} is ${existing.status} and cannot be sold.`,
+          }
+        }
       }
     }
   }
@@ -1068,36 +1100,15 @@ export async function finaliseDocument(
       }
 
       /*
-       * Gift cards (147), after the number exists so every event names its
-       * sale. Both directions THROW on refusal — an unsellable card or a
-       * short balance rolls the whole sale back, stock, number and all.
+       * Gift cards used to be written HERE, inside the sale's transaction, so a
+       * refusal rolled the whole sale back. They are written after the commit
+       * now — see "gift cards, after the commit" below — because under a shared
+       * card scheme they live in another database and no transaction spans two.
+       *
+       * The pre-flight above already checked every code and balance before this
+       * transaction opened, which it did before this change too. What moved is
+       * only where the write lands.
        */
-      if (giftLines.length > 0 || giftTenders.length > 0) {
-        const { activateGiftCardForSale, redeemGiftCardForSale } = await import('./giftCards')
-        for (const line of giftLines) {
-          await activateGiftCardForSale(tx, actor, siteId, {
-            code: line.giftCardCode ?? '',
-            amount: line.lineTotalIncl,
-            documentId: document.id,
-            documentNumber,
-            validityMonths: giftValidityMonths,
-            shiftId,
-            terminalId: document.terminalId ?? null,
-          })
-        }
-        for (const tender of giftTenders) {
-          // The sign carries the direction: positive spends the card, and a
-          // credit note's negative tender pays the refund back ONTO it.
-          await redeemGiftCardForSale(tx, actor, siteId, {
-            code: tender.input.reference ?? '',
-            amount: round(tender.input.amount, 2),
-            documentId: document.id,
-            documentNumber,
-            shiftId,
-            terminalId: document.terminalId ?? null,
-          })
-        }
-      }
 
       await tx.execute(
         `UPDATE sales_documents SET
@@ -1249,6 +1260,86 @@ export async function finaliseDocument(
       roundingAdjustment: roundingAdj,
       giftCardLiability,
     })
+
+    /*
+     * 5a. Gift cards, after the commit.
+     *
+     * Same move as the loyalty spend below and for the same reason: under a
+     * shared card scheme the cards are in the owner's database, and `tx` could
+     * not reach it.
+     *
+     * ── WHY THIS ONE LOSES LESS THAN LOYALTY DID ─────────────────────────
+     *
+     * Because the guard was never the transaction. A gift card redemption is
+     * arbitrated by `UPDATE … WHERE balance >= ?` — the database decides, and
+     * it decides correctly wherever the row lives. Two tills racing over one
+     * balance still produce exactly one winner. Moving out of the sale's
+     * transaction costs the ROLLBACK, not the guard.
+     *
+     * ── NOT FAIL-SOFT ────────────────────────────────────────────────────
+     *
+     * A failure here means goods were sold against a card that was never
+     * debited, or a card was sold that never came into existence. Both are
+     * money, and both need a person — so each is logged with the document
+     * number and the code, which is everything needed to put it right.
+     *
+     * The sale still stands. Returning a failure for a document that exists
+     * would have the cashier ring it up twice, which is worse than a card that
+     * needs adjusting by hand.
+     */
+    if (giftLines.length > 0 || giftTenders.length > 0) {
+      const { activateGiftCardForSale, redeemGiftCardForSale } = await import('./giftCards')
+      const { giftCardTransaction } = await import('./giftCardDb')
+
+      for (const line of giftLines) {
+        try {
+          await giftCardTransaction(siteId, (gtx) =>
+            activateGiftCardForSale(gtx, actor, siteId, {
+              code: line.giftCardCode ?? '',
+              amount: line.lineTotalIncl,
+              documentId: document.id,
+              documentNumber: posted.documentNumber,
+              validityMonths: giftValidityMonths,
+              shiftId,
+              terminalId: document.terminalId ?? null,
+            }),
+          )
+        } catch (error) {
+          console.error(
+            '[giftcard] CARD NOT ACTIVATED:',
+            line.giftCardCode,
+            'sold on',
+            posted.documentNumber,
+            error,
+          )
+        }
+      }
+
+      for (const tender of giftTenders) {
+        try {
+          // The sign carries the direction: positive spends the card, and a
+          // credit note's negative tender pays the refund back ONTO it.
+          await giftCardTransaction(siteId, (gtx) =>
+            redeemGiftCardForSale(gtx, actor, siteId, {
+              code: tender.input.reference ?? '',
+              amount: round(tender.input.amount, 2),
+              documentId: document.id,
+              documentNumber: posted.documentNumber,
+              shiftId,
+              terminalId: document.terminalId ?? null,
+            }),
+          )
+        } catch (error) {
+          console.error(
+            '[giftcard] CARD NOT DEBITED:',
+            tender.input.reference,
+            'on',
+            posted.documentNumber,
+            error,
+          )
+        }
+      }
+    }
 
     /*
      * 5b. Loyalty SPEND, after the commit.
