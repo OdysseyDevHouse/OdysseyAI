@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '../siteDb'
+import { supplierDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 import type { Actor } from './activityLog'
 
@@ -707,7 +708,8 @@ export async function reconcileBatches(siteId: number): Promise<BatchDrift[]> {
   return out
 }
 
-const SELECT_BATCH = `
+/** A batch is this shop's stock; the supplier that sent it may be the group's. */
+const selectBatch = (sdb: string) => `
   SELECT b.*, p.code AS product_code, p.description AS product_description,
          sl.code AS location_code,
          pd.document_number AS received_doc_number, s.name AS supplier_name
@@ -715,7 +717,7 @@ const SELECT_BATCH = `
     JOIN products p ON p.id = b.product_id
     LEFT JOIN stock_locations sl ON sl.id = b.location_id
     LEFT JOIN purchase_documents pd ON pd.id = b.received_doc_id
-    LEFT JOIN suppliers s ON s.id = pd.supplier_id
+    LEFT JOIN ${sdb}suppliers s ON s.id = pd.supplier_id
 `
 
 export type BatchListOptions = {
@@ -769,11 +771,12 @@ export async function listBatches(
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000)
   const offset = Math.max(options.offset ?? 0, 0)
+  const sdb = await supplierDbPrefix(siteId)
 
   const [rows, count] = await Promise.all([
     siteQuery<Row>(
       siteId,
-      `${SELECT_BATCH} ${whereSql}
+      `${selectBatch(sdb)} ${whereSql}
         ORDER BY (b.expiry_date IS NULL), b.expiry_date, p.description, b.id
         LIMIT ${limit} OFFSET ${offset}`,
       params,
@@ -824,7 +827,11 @@ export async function batchTrace(
     at: Date
   }[]
 } | null> {
-  const rows = await siteQuery<Row>(siteId, `${SELECT_BATCH} WHERE b.id = ? LIMIT 1`, [batchId])
+  const rows = await siteQuery<Row>(
+    siteId,
+    `${selectBatch(await supplierDbPrefix(siteId))} WHERE b.id = ? LIMIT 1`,
+    [batchId],
+  )
   if (rows.length === 0) return null
 
   const events = await siteQuery<Row>(

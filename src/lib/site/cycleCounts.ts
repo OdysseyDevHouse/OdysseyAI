@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
+import { supplierDbPrefix } from './customerDb'
 import { nextOccurrence, isDue, type RecurringFrequency } from '../expenseModel'
 import { logActivity, type Actor } from './activityLog'
 import { createStockTake, todayIso, type StockTakeScope } from './stockTakes'
@@ -44,11 +45,12 @@ export type CycleProgramme = {
   generatedCount: number
 }
 
-const SCOPE_NAME_JOIN = `
+/** A count plan is this shop's; a supplier it scopes to may be the group's. */
+const scopeNameJoin = (sdb: string) => `
   LEFT JOIN stock_locations sl ON sl.id = p.location_id
   LEFT JOIN departments d ON p.scope = 'department' AND d.id = p.scope_ref_id
   LEFT JOIN brands b ON p.scope = 'brand' AND b.id = p.scope_ref_id
-  LEFT JOIN suppliers s ON p.scope = 'supplier' AND s.id = p.scope_ref_id
+  LEFT JOIN ${sdb}suppliers s ON p.scope = 'supplier' AND s.id = p.scope_ref_id
 `
 
 function mapProgramme(r: Row, asAt: string): CycleProgramme {
@@ -95,7 +97,7 @@ export async function listCycleProgrammes(
               ORDER BY st.id DESC LIMIT 1) AS open_take_id,
             (SELECT COUNT(*) FROM stock_takes st WHERE st.programme_id = p.id) AS generated_count
        FROM cycle_count_programmes p
-       ${SCOPE_NAME_JOIN}
+       ${scopeNameJoin(await supplierDbPrefix(siteId))}
       ORDER BY p.is_active DESC, p.name`,
   )
   return rows.map((r) => mapProgramme(r, asAt))

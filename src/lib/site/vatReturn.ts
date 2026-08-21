@@ -1,7 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
-import { customerDbPrefix } from './customerDb'
+import { customerDbPrefix, supplierDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 
 /**
@@ -351,6 +351,10 @@ export async function vatDocuments(
   // d.customer_name means a miss would look like a cash sale rather than an
   // error, which is exactly the kind of wrong that goes unnoticed.
   const cdb = await customerDbPrefix(siteId)
+  // The same argument for the input side. A purchase or an expense names a
+  // supplier that may be the group's, and 'Unknown supplier' is the COALESCE
+  // that would hide the miss.
+  const sdb = await supplierDbPrefix(siteId)
 
   const rows =
     side === 'output'
@@ -383,7 +387,7 @@ export async function vatDocuments(
                   SUM(l.line_total_excl) AS excl, SUM(l.line_vat) AS vat, SUM(l.line_total_incl) AS incl
              FROM purchase_documents d
              JOIN purchase_document_lines l ON l.document_id = d.id
-             LEFT JOIN suppliers s ON s.id = d.supplier_id
+             LEFT JOIN ${sdb}suppliers s ON s.id = d.supplier_id
             WHERE d.status = 'finalised'
               AND d.document_date BETWEEN ? AND ?
               ${ratePct === undefined ? '' : 'AND l.vat_rate_pct = ?'}
@@ -398,7 +402,7 @@ export async function vatDocuments(
                   SUM(l.line_incl) AS incl
              FROM expenses e
              JOIN expense_lines l ON l.expense_id = e.id
-             LEFT JOIN suppliers s ON s.id = e.supplier_id
+             LEFT JOIN ${sdb}suppliers s ON s.id = e.supplier_id
             WHERE e.status = 'finalised'
               AND e.expense_date BETWEEN ? AND ?
               ${ratePct === undefined ? '' : 'AND l.vat_rate_pct = ?'}
@@ -418,7 +422,7 @@ export async function vatDocuments(
                     SUM(l.line_total_excl) AS excl, SUM(l.line_vat) AS vat, SUM(l.line_total_incl) AS incl
                FROM purchase_documents d
                JOIN purchase_document_lines l ON l.document_id = d.id
-               LEFT JOIN suppliers s ON s.id = d.supplier_id
+               LEFT JOIN ${sdb}suppliers s ON s.id = d.supplier_id
               WHERE d.status = 'finalised'
                 AND d.document_date BETWEEN ? AND ?
                 ${ratePct === undefined ? '' : 'AND l.vat_rate_pct = ?'}

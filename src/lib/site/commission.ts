@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { supplierDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 
 /**
@@ -63,7 +64,8 @@ type RuleRow = RowDataPacket & {
   is_active: number
 }
 
-const SELECT_RULE = `
+/** A commission rule is this shop's; a supplier it scopes to may be the group's. */
+const selectRule = (sdb: string) => `
   SELECT r.id, r.name, r.priority, r.basis,
          r.department_id, d.name AS department_name,
          r.product_id, p.code AS product_code,
@@ -75,7 +77,7 @@ const SELECT_RULE = `
     LEFT JOIN departments d ON d.id = r.department_id
     LEFT JOIN products    p ON p.id = r.product_id
     LEFT JOIN brands      b ON b.id = r.brand_id
-    LEFT JOIN suppliers   s ON s.id = r.supplier_id
+    LEFT JOIN ${sdb}suppliers s ON s.id = r.supplier_id
     LEFT JOIN users       u ON u.id = r.user_id
 `
 
@@ -104,9 +106,10 @@ function mapRule(r: RuleRow, tiers: CommissionTier[]): CommissionRule {
 }
 
 export async function listRules(siteId: number, activeOnly = false): Promise<CommissionRule[]> {
+  const sdb = await supplierDbPrefix(siteId)
   const rows = await siteQuery<RuleRow>(
     siteId,
-    `${SELECT_RULE} ${activeOnly ? 'WHERE r.is_active = 1' : ''}
+    `${selectRule(sdb)} ${activeOnly ? 'WHERE r.is_active = 1' : ''}
       ORDER BY r.priority ASC, r.id ASC`,
   )
   if (!rows.length) return []
@@ -130,7 +133,8 @@ export async function listRules(siteId: number, activeOnly = false): Promise<Com
 }
 
 export async function getRule(siteId: number, ruleId: number): Promise<CommissionRule | null> {
-  const row = await siteQueryOne<RuleRow>(siteId, `${SELECT_RULE} WHERE r.id = ? LIMIT 1`, [ruleId])
+  const sdb = await supplierDbPrefix(siteId)
+  const row = await siteQueryOne<RuleRow>(siteId, `${selectRule(sdb)} WHERE r.id = ? LIMIT 1`, [ruleId])
   if (!row) return null
 
   const tiers = await siteQuery<RowDataPacket & { from_amount: string; rate_pct: string }>(

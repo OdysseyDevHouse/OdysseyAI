@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
+import { supplierDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { nextDocumentNumber } from './sequences'
@@ -110,11 +111,17 @@ function mapAsset(r: Row): FixedAsset {
   }
 }
 
-const SELECT_ASSET = `
+/**
+ * An asset is this shop's; the supplier it was bought from may be the group's.
+ *
+ * A function rather than a constant because the qualifier is only known at call
+ * time. Empty for an unshared site, so the SQL is what it always was.
+ */
+const selectAsset = (sdb: string) => `
   SELECT a.*, c.name AS category_name, s.name AS supplier_name
     FROM fixed_assets a
     LEFT JOIN asset_categories c ON c.id = a.category_id
-    LEFT JOIN suppliers s        ON s.id = a.supplier_id
+    LEFT JOIN ${sdb}suppliers s  ON s.id = a.supplier_id
 `
 
 /* ── Categories ──────────────────────────────────────────────────────────── */
@@ -199,7 +206,7 @@ export async function listAssets(
   const limit = Math.min(Math.max(opts.limit ?? 300, 1), 2000)
   const rows = await siteQuery<Row>(
     siteId,
-    `${SELECT_ASSET}
+    `${selectAsset(await supplierDbPrefix(siteId))}
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY a.asset_code
       LIMIT ${limit}`,
@@ -209,7 +216,11 @@ export async function listAssets(
 }
 
 export async function getAsset(siteId: number, id: number): Promise<FixedAsset | null> {
-  const row = await siteQueryOne<Row>(siteId, `${SELECT_ASSET} WHERE a.id = ? LIMIT 1`, [id])
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `${selectAsset(await supplierDbPrefix(siteId))} WHERE a.id = ? LIMIT 1`,
+    [id],
+  )
   return row ? mapAsset(row) : null
 }
 

@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '@/lib/siteDb'
+import { supplierDbPrefix } from '@/lib/site/customerDb'
 import { toNum } from '@/lib/decimals'
 import { productSpec } from '@/lib/import/specs/products'
 import { fieldsFor } from '@/lib/import/spec'
@@ -56,9 +57,11 @@ export async function catalogueExport(siteId: number): Promise<CatalogueExport> 
       ),
       siteQuery<Row>(
         siteId,
+        // product_suppliers is this shop's; the supplier code comes from the
+        // file, which may be the group's.
         `SELECT ps.product_id, ps.last_cost, ps.pack_size, s.code AS supplier_code
            FROM product_suppliers ps
-           JOIN suppliers s ON s.id = ps.supplier_id
+           JOIN ${await supplierDbPrefix(siteId)}suppliers s ON s.id = ps.supplier_id
           WHERE ps.is_preferred = 1`,
       ),
     ])

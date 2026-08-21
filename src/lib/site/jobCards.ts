@@ -1,6 +1,7 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
+import { supplierDbPrefix } from './customerDb'
 import { customerQueryOne } from './customerDb'
 import { round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
@@ -746,6 +747,10 @@ export async function getJobCard(siteId: number, id: number): Promise<JobCardDet
   if (!row) return null
   const job = mapJob(row)
 
+  // job_card_lines is this shop's; the supplier it names may be the group's.
+  // Left unqualified this read the branch's own (empty) suppliers table and
+  // every bought-in part on a job card lost its supplier name.
+  const sdb = await supplierDbPrefix(siteId)
   const [lineRows, docRows] = await Promise.all([
     siteQuery<Row>(
       siteId,
@@ -756,7 +761,7 @@ export async function getJobCard(siteId: number, id: number): Promise<JobCardDet
               sup.name AS supplier_name, ec.name AS expense_category_name
          FROM job_card_lines l
          LEFT JOIN sales_documents d ON d.id = l.invoiced_doc_id
-         LEFT JOIN suppliers sup ON sup.id = l.supplier_id
+         LEFT JOIN ${sdb}suppliers sup ON sup.id = l.supplier_id
          LEFT JOIN expense_categories ec ON ec.id = l.expense_category_id
         WHERE l.job_card_id = ?
         ORDER BY l.line_number, l.id`,
