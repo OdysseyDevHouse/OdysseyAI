@@ -389,7 +389,7 @@ export default function StoreCard({
             <SharingSwitch
               name="sharesLoyalty"
               label="Use head office’s loyalty programme"
-              hint="One card across the group — earn at any store, spend at any store, one set of tiers. Works even where each store keeps its own customers and its own books."
+              hint="One card across the group — earn at any store, spend at any store, one set of tiers. Gift cards follow this switch, so a card sold at one store is spendable at another. Works even where each store keeps its own customers and its own books."
               defaultChecked={member.sharesLoyalty}
               disabled={unreadable || loyaltyBlocked || !hasPrimary}
             />

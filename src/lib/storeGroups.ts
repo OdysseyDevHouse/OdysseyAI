@@ -1236,6 +1236,38 @@ async function sharedFileRefusal(
   } catch {
     return `This store’s database could not be read, so ${feature} sharing cannot be changed.`
   }
+  /*
+   * ── THE LOYALTY GATE ALSO COUNTS GIFT CARDS ─────────────────────────
+   *
+   * Because they follow this same switch. A branch with no members but a box
+   * of issued cards passed the members-only check, joined, and its cards
+   * became invisible the moment it did — the till would look them up in the
+   * owner's database and find nothing. That is real money a shopper is
+   * holding, so it is refused for the same reason members are.
+   *
+   * `pending` counts too: a pre-generated card is stock a shop intends to
+   * sell, and stranding it is the same problem one day later.
+   */
+  if (file === 'loyalty' && held === 0) {
+    try {
+      const row = await siteQueryOne<RowDataPacket & { n: number }>(
+        siteId,
+        `SELECT COUNT(*) AS n FROM gift_cards WHERE status IN ('pending','active')`,
+      )
+      const cards = Number(row?.n ?? 0)
+      if (cards > 0) {
+        return (
+          `This store holds ${cards} gift card(s) of its own, and gift cards ` +
+          'follow the loyalty programme. Joining would leave them unfindable at ' +
+          'every till, including this one — they live in this database and the ' +
+          'group reads head office’s. Redeem or cancel them under Gift cards first.'
+        )
+      }
+    } catch {
+      // A site with no 147 has no gift_cards table, which is not a refusal.
+    }
+  }
+
   if (held > 0) {
     // The member wording is stronger on purpose: a card number is in somebody's
     // wallet, so two files that both issued M000001 would hand one person's
