@@ -10,6 +10,7 @@ import {
   setMemberSharing,
   setGroupOnlineMode,
   setGroupLegalEntity,
+  setGroupLoyaltyWallet,
   setGroupPrimary,
 } from '@/lib/storeGroups'
 import { setBranchPin, syncBranchPin } from '@/lib/control/storeBranches'
@@ -181,6 +182,19 @@ export async function setLegalEntityAction(
 
   const result = await setGroupLegalEntity(group.id, raw)
   if (!result.ok) return { error: result.error }
+
+  /*
+   * The wallet answer rides on the same form, because it is the same decision:
+   * it only means anything once "separate companies" has been chosen, and
+   * asking it on its own card would separate a question from the answer that
+   * gives it a reason to exist.
+   *
+   * Sent explicitly rather than left undefined — this form OWNS the switch, so
+   * omitting it would make it impossible to turn off. Forced to false on 'one'
+   * so the stored value can never say "separate companies share their float"
+   * about a group that has since said it is one company.
+   */
+  await setGroupLoyaltyWallet(group.id, raw === 'several' && form.get('sharesLoyaltyWallet') === 'on')
 
   revalidatePath('/setup/linked-stores')
   return { error: null, saved: raw }

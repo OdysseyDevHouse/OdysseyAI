@@ -12,6 +12,7 @@ import {
   Icons,
   Radio,
   SectionTitle,
+  Switch,
 } from '@/components/ui'
 import { setLegalEntityAction, type LinkFormState } from './actions'
 
@@ -51,8 +52,11 @@ function SaveButton({ disabled }: { disabled: boolean }) {
 
 export default function LegalEntityCard({
   legalEntity,
+  sharesLoyaltyWallet,
 }: {
   legalEntity: 'unknown' | 'one' | 'several'
+  /** Only meaningful under 'several' — see the switch below. */
+  sharesLoyaltyWallet: boolean
 }) {
   const [state, formAction] = useActionState<LinkFormState, FormData>(setLegalEntityAction, {
     error: null,
@@ -80,6 +84,7 @@ export default function LegalEntityCard({
    */
   const answered = state.saved ?? (legalEntity === 'unknown' ? '' : legalEntity)
   const [typed, setTyped] = useState<string | null>(null)
+  const [walletShared, setWalletShared] = useState(sharesLoyaltyWallet)
   const [lastAnswered, setLastAnswered] = useState(answered)
   if (lastAnswered !== answered) {
     // A save landed: drop the in-progress choice so the saved answer shows.
@@ -157,6 +162,33 @@ export default function LegalEntityCard({
             />
           </div>
 
+          {/*
+            ── THE WALLET QUESTION, AND WHY IT ONLY APPEARS HERE ─────────────
+            Shown only under "separate companies", because that is the only
+            answer that gives it a reason to exist: one company sharing its own
+            float across its own branches raises no question at all.
+
+            It is a switch rather than a refusal because it is a commercial
+            decision the owner is entitled to make — a franchise with a
+            settlement agreement between its members has already made it. What
+            the software owes them is the consequence stated here, at the moment
+            of choosing, rather than discovered at a till later.
+
+            Off by default: the answer that needs no agreement between the
+            companies. See sql/tickets/017_share_loyalty.sql.
+          */}
+          {choice === 'several' && (
+            <div className="border-t border-border pt-4">
+              <Switch
+                checked={walletShared}
+                onChange={setWalletShared}
+                label="Share loyalty wallet money between the companies"
+                hint="Points, tiers and punch cards work across the group either way. This is only about wallet rand — money a shopper handed over. Switched on, R500 topped up at one company can be spent at another, and the two settle it between themselves. Switched off, each company holds its own float."
+              />
+              {walletShared && <input type="hidden" name="sharesLoyaltyWallet" value="on" />}
+            </div>
+          )}
+
           {answered === '' && (
             <Callout tone="warning">
               Until this is answered, the customer and supplier files cannot be
@@ -169,7 +201,14 @@ export default function LegalEntityCard({
           {/* Compared against `answered`, not the prop: after a save the prop is
               stale, and comparing to it would leave Save enabled against an
               answer already written. */}
-          <SaveButton disabled={choice === '' || choice === answered} />
+          {/* Enabled when EITHER answer has moved. Comparing only the radio
+              would leave Save greyed out after someone flipped the wallet
+              switch, which reads as the screen having ignored them. */}
+          <SaveButton
+            disabled={
+              choice === '' || (choice === answered && walletShared === sharesLoyaltyWallet)
+            }
+          />
         </CardFooter>
       </form>
     </Card>

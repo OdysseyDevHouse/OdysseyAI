@@ -51,6 +51,7 @@ export default function LinkedStoresSetup({
   groupStorefront,
   primarySiteId,
   legalEntity,
+  sharesLoyaltyWallet,
 }: {
   currentSiteId: number
   currentSiteName: string
@@ -63,6 +64,8 @@ export default function LinkedStoresSetup({
   primarySiteId: number | null
   /** One company or several — gates the master-file switches. */
   legalEntity: 'unknown' | 'one' | 'several'
+  /** Whether separate companies here share loyalty wallet money. */
+  sharesLoyaltyWallet: boolean
   /** Null when these stores are not a group yet — there is nothing to configure. */
   groupStorefront: {
     enabled: boolean
@@ -107,7 +110,9 @@ export default function LinkedStoresSetup({
       {/* Asked before the store cards, because it gates their master-file
           switches — the answer has to come first on the page as well as in the
           rules. Only shown once a group exists. */}
-      {members.length > 0 && <LegalEntityCard legalEntity={legalEntity} />}
+      {members.length > 0 && (
+        <LegalEntityCard legalEntity={legalEntity} sharesLoyaltyWallet={sharesLoyaltyWallet} />
+      )}
 
       {/* After the entity question and before the store cards: it is the second
           thing that has to be settled, and the third — the sharing switches —

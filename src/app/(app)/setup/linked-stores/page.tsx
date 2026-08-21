@@ -56,6 +56,7 @@ export default async function LinkedStoresPage() {
           }))}
           primarySiteId={group?.primarySiteId ?? null}
           legalEntity={group?.legalEntity ?? 'unknown'}
+          sharesLoyaltyWallet={group?.sharesLoyaltyWallet ?? false}
           groupStorefront={
             group
               ? {

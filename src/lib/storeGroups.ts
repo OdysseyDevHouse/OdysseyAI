@@ -44,6 +44,27 @@ export type StoreGroup = {
    * to 'one' would switch a legal judgement on by silence.
    */
   legalEntity: 'unknown' | 'one' | 'several'
+  /**
+   * Whether SEPARATELY REGISTERED companies in this group may share one loyalty
+   * WALLET — not the points, which are never anybody's money.
+   *
+   * Points, tiers and punch cards are a marketing promise, and a franchise
+   * running one card across separately-owned stores owes nothing between the
+   * companies when a shopper earns at one and redeems at another. The wallet is
+   * cash the shopper handed over: topped up at store 3 and spent at store 7,
+   * store 3 holds money store 7 has given goods for, and that is an
+   * inter-company balance neither set of books records — the same objection 016
+   * raises about a shared debtors book.
+   *
+   * An option rather than a refusal because it is a commercial decision the
+   * owner is entitled to make: a group with a settlement agreement has already
+   * answered it. What the software owes them is the consequence stated at the
+   * moment of choosing, which is what the switch does.
+   *
+   * Meaningless when legalEntity is 'one' — one taxpayer, one set of books, and
+   * the float is already theirs.
+   */
+  sharesLoyaltyWallet: boolean
 }
 
 export type GroupMember = {
@@ -73,6 +94,16 @@ export type GroupMember = {
   sharesCustomers: boolean
   /** The same, for the creditors book. Separately answerable on purpose. */
   sharesSuppliers: boolean
+  /**
+   * Whether this store reads and writes the GROUP's loyalty programme.
+   *
+   * Independent of the other two on purpose. Loyalty used to be central only by
+   * riding on the customer file's owner, so the only available shape was
+   * "shared customers ⇒ shared loyalty" — and a group with twenty separate
+   * debtors books could not run one card, which is the ordinary franchise case.
+   * See sql/tickets/017_share_loyalty.sql.
+   */
+  sharesLoyalty: boolean
   /** False when this site has no active database row — it cannot be written to. */
   hasDatabase: boolean
 }
@@ -107,6 +138,7 @@ type GroupRow = RowDataPacket & {
   status: 'active' | 'inactive'
   online_group_mode?: number
   legal_entity?: 'unknown' | 'one' | 'several'
+  shares_loyalty_wallet?: number
 }
 
 type MemberRow = RowDataPacket & {
@@ -121,6 +153,7 @@ type MemberRow = RowDataPacket & {
   shares_selling: number
   shares_customers?: number
   shares_suppliers?: number
+  shares_loyalty?: number
   db_count: number
 }
 
@@ -136,6 +169,11 @@ function mapGroup(r: GroupRow): StoreGroup {
     // Absent on a control database that has not run 016. Unknown is the correct
     // reading of a missing answer.
     legalEntity: r.legal_entity ?? 'unknown',
+    // Only consulted when legalEntity is 'several' — one company sharing its
+    // own float across its own branches raises no question. Off by default,
+    // which is the answer that needs no settlement agreement between the
+    // companies. See sql/tickets/017_share_loyalty.sql.
+    sharesLoyaltyWallet: Boolean(r.shares_loyalty_wallet),
   }
 }
 
@@ -154,6 +192,10 @@ function mapMember(r: MemberRow): GroupMember {
     // it on — and it matches how onlineGroupMode handles the same case.
     sharesCustomers: Boolean(r.shares_customers),
     sharesSuppliers: Boolean(r.shares_suppliers),
+    // Absent on a control database that has not run tickets/017 yet. Off is the
+    // correct reading of "this column does not exist" — nobody has switched it
+    // on — and it matches how the two above handle the same case.
+    sharesLoyalty: Boolean(r.shares_loyalty),
     hasDatabase: Number(r.db_count) > 0,
   }
 }
@@ -161,7 +203,7 @@ function mapMember(r: MemberRow): GroupMember {
 /** The group a site belongs to, if any. A site belongs to at most one. */
 export async function groupForSite(siteId: number): Promise<StoreGroup | null> {
   const row = await queryOne<GroupRow>(
-    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode, g.legal_entity
+    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode, g.legal_entity, g.shares_loyalty_wallet
        FROM cp2_store_groups g
        JOIN cp2_store_group_members m ON m.group_id = g.id
       WHERE m.site_id = ? AND g.status = 'active'
@@ -184,7 +226,7 @@ export async function membersOfGroup(groupId: number): Promise<GroupMember[]> {
       `SELECT m.site_id, s.site_code, s.company_name, s.trading_name,
               m.position, m.shares_products, m.shares_departments,
               m.shares_cost, m.shares_selling,
-              m.shares_customers, m.shares_suppliers,
+              m.shares_customers, m.shares_suppliers, m.shares_loyalty,
               (SELECT COUNT(*) FROM cp2_site_databases d
                 WHERE d.site_id = m.site_id AND d.purpose = 'master' AND d.status = 'active'
               ) AS db_count
@@ -320,6 +362,76 @@ export const supplierOwnerSite = cache(async (siteId: number): Promise<OwnerDb> 
 })
 
 /**
+ * The same, for the loyalty programme — and the one that does NOT require one
+ * legal entity.
+ *
+ * Loyalty used to be central only by riding on the customer file's owner, so
+ * the only shape available was "shared customers ⇒ shared loyalty". A franchise
+ * running one card across separately-owned stores that each invoice their own
+ * account customers could not be expressed at all, and that is the ordinary
+ * case rather than an exotic one.
+ *
+ * Points are a marketing promise, not a receivable: nothing is owed between the
+ * companies when a shopper earns at one store and redeems at another. So the
+ * entity gate that protects the debtors book does not apply here.
+ *
+ * The WALLET is different, because it is money the shopper handed over — see
+ * loyaltyWalletRefusal() below. That question is asked where the wallet is
+ * spent, not here, because a group may legitimately share points while keeping
+ * its float separate and this resolver has to answer 'yes' for both.
+ */
+export const loyaltyOwnerSite = cache(async (siteId: number): Promise<OwnerDb> => {
+  return ownerSiteFor(siteId, 'loyalty')
+})
+
+/**
+ * Why this store may not put money on a shared wallet. Null means it may.
+ *
+ * ── THE ONE THING POINTS AND RAND DO NOT SHARE ───────────────────────────
+ *
+ * loyaltyOwnerSite deliberately ignores legal_entity, because points are a
+ * marketing promise and a franchise sharing one card owes nothing between its
+ * companies. The wallet is the exception: it is cash the shopper handed over.
+ * Topped up with R500 at store 3 and spent at store 7, store 3 is a different
+ * registered company holding money store 7 has now given goods for — an
+ * inter-company balance neither set of books records, which is precisely the
+ * objection 016 raises about a shared debtors book.
+ *
+ * ── AN OPTION, NOT A REFUSAL ─────────────────────────────────────────────
+ *
+ * A group with a settlement agreement between its members has already answered
+ * this, and the software is not entitled to answer it for them. So it is a
+ * switch on the group, off by default — the answer that needs no agreement —
+ * and the screen states the consequence beside it.
+ *
+ * Returns null for a single company, for a store that is not sharing loyalty at
+ * all, and for a group that has switched the wallet on. Never throws: a
+ * control-database problem must not stop a till taking money, and answering
+ * "no reason to refuse" is what the site did before any of this existed.
+ */
+export async function loyaltyWalletRefusal(siteId: number): Promise<string | null> {
+  try {
+    const owner = await loyaltyOwnerSite(siteId)
+    // Own programme, own float. Nothing crosses a company boundary.
+    if (owner.siteId === siteId) return null
+
+    const group = await groupForSite(siteId)
+    if (!group) return null
+    if (group.legalEntity !== 'several') return null
+    if (group.sharesLoyaltyWallet) return null
+
+    return (
+      'These stores are registered as separate companies, and this group has ' +
+      'not agreed to share loyalty wallet money across them. Points, tiers and ' +
+      'punch cards still work everywhere — only the wallet is held by each ' +
+      'company separately. An owner can change this in Setup → Linked stores.'
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
  * The shared resolution both public helpers run.
  *
  * Memoised by its callers rather than here: React's cache() keys on arguments,
@@ -329,9 +441,11 @@ export const supplierOwnerSite = cache(async (siteId: number): Promise<OwnerDb> 
  */
 async function ownerSiteFor(
   siteId: number,
-  file: 'customers' | 'suppliers',
+  file: 'customers' | 'suppliers' | 'loyalty',
 ): Promise<OwnerDb> {
   const own: OwnerDb = { siteId, purpose: MASTER }
+  const flagOf = (m: GroupMember | undefined) =>
+    file === 'customers' ? m?.sharesCustomers : file === 'suppliers' ? m?.sharesSuppliers : m?.sharesLoyalty
 
   try {
     const group = await groupForSite(siteId)
@@ -342,18 +456,29 @@ async function ownerSiteFor(
     // case, not a defensive check.
     if (!group.primarySiteId) return own
 
-    // Separate companies must not share a balance, and the answer can change
-    // AFTER the flags were set — somebody corrects it in setup, or a group is
-    // restructured. Read here rather than trusted from the member row, so that
-    // saying "these are separate companies" stops the sharing immediately
-    // instead of leaving stale flags routing writes into another taxpayer's
-    // debtors book.
-    if (group.legalEntity !== 'one') return own
+    /*
+     * Separate companies must not share a BALANCE, and the answer can change
+     * AFTER the flags were set — somebody corrects it in setup, or a group is
+     * restructured. Read here rather than trusted from the member row, so that
+     * saying "these are separate companies" stops the sharing immediately
+     * instead of leaving stale flags routing writes into another taxpayer's
+     * debtors book.
+     *
+     * LOYALTY IS EXEMPT, and that exemption is the point of the feature.
+     * Points, tiers and punch cards are a marketing promise rather than a
+     * receivable: a franchise running one card across separately-owned stores
+     * owes nothing between the companies when a shopper earns at one and
+     * redeems at another. Refusing that would block the ordinary case.
+     *
+     * The wallet is the part that IS money, and it is gated separately by
+     * loyaltyWalletRefusal() at the point of spending — not here, because a
+     * group may share points while keeping its float apart, and this resolver
+     * has to answer yes for both.
+     */
+    if (file !== 'loyalty' && group.legalEntity !== 'one') return own
 
     const members = await membersOfGroup(group.id)
-    const me = members.find((m) => m.siteId === siteId)
-    const shares = file === 'customers' ? me?.sharesCustomers : me?.sharesSuppliers
-    if (!shares) return own
+    if (!flagOf(members.find((m) => m.siteId === siteId))) return own
 
     // The primary must be in the group, hold a database, and share the same
     // file. A primary that does not share cannot host the group's file — that
@@ -361,9 +486,7 @@ async function ownerSiteFor(
     // row can never route a write into a store that opted out.
     const primary = members.find((m) => m.siteId === group.primarySiteId)
     if (!primary?.hasDatabase) return own
-    const primaryShares =
-      file === 'customers' ? primary.sharesCustomers : primary.sharesSuppliers
-    if (!primaryShares) return own
+    if (!flagOf(primary)) return own
 
     // Already the owner. Returned before the entitlement round trip because the
     // answer cannot differ: a store always owns its own database.
@@ -683,6 +806,29 @@ export async function setGroupLegalEntity(
 
   await execute('UPDATE cp2_store_groups SET legal_entity = ? WHERE id = ?', [entity, groupId])
   return { ok: true }
+}
+
+/**
+ * Whether separately-registered companies in this group share one loyalty
+ * WALLET.
+ *
+ * Note what the guard above does NOT do: switching to 'several' refuses while
+ * customers or suppliers are shared, and says nothing about loyalty. That is
+ * deliberate — a franchise keeps its card when it splits into separate
+ * companies, because points were never anybody's money. Only the float is in
+ * question, and this is the switch that answers it.
+ *
+ * No precondition of its own. Turning it OFF later does not have to unwind
+ * anything: existing wallet rows stay where they are and stay spendable at the
+ * store that holds them; what stops is a branch spending another company's
+ * float from that moment on. That is a policy change rather than a data
+ * migration, which is why it can be a switch at all.
+ */
+export async function setGroupLoyaltyWallet(groupId: number, shares: boolean): Promise<void> {
+  await execute('UPDATE cp2_store_groups SET shares_loyalty_wallet = ? WHERE id = ?', [
+    shares ? 1 : 0,
+    groupId,
+  ])
 }
 
 /** Adds a site to a group, moving it if it already belongs to another. */
