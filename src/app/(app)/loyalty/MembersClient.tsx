@@ -1,6 +1,7 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   Button,
@@ -14,13 +15,16 @@ import {
   Badge,
   EmptyState,
   Callout,
+  Modal,
+  Field,
+  Input,
   useToast,
   Icons,
   type Column,
   type BadgeTone,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import { runExpiryAction } from './actions'
+import { runExpiryAction, enrolMemberAction } from './actions'
 
 export type MemberRowView = {
   memberId: number
@@ -78,6 +82,14 @@ export function MembersClient({
   const [pending, start] = useTransition()
   const [search, setSearch] = useState('')
   const [tier, setTier] = useState('all')
+  const router = useRouter()
+
+  // The join form. Only `name` is required — see enrol().
+  const [joining, setJoining] = useState(false)
+  const [joinName, setJoinName] = useState('')
+  const [joinPhone, setJoinPhone] = useState('')
+  const [joinEmail, setJoinEmail] = useState('')
+  const [joinNumber, setJoinNumber] = useState('')
 
   // Filtered in the browser: the server already capped the list, so this is a
   // narrowing of what is on screen rather than a second query per keystroke.
@@ -188,25 +200,77 @@ export function MembersClient({
     })
   }
 
+  /*
+   * Joining, in as few fields as it can be done in.
+   *
+   * A name is the only required one — the plan asks for enrolment at the till
+   * in under ten seconds from a cell number, and every field this insisted on
+   * would be a queue getting longer. The member number is left blank unless a
+   * pre-printed card is being handed over, in which case it is typed and taken
+   * as given.
+   */
+  function enrol() {
+    const trimmed = joinName.trim()
+    if (!trimmed) {
+      toast.error('Give the member a name.')
+      return
+    }
+    start(async () => {
+      const result = await enrolMemberAction({
+        name: trimmed,
+        phone: joinPhone.trim() || undefined,
+        email: joinEmail.trim() || undefined,
+        memberNumber: joinNumber.trim() || undefined,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(result.message)
+      setJoining(false)
+      setJoinName('')
+      setJoinPhone('')
+      setJoinEmail('')
+      setJoinNumber('')
+      router.refresh()
+    })
+  }
+
+  const joinButton = canAdjust ? (
+    <Button size="sm" onClick={() => setJoining(true)}>
+      <Icons.Plus size={16} />
+      Add member
+    </Button>
+  ) : undefined
+
   return (
+    <>
     <Card>
       <CardHeader
         title="Members"
         description="Everyone earning on the programme, and what they are holding."
         action={
           canAdjust ? (
-            <Button variant="secondary" size="sm" onClick={runExpiry} disabled={pending}>
-              {pending ? 'Running…' : 'Run expiry'}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={runExpiry} disabled={pending}>
+                {pending ? 'Running…' : 'Run expiry'}
+              </Button>
+              {joinButton}
+            </div>
           ) : undefined
         }
       />
       <CardBody>
         {rows.length === 0 ? (
+          /* Joining is now a deliberate act, so the empty state offers it.
+             It used to say members appear "the first time a customer earns" —
+             true when membership was a side effect of being a customer, and
+             now a dead end: nobody would ever appear. */
           <EmptyState
             icon={<Icons.Gem />}
-            title="Nobody has earned yet"
-            hint="Members appear here the first time a customer earns points on a sale. Attach a customer at the till to start."
+            title="Nobody has joined yet"
+            hint="A member does not need a customer account — a name and a cell number is enough. Add the first one, or enrol somebody at the till."
+            action={joinButton}
           />
         ) : (
           <>
@@ -247,5 +311,64 @@ export function MembersClient({
         )}
       </CardBody>
     </Card>
+
+    <Modal open={joining} onClose={() => setJoining(false)} title="Add a member">
+      <div className="space-y-4">
+        <p className="text-sm text-muted">
+          A member does not need a customer account. A name is enough to start earning; a
+          cell number is what lets a cashier find them again without a card.
+        </p>
+
+        <Field label="Name" hint="Shown on the till and on their statement of points.">
+          <Input
+            value={joinName}
+            onChange={(e) => setJoinName(e.target.value)}
+            maxLength={160}
+            placeholder="Jane Mokoena"
+          />
+        </Field>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Cell number" hint="Optional, but it is how they are found.">
+            <Input
+              value={joinPhone}
+              onChange={(e) => setJoinPhone(e.target.value)}
+              maxLength={40}
+              placeholder="082 123 4567"
+            />
+          </Field>
+          <Field label="Email" hint="Optional.">
+            <Input
+              type="email"
+              value={joinEmail}
+              onChange={(e) => setJoinEmail(e.target.value)}
+              maxLength={190}
+            />
+          </Field>
+        </div>
+
+        <Field
+          label="Card number"
+          hint="Leave blank and one is allocated. Type it only when handing over a pre-printed card."
+        >
+          <Input
+            value={joinNumber}
+            onChange={(e) => setJoinNumber(e.target.value)}
+            maxLength={60}
+            placeholder="Allocated automatically"
+          />
+        </Field>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setJoining(false)} disabled={pending}>
+            Cancel
+          </Button>
+          <Button onClick={enrol} disabled={pending}>
+            {pending ? 'Joining…' : 'Add member'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+    </>
   )
 }

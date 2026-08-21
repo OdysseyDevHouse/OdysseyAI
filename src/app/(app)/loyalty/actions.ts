@@ -13,6 +13,8 @@ import {
   customerIdForMember,
   findTillMember,
   tillMemberForCustomer,
+  enrolMember,
+  linkMemberToCustomer,
   type TillMember,
 } from '@/lib/site/loyalty'
 import {
@@ -108,6 +110,56 @@ export async function deleteCardAction(id: number): Promise<ActionResult> {
 
   revalidatePath('/loyalty/cards')
   return { ok: true, message: 'Card deleted.' }
+}
+
+/* ── Joining ─────────────────────────────────────────────────────────────── */
+
+/**
+ * Signs somebody up.
+ *
+ * Guarded on `loyalty.adjust` rather than a capability of its own. Enrolling
+ * creates an account that can hold value, which is the same authority as moving
+ * points — and inventing a capability nobody has assigned yet would mean the
+ * button appears for no one.
+ */
+export async function enrolMemberAction(input: {
+  name: string
+  phone?: string
+  email?: string
+  memberNumber?: string
+  customerId?: number | null
+}): Promise<ActionResult> {
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
+  if ('ok' in ctx) return ctx
+
+  const done = await enrolMember(ctx.siteId, ctx.actor, input)
+  if (!done.ok) return done
+
+  revalidatePath('/loyalty')
+  if (input.customerId) revalidatePath(`/customers/${input.customerId}`)
+  return { ok: true, message: `${input.name.trim()} joined as ${done.memberNumber}.` }
+}
+
+/** Links a member to a debtors account, or clears the link. */
+export async function linkMemberAction(
+  memberId: number,
+  customerId: number | null,
+): Promise<ActionResult> {
+  const ctx = await actorForModule('loyalty', 'loyalty.adjust')
+  if ('ok' in ctx) return ctx
+
+  // The OLD link is revalidated too. Unlinking has to refresh the customer page
+  // it is being removed from, and that page is unreachable once the row is
+  // updated — so it is read first.
+  const previous = await customerIdForMember(ctx.siteId, memberId)
+
+  const done = await linkMemberToCustomer(ctx.siteId, ctx.actor, memberId, customerId)
+  if (!done.ok) return done
+
+  revalidatePath('/loyalty')
+  if (previous) revalidatePath(`/customers/${previous}`)
+  if (customerId) revalidatePath(`/customers/${customerId}`)
+  return { ok: true, message: customerId ? 'Account linked.' : 'Account unlinked.' }
 }
 
 /* ── Moving money ────────────────────────────────────────────────────────── */
