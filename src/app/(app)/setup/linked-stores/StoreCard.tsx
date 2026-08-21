@@ -103,8 +103,8 @@ export default function StoreCard({
     !member.sharesCustomers &&
     contents !== null &&
     contents.customers > 0
-  const suppliersBlocked =
-    !ownsSharedFiles && !member.sharesSuppliers && contents !== null && contents.suppliers > 0
+  // No suppliersBlocked: the supplier switch is hidden until the purchasing
+  // modules resolve their owner — see the note where it used to be rendered.
 
   return (
     <Card>
@@ -320,20 +320,33 @@ export default function StoreCard({
               disabled={unreadable || customersBlocked || !hasPrimary || !entityAllows}
             />
 
-            {suppliersBlocked && (
-              <Callout tone="warning">
-                This store has <strong>{contents?.suppliers} supplier(s)</strong> of its own.
-                Remove them first, or leave this store with its own creditors book.
-              </Callout>
-            )}
+            {/*
+              ── "Use head office's supplier file" is HIDDEN, not removed ──────
+              ─────────────────────────────────────────────────────────────────
+              The switch worked: supplierOwnerSite() resolves, supplierDbPrefix()
+              builds the right qualifier, and the flag saved. What is missing is
+              everything behind it. supplierLedger.ts and suppliers.ts — the
+              creditors sub-ledger and the supplier file itself — hold no owner
+              resolution at all, nor do purchaseDocuments, purchasePosting,
+              paymentRuns, expenses, supplierPrices, purchaseInvoiceMatch,
+              productSuppliers or reorderSuggestions.
 
-            <SharingSwitch
-              name="sharesSuppliers"
-              label="Use head office’s supplier file"
-              hint="One supplier list and one creditors book, for central buying."
-              defaultChecked={member.sharesSuppliers}
-              disabled={unreadable || suppliersBlocked || !hasPrimary || !entityAllows}
-            />
+              So switching it on pointed a branch at head office's supplier file
+              while every purchasing query kept reading the branch's own empty
+              tables: no suppliers in the list, no orders raisable, no invoices
+              matchable. Not a subtle wrong answer — purchasing simply stops.
+
+              Hidden rather than disabled, because a greyed-out switch invites
+              "how do I enable this?" and the answer is not a permission or a
+              setting, it is unwritten code. It comes back when the supplier
+              modules resolve their owner the way the customer ones now do.
+
+              THE ACTION NO LONGER SENDS sharesSuppliers — see the note in
+              actions.ts. Reading an unrendered field would evaluate to false and
+              quietly switch the file off for anyone who had it on.
+
+              Customer sharing above is unaffected and stays available.
+            */}
           </div>
           )}
         </CardBody>
