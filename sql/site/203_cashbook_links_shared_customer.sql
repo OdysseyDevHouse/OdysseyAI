@@ -1,0 +1,79 @@
+-- cashbook_links lets go of the customer ledger. The thirteenth line of 197.
+--
+-- ── THE CLAIM THIS CORRECTS ──────────────────────────────────────────────
+--
+-- 197 dropped twelve foreign keys so a branch could record its own documents
+-- against a customer living in the group primary's database. It ended by
+-- excusing one table:
+--
+--   "cashbook_links is also untouched: it keys into customer_transactions,
+--    which moves, so its cascade still resolves locally."
+--
+-- The premise is right and the conclusion does not follow. customer_transactions
+-- does move — but cashbook_links does NOT move with it, because it also keys
+-- into bank_transactions, and a bank account belongs to the shop that holds it.
+-- So the table stays in the branch while one of the two tables it points at
+-- leaves, and fk_link_ctxn goes on naming a `customer_transactions` in this
+-- schema that no longer holds the id being written.
+--
+-- ── WHAT IT COSTS TODAY ──────────────────────────────────────────────────
+--
+-- Every customer receipt taken at a branch, measured against a real shared
+-- file in scripts/probe-shared-customer-accounting.ts:
+--
+--   balance 1000.00 -> 750.00; bank rows 0 -> 0
+--   Cannot add or update a child row: a foreign key constraint fails
+--   (`ody10001_master`.`cashbook_links`, CONSTRAINT `fk_link_ctxn` ...)
+--
+-- recordCustomerReceipt posts the customer half first, against the OWNER, and
+-- it succeeds. The bank half then rolls back on this constraint. R250 comes off
+-- the debtor and no bank row is written: the sub-ledger says paid, the cashbook
+-- says nothing arrived, and reconcileControlAccounts cannot see it because the
+-- debtors side moved correctly. It raises rather than returning an error, so
+-- the caller gets an exception after the money has already moved.
+--
+-- ── WHY THE CUSTOMER SIDE ONLY ───────────────────────────────────────────
+--
+-- fk_link_stxn stays. Customers and suppliers are separately answerable — a
+-- group may run central buying from one creditors book while each branch keeps
+-- its own debtors, or the reverse (sql/tickets/015_share_customers.sql) — so
+-- the two sides genuinely differ. supplier_transactions is still in this
+-- database whenever the creditors book has not been shared, and dropping a
+-- constraint that currently holds would give up a real guarantee for nothing.
+--
+-- When supplier sharing is exercised the same way, fk_link_stxn will need the
+-- same treatment. It is left standing deliberately, not overlooked.
+--
+-- fk_link_bank also stays: bank_transactions is in this database by definition.
+--
+-- ── WHAT IS LOST, NAMED RATHER THAN GLOSSED OVER ─────────────────────────
+--
+-- Two things, and 197 was right to insist these be written down.
+--
+-- 1. REFERENTIAL INTEGRITY. The database will no longer refuse a link whose
+--    customer_txn_id names nothing. Under sharing it could not have enforced it
+--    anyway — the row is in another schema — so what is really lost is the
+--    guarantee for NON-sharing sites, which is the majority. It moves into
+--    code: linkTransaction() loads the transaction before writing the link and
+--    refuses when it is missing, and it must keep doing so. Enforcement in code
+--    is already this schema's answer for every cross-boundary reference —
+--    see 197, 198 (origin_site_id) and 101 (peer_site_id).
+--
+-- 2. THE CASCADE. ON DELETE CASCADE cleaned up links when a ledger transaction
+--    was deleted. Worth checking rather than assuming: NO production code path
+--    deletes from customer_transactions. The sub-ledger is append-only on
+--    purpose — "a row, once posted, is never edited or deleted; a mistake is
+--    corrected by posting its reverse" (customerLedger.ts). The only DELETEs in
+--    the codebase are test cleanup, which is why this cascade has been doing
+--    nothing in production and losing it costs nothing there.
+--
+--    It does affect those tests: a script that deletes customer_transactions
+--    directly will now leave its cashbook_links behind. Per
+--    odyssey-test-litter-fakes-failures that leaked row is a real hazard — a
+--    UNIQUE key on (bank_txn_id, customer_txn_id) means the next run can
+--    collide on a stale id. Test cleanup must delete links first, and
+--    reconcileOrphanedLinks() below gives it a way to prove it did.
+--
+-- The columns keep their indexes, so nothing gets slower.
+
+ALTER TABLE cashbook_links DROP FOREIGN KEY IF EXISTS fk_link_ctxn;

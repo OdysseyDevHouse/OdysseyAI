@@ -1,7 +1,12 @@
 import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
-import { customerDbPrefix, supplierDbPrefix } from './customerDb'
+import {
+  customerDbPrefix,
+  supplierDbPrefix,
+  customerQueryOne,
+  supplierQueryOne,
+} from './customerDb'
 import { round, toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { today } from './ledger'
@@ -676,6 +681,30 @@ export type ReceiptInput = {
  * exactly as they do everywhere else. The bank row and link follow. A failure
  * after the payment leaves an unlinked receipt — visible, fixable, and far
  * better than a bank row referring to a payment that does not exist.
+ *
+ * ── TWO DATABASES, AND WHY THERE IS NO ROLLBACK ──────────────────────────
+ *
+ * With a shared customer file the two halves are in different databases: the
+ * payment posts to the group primary, the bank row and link stay here. No
+ * transaction spans both, so the ordering above stops being a preference and
+ * becomes the whole safety story.
+ *
+ * The obvious repair — reverse the payment when the bank half fails — was
+ * tried and rejected. reverseTransaction() refuses a document with allocations
+ * against it, and this function auto-allocates by default, so the compensating
+ * write would itself fail exactly when it was needed. Unwinding the
+ * allocations first (unallocate() is per debit/credit pair) means a
+ * multi-invoice receipt needs several more cross-database writes to undo one,
+ * each able to fail in turn. That is a larger hole than the one it patches.
+ *
+ * So the ordering stands and the failure is made HONEST instead: the payment is
+ * real and it is reported, with the bank half named as the part that did not
+ * happen. An unlinked receipt is repairable from the reconciliation screen —
+ * the bank line gets captured or imported, and linkTransaction() joins them.
+ * A silent half-posting is not.
+ *
+ * The FK that used to make this failure common is gone (203). It could never
+ * be satisfied under sharing, and it fired AFTER the money had already moved.
  */
 export async function recordCustomerReceipt(
   siteId: number,
@@ -711,39 +740,65 @@ export async function recordCustomerReceipt(
   })
   if (!posted.ok) return posted
 
-  const bank = await siteTransaction(siteId, async (tx) => {
-    const bankTxnId = await insertTxn(
-      tx,
-      {
-        bankAccountId: input.bankAccountId,
-        // Positive: money INTO the account. The customer side posted negative
-        // (they owe less) — opposite signs for the same event, as designed.
-        amount: round(input.amount, 2),
-        txnDate: receiptDate,
-        description: input.description?.trim() || 'Customer receipt',
-        reference: input.reference ?? null,
-        source: 'receipt',
-        sourceDocId: posted.id,
-      },
-      actor,
-    )
-    await bumpBankBalance(tx, input.bankAccountId, round(input.amount, 2))
+  // Everything from here is the BRANCH half. It can fail on its own while the
+  // payment above stands, so the throw is caught and turned into a stated
+  // outcome — see the header. Rethrowing would report "receipt failed" for a
+  // customer whose balance has already dropped, which is the worst of both.
+  let bank: number
+  try {
+    bank = await siteTransaction(siteId, async (tx) => {
+      const bankTxnId = await insertTxn(
+        tx,
+        {
+          bankAccountId: input.bankAccountId,
+          // Positive: money INTO the account. The customer side posted negative
+          // (they owe less) — opposite signs for the same event, as designed.
+          amount: round(input.amount, 2),
+          txnDate: receiptDate,
+          description: input.description?.trim() || 'Customer receipt',
+          reference: input.reference ?? null,
+          source: 'receipt',
+          sourceDocId: posted.id,
+        },
+        actor,
+      )
+      await bumpBankBalance(tx, input.bankAccountId, round(input.amount, 2))
 
-    await tx.execute(
-      `INSERT INTO cashbook_links
-         (bank_txn_id, customer_txn_id, amount, match_type, confidence, user_id, user_name)
-       VALUES (?,?,?,'manual',100,?,?)`,
-      [
-        bankTxnId,
-        posted.id,
-        round(input.amount, 2).toFixed(4),
-        actor.userId,
-        actor.userName.slice(0, 120),
-      ] as never,
-    )
+      await tx.execute(
+        `INSERT INTO cashbook_links
+           (bank_txn_id, customer_txn_id, amount, match_type, confidence, user_id, user_name)
+         VALUES (?,?,?,'manual',100,?,?)`,
+        [
+          bankTxnId,
+          posted.id,
+          round(input.amount, 2).toFixed(4),
+          actor.userId,
+          actor.userName.slice(0, 120),
+        ] as never,
+      )
 
-    return bankTxnId
-  })
+      return bankTxnId
+    })
+  } catch (e) {
+    // The payment is real and it stays. Say so plainly, and say what is
+    // missing, because the repair is a different screen: capture or import the
+    // bank line, then link it. Swallowing this and returning ok would leave a
+    // receipt nobody knows is unreconciled.
+    await logActivity(siteId, actor, {
+      entity: 'bank',
+      entityId: input.bankAccountId,
+      action: 'receipt-bank-half-failed',
+      detail:
+        `Customer transaction ${posted.id} posted, bank row did not: ` +
+        (e instanceof Error ? e.message : String(e)).slice(0, 300),
+    })
+    return {
+      ok: false,
+      error:
+        'The payment was recorded against the customer, but the bank side did not save. ' +
+        'The receipt is unlinked — capture the bank line and link it from the reconciliation screen.',
+    }
+  }
 
   // Mirror into the ledger: debit bank, credit debtors. No income — the
   // revenue was recognised when the invoice was raised, and posting it again
@@ -788,7 +843,13 @@ export async function linkTransaction(
   if (bank.status === 'void') return { ok: false, error: 'That bank line is void.' }
 
   const table = side === 'customer' ? 'customer_transactions' : 'supplier_transactions'
-  const ledger = await siteQueryOne<Row>(
+  // Resolved to whichever database owns that sub-ledger. This lookup is no
+  // longer only a validation: 203 dropped fk_link_ctxn, because a foreign key
+  // cannot follow customer_transactions into the group primary's database. The
+  // refusal below IS the referential integrity now, for shared and unshared
+  // sites alike — so it must stay above the INSERT and must not become
+  // conditional on sharing being on.
+  const ledger = await (side === 'customer' ? customerQueryOne<Row> : supplierQueryOne<Row>)(
     siteId,
     `SELECT id, amount_signed FROM ${table} WHERE id = ? LIMIT 1`,
     [ledgerTxnId],
@@ -948,13 +1009,23 @@ export async function suggestMatches(
       ? ['customer_transactions', 'customers', 'customer_id', 'customer_txn_id']
       : ['supplier_transactions', 'suppliers', 'supplier_id', 'supplier_txn_id']
 
+  // The mixed query, same shape as linksFor below: cashbook_links is THIS
+  // branch's bank matching and stays on this connection, while the sub-ledger
+  // it suggests from may live in the group primary. Only the side actually
+  // being matched is resolved — money in can only be a customer receipt, so
+  // asking for the other prefix would be a control-database round trip whose
+  // answer is never used. Empty for a single store, so the SQL and its plan are
+  // byte-for-byte what they always were.
+  const prefix =
+    side === 'customer' ? await customerDbPrefix(siteId) : await supplierDbPrefix(siteId)
+
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT t.id, t.doc_number, t.doc_date, t.amount_signed, t.reference, t.description,
             p.name AS party_name, p.code AS party_code,
             COALESCE(l.linked, 0) AS linked
-       FROM ${table} t
-       JOIN ${partyTable} p ON p.id = t.${partyKey}
+       FROM ${prefix}${table} t
+       JOIN ${prefix}${partyTable} p ON p.id = t.${partyKey}
        LEFT JOIN (
              SELECT ${linkColumn} AS txn_id, SUM(amount) AS linked
                FROM cashbook_links WHERE ${linkColumn} IS NOT NULL GROUP BY ${linkColumn}
