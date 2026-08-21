@@ -1,11 +1,23 @@
 # Loyalty members — a file of their own, central across a group
 
-> **Planned, not built.** Nothing in this document exists yet except the parts
-> explicitly marked *(today)*. The work rewrites `sql/site/052_loyalty.sql` in
-> place and **deletes** `199_loyalty_shared_split.sql`,
-> `200_loyalty_stamp_origin.sql` and `201_loyalty_central.sql`. The new
-> migration numbers reserved are `sql/site/206_loyalty_members.sql` and
-> `sql/tickets/018_share_loyalty.sql`.
+> **BUILT.** All six steps are done and applied to all 22 dev sites. This
+> document is now a record of the reasoning rather than a proposal — the
+> *(today)* markers describe how things were BEFORE, and the decisions below
+> are what shipped. Where the build diverged from the plan it is marked
+> **AS BUILT** at that point.
+>
+> The migration numbers actually used differ from those reserved here:
+> `052_loyalty.sql` was rewritten in place (no `206_loyalty_members.sql`),
+> the sharing flag is `sql/tickets/017_share_loyalty.sql`, and
+> `208_drop_customer_loyalty_number.sql` removes the old column. Gift cards
+> followed in `sql/tickets/018_share_gift_cards.sql` and
+> `sql/site/209_shared_gift_cards.sql`.
+>
+> Verified by `scripts/test-loyalty.ts` (116 assertions),
+> `test-gift-cards.ts`, and eight probes: `probe-member-sale`,
+> `probe-member-states`, `probe-loyalty-screens`, `probe-loyalty-reports`,
+> `probe-loyalty-only-sharing`, `probe-loyalty-switch`,
+> `probe-shared-gift-cards` and `probe-gift-card-entity`.
 
 ## Where this starts
 
@@ -296,24 +308,23 @@ reference, exactly as `loyalty_stamps.document_id` already did in `200`.
 
 ---
 
-## Order of work
+## Order of work — all six done
 
-Roughly **6–8 days**. Steps 1–3 are mechanical and verifiable; step 4 is the
-design work and the honest source of the variance.
+Estimated 6–8 days. Each step below is marked with what actually landed.
 
-1. **Schema** (~1 day) — rewrite `052`, delete `199`/`200`/`201`, add
+1. ✅ **Schema** — rewrite `052`, delete `199`/`200`/`201`, add
    `sql/tickets/018_share_loyalty.sql`. Re-run against dev sites.
-2. **`loyaltyDb.ts` + `loyaltyOwnerSite()`** (~1–2 days) — including the
+2. ✅ **`loyaltyDb.ts` + `loyaltyOwnerSite()`** — including the
    settings resolution from decision 3.
-3. **Port the three modules** (~2 days) — ~64 `customer_id` occurrences in SQL
+3. ✅ **Port the three modules** — ~64 `customer_id` occurrences in SQL
    strings, plus the exported API: `getMember`, `awardSaleLoyalty`,
    `redeemPointsForSale`, `adjustPoints`, `reverseSaleLoyalty`, `expirePoints`,
    wallet top-ups. `tsc` catches nearly all of it.
-4. **Till, enrolment and screens** (~3 days) — decisions 4 and 6, plus the
+4. ✅ **Till, enrolment and screens** — decisions 4 and 6, plus the
    members list and the customer-side tab.
-5. **Reports** (~0.5 day) — `catalog.ts:4137` (`loyaltyLedger`) and `:4180`
+5. ✅ **Reports** — `catalog.ts:4137` (`loyaltyLedger`) and `:4180`
    (`loyaltyMembers`), which currently join `customers` directly.
-6. **The sharing switch** (~0.5 day) — `StoreCard.tsx`, `linked-stores/actions.ts`
+6. ✅ **The sharing switch** — `StoreCard.tsx`, `linked-stores/actions.ts`
    and the loyalty arm of `sharedFileRefusal`. **Last, deliberately** — see
    decision 5. Until this step the column exists with no UI, which is the safe
    state, not an unfinished one.
@@ -334,8 +345,15 @@ design work and the honest source of the variance.
 
 ## Open questions for Tiaan
 
-1. **Dev database reset** — drop-and-recreate the loyalty tables per site, or
-   re-provision? Blocks step 1.
+1. ~~**Dev database reset**~~ — **ANSWERED: drop-and-recreate.**
+   `scripts/reset-loyalty-schema.mjs` drops the loyalty tables per site and
+   re-runs `052`, which was necessary because migrations are recorded BY NAME
+   and editing an applied file does nothing. Run against all 22 sites.
+
+   One lesson worth keeping: it was run once BEFORE the code was ready, and
+   dropping `customers.loyalty_number` broke seven suites that had nothing to
+   do with loyalty — `createCustomer` wrote the column. The drop was deferred
+   to `208`, alongside the eight sites that read it.
 2. ~~**Gift cards**~~ — **ANSWERED: a separate piece, straight after this one.**
 
    `gift_cards.customer_id` has the same FK to `customers`
@@ -356,10 +374,19 @@ design work and the honest source of the variance.
    numbering machinery.** Same gap-checking and audit as every other numbered
    thing. A pre-printed card is entered as an override rather than being the
    number itself.
-4. **The customer screen's Loyalty tab** (`customers/[id]/LoyaltyTab.tsx`) —
-   when a customer has no linked member, does it show an empty state or an
-   "enrol this customer" button? The second is better and is what this plan
-   assumes.
+4. ~~**The customer screen's Loyalty tab**~~ — **ANSWERED: the button.**
+   `JoinLoyaltyPanel.tsx`. It takes the account's own name and phone rather than
+   asking for them again, since retyping them on the screen that exists to link
+   the two is how they drift apart.
+
+   **AS BUILT:** the tab has THREE states, not two. A bare null could not
+   distinguish "has not joined a running programme" — offer enrolment — from
+   "the programme is switched off", where that button could not work. So
+   `programmeEnabled` travels alongside the null.
+
+   What it replaced was worse than an empty state: the tab rendered "Loyalty
+   could not be loaded for this customer", which was reasonable when every
+   customer WAS a member and became a warning shown for the commonest case.
 5. ~~**Separate companies and the wallet**~~ — **ANSWERED, and not the way this
    plan read it.** Built in `sql/tickets/017_share_loyalty.sql` and
    `loyaltyWalletRefusal()`.
@@ -379,3 +406,73 @@ design work and the honest source of the variance.
 6. **ANSWERED — attaching a customer at the till AUTO-ATTACHES their linked
    member**, rather than offering it. Fewer taps, and reversible: the member can
    be detached without detaching the customer. Decision 4 left this open.
+
+---
+
+## What the build found that this plan did not
+
+Recorded because each was invisible to `tsc` and survived a careful read. The
+pattern is worth more than the list: **a rename that compiles is not a rename
+that works**, and nothing here was caught by the type checker.
+
+### The spend could not stay inside the sale's transaction
+
+The largest divergence, and the plan did not see it. `redeemPointsForSale` and
+`spendWalletForSale` took the sale's `tx` and threw, so an unaffordable
+redemption rolled the whole sale back. Under a shared programme those rows are
+in another database and no transaction reaches them — the old arrangement did
+not degrade, it failed outright.
+
+Rebuilt rather than relocated: every refusal is asked BEFORE the sale opens
+(`loyaltySpendRefusal`), and the deduction is written after it commits. What is
+lost is stated where the code does it — a crash in between leaves goods sold and
+a balance untouched. That is recoverable from the document; a till that cannot
+sell to a member at all is not.
+
+Gift cards inherited the same restructure and lost less, because their guard was
+never the transaction: `UPDATE … WHERE balance >= ?` is arbitrated by the
+database wherever the row lives.
+
+### Four queries addressed a table shape that no longer existed
+
+`loyalty_members` moved from being keyed on `customer_id` to its own `id`, so
+`WHERE member_id = ?` matched a column that was gone — in **both `FOR UPDATE`
+locks**, which are the entire defence against two tills spending one balance.
+Two upserts also had to become updates: a cache refresh must not be able to
+manufacture a nameless member.
+
+### `origin_site_id` was missing from the customer link
+
+`loyalty_members.customer_id` alone is ambiguous when loyalty is shared and
+customers are not — twenty branches each have their own customer 41, and
+`uq_member_customer` would have refused the second branch's enrolment, telling a
+cashier that a customer they had never seen was already a member. The unique key
+covers the pair.
+
+### The report engine only knew two owners
+
+Both loyalty sources declared `ownedBy: 'customer'`, which routes to the wrong
+database whenever the flags differ — and they are independent by design. The
+members report also joined customers with `INNER JOIN … always`, which silently
+dropped every walk-in from the report that counts the programme. Proved rather
+than argued: restoring it takes the probe from 4 rows to 2, with no error.
+
+### Training mode had a hole per shared file
+
+It refused a store sharing customers or suppliers and let a loyalty-sharing one
+straight through, then the same again for gift cards. Practice sales would have
+earned real points on real cards, and issued real stored value, in the group's
+live scheme — where the watermark cannot reach to remove them.
+
+### Gift cards, once shared, could be stranded by joining
+
+The join gate counted members and stopped. A branch with no members but a box of
+issued cards passed it, joined, and its cards became unfindable at every till.
+Now refused, with a negative control proving it is the cards doing the refusing.
+
+### And one bug that predated all of this
+
+Three of the four group `SELECT`s omitted `shares_loyalty_wallet`, so
+`listGroups` — which the Linked stores screen reads — returned it false however
+it had been saved. The wallet switch would have rendered unchecked after being
+turned on.
