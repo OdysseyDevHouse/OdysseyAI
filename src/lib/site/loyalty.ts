@@ -16,6 +16,7 @@ import {
   type LoyaltySettings,
   type LoyaltyTier,
 } from '../loyaltyRules'
+import { customerOwnerSite } from '../storeGroups'
 import { getSettings, setSetting } from './settings'
 import { logActivity, type Actor } from './activityLog'
 
@@ -767,6 +768,120 @@ export async function redeemableFor(
   return { points, maxRand: maxRedeemableRand(points, amountDue, settings), settings }
 }
 
+/* ── Before the sale opens ───────────────────────────────────────────────── */
+
+/**
+ * The member linked to a customer, if there is one.
+ *
+ * Resolved through the loyalty owner, so a branch on a shared programme finds
+ * the group's member rather than looking in its own empty table. The customer
+ * id is the BRANCH's — `loyalty_members.customer_id` holds the id from the
+ * customer file's owner, which is the same database whenever both files are
+ * shared and the branch's own when neither is. The one arrangement this cannot
+ * serve is a shared programme over unshared customer files, where two branches
+ * would each claim customer 41; `loyalty_members.customer_origin_site_id`
+ * carries the store so the pair stays unambiguous.
+ */
+export async function memberIdForCustomer(
+  siteId: number,
+  customerId: number,
+): Promise<number | null> {
+  const owner = await customerOwnerSite(siteId)
+  const row = await loyaltyQueryOne<Row>(
+    siteId,
+    `SELECT id FROM loyalty_members
+      WHERE customer_id = ? AND customer_origin_site_id = ? AND is_active = 1`,
+    [customerId, owner.siteId],
+  )
+  return row ? Number(row.id) : null
+}
+
+/**
+ * A member as the till holds them: who they are, not what they are worth.
+ *
+ * The balance is deliberately absent. It moves — another till can spend it
+ * while this basket sits on screen — so it is re-read by tillStandingAction at
+ * the moment it is quoted, and never cached on the sale.
+ */
+export type TillMember = {
+  id: number
+  /** The member's own number, which is what the card carries. */
+  number: string
+  name: string
+  /** The linked debtors account, or null for a member who has no account. */
+  customerId: number | null
+}
+
+/** The member behind a scanned card or typed number. Null if there is none. */
+export async function findTillMember(
+  siteId: number,
+  memberNumber: string,
+): Promise<TillMember | null> {
+  const code = memberNumber.trim()
+  if (!code) return null
+
+  const row = await loyaltyQueryOne<Row>(
+    siteId,
+    `SELECT id, member_number, name, customer_id
+       FROM loyalty_members
+      WHERE member_number = ? AND is_active = 1`,
+    [code],
+  )
+  if (!row) return null
+
+  return {
+    id: Number(row.id),
+    number: String(row.member_number),
+    name: String(row.name),
+    customerId: row.customer_id == null ? null : Number(row.customer_id),
+  }
+}
+
+/** The member linked to a customer, shaped for the till. */
+export async function tillMemberForCustomer(
+  siteId: number,
+  customerId: number,
+): Promise<TillMember | null> {
+  const owner = await customerOwnerSite(siteId)
+  const row = await loyaltyQueryOne<Row>(
+    siteId,
+    `SELECT id, member_number, name, customer_id
+       FROM loyalty_members
+      WHERE customer_id = ? AND customer_origin_site_id = ? AND is_active = 1`,
+    [customerId, owner.siteId],
+  )
+  if (!row) return null
+
+  return {
+    id: Number(row.id),
+    number: String(row.member_number),
+    name: String(row.name),
+    customerId: row.customer_id == null ? null : Number(row.customer_id),
+  }
+}
+
+/**
+ * The debtors account a member is linked to, if any.
+ *
+ * The inverse of memberIdForCustomer, and it answers with the id ONLY when that
+ * id means something to the asking site — a member linked to another store's
+ * customer file resolves to null here rather than to an id that would open the
+ * wrong customer. See customer_origin_site_id in sql/site/052_loyalty.sql.
+ */
+export async function customerIdForMember(
+  siteId: number,
+  memberId: number,
+): Promise<number | null> {
+  const owner = await customerOwnerSite(siteId)
+  const row = await loyaltyQueryOne<Row>(
+    siteId,
+    `SELECT customer_id FROM loyalty_members
+      WHERE id = ? AND customer_origin_site_id = ?`,
+    [memberId, owner.siteId],
+  )
+  return row?.customer_id == null ? null : Number(row.customer_id)
+}
+
 /* ── Manual movement ─────────────────────────────────────────────────────── */
 
 export type AdjustResult = { ok: true; balance: number } | { ok: false; error: string }
@@ -1051,6 +1166,8 @@ async function agedBatch(
 
 export type MemberRow = {
   memberId: number
+  /** The linked debtors account, or null for a walk-in member. */
+  customerId: number | null
   code: string
   name: string
   phone: string

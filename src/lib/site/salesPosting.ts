@@ -41,17 +41,21 @@ import type { Actor } from './activityLog'
 import {
   getLoyaltySettings,
   listTiers,
+  memberIdForCustomer,
   redeemPointsForSale,
   awardSaleLoyalty,
   reverseSaleLoyalty,
 } from './loyalty'
 import {
+  loyaltySpendRefusal,
   redeemVoucherForSale,
   awardSaleStamps,
   reverseSaleStamps,
   restoreVoucherForDocument,
   findVoucher,
+  type LoyaltyVoucher,
 } from './loyaltyCards'
+import { loyaltyTransaction } from './loyaltyDb'
 import { spendWalletForSale, refundWalletForSale } from './loyaltyWallet'
 
 /**
@@ -88,6 +92,14 @@ export type FinaliseInput = {
   tenders: TenderInput[]
   /** Required when a tender posts to an account. */
   customerId?: number | null
+  /**
+   * Who earns and spends the loyalty on this sale.
+   *
+   * Separate from customerId because they are separate things — see the note
+   * where this is resolved. Omitted, it falls back to the member linked to the
+   * attached customer, if there is one.
+   */
+  memberId?: number | null
   /**
    * Which individual units are going out, keyed by document line id. Only
    * serial-tracked lines need it, and one is required per unit sold.
@@ -204,6 +216,25 @@ export async function finaliseDocument(
   const customerId = input.customerId ?? document.customerId ?? null
 
   /*
+   * ── THE MEMBER, WHICH IS NOT THE CUSTOMER ────────────────────────────────
+   *
+   * Two attachments now, because they answer different questions: the customer
+   * authorises account credit and carries terms and a price structure, the
+   * member earns and spends loyalty. A walk-in member has no customer; an
+   * account holder may never have joined.
+   *
+   * The till sends memberId explicitly. When it does not, and a customer IS
+   * attached, the member linked to that customer is used — a customer who is
+   * also a member does not have to be attached twice, and a cashier who scans
+   * a card gets the loyalty without a second step. Auto rather than an offer,
+   * per the decision recorded in docs/plans/loyalty-members.md.
+   *
+   * Resolved through the loyalty owner, so a branch finds the group's member.
+   */
+  const memberId =
+    input.memberId ?? (customerId ? await memberIdForCustomer(siteId, customerId) : null)
+
+  /*
    * ── A DEPOSIT ALREADY PAID IS A TENDER, NOT A DISCOUNT (172) ──────────────
    *
    * Money held against this document was handed over on an earlier day and
@@ -258,15 +289,48 @@ export async function finaliseDocument(
   const usesLoyalty = !!pointsTender || !!walletTender || voucherCodes.length > 0
   const loyaltySettings = usesLoyalty || customerId ? await getLoyaltySettings(siteId) : null
 
+  /*
+   * ── LOYALTY IS CHECKED HERE AND WRITTEN AFTER THE COMMIT ────────────────
+   *
+   * It used to be neither: the spend ran INSIDE the sale's transaction and
+   * threw, so an unaffordable redemption rolled the whole sale back. That was
+   * the right guarantee and it is no longer available — under a shared
+   * programme the loyalty rows are in another database, and no transaction
+   * spans two. The old arrangement did not degrade there, it failed outright:
+   * ER_NO_REFERENCED_ROW_2 on loyalty_ledger, the throw propagating, and the
+   * till unable to complete any sale to a member.
+   *
+   * So the guarantee is rebuilt rather than relocated. Everything that could
+   * refuse the redemption is asked BEFORE the sale opens — programme running,
+   * member attached and active, enough points, enough wallet, every voucher
+   * valid and unspent. A sale that gets past this point is one the member can
+   * afford.
+   *
+   * What is lost, stated plainly: a crash between the commit and the spend
+   * leaves goods sold and the balance untouched. That is a real gap and it is
+   * the better half of the trade — the alternative is a till that cannot sell
+   * to a member at all. It is recoverable by hand from the document, which a
+   * rolled-back sale in a queue is not.
+   */
   if (usesLoyalty) {
     if (!loyaltySettings?.enabled) {
       return { ok: false, error: 'The loyalty programme is not running.' }
     }
-    // requires_customer on the tender row already refuses this for the two
-    // tenders, but a voucher is not a tender and would otherwise slip through.
-    if (!customerId) {
-      return { ok: false, error: 'Attach a customer before using loyalty.' }
+    // A MEMBER, not a customer. The two tenders no longer carry
+    // requires_customer — that would refuse every walk-in member, who is the
+    // case the member file exists for — so this guard is the only thing
+    // standing between a voucher and a sale with nobody to charge it to.
+    if (!memberId) {
+      return { ok: false, error: 'Attach a member before using loyalty.' }
     }
+
+    const refusal = await loyaltySpendRefusal(siteId, memberId, {
+      points: pointsTender ? Math.abs(pointsTender.input.amount) : 0,
+      wallet: walletTender ? Math.abs(walletTender.input.amount) : 0,
+      voucherCodes,
+      settings: loyaltySettings,
+    })
+    if (refusal) return { ok: false, error: refusal }
   }
 
   // Recompute totals from the stored lines rather than trusting the header:
@@ -619,6 +683,11 @@ export async function finaliseDocument(
   // document number at once without restructuring the result.
   let voucherFunded = 0
 
+  // Vouchers this sale consumed, collected inside the transaction and marked
+  // spent after it commits. Held out here for the same reason as voucherFunded:
+  // the closure cannot hand them back alongside the document number.
+  const redeemedVouchers: LoyaltyVoucher[] = []
+
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
       // 1. Stock. Direction comes from the product type, not from the sign of
@@ -915,52 +984,26 @@ export async function finaliseDocument(
         )
       }
 
-      // 4. Loyalty SPEND — points, wallet and vouchers.
+      // 4. The SALE's half of a loyalty spend.
       //
-      // Inside the transaction, and after the number exists so every row can
-      // name the sale it belongs to. All three throw rather than returning a
-      // refusal: an unaffordable redemption must roll the whole sale back, not
-      // leave goods sold and a balance untouched.
+      // Only the rows that belong to this document are written here. The
+      // loyalty-side rows — the points deduction, the wallet debit, the
+      // voucher's own status — are written after this transaction commits, by
+      // the block marked "loyalty spend, after the commit" below.
       //
-      // A customer is guaranteed here — the guard above refused the sale
-      // otherwise — but TypeScript cannot see that through the closure.
-      if (usesLoyalty && customerId && loyaltySettings) {
-        const tiers = await listTiers(siteId)
-
-        if (pointsTender) {
-          await redeemPointsForSale(
-            tx,
-            actor,
-            // The store making the sale. With a shared customer file the points
-            // ledger lives elsewhere, and document.id only identifies a document
-            // alongside the site it came from.
-            siteId,
-            {
-              customerId,
-              documentId: document.id,
-              documentNumber,
-              randAmount: Math.abs(pointsTender.input.amount),
-            },
-            loyaltySettings,
-            tiers,
-          )
-        }
-
-        if (walletTender) {
-          await spendWalletForSale(tx, actor, siteId, {
-            customerId,
-            documentId: document.id,
-            documentNumber,
-            amount: Math.abs(walletTender.input.amount),
-          })
-        }
-
+      // The split is not a preference. Those rows live in the loyalty owner's
+      // database whenever the programme is shared, and `tx` cannot reach it.
+      // What CAN be kept transactional is kept transactional: the voucher's
+      // tender row has to rise and fall with the sale, because a tender row
+      // without its sale is a document that does not balance.
+      //
+      // Affordability was settled before this transaction opened. A voucher
+      // read here is one loyaltySpendRefusal already found valid and unspent.
+      if (usesLoyalty && memberId && loyaltySettings) {
         for (const code of voucherCodes) {
-          const voucher = await redeemVoucherForSale(tx, {
-            code,
-            documentId: document.id,
-            documentNumber,
-          })
+          const voucher = await findVoucher(siteId, code)
+          if (!voucher) throw new Error(`No voucher with code ${code}.`)
+          redeemedVouchers.push(voucher)
 
           // Recorded against the LOYALTY_POINTS tender so the document balances:
           // total_incl stays the exact figure the customer was charged (and so
@@ -1196,19 +1239,122 @@ export async function finaliseDocument(
       giftCardLiability,
     })
 
+    /*
+     * 5b. Loyalty SPEND, after the commit.
+     *
+     * ── WHY THIS IS NOT FAIL-SOFT ────────────────────────────────────────
+     *
+     * Earning below swallows its errors, because missing points are a small
+     * debt to a member that anyone can grant by hand. Spending is the
+     * opposite: a failure here means the member kept a balance they have
+     * already been given goods for. That is a loss to the shop, and it must
+     * be loud.
+     *
+     * So each failure is logged with the document number — the one thing
+     * needed to put it right — and the sale still stands. Refusing to return
+     * a committed sale would be worse: the till would show a failure for a
+     * document that exists, and the cashier would ring it up twice.
+     *
+     * ── WHY IT IS ALMOST NEVER REACHED ───────────────────────────────────
+     *
+     * Every affordability question was asked before the sale opened. What
+     * remains is a genuine fault — the owner's database gone in the seconds
+     * since, or another till taking the same balance first. Both are rare and
+     * both need a person, which is what `console.error` summons.
+     */
+    if (usesLoyalty && memberId && loyaltySettings) {
+      const tiers = await listTiers(siteId)
+
+      if (pointsTender) {
+        try {
+          await loyaltyTransaction(siteId, (ltx) =>
+            redeemPointsForSale(
+              ltx,
+              actor,
+              // The store making the sale. Under a shared programme the ledger
+              // lives elsewhere, and document.id only identifies a document
+              // alongside the site it came from.
+              siteId,
+              {
+                memberId,
+                documentId: document.id,
+                documentNumber: posted.documentNumber,
+                randAmount: Math.abs(pointsTender.input.amount),
+              },
+              loyaltySettings,
+              tiers,
+            ),
+          )
+        } catch (error) {
+          console.error(
+            '[loyalty] POINTS NOT DEDUCTED for',
+            posted.documentNumber,
+            '— member',
+            memberId,
+            error,
+          )
+        }
+      }
+
+      if (walletTender) {
+        try {
+          await loyaltyTransaction(siteId, (ltx) =>
+            spendWalletForSale(ltx, actor, siteId, {
+              memberId,
+              documentId: document.id,
+              documentNumber: posted.documentNumber,
+              amount: Math.abs(walletTender.input.amount),
+            }),
+          )
+        } catch (error) {
+          console.error(
+            '[loyalty] WALLET NOT DEBITED for',
+            posted.documentNumber,
+            '— member',
+            memberId,
+            error,
+          )
+        }
+      }
+
+      // Marked spent one at a time, so one already-used voucher does not strand
+      // the others. redeemVoucherForSale re-checks status under its own lock:
+      // this is where a race with another till is actually caught.
+      for (const voucher of redeemedVouchers) {
+        try {
+          await loyaltyTransaction(siteId, (ltx) =>
+            redeemVoucherForSale(ltx, {
+              code: voucher.code,
+              documentId: document.id,
+              documentNumber: posted.documentNumber,
+            }),
+          )
+        } catch (error) {
+          console.error(
+            '[loyalty] VOUCHER NOT MARKED SPENT:',
+            voucher.code,
+            'on',
+            posted.documentNumber,
+            error,
+          )
+        }
+      }
+    }
+
     // 6. Loyalty EARNING, after the commit and fail-soft.
     //
-    // The mirror image of the redemption above, and deliberately on the other
-    // side of the commit. Spending a balance is a condition of the sale;
-    // earning is a consequence of it. A loyalty table that is briefly
-    // unreachable must never stop a shop trading — missing points are visible
-    // on the account and can be granted by hand, while an un-postable sale at a
-    // queue of customers cannot be undone.
+    // Spending a balance is a condition of the sale and earning is a
+    // consequence of it — which is why the two are checked so differently.
+    // Everything that could refuse a spend is asked before the sale opens;
+    // earning is never allowed to refuse anything at all. A loyalty table that
+    // is briefly unreachable must never stop a shop trading: missing points are
+    // visible on the account and can be granted by hand, while an un-postable
+    // sale at a queue of customers cannot be undone.
     //
     // Skipped entirely for a credit note: a return does not earn. What it does
     // instead is reverse the original sale's points, which happens in
     // reverseLoyaltyForDocument when the credit note names its parent.
-    if (customerId && loyaltySettings?.enabled && !isCreditSale) {
+    if (memberId && loyaltySettings?.enabled && !isCreditSale) {
       // Gift-card lines earn nothing: buying stored value is moving money,
       // not spending it. The points come later, on the goods it buys.
       const loyaltyLines = document.lines
@@ -1233,7 +1379,7 @@ export async function finaliseDocument(
 
       try {
         await awardSaleLoyalty(siteId, actor, {
-          customerId,
+          memberId,
           documentId: document.id,
           documentNumber: posted.documentNumber,
           lines: loyaltyLines,
@@ -1245,7 +1391,7 @@ export async function finaliseDocument(
 
       try {
         await awardSaleStamps(siteId, actor, {
-          customerId,
+          memberId,
           documentId: document.id,
           documentNumber: posted.documentNumber,
           lines: loyaltyLines,

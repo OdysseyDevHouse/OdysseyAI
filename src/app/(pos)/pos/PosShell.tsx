@@ -86,7 +86,11 @@ import {
 } from './actions'
 import { NewTableModal, type NewTableDetails } from './NewTableModal'
 import { tillSignOutAction } from './pinActions'
-import { tillStandingAction, type TillStanding } from '@/app/(app)/loyalty/actions'
+import {
+  tillStandingAction,
+  memberForCustomerAction,
+  type TillStanding,
+} from '@/app/(app)/loyalty/actions'
 import { TillStatusBar } from './TillStatusBar'
 import { SalePane } from './SalePane'
 import { DeptRail } from './DeptRail'
@@ -1642,6 +1646,10 @@ export default function PosShell({
             // The id is what makes it an ACCOUNT sale; a name alone is a walk-in
             // snapshot on the document and creates no debtor record.
             customerId: state.customer?.id ?? null,
+            /* Who earns and spends the loyalty. Sent separately because a
+               walk-in member has no customerId to carry it, and because the
+               server must not have to guess which of the two a caller meant. */
+            memberId: state.member?.id ?? null,
             /* `||`, NOT `??`, for the walk-in fallback.
                An untyped name trims to '' — which is not nullish, so `??` let it
                through and the document ended up with the literal string "null" as
@@ -3374,8 +3382,17 @@ export default function PosShell({
     })
   }
 
+  /* Which customer is attached RIGHT NOW, readable from inside a promise that
+     started before the latest change. A ref rather than state because nothing
+     renders from it — it exists only so a late membership lookup can tell
+     whether its customer is still the one on screen. */
+  const latestCustomerRef = useRef<number | null>(null)
+  useEffect(() => {
+    latestCustomerRef.current = state.customer?.id ?? null
+  }, [state.customer?.id])
+
   /* ── What the attached member is holding ─────────────────────────────────
-     Re-read whenever the customer changes AND whenever the tender pad opens: a balance
+     Re-read whenever the MEMBER changes AND whenever the tender pad opens: a balance
      can move at another till while a basket sits on screen, and the figure a cashier is
      about to quote should be the current one.
 
@@ -3383,13 +3400,13 @@ export default function PosShell({
      that refused to take cash because a points lookup timed out would be worse than one
      with no loyalty at all. The state itself is declared with the rest of the shell's. */
   useEffect(() => {
-    const customerId = state.customer?.id
-    if (!customerId || !till.online) {
+    const memberId = state.member?.id
+    if (!memberId || !till.online) {
       setLoyalty(null)
       return
     }
     let cancelled = false
-    void tillStandingAction(customerId)
+    void tillStandingAction(memberId)
       .then((standing) => {
         if (!cancelled) setLoyalty(standing)
       })
@@ -3401,7 +3418,7 @@ export default function PosShell({
     }
     /* `tendering` is a dependency on purpose: opening the pad re-reads the balance, which
        is the moment it matters most. */
-  }, [state.customer?.id, tendering, till.online])
+  }, [state.member?.id, tendering, till.online])
 
   /**
    * Opens the split screen for a table.
@@ -5576,7 +5593,26 @@ export default function PosShell({
         customer={state.customer}
         walkInName={state.customerName}
         onClose={() => setPickingCustomer(false)}
-        onAttach={(customer) => dispatch({ type: 'SET_CUSTOMER', customer })}
+        onAttach={(customer) => {
+          // Attach the account immediately — the cashier asked for it and must
+          // not wait on a loyalty lookup to see it land.
+          dispatch({ type: 'SET_CUSTOMER', customer })
+          // Then find their membership and attach that too, if they have one.
+          // Fire-and-forget on purpose: no membership, or a loyalty lookup that
+          // fails, must never stop an account being attached. The sale simply
+          // has no member, which is the same state as a customer who never
+          // joined.
+          void memberForCustomerAction(customer.id)
+            .then((member) => {
+              // Only if this is still the attached customer. Switching from one
+              // account to another while the first lookup is in flight would
+              // otherwise land the first customer's membership on the second.
+              if (member && latestCustomerRef.current === customer.id) {
+                dispatch({ type: 'SET_MEMBER', member })
+              }
+            })
+            .catch(() => {})
+        }}
         onClear={() => dispatch({ type: 'SET_CUSTOMER', customer: null })}
         onWalkInName={(name) => dispatch({ type: 'SET_CUSTOMER_NAME', name })}
       />

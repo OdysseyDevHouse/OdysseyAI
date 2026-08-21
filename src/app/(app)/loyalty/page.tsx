@@ -29,6 +29,7 @@ export default async function LoyaltyPage() {
   ])
 
   const rows: MemberRowView[] = members.rows.map((row) => ({
+    memberId: row.memberId,
     customerId: row.customerId,
     code: row.code,
     name: row.name,

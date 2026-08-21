@@ -94,7 +94,7 @@ const WALLET_ENTRY: Record<string, string> = {
 }
 
 export function LoyaltyTab({
-  customerId,
+  memberId,
   enabled,
   points,
   pointsValue,
@@ -110,7 +110,15 @@ export function LoyaltyTab({
   wallet,
   canAdjust,
 }: {
-  customerId: number
+  /**
+   * The MEMBER this tab acts on — not the customer whose page it sits in.
+   *
+   * The two were the same number until the member file was split out, and every
+   * action below is keyed on this one. Both are `number`, so nothing but this
+   * name stops a customer id being passed here and quietly adjusting the wrong
+   * account.
+   */
+  memberId: number
   enabled: boolean
   points: number
   pointsValue: number
@@ -250,7 +258,7 @@ export function LoyaltyTab({
             variant="ghost"
             size="sm"
             disabled={pending}
-            onClick={() => run(() => recalcMemberAction(customerId))}
+            onClick={() => run(() => recalcMemberAction(memberId))}
           >
             <Icons.Refresh size={16} />
             Rebuild balance
@@ -314,7 +322,7 @@ export function LoyaltyTab({
                           variant="danger-ghost"
                           size="sm"
                           disabled={pending}
-                          onClick={() => run(() => voidVoucherAction(row.id, customerId))}
+                          onClick={() => run(() => voidVoucherAction(row.id, memberId))}
                         >
                           Cancel
                         </Button>
@@ -362,7 +370,7 @@ export function LoyaltyTab({
             <Button
               variant="primary"
               disabled={pending}
-              onClick={() => run(() => adjustPointsAction(customerId, pointsDelta, reason))}
+              onClick={() => run(() => adjustPointsAction(memberId, pointsDelta, reason))}
             >
               {pending ? 'Saving…' : 'Adjust points'}
             </Button>
@@ -398,7 +406,7 @@ export function LoyaltyTab({
             <Button
               variant="primary"
               disabled={pending}
-              onClick={() => run(() => adjustWalletAction(customerId, walletDelta, reason))}
+              onClick={() => run(() => adjustWalletAction(memberId, walletDelta, reason))}
             >
               {pending ? 'Saving…' : 'Adjust wallet'}
             </Button>
@@ -435,7 +443,7 @@ export function LoyaltyTab({
               variant="primary"
               disabled={pending}
               onClick={() =>
-                run(() => issueVoucherAction(customerId, voucherValue, reason, voucherDays))
+                run(() => issueVoucherAction(memberId, voucherValue, reason, voucherDays))
               }
             >
               {pending ? 'Issuing…' : 'Issue voucher'}

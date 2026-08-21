@@ -5,6 +5,8 @@ import { loyaltyBranchDbPrefix, loyaltyExecute, loyaltyQuery, loyaltyQueryOne, l
 import { round, toNum } from '../decimals'
 import {
   cardCompletions,
+  pointsToRand,
+  randToPoints,
   stampsForBasket,
   VOUCHER_ALPHABET,
   VOUCHER_CODE_LENGTH,
@@ -15,7 +17,14 @@ import {
 } from '../loyaltyRules'
 import { logActivity, type Actor } from './activityLog'
 import { today as localToday } from './ledger'
-import { getLoyaltySettings, listTiers, insertLedger, refreshMember } from './loyalty'
+import {
+  getLoyaltySettings,
+  listTiers,
+  insertLedger,
+  refreshMember,
+  redeemableFor,
+} from './loyalty'
+import { getWalletBalance } from './loyaltyWallet'
 
 /**
  * Punch cards, stamps and vouchers.
@@ -913,3 +922,97 @@ export async function restoreVoucherForDocument(siteId: number, documentId: numb
   )
   return res.affectedRows
 }
+
+/* ── Before the sale opens ───────────────────────────────────────────────── */
+
+export type SpendRequest = {
+  /** Rand to settle with points. 0 if points are not being used. */
+  points: number
+  /** Rand to settle from the wallet. 0 if the wallet is not being used. */
+  wallet: number
+  voucherCodes: readonly string[]
+  settings: LoyaltySettings
+}
+
+/**
+ * Asks every question that could refuse a loyalty spend, BEFORE the sale opens.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────
+ *
+ * The three spend functions throw, and that throw used to roll the sale back
+ * because they ran inside its transaction. Under a shared programme they run
+ * against another database, where no transaction reaches. So the refusals are
+ * asked here instead, and the sale only opens once they have all passed.
+ *
+ * ── WHAT THIS IS AND IS NOT ──────────────────────────────────────────────
+ *
+ * It is not a lock. Between this check and the spend, the same member could
+ * redeem the same points on another till. The spend functions still hold their
+ * FOR UPDATE and still throw, so the money is never double-spent — the second
+ * till simply learns about it a moment later than it used to, after the sale
+ * has committed rather than before.
+ *
+ * That residual race is small and one-directional: it needs two tills serving
+ * the SAME member within the same second. It is worth naming rather than
+ * hiding, because the fix for it — moving the balance somewhere both databases
+ * can lock — is the thing this whole design refused to do.
+ *
+ * Returns the refusal to show the cashier, or null to proceed.
+ */
+export async function loyaltySpendRefusal(
+  siteId: number,
+  memberId: number,
+  req: SpendRequest,
+): Promise<string | null> {
+  const member = await loyaltyQueryOne<Row>(
+    siteId,
+    'SELECT id, is_active, member_number FROM loyalty_members WHERE id = ?',
+    [memberId],
+  )
+  if (!member) return 'That member is no longer on file.'
+  if (!Number(member.is_active)) {
+    return `Member ${String(member.member_number)} is closed and cannot earn or spend.`
+  }
+
+  if (req.points > 0) {
+    const { points: balance } = await redeemableFor(siteId, memberId, req.points)
+    const needed = randToPoints(req.points, req.settings)
+
+    if (req.settings.minRedeemPoints > 0 && balance < req.settings.minRedeemPoints) {
+      return `At least ${req.settings.minRedeemPoints} points are needed to redeem — this member has ${Math.floor(balance)}.`
+    }
+    if (needed > balance) {
+      const worth = pointsToRand(balance, req.settings)
+      return `Not enough points: ${Math.floor(balance)} is worth R${worth.toFixed(2)}, and R${req.points.toFixed(2)} was asked for.`
+    }
+  }
+
+  if (req.wallet > 0) {
+    const balance = await getWalletBalance(siteId, memberId)
+    if (round(req.wallet, 2) > balance) {
+      return `Not enough on the card: R${balance.toFixed(2)} available, R${req.wallet.toFixed(2)} asked for.`
+    }
+  }
+
+  for (const raw of req.voucherCodes) {
+    const code = raw.trim().toUpperCase()
+    const voucher = await findVoucher(siteId, code)
+    if (!voucher) return `No voucher with code ${code}.`
+    if (voucher.status === 'redeemed') return `Voucher ${code} has already been used.`
+    if (voucher.status === 'void') return `Voucher ${code} has been cancelled.`
+    if (voucher.status === 'expired') return `Voucher ${code} has expired.`
+    if (voucher.expiresOn && voucher.expiresOn < localToday()) {
+      return `Voucher ${code} expired on ${voucher.expiresOn}.`
+    }
+    // A voucher belongs to the member it was issued to, and the till must not
+    // let one member spend another's. The spend functions never checked this
+    // because the sale carried the customer and nobody asked; asking here is
+    // free and closes it.
+    if (voucher.memberId && voucher.memberId !== memberId) {
+      return `Voucher ${code} was issued to another member.`
+    }
+  }
+
+  return null
+}
+

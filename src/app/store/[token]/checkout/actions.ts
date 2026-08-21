@@ -268,9 +268,14 @@ export async function previewVoucherAction(token: string, code: string): Promise
   if (!session) return { ok: false, error: 'Sign in to use your voucher.' }
 
   const { findVoucher } = await import('@/lib/site/loyaltyCards')
+  const { memberIdForCustomer } = await import('@/lib/site/loyalty')
   const { today } = await import('@/lib/site/ledger')
   const voucher = await findVoucher(siteId, code)
-  if (!voucher || voucher.customerId !== session.customerId) {
+  // The voucher is the member's, and the session is the customer's — so the
+  // customer has to be resolved to their membership before the two can be
+  // compared. No membership means no voucher of their own.
+  const memberId = await memberIdForCustomer(siteId, session.customerId)
+  if (!voucher || !memberId || voucher.memberId !== memberId) {
     return { ok: false, error: 'That voucher is not on your account.' }
   }
   if (voucher.status !== 'issued') return { ok: false, error: 'That voucher has already been used.' }

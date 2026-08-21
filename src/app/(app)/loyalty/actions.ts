@@ -10,6 +10,10 @@ import {
   recalcMember,
   getLoyaltySettings,
   getMember,
+  customerIdForMember,
+  findTillMember,
+  tillMemberForCustomer,
+  type TillMember,
 } from '@/lib/site/loyalty'
 import {
   createCard,
@@ -108,19 +112,32 @@ export async function deleteCardAction(id: number): Promise<ActionResult> {
 
 /* ── Moving money ────────────────────────────────────────────────────────── */
 
+/**
+ * Refreshes the screens a loyalty movement can appear on.
+ *
+ * Takes the member, and finds the customer page to refresh from it — rather
+ * than the other way round, which is what these actions used to do. A member
+ * with no linked account simply has one fewer page to refresh, which is why the
+ * customer path is conditional rather than assumed.
+ */
+async function revalidateMember(siteId: number, memberId: number): Promise<void> {
+  revalidatePath('/loyalty')
+  const customerId = await customerIdForMember(siteId, memberId)
+  if (customerId) revalidatePath(`/customers/${customerId}`)
+}
+
 export async function adjustPointsAction(
-  customerId: number,
+  memberId: number,
   points: number,
   reason: string,
 ): Promise<ActionResult> {
   const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
-  const done = await adjustPoints(ctx.siteId, ctx.actor, customerId, points, reason)
+  const done = await adjustPoints(ctx.siteId, ctx.actor, memberId, points, reason)
   if (!done.ok) return done
 
-  revalidatePath(`/customers/${customerId}`)
-  revalidatePath('/loyalty')
+  await revalidateMember(ctx.siteId, memberId)
   return {
     ok: true,
     message: `${points > 0 ? 'Added' : 'Removed'} ${Math.abs(points)} points. Balance is now ${done.balance}.`,
@@ -128,22 +145,22 @@ export async function adjustPointsAction(
 }
 
 export async function adjustWalletAction(
-  customerId: number,
+  memberId: number,
   amount: number,
   reason: string,
 ): Promise<ActionResult> {
   const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
-  const done = await adjustWallet(ctx.siteId, ctx.actor, customerId, amount, reason)
+  const done = await adjustWallet(ctx.siteId, ctx.actor, memberId, amount, reason)
   if (!done.ok) return done
 
-  revalidatePath(`/customers/${customerId}`)
+  await revalidateMember(ctx.siteId, memberId)
   return { ok: true, message: `Wallet is now R${done.balance.toFixed(2)}.` }
 }
 
 export async function topUpWalletAction(
-  customerId: number,
+  memberId: number,
   amount: number,
   tenderTypeId: number,
   terminalId: number | null,
@@ -152,19 +169,19 @@ export async function topUpWalletAction(
   if ('ok' in ctx) return ctx
 
   const done = await topUpWallet(ctx.siteId, ctx.actor, {
-    customerId,
+    memberId,
     amount,
     tenderTypeId,
     terminalId,
   })
   if (!done.ok) return done
 
-  revalidatePath(`/customers/${customerId}`)
+  await revalidateMember(ctx.siteId, memberId)
   return { ok: true, message: `Loaded R${amount.toFixed(2)}. Balance is R${done.balance.toFixed(2)}.` }
 }
 
 export async function issueVoucherAction(
-  customerId: number,
+  memberId: number,
   rewardValue: number,
   description: string,
   validDays: number,
@@ -173,7 +190,7 @@ export async function issueVoucherAction(
   if ('ok' in ctx) return ctx
 
   const done = await issueVoucher(ctx.siteId, ctx.actor, {
-    customerId,
+    memberId,
     rewardType: 'value',
     rewardValue,
     description,
@@ -182,18 +199,18 @@ export async function issueVoucherAction(
   })
   if (!done.ok) return done
 
-  revalidatePath(`/customers/${customerId}`)
+  await revalidateMember(ctx.siteId, memberId)
   return { ok: true, message: `Voucher ${done.code} issued.` }
 }
 
-export async function voidVoucherAction(id: number, customerId: number): Promise<ActionResult> {
+export async function voidVoucherAction(id: number, memberId: number): Promise<ActionResult> {
   const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
   const done = await voidVoucher(ctx.siteId, ctx.actor, id)
   if (!done.ok) return done
 
-  revalidatePath(`/customers/${customerId}`)
+  await revalidateMember(ctx.siteId, memberId)
   return { ok: true, message: 'Voucher cancelled.' }
 }
 
@@ -226,6 +243,37 @@ export async function runExpiryAction(): Promise<ActionResult> {
 
 /* ── The till ────────────────────────────────────────────────────────────── */
 
+/**
+ * The membership attached to a customer, for the till.
+ *
+ * Called when a cashier attaches an account, so a customer who is also a member
+ * gets their loyalty without a second scan — the decision recorded in
+ * docs/plans/loyalty-members.md. Returns null when they never joined, which is
+ * ordinary and silent: the till simply shows no loyalty panel.
+ *
+ * Guarded on `sales.till` like tillStandingAction, and for the same reason.
+ */
+export async function memberForCustomerAction(customerId: number): Promise<TillMember | null> {
+  const ctx = await actorForModule('loyalty', 'sales.till')
+  if ('ok' in ctx) return null
+
+  const settings = await getLoyaltySettings(ctx.siteId)
+  if (!settings.enabled) return null
+
+  return tillMemberForCustomer(ctx.siteId, customerId)
+}
+
+/** The member behind a scanned card, for a shopper with no account. */
+export async function findMemberAction(memberNumber: string): Promise<TillMember | null> {
+  const ctx = await actorForModule('loyalty', 'sales.till')
+  if ('ok' in ctx) return null
+
+  const settings = await getLoyaltySettings(ctx.siteId)
+  if (!settings.enabled) return null
+
+  return findTillMember(ctx.siteId, memberNumber)
+}
+
 export type TillStanding = {
   points: number
   pointsValue: number
@@ -245,7 +293,7 @@ export type TillStanding = {
  * Returns null when the programme is off, so the till simply shows nothing
  * rather than an empty loyalty panel.
  */
-export async function tillStandingAction(customerId: number): Promise<TillStanding | null> {
+export async function tillStandingAction(memberId: number): Promise<TillStanding | null> {
   const ctx = await actorForModule('loyalty', 'sales.till')
   if ('ok' in ctx) return null
 
@@ -253,9 +301,9 @@ export async function tillStandingAction(customerId: number): Promise<TillStandi
   if (!settings.enabled) return null
 
   const [member, vouchers, walletBalance] = await Promise.all([
-    getMember(ctx.siteId, customerId, settings),
-    listVouchers(ctx.siteId, { customerId, spendableOnly: true }),
-    getWalletBalance(ctx.siteId, customerId),
+    getMember(ctx.siteId, memberId, settings),
+    listVouchers(ctx.siteId, { memberId, spendableOnly: true }),
+    getWalletBalance(ctx.siteId, memberId),
   ])
   if (!member) return null
 
@@ -280,11 +328,11 @@ export async function tillStandingAction(customerId: number): Promise<TillStandi
   }
 }
 
-export async function recalcMemberAction(customerId: number): Promise<ActionResult> {
+export async function recalcMemberAction(memberId: number): Promise<ActionResult> {
   const ctx = await actorForModule('loyalty', 'loyalty.adjust')
   if ('ok' in ctx) return ctx
 
-  await recalcMember(ctx.siteId, customerId)
-  revalidatePath(`/customers/${customerId}`)
+  await recalcMember(ctx.siteId, memberId)
+  await revalidateMember(ctx.siteId, memberId)
   return { ok: true, message: 'Balance rebuilt from the ledger.' }
 }

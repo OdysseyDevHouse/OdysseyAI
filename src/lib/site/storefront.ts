@@ -1961,8 +1961,13 @@ export async function placePublicOrder(
       return { ok: false, error: 'Vouchers work online only on orders paid by card — please use it at the till.' }
     }
     const { findVoucher } = await import('./loyaltyCards')
+    const { memberIdForCustomer } = await import('./loyalty')
     const voucher = await findVoucher(siteId, input.voucherCode)
-    if (!voucher || voucher.customerId !== input.customerId) {
+    // Vouchers belong to a MEMBER, and the shopper signed in as a customer. A
+    // customer who never joined has no member, and so no voucher of their own —
+    // which is the same refusal as a voucher belonging to someone else.
+    const memberId = input.customerId ? await memberIdForCustomer(siteId, input.customerId) : null
+    if (!voucher || !memberId || voucher.memberId !== memberId) {
       return { ok: false, error: 'That voucher is not on your account.' }
     }
     if (voucher.status !== 'issued') {

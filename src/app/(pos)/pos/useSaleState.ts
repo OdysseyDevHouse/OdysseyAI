@@ -14,6 +14,7 @@ import { captureBaseline, type SessionBaseline } from '@/lib/lineSession'
 import type { ChosenOption } from '@/lib/instructionRules'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
+import type { TillMember } from '@/lib/site/loyalty'
 import type { SalesDocType } from '@/lib/site/salesDocuments'
 
 /**
@@ -57,6 +58,19 @@ export type SaleState = {
   /** The draft this basket was recalled from, if any. */
   documentId: number | null
   customer: TillCustomer | null
+  /**
+   * Who earns and spends loyalty on this sale.
+   *
+   * SEPARATE FROM `customer`, and the separation is the point. A customer is a
+   * debtors account: terms, a credit limit, a price structure. A member is a
+   * loyalty identity. Most shops have people who are one and not the other —
+   * the regular who pays cash and collects points has no account, and the trade
+   * account never joined the programme.
+   *
+   * Set together with the customer when that customer is linked to a member, so
+   * scanning either one is enough. Cleared with the sale, like the customer.
+   */
+  member: TillMember | null
   /** A walk-in's name, typed. Not a customer record and creates no debtor. */
   customerName: string
   catalog: CatalogView
@@ -133,6 +147,7 @@ export const initialSaleState: SaleState = {
   selectedKey: null,
   documentId: null,
   customer: null,
+  member: null,
   customerName: '',
   catalog: { kind: 'keys' },
   query: '',
@@ -186,7 +201,23 @@ export type SaleAction =
    */
   | { type: 'UNDO' }
   | { type: 'CLEAR' }
-  | { type: 'SET_CUSTOMER'; customer: TillCustomer | null }
+  /**
+   * Attach or clear the customer, and with them their membership.
+   *
+   * `member` is what the caller found for this customer — see PosShell, which
+   * looks it up. Passing it here rather than resolving it in the reducer keeps
+   * the reducer synchronous, and keeps the two attachments in one action so a
+   * handler cannot set a customer and forget their member.
+   */
+  | { type: 'SET_CUSTOMER'; customer: TillCustomer | null; member?: TillMember | null }
+  /**
+   * Attach a member on their own — a scanned card from someone with no account.
+   *
+   * Deliberately does NOT touch the customer: a member who is also an account
+   * holder may be buying on their account or with cash, and the till must not
+   * decide that for them.
+   */
+  | { type: 'SET_MEMBER'; member: TillMember | null }
   | { type: 'SET_CUSTOMER_NAME'; name: string }
   | { type: 'SET_QUERY'; query: string }
   | { type: 'SHOW_KEYS' }
@@ -419,10 +450,21 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
       return {
         ...state,
         customer: action.customer,
+        // The customer's membership comes with them, and goes with them.
+        //
+        // `undefined` means the caller did not look one up, which is not the
+        // same claim as "this customer is not a member" — so it leaves an
+        // already-scanned card alone. Clearing the customer clears the member
+        // outright: a card scanned as part of attaching an account should not
+        // outlive it.
+        member: action.customer ? (action.member ?? state.member) : null,
         // A real account's name replaces whatever was typed, so the slip and the
         // ledger cannot disagree about who this is.
         customerName: action.customer ? '' : state.customerName,
       }
+
+    case 'SET_MEMBER':
+      return { ...state, member: action.member }
 
     case 'SET_CUSTOMER_NAME':
       return { ...state, customerName: action.name }
@@ -478,6 +520,10 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
         documentId: action.documentId,
         lines: action.lines,
         customer: action.customer ?? null,
+        // Dropped with the account, and re-found when it is re-attached. A
+        // membership recalled from yesterday's parked basket would quote a
+        // balance nobody has re-read.
+        member: null,
         /*
          * The NAME survives even when the account does not.
          *

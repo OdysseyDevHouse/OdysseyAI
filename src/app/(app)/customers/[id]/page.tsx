@@ -31,7 +31,12 @@ import TransactionsTab from './TransactionsTab'
 import ActivityTable from './ActivityTable'
 import { CreditTab } from './CreditTab'
 import { LoyaltyTab } from './LoyaltyTab'
-import { getLoyaltySettings, getMember, listLedger as listLoyaltyLedger } from '@/lib/site/loyalty'
+import {
+  getLoyaltySettings,
+  getMember,
+  memberIdForCustomer,
+  listLedger as listLoyaltyLedger,
+} from '@/lib/site/loyalty'
 import { listVouchers, getCardProgress } from '@/lib/site/loyaltyCards'
 import { listWallet } from '@/lib/site/loyaltyWallet'
 import ContactsPanel from '@/components/party/ContactsPanel'
@@ -86,21 +91,35 @@ function when(date: Date | null): string {
   })
 }
 
-/** Everything the loyalty tab shows, shaped for the client component. */
+/**
+ * Everything the loyalty tab shows, shaped for the client component.
+ *
+ * Returns null when this customer is not a member — which is now an ordinary
+ * state rather than a missing row. Every customer used to BE a member
+ * implicitly; joining is a deliberate act, so the tab has to be able to say
+ * "not a member yet" and offer to enrol them.
+ */
 async function loadLoyalty(siteId: number, customerId: number) {
   const settings = await getLoyaltySettings(siteId)
 
+  const memberId = await memberIdForCustomer(siteId, customerId)
+  if (!memberId) return null
+
   const [member, ledger, vouchers, cards, wallet] = await Promise.all([
-    getMember(siteId, customerId, settings),
-    listLoyaltyLedger(siteId, customerId),
-    listVouchers(siteId, { customerId }),
-    getCardProgress(siteId, customerId),
-    listWallet(siteId, customerId),
+    getMember(siteId, memberId, settings),
+    listLoyaltyLedger(siteId, memberId),
+    listVouchers(siteId, { memberId }),
+    getCardProgress(siteId, memberId),
+    listWallet(siteId, memberId),
   ])
   if (!member) return null
 
   return {
     enabled: settings.enabled,
+    // The tab acts on the MEMBER — every loyalty action is keyed on it now, and
+    // the customer id it used to send would name the wrong row (or none) on a
+    // shared programme.
+    memberId,
     member,
     ledger: ledger.map((e) => ({
       id: e.id,
@@ -449,7 +468,7 @@ export default async function CustomerPage({
         ) : active === 'loyalty' ? (
           loyalty ? (
             <LoyaltyTab
-              customerId={customerId}
+              memberId={loyalty.memberId}
               enabled={loyalty.enabled}
               points={loyalty.member.points}
               pointsValue={loyalty.member.pointsValue}

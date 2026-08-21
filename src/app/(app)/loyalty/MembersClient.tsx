@@ -23,7 +23,14 @@ import { formatMoney } from '@/lib/decimals'
 import { runExpiryAction } from './actions'
 
 export type MemberRowView = {
-  customerId: number
+  memberId: number
+  /**
+   * The debtors account this member is linked to, if any.
+   *
+   * Null is ordinary, not exceptional — a walk-in member never had one. It is
+   * what stops the name below being a link to a customer that does not exist.
+   */
+  customerId: number | null
   code: string
   name: string
   phone: string
@@ -90,12 +97,22 @@ export function MembersClient({
   const columns: Column<MemberRowView>[] = [
     {
       key: 'name',
-      header: 'Customer',
+      header: 'Member',
       cell: (row) => (
         <div>
-          <Link href={`/customers/${row.customerId}`} className="font-medium text-ink hover:underline">
-            {row.name}
-          </Link>
+          {/* A link only where there is somewhere to go. A walk-in member has
+              no debtors account, and a name that looks clickable but is not is
+              worse than plain text. */}
+          {row.customerId ? (
+            <Link
+              href={`/customers/${row.customerId}`}
+              className="font-medium text-ink hover:underline"
+            >
+              {row.name}
+            </Link>
+          ) : (
+            <span className="font-medium text-ink">{row.name}</span>
+          )}
           <div className="text-xs text-muted">
             {row.code}
             {row.phone ? ` · ${row.phone}` : ''}
@@ -217,7 +234,7 @@ export function MembersClient({
             <DataTable
               columns={columns}
               rows={visible}
-              getRowKey={(row) => row.customerId}
+              getRowKey={(row) => row.memberId}
               empty={{ title: 'No members match', hint: 'Try a different search or tier.' }}
             />
             {truncated && (

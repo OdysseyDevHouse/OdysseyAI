@@ -112,7 +112,20 @@ CREATE TABLE IF NOT EXISTS loyalty_members (
   -- Deliberately NOT a foreign key: `customers` may live in another database
   -- when the customer file is shared and loyalty is not, or the reverse. The
   -- link is validated in code, where it can also say WHY it refused.
+  --
+  -- TWO COLUMNS, for the same reason loyalty_ledger names the store that made
+  -- the sale: a customer id is only unique within the database that issued it.
+  -- A group sharing loyalty but NOT customers has twenty branches each holding
+  -- their own customer 41, and one shared members table. With customer_id
+  -- alone, uq_member_customer would refuse the second branch's enrolment —
+  -- telling a cashier that a customer they have never seen already has a
+  -- membership. The pair is what makes the link mean one person.
   customer_id      INT UNSIGNED NULL,
+  -- The site whose customer file customer_id belongs to. NULL exactly when
+  -- customer_id is NULL. This is the customer file's OWNER, not the branch
+  -- making the sale — two branches sharing a customer file must resolve to the
+  -- same member, which is the whole point of sharing it.
+  customer_origin_site_id INT UNSIGNED NULL,
 
   name             VARCHAR(160) NOT NULL,
   phone            VARCHAR(40) NULL,
@@ -142,9 +155,10 @@ CREATE TABLE IF NOT EXISTS loyalty_members (
 
   PRIMARY KEY (id),
   UNIQUE KEY uq_member_number (member_number),
-  -- One membership per customer. NULLs are exempt, which is what allows any
-  -- number of walk-in members — see the header.
-  UNIQUE KEY uq_member_customer (customer_id),
+  -- One membership per customer, where "a customer" is the (site, id) PAIR.
+  -- NULLs are exempt — and both columns are NULL together for a walk-in — which
+  -- is what allows any number of walk-in members; see the header.
+  UNIQUE KEY uq_member_customer (customer_origin_site_id, customer_id),
   KEY idx_member_tier (tier_id),
   KEY idx_member_phone (phone),
   KEY idx_member_activity (last_activity_at)

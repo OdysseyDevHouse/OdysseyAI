@@ -395,6 +395,14 @@ export async function finaliseSaleAction(
   documentId: number | null,
   sale: {
     customerId?: number | null
+    /**
+     * Who earns and spends the loyalty, when that is not simply the customer.
+     *
+     * Optional, and omitting it is not the same as passing null: absent lets
+     * the posting engine fall back to the customer's own membership, which is
+     * what every caller written before members existed should keep doing.
+     */
+    memberId?: number | null
     customerName?: string | null
     customerPhone?: string | null
     customerVatNo?: string | null
@@ -475,6 +483,10 @@ export async function finaliseSaleAction(
     documentId: saved.id,
     tenders,
     customerId: sale.customerId ?? null,
+    // Undefined rather than null when the caller said nothing, so the posting
+    // engine falls back to the customer's own membership instead of being told
+    // there is none.
+    memberId: sale.memberId,
     voucherCodes,
     declaredTips: tips.declaredTips,
     serviceCharge: tips.serviceCharge,
