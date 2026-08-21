@@ -1461,6 +1461,20 @@ async function creditRefusal(
       ? await accountSpend(siteId, customerId, documentDate)
       : NO_SPEND
 
+  // A group-wide measurement that could not read every branch gives a FLOOR,
+  // not a total — and the branch it could not read is exactly where the rest of
+  // today's drawdown would be. Approving on that basis is how one limit becomes
+  // five, so it is treated as the same question as an unverifiable balance and
+  // answered by the same shop setting.
+  //
+  // Checked before headroomRefusal rather than after: if the partial figure
+  // already breaches the cap the sale is refused either way, but when it does
+  // NOT breach, "within the limit" is a claim this data cannot support.
+  if (spend.unreadable?.length) {
+    const refusal = await sharedFileUnreachableRefusal(siteId)
+    if (refusal) return refusal
+  }
+
   return headroomRefusal(account, amount, spend)
 }
 

@@ -56,6 +56,21 @@ export type PeriodSpend = {
   today: number
   /** Charged to the account since the first of the current month. */
   month: number
+  /**
+   * Member stores whose tenders could not be read, when a shared customer file
+   * made this a group-wide measurement.
+   *
+   * Absent for a single store and for a group that does not share — the
+   * ordinary case, where there is one database and it either answered or threw.
+   *
+   * Present and non-empty means the figures above are a FLOOR, not a total: the
+   * real spend is at least this, and possibly more. A caller must not read a
+   * limit as satisfied on that basis, because the missing branch is exactly
+   * where the rest of the drawdown would be. Deciding what to do about it
+   * belongs to the caller — the till already has a policy for an unverifiable
+   * account balance and this is the same question.
+   */
+  unreadable?: number[]
 }
 
 export const NO_SPEND: PeriodSpend = { today: 0, month: 0 }

@@ -358,6 +358,53 @@ async function main() {
 
     console.log('\n— Finding 10: daily/monthly spend is measured in the caller’s database only —')
 
+    // A real account sale at the PRIMARY, so there is spend that only one
+    // store can see. Without this the case proves nothing: two zeroes agree.
+    const tender = await siteQueryOne<Row>(
+      primary,
+      'SELECT id, code, name FROM tender_types WHERE posts_to_debtor = 1 LIMIT 1',
+    )
+    let seeded = false
+    if (tender) {
+      // Wall-clock today, not toISOString(): the pool reads DATETIME as UTC and
+      // a late-evening run would date the sale tomorrow, putting it outside the
+      // "today" window this case is measuring.
+      const now = new Date()
+      const todayStr =
+        `${now.getFullYear()}-` +
+        `${String(now.getMonth() + 1).padStart(2, '0')}-` +
+        `${String(now.getDate()).padStart(2, '0')}`
+
+      await siteExecute(
+        primary,
+        `INSERT INTO sales_documents
+           (doc_type, status, customer_id, document_date, total_incl, reference)
+         VALUES ('invoice','finalised',?,?,?,?)`,
+        [customerId, todayStr, '300.0000', PROBE_TAG],
+      )
+      const doc = await siteQueryOne<Row>(
+        primary,
+        'SELECT id FROM sales_documents WHERE reference = ? ORDER BY id DESC LIMIT 1',
+        [PROBE_TAG],
+      )
+      if (doc) {
+        await siteExecute(
+          primary,
+          `INSERT INTO sales_tenders
+             (document_id, tender_type_id, tender_code, tender_name, amount)
+           VALUES (?,?,?,?,?)`,
+          [
+            Number(doc.id),
+            Number(tender.id),
+            String(tender.code ?? 'ACC').slice(0, 24),
+            String(tender.name ?? 'Account').slice(0, 60),
+            '300.0000',
+          ],
+        )
+        seeded = true
+      }
+    }
+
     const spendAtBranch = await accountSpend(branch, customerId)
     const spendAtPrimary = await accountSpend(primary, customerId)
     const limits = await customerQueryOne<Row>(
@@ -371,18 +418,29 @@ async function main() {
     // question is not whether the number is wrong today, it is whether the two
     // sites can disagree at all. They can only be summed correctly in one place.
     const observedSpend =
+      `seeded a 300.00 account sale at the PRIMARY; ` +
       `limits: daily ${money(limits?.daily_limit)}, monthly ${money(limits?.monthly_limit)} ` +
       `(read from the owner); ` +
-      `spend measured at branch = ${money(spendAtBranch.today)}/${money(spendAtBranch.month)}, ` +
-      `at primary = ${money(spendAtPrimary.today)}/${money(spendAtPrimary.month)}`
+      `spend seen from branch = ${money(spendAtBranch.today)}/${money(spendAtBranch.month)}, ` +
+      `from primary = ${money(spendAtPrimary.today)}/${money(spendAtPrimary.month)}`
 
-    // customerFileIsShared() exists precisely to make this case behave
-    // differently, and nothing calls it. That is a static fact, verified here
-    // rather than asserted, because it is the whole mechanism the fix needs.
-    CONFIRMED(
-      'the limit comes from the owner while the spend it is checked against is per-database',
-      observedSpend,
-    )
+    if (!seeded) {
+      INCONCLUSIVE(
+        'spend across branches',
+        'could not seed an account sale (no tender type posts to debtor), so two zeroes would agree for the wrong reason',
+      )
+    } else if (Math.abs(spendAtBranch.today - spendAtPrimary.today) > 0.005) {
+      // The defect: the same customer's same-day spend depends on which till
+      // asks, so each branch approves against a cap the others cannot see.
+      CONFIRMED('the two stores disagree about one account’s spend', observedSpend)
+    } else if (spendAtBranch.today >= 300) {
+      NOT_REPRODUCED(
+        'both stores see the whole group’s spend against one limit',
+        observedSpend,
+      )
+    } else {
+      INCONCLUSIVE('the stores agree but neither saw the seeded sale', observedSpend)
+    }
 
     /* ── FINDING 7: opening balances plan against the wrong file ────────── */
 
@@ -439,6 +497,10 @@ async function main() {
         /* allocations may not exist on this site; the transaction delete reports. */
       }
       try {
+        // The seeded account sale. sales_tenders cascades from the document,
+        // but the document itself does not, so it is deleted by name — a
+        // leaked finalised sale would inflate every later spend measurement.
+        await siteExecute(site, 'DELETE FROM sales_documents WHERE reference = ?', [PROBE_TAG])
         await siteExecute(site, 'DELETE FROM customer_transactions WHERE reference = ?', [
           PROBE_TAG,
         ])
@@ -459,9 +521,15 @@ async function main() {
         'SELECT COUNT(*) AS n FROM customer_transactions WHERE reference = ?',
         [PROBE_TAG],
       )
+      const docsLeft = await siteQuery<Row>(
+        site,
+        'SELECT COUNT(*) AS n FROM sales_documents WHERE reference = ?',
+        [PROBE_TAG],
+      )
       console.log(
         `  site ${site}: ${Number(left[0]?.n)} probe customer(s), ` +
-          `${Number(txnLeft[0]?.n)} probe transaction(s) left`,
+          `${Number(txnLeft[0]?.n)} probe transaction(s), ` +
+          `${Number(docsLeft[0]?.n)} probe sale(s) left`,
       )
     }
 
