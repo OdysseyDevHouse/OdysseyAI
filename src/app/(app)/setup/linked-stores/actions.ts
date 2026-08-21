@@ -11,6 +11,7 @@ import {
   setGroupOnlineMode,
   setGroupLegalEntity,
   setGroupLoyaltyWallet,
+  setGroupGiftCards,
   setGroupPrimary,
 } from '@/lib/storeGroups'
 import { setBranchPin, syncBranchPin } from '@/lib/control/storeBranches'
@@ -196,6 +197,9 @@ export async function setLegalEntityAction(
    * about a group that has since said it is one company.
    */
   await setGroupLoyaltyWallet(group.id, raw === 'several' && form.get('sharesLoyaltyWallet') === 'on')
+  // The same, for stored value. Forced false on 'one' for the same reason:
+  // a stored yes must never outlive the answer that made it meaningful.
+  await setGroupGiftCards(group.id, raw === 'several' && form.get('sharesGiftCards') === 'on')
 
   revalidatePath('/setup/linked-stores')
   return { error: null, saved: raw }

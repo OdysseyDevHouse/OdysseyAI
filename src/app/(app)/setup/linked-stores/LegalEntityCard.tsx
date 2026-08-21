@@ -53,10 +53,12 @@ function SaveButton({ disabled }: { disabled: boolean }) {
 export default function LegalEntityCard({
   legalEntity,
   sharesLoyaltyWallet,
+  sharesGiftCards,
 }: {
   legalEntity: 'unknown' | 'one' | 'several'
   /** Only meaningful under 'several' — see the switch below. */
   sharesLoyaltyWallet: boolean
+  sharesGiftCards: boolean
 }) {
   const [state, formAction] = useActionState<LinkFormState, FormData>(setLegalEntityAction, {
     error: null,
@@ -85,6 +87,7 @@ export default function LegalEntityCard({
   const answered = state.saved ?? (legalEntity === 'unknown' ? '' : legalEntity)
   const [typed, setTyped] = useState<string | null>(null)
   const [walletShared, setWalletShared] = useState(sharesLoyaltyWallet)
+  const [cardsShared, setCardsShared] = useState(sharesGiftCards)
   const [lastAnswered, setLastAnswered] = useState(answered)
   if (lastAnswered !== answered) {
     // A save landed: drop the in-progress choice so the saved answer shows.
@@ -186,6 +189,31 @@ export default function LegalEntityCard({
                 hint="Points, tiers and punch cards work across the group either way. This is only about wallet rand — money a shopper handed over. Switched on, R500 topped up at one company can be spent at another, and the two settle it between themselves. Switched off, each company holds its own float."
               />
               {walletShared && <input type="hidden" name="sharesLoyaltyWallet" value="on" />}
+
+              {/*
+                ── THE SAME QUESTION, ABOUT A DIFFERENT KIND OF MONEY ──
+                ────────────────────────────────────────────────────────
+                Gift cards ride on the loyalty switch, so a group that
+                shares its programme shares its cards — and loyalty is
+                exempt from the entity answer above, because points cost
+                nothing to honour.
+
+                A gift card is not points. It is cash already handed over,
+                so without this switch turning the programme on would pool
+                two companies’ liabilities in silence. Off is the answer
+                that needs no agreement between them.
+
+                See sql/tickets/018_share_gift_cards.sql.
+              */}
+              <div className="mt-4">
+                <Switch
+                  checked={cardsShared}
+                  onChange={setCardsShared}
+                  label="Share gift card value between the companies"
+                  hint="Switched on, a card sold by one company can be spent at another, and the two settle it between themselves. Switched off, a card is spendable at the company that sold it — the programme is still shared, so points and rewards work everywhere."
+                />
+                {cardsShared && <input type="hidden" name="sharesGiftCards" value="on" />}
+              </div>
             </div>
           )}
 
@@ -206,7 +234,10 @@ export default function LegalEntityCard({
               switch, which reads as the screen having ignored them. */}
           <SaveButton
             disabled={
-              choice === '' || (choice === answered && walletShared === sharesLoyaltyWallet)
+              choice === '' ||
+              (choice === answered &&
+                walletShared === sharesLoyaltyWallet &&
+                cardsShared === sharesGiftCards)
             }
           />
         </CardFooter>

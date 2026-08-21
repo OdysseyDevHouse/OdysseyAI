@@ -52,6 +52,7 @@ export default function LinkedStoresSetup({
   primarySiteId,
   legalEntity,
   sharesLoyaltyWallet,
+  sharesGiftCards,
 }: {
   currentSiteId: number
   currentSiteName: string
@@ -66,6 +67,8 @@ export default function LinkedStoresSetup({
   legalEntity: 'unknown' | 'one' | 'several'
   /** Whether separate companies here share loyalty wallet money. */
   sharesLoyaltyWallet: boolean
+  /** Whether separate companies here pool gift card value. */
+  sharesGiftCards: boolean
   /** Null when these stores are not a group yet — there is nothing to configure. */
   groupStorefront: {
     enabled: boolean
@@ -111,7 +114,11 @@ export default function LinkedStoresSetup({
           switches — the answer has to come first on the page as well as in the
           rules. Only shown once a group exists. */}
       {members.length > 0 && (
-        <LegalEntityCard legalEntity={legalEntity} sharesLoyaltyWallet={sharesLoyaltyWallet} />
+        <LegalEntityCard
+          legalEntity={legalEntity}
+          sharesLoyaltyWallet={sharesLoyaltyWallet}
+          sharesGiftCards={sharesGiftCards}
+        />
       )}
 
       {/* After the entity question and before the store cards: it is the second
