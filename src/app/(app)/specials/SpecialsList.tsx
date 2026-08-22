@@ -217,6 +217,42 @@ export default function SpecialsList({
     setEditingRows([])
   }
 
+  /**
+   * The same special again, as a new one.
+   *
+   * ── WHY THIS IS WORTH A BUTTON ───────────────────────────────────────────
+   *
+   * Next month's version of last month's promotion is the same dozen products,
+   * the same discount, the same days — and a different fortnight. Without this
+   * that is retyped from scratch every time, and the retyping is where a
+   * product gets left out.
+   *
+   * Purely client-side: the form opens on a copy with no id, so nothing exists
+   * until Create is pressed. Someone who duplicates by accident closes the
+   * dialog and has changed nothing.
+   *
+   * The COUNTER does not come with it. A copy has been redeemed zero times
+   * whatever its original has done — carrying that across would start a fresh
+   * promotion already half spent.
+   */
+  function openCopy(special: SpecialWithUse) {
+    openEdit(special)
+    setEditing({
+      ...toInput(special),
+      id: null,
+      name: `${special.name} (copy)`.slice(0, 100),
+      /*
+       * Switched OFF, deliberately.
+       *
+       * A duplicate opens on the original's dates, which have very likely
+       * passed — and a copy that arrives live is a promotion nobody decided to
+       * run. Whoever is copying it is about to change the window anyway, and
+       * this way the decision to start it is theirs.
+       */
+      isActive: false,
+    })
+  }
+
   function openEdit(special: SpecialWithUse) {
     setEditing(toInput(special))
     setEditingRows(
@@ -419,6 +455,17 @@ export default function SpecialsList({
                         onClick={() => openEdit(special)}
                       >
                         <Icons.Pencil size={15} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label={`Duplicate ${special.name}`}
+                        title="Duplicate"
+                        disabled={busy}
+                        onClick={() => openCopy(special)}
+                      >
+                        <Icons.Copy size={15} />
                       </Button>
                       <Button
                         variant="danger-ghost"

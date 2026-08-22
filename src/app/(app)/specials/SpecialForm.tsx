@@ -26,12 +26,15 @@ import {
   AUDIENCE_LABEL,
   type Audience,
   ROLES_USED,
+  LADDERED,
+  computeSpecials,
   groupOf,
   validateSpecial,
   type SpecialInput,
   type SpecialItemInput,
   type SpecialRole,
   type SpecialShape,
+  type Special,
   // The pure engine, NOT lib/site/specials — importing the server module from
   // a client component pulls mysql2 into the browser bundle.
 } from '@/lib/specialsEngine'
@@ -402,6 +405,9 @@ export default function SpecialForm({
           busy={busy}
         />
 
+        {/* What it does to a real basket, run through the real engine. */}
+        <DealPreview draft={draft} rows={rows} />
+
         {/* ── Who and where ─────────────────────────────────────────────── */}
         <AudienceSection draft={draft} patch={patch} customerGroups={customerGroups} />
 
@@ -443,6 +449,136 @@ function Section({
         </span>
       </div>
       <div className="mt-3 flex flex-col gap-3">{children}</div>
+    </div>
+  )
+}
+
+/* ── What it actually does to a basket ───────────────────────────────────── */
+
+/**
+ * A worked example, computed with the REAL engine.
+ *
+ * ── WHY A PREVIEW AND NOT A DESCRIPTION ──────────────────────────────────
+ *
+ * The form already describes each shape in prose, and prose is exactly what a
+ * misconfigured special reads as: "buy 3, cheapest free" says the same thing
+ * whether the trigger list has three products in it or none. The arithmetic is
+ * the only thing that can tell someone their deal does nothing, and the only
+ * honest way to show the arithmetic is to run it.
+ *
+ * It uses `computeSpecials` — the same function the till runs — over the rows
+ * actually picked, at the prices those products actually carry. A preview
+ * written as its own sum would be a second implementation, and the first thing
+ * it would do is disagree with the counter.
+ *
+ * Shown only when it can say something true: a special with nothing picked yet,
+ * or one whose products have no price on file, gets nothing rather than a
+ * confident R0.00.
+ */
+function DealPreview({ draft, rows }: { draft: SpecialInput; rows: FormRow[] }) {
+  const keep = ROLES_USED[draft.shape]
+  const priced = rows.filter(
+    (r) => keep.includes(r.role) && r.productId !== null && (r.currentPrice ?? 0) > 0,
+  )
+  if (priced.length === 0) return null
+
+  /*
+   * A basket big enough to actually trigger the deal.
+   *
+   * Enough of each product to complete one deal — plus the trigger quantity for
+   * the shapes that count units rather than rows, and a spend threshold cleared
+   * where one applies. A basket of one of everything would show "nothing
+   * happens" for half the shapes, which is worse than showing nothing.
+   */
+  /*
+   * `triggerQty` is only read by the shapes that count units into groups.
+   * Reading it for a happy hour would show a basket of three when the deal has
+   * nothing to do with quantity — a preview that invents a detail is a preview
+   * someone has to work out how to ignore.
+   */
+  const countsUnits =
+    draft.shape === 'cheapest_free' ||
+    draft.shape === 'mix_and_match' ||
+    draft.shape === 'second_at_pct'
+  const need = Math.max(
+    1,
+    Math.floor(draft.shape === 'second_at_pct' ? 2 : countsUnits ? draft.triggerQty || 0 : 0),
+    ...(LADDERED.has(draft.shape) ? draft.tiers.map((t) => Math.floor(t.qty)) : [0]),
+  )
+  const perRow = priced.length === 1 ? need : Math.max(1, Math.ceil(need / priced.length))
+
+  const lines = priced.map((r) => ({
+    productId: r.productId as number,
+    departmentId: r.departmentId,
+    priceIncl: r.currentPrice as number,
+    qty: Math.max(perRow, Math.floor(r.qty) || 1),
+  }))
+
+  const asSpecial: Special = {
+    ...(draft as unknown as Special),
+    id: draft.id ?? -1,
+    priority: 1,
+    items: rows
+      .filter((r) => keep.includes(r.role))
+      .map(({ role, productId, departmentId, qty, priceIncl }) => ({
+        role,
+        productId,
+        departmentId,
+        qty,
+        priceIncl,
+      })),
+    // The window is not the question here — someone is asking "what does this
+    // deal DO", not "is it running at this second". Forced open so the preview
+    // answers the question that was asked.
+    isActive: true,
+    startsAt: '2000-01-01T00:00',
+    endsAt: '2099-12-31T23:59',
+    dailyStart: '',
+    dailyEnd: '',
+    daysOfWeek: '1111111',
+    audience: 'everyone',
+    runsInStore: true,
+    runsOnline: true,
+  }
+
+  const result = computeSpecials(lines, [asSpecial], new Date())
+  const before = lines.reduce((sum, l) => sum + l.priceIncl * l.qty, 0)
+  const saved = lines.reduce((sum, l, i) => {
+    const pct = result.lineSpecials[i]?.pct ?? 0
+    return sum + l.priceIncl * l.qty * (pct / 100)
+  }, 0)
+
+  const nothing =
+    saved < 0.005 && result.rewards.length === 0 && !result.freeDelivery
+
+  return (
+    <div className="rounded-card border border-border bg-surface-2 p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+        On a basket of {lines.map((l) => `${l.qty} × ${formatMoney(l.priceIncl)}`).join(' + ')}
+      </p>
+      {nothing ? (
+        <p className="text-sm text-warning">
+          <Icons.Info size={14} className="mr-1.5 inline align-text-bottom" />
+          This deal gives nothing on that basket. Check the quantities and the discount.
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+          <span className="text-muted">
+            {formatMoney(before)} <span aria-hidden>→</span>{' '}
+            <span className="numeric font-semibold text-ink">{formatMoney(before - saved)}</span>
+          </span>
+          {saved >= 0.005 && (
+            <span className="text-success">Customer saves {formatMoney(saved)}</span>
+          )}
+          {result.rewards.length > 0 && (
+            <span className="text-success">
+              plus {result.rewards.reduce((n, r) => n + r.qty, 0)} free item
+              {result.rewards.reduce((n, r) => n + r.qty, 0) === 1 ? '' : 's'}
+            </span>
+          )}
+          {result.freeDelivery && <span className="text-success">plus free delivery</span>}
+        </div>
+      )}
     </div>
   )
 }
