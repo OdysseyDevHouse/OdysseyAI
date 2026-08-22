@@ -915,6 +915,20 @@ const SALE_LINES_SOURCE: CatalogSource = {
        its own; the whole document has one. */
     { name: 'returnReason', sql: 'LEFT JOIN sales_return_reasons rr ON rr.id = d.return_reason_id' },
     CUSTOMER_GROUP_JOIN,
+    /*
+     * The promotion that discounted the line, if one did.
+     *
+     * `special_id` has been written on every discounted line since 056 —
+     * specifically so "what did that promotion cost us" could be answered from
+     * the sales data rather than guessed at — and until now no catalog field
+     * reached it, so no report could ask. The column was collecting evidence
+     * nobody could read.
+     *
+     * NOT named `doc`: a join by that name shadows the parent document alias
+     * this source's date filter runs through, and every report on the source
+     * fails at request time.
+     */
+    { name: 'special', sql: 'LEFT JOIN specials sp ON sp.id = t.special_id' },
   ],
   defaultFilters: [{ field: 'status', op: 'eq', value: 'finalised' }],
   note: 'Starts with finalised documents only. Credit note lines carry negative quantities, so totals net off returns.',
@@ -1062,6 +1076,44 @@ const SALE_LINES_SOURCE: CatalogSource = {
       expr: 't.discount_pct',
       numeric: true,
       noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    /*
+     * WHICH promotion discounted this line.
+     *
+     * The whole point of `special_id`, unreadable until now. Grouping a sales
+     * report by this is what turns "we gave away R8,400 in discounts" into "the
+     * Friday happy hour cost R8,400 and sold 300 burgers", which is the
+     * difference between a number and a decision.
+     *
+     * The NAME comes off the specials table rather than being snapshotted onto
+     * the line, so renaming a promotion renames it everywhere it is reported —
+     * and a deleted one reads as blank rather than as a stale name, which is
+     * honest: the sale still happened, the promotion no longer exists.
+     */
+    {
+      key: 'specialName',
+      label: 'Promotion',
+      type: 'text',
+      expr: 'sp.name',
+      needs: ['special'],
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'specialShape',
+      label: 'Promotion kind',
+      type: 'text',
+      expr: 'sp.shape',
+      needs: ['special'],
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'onSpecial',
+      label: 'On promotion',
+      type: 'text',
+      // A plain yes/no, so a report can split promotional sales from ordinary
+      // ones without needing to know any promotion's name.
+      expr: "CASE WHEN t.special_id IS NULL THEN 'No' ELSE 'Yes' END",
       group: FIELD_GROUPS.MONEY,
     },
     // ── cost and margin: gated, because "what we paid" is a separate question

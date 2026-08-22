@@ -288,6 +288,51 @@ export const TEMPLATES: ReportTemplate[] = [
    * cashier and till can never show margin; see the note on each.
    */
   {
+    /*
+     * What each promotion actually cost, and what it actually sold.
+     *
+     * `sales_document_lines.special_id` has been written on every discounted
+     * line since 056, expressly so this question could be answered from the
+     * sales data rather than guessed at — and until the catalog gained a field
+     * for it, nothing could ask. The column was collecting evidence nobody
+     * could read.
+     *
+     * Grouped by the promotion and its kind. The two figures that matter sit
+     * beside each other: `discountIncl` is what was given away, `lineTotalIncl`
+     * is what came in anyway, and `grossProfit` says whether the shop was
+     * better off for running it. A promotion that shifted volume at a profit
+     * and one that discounted people who would have bought regardless look
+     * identical in a plain sales report and quite different here.
+     *
+     * Financial, because the margin column is the point and margin is gated.
+     */
+    id: 'specials-performance',
+    name: 'Promotion performance',
+    description: 'What each special cost you, what it sold, and whether it was worth running.',
+    category: 'Sales',
+    permission: 'reports.view',
+    financial: true,
+    spec: spec({
+      source: 'saleLines',
+      groupFields: ['specialName', 'specialShape'],
+      columns: [
+        { field: 'qty', agg: 'sum' },
+        { field: 'lineTotalIncl', agg: 'sum' },
+        { field: 'discountIncl', agg: 'sum' },
+        { field: 'grossProfit', agg: 'sum' },
+        { field: 'grossProfitPct', agg: 'avg' },
+      ],
+      filters: [
+        { field: 'status', op: 'eq', value: 'finalised' },
+        /* Promotional lines only. Without this every ordinary sale arrives in
+           one enormous unnamed group and buries the promotions this report
+           exists to compare. */
+        { field: 'onSpecial', op: 'eq', value: 'Yes' },
+      ],
+      sort: { key: 'discountIncl_sum', dir: 'desc' },
+    }),
+  },
+  {
     id: 'sales-by-product',
     name: 'Product performance',
     description: 'What sold, how much of it, and what it made. The top-sellers list.',
