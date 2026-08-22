@@ -1,4 +1,5 @@
 import { documentTotals, lineTotals } from './documentMath'
+import { round } from './decimals'
 import type { SalesDocument } from './site/salesDocuments'
 
 /**
@@ -35,6 +36,27 @@ export type ReceiptLine = {
   qty: number
   unitPriceIncl: number
   lineTotalIncl: number
+  /**
+   * What came off this line, and why.
+   *
+   * BOTH figures, because they answer different questions: the percentage is
+   * the claim the shop advertised ("20% off"), the rand amount is what this
+   * customer actually saved on this line. A slip carrying only one of them
+   * makes the customer do arithmetic to check the other.
+   *
+   * `discountPct` is the EFFECTIVE percentage — a special and a manual
+   * discount do NOT compound, so it is whichever of the two won (see
+   * effectiveDiscountPct). Zero on an undiscounted line, which is what keeps
+   * the renderers' `> 0` guards honest.
+   *
+   * `specialName` names the promotion when one is what discounted the line,
+   * null when a cashier did it by hand. The till already draws exactly this
+   * distinction on its line badge; the paper should not be vaguer than the
+   * screen the customer watched.
+   */
+  discountPct: number
+  discountIncl: number
+  specialName: string | null
   /** Instruction answers marked prints_on_receipt, plus the free-text note. */
   notes: string[]
 }
@@ -105,6 +127,18 @@ export function receiptDataFor(
     loyalty?: { pointsEarned: number; balance: number } | null
     copyNumber?: number
     footerText?: string
+    /**
+     * Special id → name, for the per-line "why" (see ReceiptLine.specialName).
+     *
+     * Passed in rather than joined onto the line, because `getDocument` also
+     * serves the in-store box, and the box holds ten tables — none of them
+     * `specials` (see scripts/box-migrate.mjs). A join there would break every
+     * tab read to name a promotion that only a finalised slip prints.
+     *
+     * Omitted means "no names available", not "no specials": the lines still
+     * print their discount, just without a promotion's name against it.
+     */
+    specialNames?: ReadonlyMap<number, string>
     /** Where a QR block on this slip may point — see ReceiptData.qrLinks. */
     qrLinks?: ReceiptData['qrLinks']
   },
@@ -139,11 +173,18 @@ export function receiptDataFor(
     terminalCode: doc.terminalCode,
     customerName: doc.customerName?.trim() || null,
     customerVatNo: doc.customerVatNo?.trim() || null,
-    lines: doc.lines.map((l) => ({
+    lines: doc.lines.map((l, index) => ({
       description: l.description,
       qty: Math.abs(l.qty),
       unitPriceIncl: l.unitPriceIncl,
       lineTotalIncl: Math.abs(l.lineTotalIncl),
+      discountPct: Math.abs(l.discountPct),
+      /* The RECOMPUTED amount, not the stored column, and for the same reason
+         the VAT split above is recomputed: `computed` already resolved the
+         "absolute wins over percentage" rule, so a line discounted by pct
+         alone still reports rands here instead of the zero the column holds. */
+      discountIncl: Math.abs(computed[index].discountIncl),
+      specialName: (l.specialId !== null ? opts.specialNames?.get(l.specialId) : null) ?? null,
       notes: receiptNotes(l.instructions),
     })),
     subtotalExcl: doc.subtotalExcl,
@@ -183,6 +224,8 @@ export function receiptDataFromBasket(input: {
     unitPriceIncl: number
     discountPct?: number
     discountIncl?: number
+    /** The promotion that discounted this line, when one did. See ReceiptLine. */
+    specialName?: string | null
     vatRatePct: number
     instructions?: readonly SlipInstruction[]
     note?: string | null
@@ -222,6 +265,29 @@ export function receiptDataFromBasket(input: {
       qty: Math.abs(l.qty),
       unitPriceIncl: l.unitPriceIncl,
       lineTotalIncl: Math.abs(computed[index].lineTotalIncl),
+      /*
+       * DERIVED when only an amount was given, not echoed back.
+       *
+       * A line can be discounted either way: a percentage the cashier typed, or
+       * an absolute amount (a document discount's apportioned share, or a
+       * discount code's). The posted builder reads a stored `discount_pct` that
+       * the sale engine worked out either way, so it always has one — and this
+       * builder, echoing its input, printed "0% off" on exactly the lines
+       * discounted by amount.
+       *
+       * Which made the offline slip and the posted slip disagree about the same
+       * sale: paper handed over at the counter claiming 0%, and a reprint after
+       * sync claiming 8%. `lineTotals` has already resolved the amount, so the
+       * percentage is arithmetic rather than a second source of truth.
+       */
+      discountPct: Math.abs(
+        l.discountPct ??
+          (computed[index].grossIncl > 0
+            ? round((computed[index].discountIncl / computed[index].grossIncl) * 100, 3)
+            : 0),
+      ),
+      discountIncl: Math.abs(computed[index].discountIncl),
+      specialName: l.specialName ?? null,
       notes: receiptNotes(l.instructions, l.note),
     })),
     subtotalExcl: totals.subtotalExcl,
