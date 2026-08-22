@@ -16,8 +16,7 @@ import {
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
-  COMBO_MODE_LABEL,
-  TYPE_LABEL,
+  SHAPE_LABEL,
   specialActiveAt,
   type Special,
   type SpecialInput,
@@ -79,21 +78,20 @@ const STATUS_LABEL = {
   off: 'Off',
 } as const
 
-/** What kind it is, naming the combo mode rather than just "Combo deal". */
+/** What kind it is — the shape's own name, not the group it is filed under. */
 function typeLabel(s: Special): string {
-  return s.type === 'combo' && s.comboMode
-    ? COMBO_MODE_LABEL[s.comboMode]
-    : TYPE_LABEL[s.type]
+  return SHAPE_LABEL[s.shape]
 }
 
 /** A one-line summary of what the customer actually gets. */
 function dealSummary(s: Special): string {
-  const shape = s.type === 'combo' ? s.comboMode || 'cheapest_free' : s.type
-  switch (shape) {
+  switch (s.shape) {
     case 'happy_hour':
-      return s.appliesToAll
-        ? `${s.discountPct}% off everything`
-        : `${s.discountPct}% off ${countScope(s)}`
+      // No scope at all IS the whole store — see 210 on why the separate
+      // applies_to_all flag went.
+      return s.items.some((i) => i.role === 'scope')
+        ? `${s.discountPct}% off ${countScope(s)}`
+        : `${s.discountPct}% off everything`
     case 'special_price':
       return `Marked-down price on ${countScope(s)}`
     case 'cheapest_free':
@@ -106,12 +104,26 @@ function dealSummary(s: Special): string {
       return `${s.discountPct}% off when you buy ${countRole(s, 'trigger')}`
     case 'bundle_price':
       return `${countRole(s, 'trigger')} for ${formatMoney(s.bundlePriceIncl)}`
+    case 'multibuy':
+      return s.tiers.length === 1
+        ? `${s.tiers[0].qty} for ${formatMoney(s.tiers[0].priceIncl)}`
+        : `${s.tiers.length} quantity tiers on ${countRole(s, 'trigger')}`
     case 'spend':
       return s.discountPct > 0
         ? `Spend ${formatMoney(s.spendAmountIncl)}, get ${s.discountPct}% off`
         : `Spend ${formatMoney(s.spendAmountIncl)}, get something free`
-    default:
-      return ''
+    /*
+     * Declared in the enum, not built yet. They cannot be created — the form
+     * does not offer them — so this is unreachable rather than a gap. Named
+     * individually so that BUILDING one is a compile error here until its
+     * summary is written, which is the point of listing them.
+     */
+    case 'quantity_break':
+    case 'second_at_pct':
+    case 'mix_and_match':
+    case 'free_delivery':
+    case 'bonus_points':
+      return SHAPE_LABEL[s.shape]
   }
 }
 
@@ -422,8 +434,7 @@ function toInput(s: Special): SpecialInput {
   return {
     id: s.id,
     name: s.name,
-    type: s.type,
-    comboMode: s.comboMode,
+    shape: s.shape,
     isActive: s.isActive,
     startsAt: s.startsAt,
     endsAt: s.endsAt,
@@ -431,7 +442,6 @@ function toInput(s: Special): SpecialInput {
     dailyEnd: s.dailyEnd,
     daysOfWeek: s.daysOfWeek,
     discountPct: s.discountPct,
-    appliesToAll: s.appliesToAll,
     triggerQty: s.triggerQty,
     bundlePriceIncl: s.bundlePriceIncl,
     spendAmountIncl: s.spendAmountIncl,
@@ -447,8 +457,7 @@ function blankSpecial(): SpecialInput {
   return {
     id: null,
     name: '',
-    type: 'happy_hour',
-    comboMode: '',
+    shape: 'happy_hour',
     isActive: true,
     // Today through next week, all day: the common case, and every part of it
     // is visible and changeable rather than hidden behind a default.
@@ -458,7 +467,6 @@ function blankSpecial(): SpecialInput {
     dailyEnd: '',
     daysOfWeek: '1111111',
     discountPct: 10,
-    appliesToAll: false,
     triggerQty: 3,
     bundlePriceIncl: 0,
     spendAmountIncl: 0,

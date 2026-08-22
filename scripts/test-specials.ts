@@ -24,6 +24,8 @@ import {
   type BasketLine,
   type Special,
   type SpecialItem,
+  type SpecialTier,
+  type SpecialShape,
 } from '../src/lib/specialsEngine'
 
 let fails = 0
@@ -38,8 +40,7 @@ function special(over: Partial<Special>): Special {
   return {
     id: 1,
     name: 'Test',
-    type: 'happy_hour',
-    comboMode: '',
+    shape: 'happy_hour',
     isActive: true,
     startsAt: '2026-01-01T00:00',
     endsAt: '2030-12-31T23:59',
@@ -47,7 +48,6 @@ function special(over: Partial<Special>): Special {
     dailyEnd: '',
     daysOfWeek: '1111111',
     discountPct: 0,
-    appliesToAll: false,
     triggerQty: 0,
     bundlePriceIncl: 0,
     spendAmountIncl: 0,
@@ -66,6 +66,12 @@ const trigger = (productId: number, qty = 1): SpecialItem => ({
 })
 const reward = (productId: number, qty = 1): SpecialItem => ({
   role: 'reward', productId, departmentId: null, qty, priceIncl: 0,
+})
+/** A multibuy rung: this many units for this much. */
+const tier = (qty: number, priceIncl: number): SpecialTier => ({ qty, priceIncl, discountPct: 0 })
+/** A quantity-break rung: this many units, this much off each. */
+const pctTier = (qty: number, discountPct: number): SpecialTier => ({
+  qty, priceIncl: 0, discountPct,
 })
 const line = (productId: number, priceIncl: number, qty = 1, departmentId: number | null = 10):
   BasketLine => ({ productId, departmentId, priceIncl, qty })
@@ -122,19 +128,19 @@ async function main() {
   console.log('\n— A straight discount —')
   {
     const lines = [line(1, 100), line(2, 50)]
-    const r = computeSpecials(lines, [special({ type: 'happy_hour', discountPct: 10, items: [scope(1)] })], NOW)
+    const r = computeSpecials(lines, [special({ shape: 'happy_hour', discountPct: 10, items: [scope(1)] })], NOW)
     ok('the named product is discounted', near(r.lineSpecials[0]?.pct ?? 0, 10))
     ok('and nothing else is', r.lineSpecials[1] === undefined)
   }
   {
     const lines = [line(1, 100), line(2, 50)]
-    const r = computeSpecials(lines, [special({ type: 'happy_hour', discountPct: 15, appliesToAll: true })], NOW)
+    const r = computeSpecials(lines, [special({ shape: 'happy_hour', discountPct: 15 })], NOW)
     ok('a whole-shop special hits everything', r.lineSpecials.every((s) => near(s?.pct ?? 0, 15)))
   }
   {
     const lines = [line(1, 100, 1, 7)]
     const dept: SpecialItem = { role: 'scope', productId: null, departmentId: 7, qty: 1, priceIncl: 0 }
-    const r = computeSpecials(lines, [special({ type: 'happy_hour', discountPct: 20, items: [dept] })], NOW)
+    const r = computeSpecials(lines, [special({ shape: 'happy_hour', discountPct: 20, items: [dept] })], NOW)
     ok('a department scope matches by id', near(r.lineSpecials[0]?.pct ?? 0, 20))
   }
 
@@ -143,14 +149,14 @@ async function main() {
   {
     const lines = [line(1, 100)]
     const r = computeSpecials(
-      lines, [special({ type: 'special_price', items: [scope(1, { priceIncl: 75 })] })], NOW,
+      lines, [special({ shape: 'special_price', items: [scope(1, { priceIncl: 75 })] })], NOW,
     )
     ok('R100 marked down to R75 is 25% off', near(r.lineSpecials[0]?.pct ?? 0, 25))
   }
   {
     const lines = [line(1, 100)]
     const r = computeSpecials(
-      lines, [special({ type: 'special_price', items: [scope(1, { priceIncl: 120 })] })], NOW,
+      lines, [special({ shape: 'special_price', items: [scope(1, { priceIncl: 120 })] })], NOW,
     )
     ok('a "special" price ABOVE the shelf price does nothing', r.lineSpecials[0] === undefined)
   }
@@ -160,7 +166,7 @@ async function main() {
     const deptRow: SpecialItem = { role: 'scope', productId: null, departmentId: 7, qty: 1, priceIncl: 90 }
     const r = computeSpecials(
       lines,
-      [special({ type: 'special_price', items: [deptRow, scope(1, { priceIncl: 60 })] })],
+      [special({ shape: 'special_price', items: [deptRow, scope(1, { priceIncl: 60 })] })],
       NOW,
     )
     ok('a product row beats a department row', near(r.lineSpecials[0]?.pct ?? 0, 40), 'R60, not R90')
@@ -171,14 +177,14 @@ async function main() {
   {
     // Three separate lines at 30, 20, 10. One deal; the R10 is free.
     const lines = [line(1, 30), line(2, 20), line(3, 10)]
-    const s = special({ type: 'combo', comboMode: 'cheapest_free', triggerQty: 3, items: [trigger(1), trigger(2), trigger(3)] })
+    const s = special({ shape: 'cheapest_free', triggerQty: 3, items: [trigger(1), trigger(2), trigger(3)] })
     const r = computeSpecials(lines, [s], NOW)
     ok('the cheapest is free', near(r.lineSpecials[2]?.pct ?? 0, 100))
     ok('the others pay full price', r.lineSpecials[0] === undefined && r.lineSpecials[1] === undefined)
   }
   {
     const lines = [line(1, 10, 3)]
-    const s = special({ type: 'combo', comboMode: 'cheapest_free', triggerQty: 3, items: [trigger(1)] })
+    const s = special({ shape: 'cheapest_free', triggerQty: 3, items: [trigger(1)] })
     const r = computeSpecials(lines, [s], NOW)
     ok(
       'three on ONE line gives a third off that line',
@@ -188,13 +194,13 @@ async function main() {
   }
   {
     const lines = [line(1, 10, 2)]
-    const s = special({ type: 'combo', comboMode: 'cheapest_free', triggerQty: 3, items: [trigger(1)] })
+    const s = special({ shape: 'cheapest_free', triggerQty: 3, items: [trigger(1)] })
     ok('two of three does not fire', computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined)
   }
   {
     // 50% rather than free — "second at half price".
     const lines = [line(1, 100), line(2, 100)]
-    const s = special({ type: 'combo', comboMode: 'cheapest_free', triggerQty: 2, discountPct: 50, items: [trigger(1), trigger(2)] })
+    const s = special({ shape: 'cheapest_free', triggerQty: 2, discountPct: 50, items: [trigger(1), trigger(2)] })
     const r = computeSpecials(lines, [s], NOW)
     ok('a partial discount is honoured', near(r.lineSpecials[0]?.pct ?? 0, 50))
   }
@@ -204,11 +210,11 @@ async function main() {
   {
     const lines = [line(1, 30), line(2, 20), line(3, 10)]
     const threeForTwo = special({
-      id: 1, priority: 1, name: '3 for 2', type: 'combo', comboMode: 'cheapest_free', triggerQty: 3,
+      id: 1, priority: 1, name: '3 for 2', shape: 'cheapest_free', triggerQty: 3,
       items: [trigger(1), trigger(2), trigger(3)],
     })
     const tenPercent = special({
-      id: 2, priority: 2, name: '10% off', type: 'happy_hour', discountPct: 10,
+      id: 2, priority: 2, name: '10% off', shape: 'happy_hour', discountPct: 10,
       items: [scope(1), scope(2), scope(3)],
     })
     const r = computeSpecials(lines, [threeForTwo, tenPercent], NOW)
@@ -222,9 +228,9 @@ async function main() {
   {
     // Reversing the priority changes which deal the customer gets.
     const lines = [line(1, 30), line(2, 20), line(3, 10)]
-    const threeForTwo = special({ id: 1, priority: 2, type: 'combo', comboMode: 'cheapest_free', triggerQty: 3,
+    const threeForTwo = special({ id: 1, priority: 2, shape: 'cheapest_free', triggerQty: 3,
       items: [trigger(1), trigger(2), trigger(3)] })
-    const tenPercent = special({ id: 2, priority: 1, type: 'happy_hour', discountPct: 10,
+    const tenPercent = special({ id: 2, priority: 1, shape: 'happy_hour', discountPct: 10,
       items: [scope(1), scope(2), scope(3)] })
     const r = computeSpecials(lines, [threeForTwo, tenPercent], NOW)
     ok(
@@ -236,9 +242,9 @@ async function main() {
   {
     // A special that cannot fire must not block the one below it.
     const lines = [line(1, 100)]
-    const impossible = special({ id: 1, priority: 1, type: 'special_price',
+    const impossible = special({ id: 1, priority: 1, shape: 'special_price',
       items: [scope(1, { priceIncl: 150 })] })
-    const real = special({ id: 2, priority: 2, type: 'happy_hour', discountPct: 10, items: [scope(1)] })
+    const real = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 10, items: [scope(1)] })
     const r = computeSpecials(lines, [impossible, real], NOW)
     ok(
       'a special that gives nothing does not claim',
@@ -251,7 +257,7 @@ async function main() {
   console.log('\n— Several for one price —')
   {
     const lines = [line(1, 60), line(2, 60)]
-    const s = special({ type: 'combo', comboMode: 'bundle_price', bundlePriceIncl: 100, items: [trigger(1), trigger(2)] })
+    const s = special({ shape: 'bundle_price', bundlePriceIncl: 100, items: [trigger(1), trigger(2)] })
     const r = computeSpecials(lines, [s], NOW)
     const paid = lines.reduce(
       (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
@@ -261,9 +267,9 @@ async function main() {
   {
     // The bundle costs MORE than the items — must not fire.
     const lines = [line(1, 30), line(2, 30)]
-    const s = special({ id: 1, priority: 1, type: 'combo', comboMode: 'bundle_price', bundlePriceIncl: 100,
+    const s = special({ id: 1, priority: 1, shape: 'bundle_price', bundlePriceIncl: 100,
       items: [trigger(1), trigger(2)] })
-    const other = special({ id: 2, priority: 2, type: 'happy_hour', discountPct: 5,
+    const other = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 5,
       items: [scope(1), scope(2)] })
     const r = computeSpecials(lines, [s, other], NOW)
     ok(
@@ -277,8 +283,8 @@ async function main() {
   {
     // 3 for R25 against R10 shelf units: R30 of goods for R25.
     const lines = [line(1, 10, 3)]
-    const s = special({ type: 'combo', comboMode: 'multibuy', items: [trigger(1)],
-      tiers: [{ qty: 3, priceIncl: 25 }] })
+    const s = special({ shape: 'multibuy', items: [trigger(1)],
+      tiers: [tier(3, 25)] })
     const r = computeSpecials(lines, [s], NOW)
     const paid = lines.reduce(
       (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
@@ -289,8 +295,8 @@ async function main() {
     // Nine units against 3-for-R25 and 6-for-R45: the LARGEST tier fills
     // first — one six and one three (R70), not three threes (R75).
     const lines = [line(1, 10, 9)]
-    const s = special({ type: 'combo', comboMode: 'multibuy', items: [trigger(1)],
-      tiers: [{ qty: 3, priceIncl: 25 }, { qty: 6, priceIncl: 45 }] })
+    const s = special({ shape: 'multibuy', items: [trigger(1)],
+      tiers: [tier(3, 25), tier(6, 45)] })
     const r = computeSpecials(lines, [s], NOW)
     const paid = lines.reduce(
       (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
@@ -301,8 +307,8 @@ async function main() {
   {
     // Four units against a 3-tier: three at the tier, the fourth at shelf.
     const lines = [line(1, 10, 4)]
-    const s = special({ type: 'combo', comboMode: 'multibuy', items: [trigger(1)],
-      tiers: [{ qty: 3, priceIncl: 25 }] })
+    const s = special({ shape: 'multibuy', items: [trigger(1)],
+      tiers: [tier(3, 25)] })
     const r = computeSpecials(lines, [s], NOW)
     const paid = lines.reduce(
       (sum, l, i) => sum + l.priceIncl * l.qty * (1 - (r.lineSpecials[i]?.pct ?? 0) / 100), 0,
@@ -313,8 +319,8 @@ async function main() {
   {
     // A mixed group: the deal spends the CHEAPEST units, the house rule.
     const lines = [line(1, 10, 2), line(2, 20, 2)]
-    const s = special({ type: 'combo', comboMode: 'multibuy',
-      items: [trigger(1), trigger(2)], tiers: [{ qty: 2, priceIncl: 15 }] })
+    const s = special({ shape: 'multibuy',
+      items: [trigger(1), trigger(2)], tiers: [tier(2, 15)] })
     const r = computeSpecials(lines, [s], NOW)
     // Two bundles fire: [10,10] for 15 and [20,20] for 15 — greedy consumes
     // all four units, cheapest bundle first.
@@ -328,9 +334,9 @@ async function main() {
     // A tier at or above what the units cost is not a deal, and must not
     // claim — the special below still gets its chance.
     const lines = [line(1, 10, 2)]
-    const dud = special({ id: 1, priority: 1, type: 'combo', comboMode: 'multibuy',
-      items: [trigger(1)], tiers: [{ qty: 2, priceIncl: 25 }] })
-    const other = special({ id: 2, priority: 2, type: 'happy_hour', discountPct: 5, items: [scope(1)] })
+    const dud = special({ id: 1, priority: 1, shape: 'multibuy',
+      items: [trigger(1)], tiers: [tier(2, 25)] })
+    const other = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 5, items: [scope(1)] })
     const r = computeSpecials(lines, [dud, other], NOW)
     ok('a tier dearer than the goods does not fire, and does not claim',
       r.lineSpecials[0]?.specialId === 2)
@@ -339,9 +345,9 @@ async function main() {
     // Once ANY tier fires, every qualifying line is claimed — including the
     // units paying shelf price — exactly like cheapest_free.
     const lines = [line(1, 10, 4)]
-    const mb = special({ id: 1, priority: 1, type: 'combo', comboMode: 'multibuy',
-      items: [trigger(1)], tiers: [{ qty: 3, priceIncl: 25 }] })
-    const other = special({ id: 2, priority: 2, type: 'happy_hour', discountPct: 50, items: [scope(1)] })
+    const mb = special({ id: 1, priority: 1, shape: 'multibuy',
+      items: [trigger(1)], tiers: [tier(3, 25)] })
+    const other = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 50, items: [scope(1)] })
     const r = computeSpecials(lines, [mb, other], NOW)
     ok('a fired multibuy claims the whole qualifying line',
       r.lineSpecials[0]?.specialId === 1,
@@ -352,14 +358,14 @@ async function main() {
   console.log('\n— Buy this, get that —')
   {
     const lines = [line(1, 50, 2)]
-    const s = special({ type: 'combo', comboMode: 'free_item', items: [trigger(1, 2), reward(9)] })
+    const s = special({ shape: 'free_item', items: [trigger(1, 2), reward(9)] })
     const r = computeSpecials(lines, [s], NOW)
     ok('the reward is earned', r.rewards.length === 1 && r.rewards[0].productId === 9)
     ok('the trigger line is not discounted', r.lineSpecials[0] === undefined, 'the reward IS the deal')
   }
   {
     const lines = [line(1, 50, 4)]
-    const s = special({ type: 'combo', comboMode: 'free_item', items: [trigger(1, 2), reward(9)] })
+    const s = special({ shape: 'free_item', items: [trigger(1, 2), reward(9)] })
     ok('two deals earn two rewards', computeSpecials(lines, [s], NOW).rewards[0]?.qty === 2)
   }
 
@@ -367,18 +373,18 @@ async function main() {
   console.log('\n— Spend this much —')
   {
     const lines = [line(1, 300), line(2, 300)]
-    const s = special({ type: 'spend', spendAmountIncl: 500, discountPct: 10 })
+    const s = special({ shape: 'spend', spendAmountIncl: 500, discountPct: 10 })
     const r = computeSpecials(lines, [s], NOW)
     ok('over the threshold, everything is discounted', r.lineSpecials.every((x) => near(x?.pct ?? 0, 10)))
   }
   {
     const lines = [line(1, 100)]
-    const s = special({ type: 'spend', spendAmountIncl: 500, discountPct: 10 })
+    const s = special({ shape: 'spend', spendAmountIncl: 500, discountPct: 10 })
     ok('under it, nothing is', computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined)
   }
   {
     const lines = [line(1, 2000)]
-    const s = special({ type: 'spend', spendAmountIncl: 500, items: [reward(9)] })
+    const s = special({ shape: 'spend', spendAmountIncl: 500, items: [reward(9)] })
     ok(
       'clearing the threshold four times is still ONE reward',
       computeSpecials(lines, [s], NOW).rewards[0]?.qty === 1,
@@ -388,8 +394,8 @@ async function main() {
     // The threshold counts the whole basket, even lines already claimed —
     // what the customer brought to the till is what they spent.
     const lines = [line(1, 400), line(2, 200)]
-    const first = special({ id: 1, priority: 1, type: 'happy_hour', discountPct: 50, items: [scope(1)] })
-    const spend = special({ id: 2, priority: 2, type: 'spend', spendAmountIncl: 500, discountPct: 10 })
+    const first = special({ id: 1, priority: 1, shape: 'happy_hour', discountPct: 50, items: [scope(1)] })
+    const spend = special({ id: 2, priority: 2, shape: 'spend', spendAmountIncl: 500, discountPct: 10 })
     const r = computeSpecials(lines, [first, spend], NOW)
     ok(
       'an earlier discount does not push a basket under the threshold',
@@ -417,7 +423,7 @@ async function main() {
     // A refund line. It must keep its slot so the results stay index-aligned,
     // but must never earn a deal.
     const lines = [line(1, 10, -1)]
-    const s = special({ type: 'happy_hour', discountPct: 10, appliesToAll: true })
+    const s = special({ shape: 'happy_hour', discountPct: 10 })
     const r = computeSpecials(lines, [s], NOW)
     ok('the result stays index-aligned with the basket', r.lineSpecials.length === 1)
     ok(
@@ -430,7 +436,7 @@ async function main() {
     // The till passes a refund in as qty 0, to keep the array aligned with the
     // basket while making sure it cannot complete or collect a deal.
     const lines = [line(1, 10, 0)]
-    const s = special({ type: 'happy_hour', discountPct: 10, appliesToAll: true })
+    const s = special({ shape: 'happy_hour', discountPct: 10 })
     ok(
       'nor does a zero-quantity line',
       computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined,
@@ -438,12 +444,12 @@ async function main() {
   }
   {
     const lines = [line(1, 0)]
-    const s = special({ type: 'special_price', items: [scope(1, { priceIncl: 5 })] })
+    const s = special({ shape: 'special_price', items: [scope(1, { priceIncl: 5 })] })
     ok('a zero-priced line cannot be marked down', computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined)
   }
   {
     const lines = [line(1, 100)]
-    const s = special({ type: 'happy_hour', discountPct: 500, items: [scope(1)] })
+    const s = special({ shape: 'happy_hour', discountPct: 500, items: [scope(1)] })
     ok(
       'a discount over 100% is clamped',
       near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 100),
@@ -484,8 +490,7 @@ async function databaseChecks() {
   const base = {
     id: null as number | null,
     name: `${TAG} one`,
-    type: 'happy_hour' as const,
-    comboMode: '' as const,
+    shape: 'happy_hour' as SpecialShape,
     isActive: true,
     startsAt: at(new Date(now.getTime() - 3600_000)),
     endsAt: at(new Date(now.getTime() + 86400_000)),
@@ -493,12 +498,11 @@ async function databaseChecks() {
     dailyEnd: '',
     daysOfWeek: '1111111',
     discountPct: 25,
-    appliesToAll: true,
     triggerQty: 0,
     bundlePriceIncl: 0,
     spendAmountIncl: 0,
     items: [],
-    tiers: [] as { qty: number; priceIncl: number }[],
+    tiers: [] as SpecialTier[],
   }
 
   console.log('\n— Validation —')
@@ -507,13 +511,14 @@ async function databaseChecks() {
   ok('half a daily band is refused', validateSpecial({ ...base, dailyStart: '17:00' }) !== null)
   ok('no days of the week is refused', validateSpecial({ ...base, daysOfWeek: '0000000' }) !== null)
   ok(
-    'a percentage special with nothing to apply to is refused',
-    validateSpecial({ ...base, appliesToAll: false, items: [] }) !== null,
+    'a happy hour naming nothing is the WHOLE STORE, not an error',
+    validateSpecial({ ...base, items: [] }) === null,
+    'an empty scope replaced the applies_to_all flag — see 210',
   )
   ok(
     'a marked-down price on a whole DEPARTMENT is allowed',
     validateSpecial({
-      ...base, type: 'special_price', appliesToAll: false,
+      ...base, shape: 'special_price',
       items: [{ role: 'scope', productId: null, departmentId: 1, qty: 1, priceIncl: 5 }],
     }) === null,
     'a department row prices everything in it — the legacy shop relies on this',
@@ -521,17 +526,17 @@ async function databaseChecks() {
   ok('a good one passes', validateSpecial(base) === null)
 
   const mbBase = {
-    ...base, type: 'combo' as const, comboMode: 'multibuy' as const, appliesToAll: false,
+    ...base, shape: 'multibuy' as SpecialShape,
     items: [{ role: 'trigger' as const, productId: 2, departmentId: null, qty: 1, priceIncl: 0 }],
   }
   ok('a multibuy with no tiers is refused',
     validateSpecial({ ...mbBase, tiers: [] }) !== null)
   ok('a one-unit tier is refused — that is just the shelf price',
-    validateSpecial({ ...mbBase, tiers: [{ qty: 1, priceIncl: 10 }] }) !== null)
+    validateSpecial({ ...mbBase, tiers: [tier(1, 10)] }) !== null)
   ok('two tiers at the same quantity are refused',
-    validateSpecial({ ...mbBase, tiers: [{ qty: 3, priceIncl: 25 }, { qty: 3, priceIncl: 20 }] }) !== null)
+    validateSpecial({ ...mbBase, tiers: [tier(3, 25), tier(3, 20)] }) !== null)
   ok('a priced ladder passes',
-    validateSpecial({ ...mbBase, tiers: [{ qty: 3, priceIncl: 25 }, { qty: 6, priceIncl: 45 }] }) === null)
+    validateSpecial({ ...mbBase, tiers: [tier(3, 25), tier(6, 45)] }) === null)
 
   console.log('\n— The window survives the database —')
   const saved = await saveSpecial(SITE, base, 'test')
@@ -556,8 +561,7 @@ async function databaseChecks() {
   const withItems = await saveSpecial(
     SITE,
     {
-      ...base, id: saved.id, name: `${TAG} two`, type: 'combo', comboMode: 'cheapest_free', triggerQty: 3,
-      appliesToAll: false, discountPct: 100,
+      ...base, id: saved.id, name: `${TAG} two`, shape: 'cheapest_free', triggerQty: 3, discountPct: 100,
       items: [
         { role: 'trigger', productId: 2, departmentId: null, qty: 1, priceIncl: 0 },
         // A scope row on a combo: itemsFor should drop it, because the kind
@@ -579,10 +583,9 @@ async function databaseChecks() {
   const withTiers = await saveSpecial(
     SITE,
     {
-      ...base, id: saved.id, name: `${TAG} tiers`, type: 'combo', comboMode: 'multibuy',
-      appliesToAll: false,
+      ...base, id: saved.id, name: `${TAG} tiers`, shape: 'multibuy',
       items: [{ role: 'trigger', productId: 2, departmentId: null, qty: 1, priceIncl: 0 }],
-      tiers: [{ qty: 6, priceIncl: 45 }, { qty: 3, priceIncl: 25 }],
+      tiers: [tier(6, 45), tier(3, 25)],
     },
     'test',
   )
@@ -600,8 +603,8 @@ async function databaseChecks() {
   await saveSpecial(
     SITE,
     {
-      ...base, id: saved.id, name: `${TAG} two`, type: 'combo', comboMode: 'cheapest_free',
-      triggerQty: 3, appliesToAll: false, discountPct: 100,
+      ...base, id: saved.id, name: `${TAG} two`, shape: 'cheapest_free',
+      triggerQty: 3, discountPct: 100,
       items: [{ role: 'trigger', productId: 2, departmentId: null, qty: 1, priceIncl: 0 }],
     },
     'test',
@@ -681,11 +684,11 @@ async function basketChecks() {
   const saved = await saveSpecial(
     SITE,
     {
-      id: null, name: `${TAG} basket`, type: 'happy_hour', comboMode: '', isActive: true,
+      id: null, name: `${TAG} basket`, shape: 'happy_hour', isActive: true,
       startsAt: at(new Date(now.getTime() - 3600_000)),
       endsAt: at(new Date(now.getTime() + 86400_000)),
       dailyStart: '', dailyEnd: '', daysOfWeek: '1111111',
-      discountPct: 20, appliesToAll: false, triggerQty: 0,
+      discountPct: 20, triggerQty: 0,
       bundlePriceIncl: 0, spendAmountIncl: 0,
       items: [{ role: 'scope', productId: product.id, departmentId: null, qty: 1, priceIncl: 0 }],
       tiers: [],

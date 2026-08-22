@@ -26,50 +26,154 @@
  */
 
 /**
- * The four shapes a promotion can take.
+ * Every shape a promotion can take.
  *
- * A combo is one TYPE with four modes rather than four types, because the four
- * modes share everything that matters — they all count trigger products into
- * deals — and differ only in what the deal hands back. Flattening them into
- * six peers loses that, and makes a shopkeeper choose from a list of six when
- * the real question is "is this a straight discount, a marked price, a combo,
- * or a spend threshold".
+ * ── ONE FLAT LIST, AND A FORM THAT STILL ASKS TWO QUESTIONS ──────────────
+ *
+ * These were once a `type` of four values, one of which ("combo") carried a
+ * separate `mode`. The split described how a shopkeeper TALKS about a deal —
+ * "it is a combo, buy three get one free" — and the form still asks it that
+ * way, using SHAPE_GROUPS below.
+ *
+ * But no code ever worked in those terms. Every consumer collapsed the pair
+ * back into one value on its first line, and five reconstructions of one fact
+ * are five chances to reconstruct it differently. Worse, the pair could
+ * disagree: a happy hour carrying a leftover combo mode was a row that read as
+ * nonsense, and `saveSpecial` had to blank it by hand on every write.
+ *
+ * So the DATA is flat and the QUESTION stays in two steps, which is where it
+ * always belonged.
  */
-export const SPECIAL_TYPES = ['happy_hour', 'special_price', 'combo', 'spend'] as const
-export type SpecialType = (typeof SPECIAL_TYPES)[number]
-
-export const TYPE_LABEL: Record<SpecialType, string> = {
-  happy_hour: 'Happy hour',
-  special_price: 'Special price',
-  combo: 'Combo deal',
-  spend: 'Spend & get',
-}
-
-/** What a combo actually does. Only meaningful when the type is `combo`. */
-export const COMBO_MODES = [
+export const SPECIAL_SHAPES = [
+  'happy_hour',
+  'special_price',
   'cheapest_free',
   'free_item',
   'percent_off',
   'bundle_price',
   'multibuy',
+  'spend',
+  'quantity_break',
+  'second_at_pct',
+  'mix_and_match',
+  'free_delivery',
+  'bonus_points',
 ] as const
-export type ComboMode = '' | (typeof COMBO_MODES)[number]
+export type SpecialShape = (typeof SPECIAL_SHAPES)[number]
 
-export const COMBO_MODE_LABEL: Record<Exclude<ComboMode, ''>, string> = {
+export const SHAPE_LABEL: Record<SpecialShape, string> = {
+  happy_hour: 'Happy hour',
+  special_price: 'Special price',
   cheapest_free: 'Buy X, cheapest % off',
   free_item: 'Buy these, get one free',
   percent_off: 'Buy these, get % off',
   bundle_price: 'Bundle price',
   multibuy: 'Multibuy tiers',
+  spend: 'Spend & get',
+  quantity_break: 'Quantity break',
+  second_at_pct: 'Second one % off',
+  mix_and_match: 'Mix & match',
+  free_delivery: 'Free delivery',
+  bonus_points: 'Bonus points',
 }
 
-/** One rung of a multibuy ladder: this many units for this much. */
+/**
+ * How the form groups the shapes into its two questions.
+ *
+ * PRESENTATION ONLY. Nothing in the engine reads this — the arithmetic switches
+ * on the shape itself. It exists so the form can go on asking "what kind of
+ * special?" and then, when the answer is a combo, "what does the combo do?",
+ * without the database having to keep two columns that can contradict.
+ */
+export const SHAPE_GROUPS = [
+  { key: 'happy_hour', label: 'Happy hour', shapes: ['happy_hour'] },
+  { key: 'special_price', label: 'Special price', shapes: ['special_price'] },
+  {
+    key: 'combo',
+    label: 'Combo deal',
+    shapes: [
+      'cheapest_free',
+      'free_item',
+      'percent_off',
+      'bundle_price',
+      'multibuy',
+      'quantity_break',
+      'second_at_pct',
+      'mix_and_match',
+    ],
+  },
+  { key: 'spend', label: 'Spend & get', shapes: ['spend', 'free_delivery', 'bonus_points'] },
+] as const satisfies readonly {
+  key: string
+  label: string
+  shapes: readonly SpecialShape[]
+}[]
+
+/** Which group a shape belongs to, for a form drawing the first question. */
+export function groupOf(shape: SpecialShape): (typeof SHAPE_GROUPS)[number]['key'] {
+  return (
+    SHAPE_GROUPS.find((g) => (g.shapes as readonly string[]).includes(shape))?.key ?? 'happy_hour'
+  )
+}
+
+/**
+ * One rung of a quantity ladder.
+ *
+ * Two shapes ladder, and they ladder different things. `multibuy` prices a
+ * quantity — three for R25 — and reads `priceIncl`. `quantity_break` discounts
+ * one — ten or more at 5% off — and reads `discountPct`. Whichever the shape
+ * does not use stays at zero.
+ *
+ * Two fields rather than one read differently depending on the parent: a single
+ * column holding rands in some rows and percentages in others is a column every
+ * reader must ask the parent about first, and the first reader that forgets
+ * prices a deal at five rand instead of five percent.
+ */
 export type SpecialTier = {
   qty: number
   priceIncl: number
+  discountPct: number
 }
 
+/** The shapes that read `tiers`. */
+export const LADDERED: ReadonlySet<SpecialShape> = new Set(['multibuy', 'quantity_break'])
+
+
 export type SpecialRole = 'scope' | 'trigger' | 'reward'
+
+/**
+ * Which item roles each shape actually reads.
+ *
+ * A table rather than a chain of conditionals, so adding a shape is a line here
+ * and a compile error if it is forgotten — where a chain silently falls through
+ * to whatever its last branch happened to be.
+ *
+ * In the pure engine so the FORM and the SERVER read the same table. Both drop
+ * the rows a shape does not use — the form on the way out, the server on the
+ * way in — and two copies of this list would be two answers to "does a bundle
+ * keep its scope rows".
+ */
+export const ROLES_USED: Record<SpecialShape, SpecialRole[]> = {
+  // A scope of nothing means the whole store, so these two carry scope only.
+  happy_hour: ['scope'],
+  special_price: ['scope'],
+
+  // The combos count trigger products into deals.
+  cheapest_free: ['trigger'],
+  percent_off: ['trigger'],
+  bundle_price: ['trigger'],
+  multibuy: ['trigger'],
+  quantity_break: ['trigger'],
+  second_at_pct: ['trigger'],
+  mix_and_match: ['trigger'],
+  // The one combo that also hands something back.
+  free_item: ['trigger', 'reward'],
+
+  // The threshold deals ask nothing of WHICH products, only of the total.
+  spend: ['reward'],
+  free_delivery: [],
+  bonus_points: [],
+}
 
 export type SpecialItem = {
   role: SpecialRole
@@ -84,9 +188,7 @@ export type SpecialItem = {
 export type Special = {
   id: number
   name: string
-  type: SpecialType
-  /** Only meaningful when the type is `combo`; '' otherwise. */
-  comboMode: ComboMode
+  shape: SpecialShape
   isActive: boolean
   /** Local wall-clock, 'YYYY-MM-DDTHH:mm'. */
   startsAt: string
@@ -97,7 +199,6 @@ export type Special = {
   /** Seven characters of 0/1, MONDAY FIRST. */
   daysOfWeek: string
   discountPct: number
-  appliesToAll: boolean
   triggerQty: number
   bundlePriceIncl: number
   spendAmountIncl: number
@@ -185,8 +286,7 @@ export type SpecialInput = {
   /** Null to create. */
   id: number | null
   name: string
-  type: SpecialType
-  comboMode: ComboMode
+  shape: SpecialShape
   isActive: boolean
   startsAt: string
   endsAt: string
@@ -194,7 +294,6 @@ export type SpecialInput = {
   dailyEnd: string
   daysOfWeek: string
   discountPct: number
-  appliesToAll: boolean
   triggerQty: number
   bundlePriceIncl: number
   spendAmountIncl: number
@@ -211,10 +310,7 @@ export type SpecialInput = {
  */
 export function validateSpecial(input: SpecialInput): string | null {
   if (!input.name.trim()) return 'A name for the special is required'
-  if (!(SPECIAL_TYPES as readonly string[]).includes(input.type)) return 'Unknown special type'
-  if (input.type === 'combo' && !(COMBO_MODES as readonly string[]).includes(input.comboMode)) {
-    return 'Choose what the combo does'
-  }
+  if (!(SPECIAL_SHAPES as readonly string[]).includes(input.shape)) return 'Unknown special type'
 
   const start = input.startsAt.trim()
   const end = input.endsAt.trim()
@@ -242,14 +338,13 @@ export function validateSpecial(input: SpecialInput): string | null {
   const rewards = input.items.filter((i) => i.role === 'reward')
   const pct = 'The discount must be between 0 and 100 percent'
 
-  const shape = input.type === 'combo' ? input.comboMode : input.type
-
-  switch (shape) {
+  switch (input.shape) {
     case 'happy_hour':
       if (input.discountPct <= 0 || input.discountPct > 100) return pct
-      if (!input.appliesToAll && scope.length === 0) {
-        return 'Add the products or departments the special applies to'
-      }
+      /* An empty scope IS "the whole store" — see 210 for why the old
+         applies_to_all flag went. So there is nothing to refuse here: a happy
+         hour naming nothing is a store-wide one, which is a real thing to want
+         and used to need a separate switch to say. */
       break
 
     case 'special_price':
@@ -428,7 +523,7 @@ export function computeSpecials(
     const available = lines
       .map((line, index) => ({ line, index }))
       .filter(({ line, index }) => !claimed[index] && line.qty > 0)
-    if (available.length === 0 && special.type !== 'spend') continue
+    if (available.length === 0 && special.shape !== 'spend') continue
 
     const scope = special.items.filter((i) => i.role === 'scope')
     const triggers = special.items.filter((i) => i.role === 'trigger')
@@ -464,14 +559,14 @@ export function computeSpecials(
       })
     }
 
-    const shape =
-      special.type === 'combo' ? special.comboMode || 'cheapest_free' : special.type
-
-    switch (shape) {
+    switch (special.shape) {
       case 'happy_hour': {
         const pct = clampPct(special.discountPct)
         if (pct <= 0) break
-        const hit = special.appliesToAll ? available : matching(scope)
+        // No scope at all means the whole store. The rows someone picked are
+        // the limit; picking none is not picking nothing, it is picking
+        // everything — which is what a store-wide sale is.
+        const hit = scope.length === 0 ? available : matching(scope)
         if (hit.length === 0) break
         for (const { index } of hit) give(index, pct)
         claim(hit)

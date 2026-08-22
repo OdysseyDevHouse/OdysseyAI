@@ -271,8 +271,7 @@ function main() {
       {
         id: 1,
         name: '10% off Coke',
-        type: 'happy_hour',
-        comboMode: '',
+        shape: 'happy_hour',
         isActive: true,
         startsAt: '2000-01-01T00:00',
         endsAt: '2099-12-31T23:59',
@@ -280,7 +279,6 @@ function main() {
         dailyEnd: '',
         daysOfWeek: '1111111',
         discountPct: 10,
-        appliesToAll: false,
         triggerQty: 0,
         bundlePriceIncl: 0,
         spendAmountIncl: 0,

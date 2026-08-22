@@ -19,16 +19,15 @@ import { formatMoney } from '@/lib/decimals'
 import { searchProductsAction } from '@/app/(app)/products/pickerActions'
 import type { ProductPick } from '@/lib/site/products'
 import {
-  COMBO_MODES,
-  COMBO_MODE_LABEL,
-  SPECIAL_TYPES,
-  TYPE_LABEL,
+  SHAPE_GROUPS,
+  SHAPE_LABEL,
+  ROLES_USED,
+  groupOf,
   validateSpecial,
-  type ComboMode,
   type SpecialInput,
   type SpecialItemInput,
   type SpecialRole,
-  type SpecialType,
+  type SpecialShape,
   // The pure engine, NOT lib/site/specials — importing the server module from
   // a client component pulls mysql2 into the browser bundle.
 } from '@/lib/specialsEngine'
@@ -37,15 +36,23 @@ import { saveSpecialAction } from './actions'
 /**
  * Setting up one special.
  *
- * ── THE FORM FOLLOWS THE TYPE ────────────────────────────────────────────
+ * ── THE FORM FOLLOWS THE SHAPE ───────────────────────────────────────────
  *
- * Four types, one of which has four modes. Only the fields the chosen shape
- * actually uses are drawn — showing all of them greyed out would make every
- * special look more complicated than it is, and a shopkeeper setting up a
- * happy hour has no business seeing a bundle price box.
+ * Only the fields the chosen shape actually uses are drawn — showing all of
+ * them greyed out would make every special look more complicated than it is,
+ * and a shopkeeper setting up a happy hour has no business seeing a bundle
+ * price box.
  *
- * The second question is only asked once the first makes it relevant, which is
- * why the combo modes appear under the type control rather than beside it.
+ * ── ONE STORED SHAPE, ASKED AS TWO QUESTIONS ─────────────────────────────
+ *
+ * The database keeps a single flat `shape` (see 210), because every piece of
+ * code that reads a special immediately wants one value to switch on. But a
+ * shopkeeper does not describe a deal that way — they say "it is a combo, buy
+ * three get one free". So the first control picks a GROUP and the second, shown
+ * only when the group holds a choice, picks the shape within it.
+ *
+ * That split now lives entirely here, in the screen that asks the question,
+ * rather than in two columns that could contradict each other.
  *
  * ── IT VALIDATES WITH THE SERVER'S OWN FUNCTION ──────────────────────────
  *
@@ -57,6 +64,26 @@ import { saveSpecialAction } from './actions'
 export type DepartmentOption = { id: number; name: string }
 
 const DAY_LETTERS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+/**
+ * The shapes whose arithmetic is actually written.
+ *
+ * `SPECIAL_SHAPES` names more than this — 210 declared every shape the enum
+ * will ever hold, so that building one is a code change rather than another
+ * ALTER on a table every till reads. Offering an unbuilt shape here would let a
+ * shop set one up, save it, switch it on, and never find out that it does
+ * nothing. So the form only offers what fires.
+ */
+const BUILT: ReadonlySet<SpecialShape> = new Set([
+  'happy_hour',
+  'special_price',
+  'cheapest_free',
+  'free_item',
+  'percent_off',
+  'bundle_price',
+  'multibuy',
+  'spend',
+])
 
 /** A row as the form holds it — the item plus what it is called and costs. */
 export type FormRow = SpecialItemInput & {
@@ -90,27 +117,21 @@ export default function SpecialForm({
 
   const patch = (changes: Partial<SpecialInput>) => setDraft({ ...draft, ...changes })
 
-  /** Which shape the form is drawing — a type, or a combo's mode. */
-  const shape = draft.type === 'combo' ? draft.comboMode || 'cheapest_free' : draft.type
+  /** The group the chosen shape sits in, for the first segmented control. */
+  const group = SHAPE_GROUPS.find((g) => g.key === groupOf(draft.shape)) ?? SHAPE_GROUPS[0]
 
   function save() {
     /*
      * Only the rows this shape uses are sent. The rest stay in local state, so
-     * switching type and back does not lose what was already picked.
+     * switching shape and back does not lose what was already picked.
+     *
+     * The same table the server filters by, imported rather than restated —
+     * two lists would be two answers to "does a bundle keep its scope rows".
      */
-    const keep: SpecialRole[] =
-      draft.type === 'happy_hour' || draft.type === 'special_price'
-        ? ['scope']
-        : draft.type === 'spend'
-          ? ['reward']
-          : draft.comboMode === 'free_item'
-            ? ['trigger', 'reward']
-            : ['trigger']
+    const keep: SpecialRole[] = ROLES_USED[draft.shape]
 
     const payload: SpecialInput = {
       ...draft,
-      comboMode: draft.type === 'combo' ? draft.comboMode : '',
-      appliesToAll: draft.type === 'happy_hour' ? draft.appliesToAll : false,
       items: rows
         .filter((r) => keep.includes(r.role))
         .map(({ role, productId, departmentId, qty, priceIncl }) => ({
@@ -200,17 +221,33 @@ export default function SpecialForm({
           title="What kind of special?"
           hint="Pick the shape of the promotion — the rest of the form follows."
         >
+          {/*
+            Two questions over ONE stored value.
+
+            The shape is flat in the database — see 210 — but a shopkeeper does
+            not describe a deal that way. They say "it is a combo, buy three get
+            one free", so the form keeps asking in that order and simply picks
+            the group's first shape when the group changes.
+          */}
           <SegmentedControl
-            value={draft.type}
-            onChange={(v) => patch({ type: v as SpecialType })}
-            options={SPECIAL_TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] }))}
+            value={groupOf(draft.shape)}
+            onChange={(v) => {
+              const group = SHAPE_GROUPS.find((g) => g.key === v)
+              if (group) patch({ shape: group.shapes[0] })
+            }}
+            options={SHAPE_GROUPS.map((g) => ({ value: g.key, label: g.label }))}
           />
-          {/* The second question, asked only once the first makes it real. */}
-          {draft.type === 'combo' && (
+          {/* The second question, asked only when the group holds a choice. */}
+          {group.shapes.length > 1 && (
             <SegmentedControl
-              value={draft.comboMode || 'cheapest_free'}
-              onChange={(v) => patch({ comboMode: v as ComboMode })}
-              options={COMBO_MODES.map((m) => ({ value: m, label: COMBO_MODE_LABEL[m] }))}
+              value={draft.shape}
+              onChange={(v) => patch({ shape: v as SpecialShape })}
+              options={group.shapes
+                // Only what is BUILT. The enum names shapes whose arithmetic is
+                // not written yet, and offering one would let a shop set up a
+                // promotion that silently never fires.
+                .filter((s) => BUILT.has(s))
+                .map((s) => ({ value: s, label: SHAPE_LABEL[s] }))}
             />
           )}
         </Section>
@@ -344,7 +381,7 @@ export default function SpecialForm({
 
         {/* ── The deal, whichever shape it is ───────────────────────────── */}
         <DealSection
-          shape={shape}
+          shape={draft.shape}
           draft={draft}
           patch={patch}
           rows={rows}
@@ -403,7 +440,7 @@ function DealSection({
   departments,
   busy,
 }: {
-  shape: string
+  shape: SpecialShape
   draft: SpecialInput
   patch: (changes: Partial<SpecialInput>) => void
   rows: FormRow[]
@@ -422,35 +459,32 @@ function DealSection({
         title="Discount"
         hint="How much comes off, and what it covers."
       >
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="w-36">
-            <Field label="Discount">
-              <NumberInput
-                value={draft.discountPct}
-                min={0}
-                max={100}
-                onChange={(e) => patch({ discountPct: Number(e.target.value) || 0 })}
-              />
-            </Field>
-          </div>
-          <label className="flex h-control cursor-pointer items-center gap-2 rounded-control border border-border bg-surface-2 px-3">
-            <input
-              type="checkbox"
-              className="size-4 cursor-pointer"
-              checked={draft.appliesToAll}
-              onChange={(e) => patch({ appliesToAll: e.target.checked })}
+        <div className="w-36">
+          <Field label="Discount">
+            <NumberInput
+              value={draft.discountPct}
+              min={0}
+              max={100}
+              onChange={(e) => patch({ discountPct: Number(e.target.value) || 0 })}
             />
-            <span className="text-sm text-ink">Applies to the whole store</span>
-          </label>
+          </Field>
         </div>
 
-        {!draft.appliesToAll &&
-          editor({
-            role: 'scope',
-            label: 'Applies to',
-            hint: 'Products and/or whole departments that get the discount.',
-            empty: 'Nothing added yet — add the products or departments the discount covers.',
-          })}
+        {/*
+          There is no "applies to the whole store" switch any more.
+
+          There used to be, beside this list, and a special could carry BOTH —
+          the flag silently won, so the products someone had carefully picked
+          were ignored with nothing on screen to say so. Adding nothing IS the
+          store-wide answer now, and the empty state says so out loud rather
+          than leaving it to be discovered.
+        */}
+        {editor({
+          role: 'scope',
+          label: 'Applies to',
+          hint: 'Leave empty to discount the whole store, or name the products and departments it covers.',
+          empty: 'Nothing added — this discount applies to EVERYTHING in the store.',
+        })}
       </Section>
     )
   }
@@ -685,8 +719,10 @@ function DealSection({
                     tiers: [
                       ...tiers,
                       // The next rung starts above the last, so the ladder
-                      // climbs by itself as rungs are added.
-                      { qty: (tiers.at(-1)?.qty ?? 1) + 2, priceIncl: 0 },
+                      // climbs by itself as rungs are added. A multibuy rung
+                      // prices a quantity, so the percentage stays at zero —
+                      // it is what the quantity_break shape ladders instead.
+                      { qty: (tiers.at(-1)?.qty ?? 1) + 2, priceIncl: 0, discountPct: 0 },
                     ],
                   })
                 }

@@ -4,13 +4,13 @@ import { siteQuery, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import {
   computeSpecials,
-  COMBO_MODES,
-  SPECIAL_TYPES,
+  SPECIAL_SHAPES,
+  LADDERED,
+  ROLES_USED,
   type Special,
   type SpecialItem,
   type SpecialTier,
-  type ComboMode,
-  type SpecialType,
+  type SpecialShape,
   validateSpecial,
   type SpecialInput,
   type SpecialItemInput,
@@ -37,15 +37,15 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 const NAME_MAX = 100
 
 function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special {
-  const type = String(r.type)
-  const mode = String(r.combo_mode ?? '')
+  const shape = String(r.shape)
   return {
     id: Number(r.id),
     name: String(r.name),
     // Coerced rather than trusted: one row written by a future version must
     // not take down every till that reads it.
-    type: (SPECIAL_TYPES as readonly string[]).includes(type) ? (type as SpecialType) : 'happy_hour',
-    comboMode: (COMBO_MODES as readonly string[]).includes(mode) ? (mode as ComboMode) : '',
+    shape: (SPECIAL_SHAPES as readonly string[]).includes(shape)
+      ? (shape as SpecialShape)
+      : 'happy_hour',
     isActive: !!r.is_active,
     // Already the wall-clock text a shopkeeper typed — see 057's note on why
     // these are not DATETIME columns.
@@ -55,7 +55,6 @@ function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special
     dailyEnd: String(r.daily_end ?? ''),
     daysOfWeek: /^[01]{7}$/.test(String(r.days_of_week)) ? String(r.days_of_week) : '1111111',
     discountPct: toNum(r.discount_pct),
-    appliesToAll: !!r.applies_to_all,
     triggerQty: Number(r.trigger_qty ?? 0),
     bundlePriceIncl: toNum(r.bundle_price_incl),
     spendAmountIncl: toNum(r.spend_amount_incl),
@@ -104,7 +103,11 @@ export async function listSpecials(siteId: number): Promise<Special[]> {
   for (const row of tiers) {
     const id = Number(row.special_id)
     const list = tiersBySpecial.get(id) ?? []
-    list.push({ qty: Number(row.qty), priceIncl: toNum(row.price_incl) })
+    list.push({
+      qty: Number(row.qty),
+      priceIncl: toNum(row.price_incl),
+      discountPct: toNum(row.discount_pct),
+    })
     tiersBySpecial.set(id, list)
   }
 
@@ -232,7 +235,7 @@ export function specialPriceFor(
   now: Date,
 ): { priceIncl: number; wasPriceIncl: number; specialId: number; name: string } | null {
   const singleUnit = specials.filter(
-    (s) => s.type === 'happy_hour' || s.type === 'special_price',
+    (s) => s.shape === 'happy_hour' || s.shape === 'special_price',
   )
   if (singleUnit.length === 0) return null
 
@@ -371,14 +374,7 @@ export { validateSpecial }
  * nothing reads and the next person has to puzzle over.
  */
 function itemsFor(input: SpecialInput): SpecialItemInput[] {
-  const keep: SpecialRole[] =
-    input.type === 'happy_hour' || input.type === 'special_price'
-      ? ['scope']
-      : input.type === 'spend'
-        ? ['reward']
-        : input.comboMode === 'free_item'
-          ? ['trigger', 'reward']
-          : ['trigger']
+  const keep = ROLES_USED[input.shape]
 
   return input.items
     .filter((i) => keep.includes(i.role))
@@ -402,10 +398,7 @@ export async function saveSpecial(
 
     const fields = [
       input.name.trim().slice(0, NAME_MAX),
-      input.type,
-      // Blank unless it IS a combo, so a leftover mode cannot make a happy
-      // hour behave like one.
-      input.type === 'combo' ? input.comboMode : '',
+      input.shape,
       input.isActive ? 1 : 0,
       input.startsAt.trim(),
       input.endsAt.trim(),
@@ -413,7 +406,6 @@ export async function saveSpecial(
       input.dailyEnd.trim(),
       input.daysOfWeek,
       input.discountPct.toFixed(3),
-      input.appliesToAll ? 1 : 0,
       Math.max(0, Math.floor(input.triggerQty)),
       input.bundlePriceIncl.toFixed(4),
       input.spendAmountIncl.toFixed(4),
@@ -423,9 +415,9 @@ export async function saveSpecial(
     if (id) {
       await tx.query(
         `UPDATE specials
-            SET name = ?, type = ?, combo_mode = ?, is_active = ?, starts_at = ?, ends_at = ?,
+            SET name = ?, shape = ?, is_active = ?, starts_at = ?, ends_at = ?,
                 daily_start = ?, daily_end = ?, days_of_week = ?, discount_pct = ?,
-                applies_to_all = ?, trigger_qty = ?, bundle_price_incl = ?,
+                trigger_qty = ?, bundle_price_incl = ?,
                 spend_amount_incl = ?, updated_by = ?
           WHERE id = ?`,
         [...fields, id],
@@ -438,10 +430,10 @@ export async function saveSpecial(
 
       const [result] = await tx.query<import('mysql2').ResultSetHeader>(
         `INSERT INTO specials
-           (name, type, combo_mode, is_active, starts_at, ends_at, daily_start, daily_end,
-            days_of_week, discount_pct, applies_to_all, trigger_qty,
+           (name, shape, is_active, starts_at, ends_at, daily_start, daily_end,
+            days_of_week, discount_pct, trigger_qty,
             bundle_price_incl, spend_amount_incl, updated_by, priority)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [...fields, nextPriority],
       )
       id = result.insertId
@@ -470,15 +462,28 @@ export async function saveSpecial(
       )
     }
 
-    // The tiers, same replace-wholesale rule as the items — and dropped
-    // entirely when the special is not a multibuy, so a deal edited into
-    // another shape does not keep a ladder nothing reads.
+    /*
+     * The tiers, same replace-wholesale rule as the items — and dropped
+     * entirely when the shape has no ladder, so a deal edited into another
+     * shape does not keep rungs nothing reads.
+     *
+     * Two shapes ladder, and they ladder different things: `multibuy` prices a
+     * quantity (3 for R25) while `quantity_break` discounts one (10+ at 5%
+     * off). Both columns are written from whichever the shape uses and the
+     * other stays at zero — see 210 for why they are separate columns rather
+     * than one read differently depending on the parent.
+     */
     await tx.query(`DELETE FROM special_tiers WHERE special_id = ?`, [id])
-    if (input.type === 'combo' && input.comboMode === 'multibuy') {
+    if (LADDERED.has(input.shape)) {
       for (const tier of input.tiers) {
         await tx.query(
-          `INSERT INTO special_tiers (special_id, qty, price_incl) VALUES (?,?,?)`,
-          [id, Math.max(2, Math.floor(tier.qty)), Math.max(tier.priceIncl, 0).toFixed(4)],
+          `INSERT INTO special_tiers (special_id, qty, price_incl, discount_pct) VALUES (?,?,?,?)`,
+          [
+            id,
+            Math.max(2, Math.floor(tier.qty)),
+            Math.max(tier.priceIncl, 0).toFixed(4),
+            Math.min(Math.max(tier.discountPct, 0), 100).toFixed(3),
+          ],
         )
       }
     }
