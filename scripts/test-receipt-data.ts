@@ -128,6 +128,61 @@ ok('the posted slip takes its cashier from the document',
     built.cashierName === doc.userName,
     `${built.cashierName} vs ${doc.userName}`)
 
+console.log('\n── A free item a promotion handed over ─────────────────────\n')
+
+/*
+ * ── WHY THIS NEEDS ITS OWN CASE ──────────────────────────────────────────
+ *
+ * A reward line is what a "buy two pizzas, get a garlic bread" promotion puts
+ * on the sale: an ordinary line at ZERO price, carrying the special that
+ * granted it. It is the one line on the slip where the promotion did not take
+ * money off — it handed something over — so `discountIncl` is legitimately 0.
+ *
+ * Every renderer guards its "why" row on `discountIncl > 0`, which is right for
+ * a discount and wrong here: the free item prints as
+ *
+ *     1 x Garlic Bread                           R0.00
+ *
+ * with nothing saying why, so it reads as a pricing error rather than a
+ * freebie. The builder's job is to carry the promotion's NAME through on such a
+ * line; what each renderer then draws is its own business, but it cannot draw
+ * what it was not given.
+ */
+const rewardDoc = {
+  ...doc,
+  lines: [
+    doc.lines[0],
+    {
+      id: 2, documentId: 9, lineNumber: 2, productId: 7, productCode: 'GB',
+      description: 'Garlic Bread', productType: 'normal', departmentId: null,
+      salesRepId: null, salesRepName: null, salesRepUserId: null,
+      qty: 1, qtyDelivered: 0, unitPriceIncl: 0, discountPct: 0, discountIncl: 0,
+      vatRatePct: 15, lineTotalIncl: 0, lineTotalExcl: 0, lineVat: 0,
+      unitCostExcl: 8, specialId: 42,
+      instructions: [], kitchenSentQty: 0, note: '',
+    },
+  ],
+} as unknown as SalesDocument
+
+const withReward = receiptDataFor(rewardDoc, site, tenders, {
+  printedAt: 'now',
+  specialNames: new Map([[42, 'Pizza Tuesday']]),
+})
+const free = withReward.lines[1]
+
+ok('the free line is on the slip', free?.description === 'Garlic Bread')
+ok('at nothing', free?.lineTotalIncl === 0)
+ok(
+  '*** and it NAMES the promotion that gave it ***',
+  free?.specialName === 'Pizza Tuesday',
+  free?.specialName ?? '(null)',
+  )
+ok(
+  'while carrying no discount, because none was taken off',
+  free?.discountIncl === 0 && free?.discountPct === 0,
+  'a renderer keying its "why" row on discountIncl > 0 will say nothing here',
+)
+
 console.log('\n── Notes formatting ────────────────────────────────────────\n')
 
 ok('qty > 1 formats as a count',
