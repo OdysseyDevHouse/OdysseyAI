@@ -5,11 +5,13 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  Checkbox,
   Card,
   CardBody,
   CardHeader,
   EmptyState,
   Icons,
+  Modal,
   SegmentedControl,
   Switch,
   useToast,
@@ -27,6 +29,7 @@ import {
 
 import {
   deleteSpecialAction,
+  fanoutSpecialAction,
   reorderSpecialsAction,
   setSpecialActiveAction,
 } from './actions'
@@ -36,6 +39,7 @@ import SpecialForm, {
   type FormRow,
 } from './SpecialForm'
 import type { ResolvedItem, SpecialWithUse } from '@/lib/site/specials'
+import type { FanoutOutcome } from '@/lib/site/specialFanout'
 
 /**
  * The shop's promotions, in the order they fire.
@@ -166,12 +170,15 @@ export default function SpecialsList({
   items,
   departments,
   customerGroups,
+  stores,
 }: {
   specials: SpecialWithUse[]
   /** Every special's items, already resolved to names and prices. */
   items: ResolvedItem[]
   departments: DepartmentOption[]
   customerGroups: CustomerGroupOption[]
+  /** The other stores in the group. Empty for a shop that is in none. */
+  stores: { siteId: number; name: string }[]
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -198,6 +205,8 @@ export default function SpecialsList({
    * than derived from it, because a NEW special has no id to look items up by.
    */
   const [editingRows, setEditingRows] = useState<FormRow[]>([])
+  /** The special whose push dialog is open. */
+  const [pushing, setPushing] = useState<SpecialWithUse | null>(null)
 
   // Re-derived on every render rather than held in state, so a special that
   // starts while someone is looking at the list flips on its own.
@@ -480,6 +489,22 @@ export default function SpecialsList({
                       >
                         <Icons.Copy size={15} />
                       </Button>
+                      {/* Only for a shop that is actually in a group. A button
+                          that opens a dialog listing no stores is a button
+                          promising something the shop does not have. */}
+                      {stores.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          iconOnly
+                          aria-label={`Push ${special.name} to other stores`}
+                          title="Push to other stores"
+                          disabled={busy}
+                          onClick={() => setPushing(special)}
+                        >
+                          <Icons.Send size={15} />
+                        </Button>
+                      )}
                       <Button
                         variant="danger-ghost"
                         size="sm"
@@ -509,6 +534,18 @@ export default function SpecialsList({
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
+            router.refresh()
+          }}
+        />
+      )}
+
+      {pushing && (
+        <PushToStores
+          special={pushing}
+          stores={stores}
+          onClose={() => setPushing(null)}
+          onDone={() => {
+            setPushing(null)
             router.refresh()
           }}
         />
@@ -571,4 +608,145 @@ function blankSpecial(): SpecialInput {
     items: [],
     tiers: [],
   }
+}
+
+/* ── Pushing one promotion to the rest of the group ──────────────────────── */
+
+/**
+ * Copy this special into the other stores.
+ *
+ * ── IT COPIES, AND THE DIALOG SAYS SO ────────────────────────────────────
+ *
+ * Each store gets its own row, which it can then switch off or re-time without
+ * phoning head office. That is the right behaviour and a surprising one if
+ * nobody says it, so the dialog does — along with the two things that cannot
+ * travel: a customer group (ids are per store) and a redemption count.
+ *
+ * ── AND IT REPORTS PER STORE ─────────────────────────────────────────────
+ *
+ * No transaction spans two databases, so this is never all-or-nothing. Nineteen
+ * stores taking it and one being asleep IS the answer, and the outcomes stay on
+ * screen afterwards — including which products a store does not stock, because
+ * a promotion covering four products here and three there is exactly what
+ * nobody finds until a customer argues about a price.
+ */
+function PushToStores({
+  special,
+  stores,
+  onClose,
+  onDone,
+}: {
+  special: SpecialWithUse
+  stores: { siteId: number; name: string }[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const toast = useToast()
+  const [busy, start] = useTransition()
+  const [chosen, setChosen] = useState<Set<number>>(new Set(stores.map((s) => s.siteId)))
+  const [outcomes, setOutcomes] = useState<FanoutOutcome[] | null>(null)
+
+  const toggle = (siteId: number) => {
+    const next = new Set(chosen)
+    if (next.has(siteId)) next.delete(siteId)
+    else next.add(siteId)
+    setChosen(next)
+  }
+
+  const caveat =
+    special.audience === 'group'
+      ? 'This promotion is aimed at one customer group. Customer groups are per store, so the copies will apply to everyone until each branch narrows them.'
+      : special.maxRedemptions !== null
+        ? `Each store keeps its own count, so a limit of ${special.maxRedemptions} means ${special.maxRedemptions} at every store rather than ${special.maxRedemptions} across the group.`
+        : null
+
+  function push() {
+    start(async () => {
+      const result = await fanoutSpecialAction(special.id, [...chosen])
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      setOutcomes(result.outcomes)
+      const worked = result.outcomes.filter((o) => o.ok).length
+      if (worked === result.outcomes.length) {
+        toast.success(`Pushed to ${worked} store${worked === 1 ? '' : 's'}.`)
+      } else {
+        toast.error(`${worked} of ${result.outcomes.length} stores took it — see below.`)
+      }
+    })
+  }
+
+  return (
+    <Modal
+      open
+      onClose={busy ? () => {} : outcomes ? onDone : onClose}
+      title="Push to other stores"
+      description={`Copy “${special.name}” into the other stores in your group.`}
+      size="lg"
+      footer={
+        outcomes ? (
+          <Button onClick={onDone}>Done</Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={push} disabled={busy || chosen.size === 0}>
+              <Icons.Send size={15} />
+              {busy
+                ? 'Pushing…'
+                : `Push to ${chosen.size} store${chosen.size === 1 ? '' : 's'}`}
+            </Button>
+          </>
+        )
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {outcomes ? (
+          <ul className="flex flex-col gap-2">
+            {outcomes.map((o) => (
+              <li
+                key={o.siteId}
+                className="flex flex-wrap items-center gap-2 rounded-control border border-border bg-surface px-3 py-2 text-sm"
+              >
+                <Badge tone={o.ok ? 'success' : 'danger'}>{o.ok ? o.detail : 'failed'}</Badge>
+                <span className="text-ink">{o.storeName}</span>
+                {!o.ok && <span className="text-muted">{o.detail}</span>}
+                {o.skipped.length > 0 && (
+                  <span className="text-warning">
+                    {o.skipped.length} not stocked there: {o.skipped.slice(0, 4).join(', ')}
+                    {o.skipped.length > 4 ? '…' : ''}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <>
+            <p className="text-sm text-muted">
+              Each store gets its own copy, which it can switch off or re-time on its own.
+              Pushing again updates the copies rather than making new ones.
+            </p>
+            {caveat && (
+              <p className="rounded-control bg-warning-soft px-3 py-2 text-xs text-warning">
+                <Icons.Info size={14} className="mr-1.5 inline align-text-bottom" />
+                {caveat}
+              </p>
+            )}
+            <div className="flex flex-col gap-1.5">
+              {stores.map((s) => (
+                <Checkbox
+                  key={s.siteId}
+                  checked={chosen.has(s.siteId)}
+                  label={s.name}
+                  onChange={() => toggle(s.siteId)}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  )
 }

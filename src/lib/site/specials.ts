@@ -43,6 +43,10 @@ function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special
   return {
     maxRedemptions: r.max_redemptions === null ? null : Number(r.max_redemptions),
     redemptionsCount: Number(r.redemptions_count ?? 0),
+    originSiteId:
+      r.origin_site_id === null || r.origin_site_id === undefined
+        ? null
+        : Number(r.origin_site_id),
     id: Number(r.id),
     name: String(r.name),
     // Coerced rather than trusted: one row written by a future version must
@@ -119,6 +123,11 @@ export type SpecialWithUse = Special & {
   /** Null is unlimited. */
   maxRedemptions: number | null
   redemptionsCount: number
+  /**
+   * Which site this copy was pushed FROM (215). Null means this store wrote
+   * it itself — which is every special that was never fanned out.
+   */
+  originSiteId: number | null
 }
 
 /** Every special, in firing order. Includes the switched-off ones. */
@@ -455,6 +464,13 @@ export async function saveSpecial(
   siteId: number,
   input: SpecialInput,
   updatedBy: string,
+  /**
+   * Set only when this row is a COPY pushed from another store (215).
+   *
+   * Undefined leaves the column alone, so an ordinary edit at a branch does not
+   * quietly claim the promotion as its own — nor disown one it received.
+   */
+  originSiteId?: number,
 ): Promise<SaveResult> {
   const problem = validateSpecial(input)
   if (problem) return { ok: false, error: problem }
@@ -496,6 +512,7 @@ export async function saveSpecial(
       (input.shape === 'bonus_points' ? Math.max(1, input.pointsMultiplier ?? 1) : 1).toFixed(3),
       input.rewardPerDeal === false ? 0 : 1,
       updatedBy.slice(0, 120),
+      originSiteId ?? null,
     ]
 
     if (id) {
@@ -507,7 +524,10 @@ export async function saveSpecial(
                 max_deals_per_sale = ?, respect_max_discount = ?, min_margin_pct = ?,
                 never_below_cost = ?, max_redemptions = ?,
                 audience = ?, audience_group_id = ?, runs_in_store = ?, runs_online = ?,
-                points_multiplier = ?, reward_per_deal = ?, updated_by = ?
+                points_multiplier = ?, reward_per_deal = ?, updated_by = ?,
+                -- COALESCE so an ordinary edit (which passes nothing) leaves
+                -- the origin alone rather than disowning a pushed copy.
+                origin_site_id = COALESCE(?, origin_site_id)
           WHERE id = ?`,
         [...fields, id],
       )
@@ -525,8 +545,8 @@ export async function saveSpecial(
             max_deals_per_sale, respect_max_discount, min_margin_pct,
             never_below_cost, max_redemptions,
             audience, audience_group_id, runs_in_store, runs_online,
-            points_multiplier, reward_per_deal, updated_by, priority)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            points_multiplier, reward_per_deal, updated_by, origin_site_id, priority)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [...fields, nextPriority],
       )
       id = result.insertId

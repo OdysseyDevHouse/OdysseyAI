@@ -283,7 +283,8 @@
     "test:box-flush": "tsx --conditions=react-server --env-file=.env scripts/test-box-flush.ts",
     "test:box-handover": "tsx scripts/test-box-handover.ts",
     "test:table-autosave": "tsx scripts/test-table-autosave.ts",
-    "test:db-provision": "node scripts/test-db-provision.mjs"
+    "test:db-provision": "node scripts/test-db-provision.mjs",
+    "test:special-fanout": "tsx --conditions=react-server --env-file=.env scripts/test-special-fanout.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

@@ -2,6 +2,7 @@ import { requireCapability } from '@/lib/auth'
 import { listSpecials, resolveSpecialItems } from '@/lib/site/specials'
 import { listDepartments } from '@/lib/site/departments'
 import { listCustomerGroups } from '@/lib/site/customerLookups'
+import { fanoutTargets } from '@/lib/site/specialFanout'
 import { PageHeader, PageBody } from '@/components/ui'
 import SpecialsList from './SpecialsList'
 
@@ -19,7 +20,7 @@ export default async function SpecialsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('products.edit')
 
-  const [specials, items, departments, customerGroups] = await Promise.all([
+  const [specials, items, departments, customerGroups, stores] = await Promise.all([
     listSpecials(siteId),
     // Resolved once for the whole screen rather than per special.
     resolveSpecialItems(siteId),
@@ -27,6 +28,9 @@ export default async function SpecialsPage() {
     // For a promotion aimed at one group. Active only: a retired group is one
     // nobody may target again, and its existing promotions keep naming it.
     listCustomerGroups(siteId),
+    /* The other stores in the group, for pushing a promotion out. Empty for a
+       shop that is in no group, and then the button is not drawn at all. */
+    fanoutTargets(siteId),
   ])
 
   return (
@@ -41,6 +45,7 @@ export default async function SpecialsPage() {
           items={items}
           departments={departments.map((d) => ({ id: d.id, name: d.name }))}
           customerGroups={customerGroups.map((g) => ({ id: g.id, name: g.name }))}
+          stores={stores}
         />
       </PageBody>
     </>
