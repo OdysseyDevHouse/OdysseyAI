@@ -326,6 +326,12 @@ export type Special = {
   runsInStore?: boolean
   runsOnline?: boolean
   /**
+   * `free_item` only: does the reward scale with the number of deals? See 214.
+   *
+   * Absent means yes, which is what the code did before the flag existed.
+   */
+  rewardPerDeal?: boolean
+  /**
    * `bonus_points` only: how much faster loyalty points accrue. See 213.
    *
    * Absent, and 1, both mean "no change" — every other shape leaves it alone.
@@ -417,6 +423,15 @@ export type SpecialsResult = {
   /** Index-aligned with the lines passed in. Undefined means nothing applied. */
   lineSpecials: (AppliedSpecial | undefined)[]
   rewards: SpecialReward[]
+  /**
+   * A `free_delivery` special cleared its threshold.
+   *
+   * Reported rather than applied, because the delivery fee is not part of the
+   * basket this engine prices — it is worked out from the address at checkout.
+   * The caller waives the fee exactly where a free-delivery discount code
+   * already does.
+   */
+  freeDelivery: boolean
 }
 
 export type SpecialItemInput = {
@@ -453,6 +468,8 @@ export type SpecialInput = {
   runsOnline?: boolean
   /** `bonus_points` only. See 213. */
   pointsMultiplier?: number
+  /** `free_item` only. See 214. */
+  rewardPerDeal?: boolean
   items: SpecialItemInput[]
   tiers: SpecialTier[]
 }
@@ -581,16 +598,36 @@ export function validateSpecial(input: SpecialInput): string | null {
       if (input.pointsMultiplier > 100) return 'That points multiplier is too large'
       break
 
-    /*
-     * Declared in the enum by 210, not built yet. Listed so that BUILDING one
-     * is a compile error here until its rules are written, rather than a shape
-     * that silently validates and then does nothing.
-     */
-    case 'quantity_break':
+    case 'quantity_break': {
+      if (triggers.length === 0) return 'Add the products the quantity breaks apply to'
+      if (input.tiers.length === 0) return 'Add at least one break — a quantity and its discount'
+      if (input.tiers.some((t) => Math.floor(t.qty) < 2)) {
+        return 'A break needs at least 2 units — one unit is just the shelf price'
+      }
+      if (input.tiers.some((t) => t.discountPct <= 0 || t.discountPct > 100)) {
+        return 'Every break needs a discount between 0 and 100 percent'
+      }
+      const qtys = input.tiers.map((t) => Math.floor(t.qty))
+      if (new Set(qtys).size !== qtys.length) {
+        return 'Two breaks name the same quantity — keep one of them'
+      }
+      break
+    }
+
     case 'second_at_pct':
+      if (input.discountPct <= 0 || input.discountPct > 100) return pct
+      if (triggers.length === 0) return 'Add the products the deal applies to'
+      break
+
     case 'mix_and_match':
+      if (input.bundlePriceIncl <= 0) return 'Set the price for the group'
+      if (input.triggerQty < 2) return 'How many must they pick? At least 2'
+      if (triggers.length === 0) return 'Add the products they can choose from'
+      break
+
     case 'free_delivery':
-      return 'That kind of special is not available yet'
+      if (input.spendAmountIncl <= 0) return 'Set the amount the customer must spend'
+      break
   }
 
   return null
@@ -776,6 +813,7 @@ export function computeSpecials(
 ): SpecialsResult {
   const lineSpecials: (AppliedSpecial | undefined)[] = new Array(lines.length).fill(undefined)
   const rewards: SpecialReward[] = []
+  let freeDelivery = false
   /** A line a higher-priority special has already involved. */
   const claimed = new Array(lines.length).fill(false)
 
@@ -916,8 +954,19 @@ export function computeSpecials(
         break
       }
 
+      /*
+       * "Second one half price" IS "buy 2, cheapest at 50% off".
+       *
+       * The same arithmetic, reached by a name a shopkeeper actually uses. It
+       * was always possible to express with cheapest_free at quantity 2, and
+       * nobody ever found it there — which is a discoverability problem, not an
+       * arithmetic one, so it is fixed with a label rather than a second
+       * implementation that could disagree about the edges.
+       */
+      case 'second_at_pct':
       case 'cheapest_free': {
-        const need = Math.floor(special.triggerQty)
+        const need =
+          special.shape === 'second_at_pct' ? 2 : Math.floor(special.triggerQty)
         if (need < 2) break
         // 0 reads as "free": a shop setting up "buy 3 get 1" thinks in terms
         // of the free one, not of a 100% discount.
@@ -986,6 +1035,130 @@ export function computeSpecials(
         claim(matching(triggers))
         break
       }
+
+      /*
+       * "Any 3 from this shelf for R100."
+       *
+       * ── WHY IT IS NOT bundle_price WITH ONE ROW ──────────────────────────
+       *
+       * It nearly is, and that was the argument for not building it: a bundle
+       * with a single department row at quantity 3 already does this. But
+       * nobody found it — a shopkeeper looking for "mix and match" does not
+       * think to express it as a one-row bundle, and a feature nobody can find
+       * is a feature the shop does not have.
+       *
+       * It differs in one real way as well. A bundle requires EVERY row in its
+       * quantity — bread AND milk. This counts across all its rows together, so
+       * three of anything named qualifies, which is what "any three" means and
+       * what a bundle cannot say however its rows are arranged.
+       */
+      case 'mix_and_match': {
+        const need = Math.floor(special.triggerQty)
+        if (need < 2 || special.bundlePriceIncl <= 0) break
+
+        const qualifying = matching(triggers)
+        const totalQty = qualifying.reduce((sum, { line }) => sum + Math.max(line.qty, 0), 0)
+        const groups = capDeals(Math.floor(totalQty / need), special.guards)
+        if (groups < 1) break
+
+        /*
+         * Allocate CHEAPEST first, the same house rule every other combo
+         * follows: the deal spends the least valuable units, so the customer
+         * pays the group price for the cheapest things that qualify and the
+         * expensive ones stay at shelf price. Filling with the dearest units
+         * would hand away more than the shop intended on every mixed basket.
+         */
+        const pool = [...qualifying].sort((a, b) => a.line.priceIncl - b.line.priceIncl)
+        let want = groups * need
+        let allocatedValue = 0
+        const used = new Map<number, number>()
+        for (const { line, index } of pool) {
+          if (want <= 0) break
+          const take = Math.min(want, Math.max(line.qty, 0))
+          if (take <= 0) continue
+          used.set(index, take)
+          allocatedValue += take * line.priceIncl
+          want -= take
+        }
+
+        const groupTotal = groups * special.bundlePriceIncl
+        // Costs more than buying them separately — do not fire, and do not
+        // claim, so a lower-priority special still gets its chance.
+        if (allocatedValue <= groupTotal) break
+
+        const fraction = 1 - groupTotal / allocatedValue
+        for (const [index, units] of used) {
+          const line = lines[index]
+          if (line.qty > 0) give(index, (units / line.qty) * fraction * 100)
+        }
+        // EVERY qualifying line, including units paying shelf price — the same
+        // rule as cheapest_free, for the same reason.
+        claim(qualifying)
+        break
+      }
+
+      /*
+       * A ladder of PERCENTAGES rather than prices: 10 or more at 5% off, 50 or
+       * more at 10%. How trade and wholesale actually price, and not
+       * expressible by multibuy, which ladders a price for an exact quantity.
+       *
+       * Unlike multibuy it does not consume units into groups. A break is a
+       * threshold: cross it and EVERY qualifying unit gets that rate. Buying 11
+       * against a 10-break discounts all eleven, not ten with one at shelf
+       * price — which is what a customer buying in bulk expects, and what the
+       * word "break" means in a trade price list.
+       */
+      case 'quantity_break': {
+        const breaks = [...special.tiers]
+          .filter((t) => Math.floor(t.qty) >= 2 && t.discountPct > 0)
+          // Biggest threshold first, so the best rate the basket has earned is
+          // the one found.
+          .sort((a, b) => b.qty - a.qty)
+        if (breaks.length === 0) break
+
+        const qualifying = matching(triggers)
+        const totalQty = qualifying.reduce((sum, { line }) => sum + Math.max(line.qty, 0), 0)
+        const earned = breaks.find((t) => totalQty >= Math.floor(t.qty))
+        if (!earned) break
+
+        const rate = clampPct(earned.discountPct)
+        if (rate <= 0) break
+        for (const { index } of qualifying) give(index, rate)
+        claim(qualifying)
+        break
+      }
+
+      /*
+       * "Free delivery over R500."
+       *
+       * It touches no line — delivery is not goods, and the fee is not part of
+       * the basket the engine sees. So this claims nothing and discounts
+       * nothing; it only reports, through `freeDelivery` on the result, that
+       * the threshold was cleared. The checkout honours it exactly where a
+       * free-delivery discount code already is (storefront.ts).
+       *
+       * In store it does nothing, which is correct: nobody delivers a sale
+       * they carried out of the shop.
+       */
+      case 'free_delivery': {
+        if (special.spendAmountIncl <= 0) break
+        // The WHOLE basket at normal prices, the same measure `spend` uses —
+        // an earlier discount should not push a customer back under a
+        // threshold they cleared.
+        const gross = lines.reduce((sum, l) => sum + l.priceIncl * Math.max(l.qty, 0), 0)
+        if (gross < special.spendAmountIncl) break
+        freeDelivery = true
+        break
+      }
+
+      /*
+       * Changes points, not prices. Answered by `pointsMultiplierFor` against
+       * the same list, and deliberately inert here: with no line to claim it
+       * must take none, or it would block a real discount beneath it from
+       * reaching the same goods.
+       */
+      case 'bonus_points':
+        break
 
       /*
        * A quantity ladder: 3 for R25, 6 for R45. Greedy LARGEST tier first —
@@ -1078,7 +1251,14 @@ export function computeSpecials(
             specialId: special.id,
             name: special.name,
             productId: row.productId,
-            qty: deals * Math.max(row.qty, 1),
+            /*
+             * Scales with the deal count by default (214): six pizzas against a
+             * buy-two deal is three breads. Switched off, the reward is handed
+             * over ONCE however many deals the basket completes — which is what
+             * "have a coffee on us" means, and what a shop running a
+             * thank-you rather than a bulk offer intends.
+             */
+            qty: (special.rewardPerDeal === false ? 1 : deals) * Math.max(row.qty, 1),
           })
         }
         // The triggers are claimed but not discounted — the reward IS the deal.
@@ -1119,7 +1299,7 @@ export function computeSpecials(
     }
   }
 
-  return { lineSpecials, rewards }
+  return { lineSpecials, rewards, freeDelivery }
 }
 
 /**

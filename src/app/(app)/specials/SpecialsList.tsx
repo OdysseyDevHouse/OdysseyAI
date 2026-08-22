@@ -117,19 +117,22 @@ function dealSummary(s: Special): string {
       return s.discountPct > 0
         ? `Spend ${formatMoney(s.spendAmountIncl)}, get ${s.discountPct}% off`
         : `Spend ${formatMoney(s.spendAmountIncl)}, get something free`
-    /*
-     * Declared in the enum, not built yet. They cannot be created — the form
-     * does not offer them — so this is unreachable rather than a gap. Named
-     * individually so that BUILDING one is a compile error here until its
-     * summary is written, which is the point of listing them.
-     */
     case 'bonus_points':
       return `${s.pointsMultiplier ?? 1}x loyalty points`
-    case 'quantity_break':
+    case 'quantity_break': {
+      const smallest = [...s.tiers].sort((a, b) => a.qty - b.qty)[0]
+      return smallest
+        ? `${smallest.qty}+ at ${smallest.discountPct}% off${s.tiers.length > 1 ? `, ${s.tiers.length} breaks` : ''}`
+        : 'Quantity breaks'
+    }
     case 'second_at_pct':
+      return s.discountPct >= 100
+        ? 'Buy one, get one free'
+        : `Second one at ${s.discountPct}% off`
     case 'mix_and_match':
+      return `Any ${s.triggerQty} for ${formatMoney(s.bundlePriceIncl)}`
     case 'free_delivery':
-      return SHAPE_LABEL[s.shape]
+      return `Free delivery over ${formatMoney(s.spendAmountIncl)}`
   }
 }
 
@@ -475,6 +478,7 @@ function toInput(s: SpecialWithUse): SpecialInput {
     runsInStore: s.runsInStore,
     runsOnline: s.runsOnline,
     pointsMultiplier: s.pointsMultiplier,
+    rewardPerDeal: s.rewardPerDeal,
     triggerQty: s.triggerQty,
     bundlePriceIncl: s.bundlePriceIncl,
     spendAmountIncl: s.spendAmountIncl,

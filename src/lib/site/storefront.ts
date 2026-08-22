@@ -22,6 +22,7 @@ import {
   translateToBranch,
 } from './branchCatalogue'
 import { liveSpecials, specialPriceFor } from './specials'
+import { computeSpecials } from '../specialsEngine'
 import { storefrontImagesByIds, type StorefrontImage } from './storefrontImages'
 import { recentApprovedReviews, type ProductReview } from './productReviews'
 
@@ -1868,6 +1869,32 @@ export async function placePublicOrder(
   // so it is what a free-delivery-over-R500 threshold has to be measured
   // against — a threshold met only before a R100 discount was not really met.
   const discountedGoods = round(goodsTotal - discountIncl, 2)
+
+  /*
+   * A free-delivery SPECIAL, which reaches the same conclusion as a
+   * free-delivery discount code and is honoured in the same place.
+   *
+   * Measured on the pre-discount goods, matching how the `spend` shape works
+   * and how `computeSpecials` measures its own threshold: what the customer
+   * brought to the checkout is what they spent, and a discount they were given
+   * should not push them back under a threshold they cleared. That is a
+   * different rule from the zone's own `freeOverIncl` above, deliberately —
+   * one is the shop's standing delivery policy, the other is a promotion.
+   */
+  if (!freeDelivery) {
+    const specials = await liveSpecials(context.catalogueSiteId)
+    freeDelivery = computeSpecials(
+      priced.map((p) => ({
+        productId: p.productId,
+        departmentId: byId.get(p.productId)?.departmentId ?? null,
+        priceIncl: p.unitPriceIncl,
+        qty: p.qty,
+      })),
+      specials,
+      new Date(),
+      { channel: 'online' },
+    ).freeDelivery
+  }
 
   // The fee is MONEY, so it is quoted server-side against the current zones.
   // A browser-supplied one could be set to zero.

@@ -786,6 +786,181 @@ async function main() {
     )
   }
 
+  /* ── The newer shapes ───────────────────────────────────────────────────*/
+  console.log('\n— Second one % off —')
+  {
+    const lines = [line(1, 100, 2)]
+    const s = special({ shape: 'second_at_pct', discountPct: 50, items: [trigger(1)] })
+    ok(
+      'two units means one at half price',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 25),
+      'one of two units at 50% is 25% off the line',
+    )
+  }
+  {
+    const lines = [line(1, 100, 1)]
+    const s = special({ shape: 'second_at_pct', discountPct: 50, items: [trigger(1)] })
+    ok('one unit earns nothing', computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined)
+  }
+  {
+    const lines = [line(1, 100, 4)]
+    const s = special({ shape: 'second_at_pct', discountPct: 50, items: [trigger(1)] })
+    ok(
+      'four units means two at half price',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 25),
+    )
+  }
+  {
+    // Two different products still make a pair, and the CHEAPER is discounted.
+    const lines = [line(1, 100), line(2, 40)]
+    const s = special({ shape: 'second_at_pct', discountPct: 50, items: [trigger(1), trigger(2)] })
+    const r = computeSpecials(lines, [s], NOW)
+    ok('the cheaper of a mixed pair is the discounted one', near(r.lineSpecials[1]?.pct ?? 0, 50))
+    ok('and the dearer pays full price', r.lineSpecials[0] === undefined)
+  }
+
+  console.log('\n— Mix & match —')
+  {
+    // Any 3 for R100, against three R50 items: saves R50 over R150.
+    const lines = [line(1, 50), line(2, 50), line(3, 50)]
+    const s = special({
+      shape: 'mix_and_match', triggerQty: 3, bundlePriceIncl: 100,
+      items: [trigger(1), trigger(2), trigger(3)],
+    })
+    const r = computeSpecials(lines, [s], NOW)
+    const saved = r.lineSpecials.reduce((sum, a, i) => sum + (a ? (a.pct / 100) * 50 : 0), 0)
+    ok('three at R50 for R100 saves R50', near(saved, 50, 0.01), `saved ${saved.toFixed(2)}`)
+  }
+  {
+    const lines = [line(1, 50), line(2, 50)]
+    const s = special({
+      shape: 'mix_and_match', triggerQty: 3, bundlePriceIncl: 100,
+      items: [trigger(1), trigger(2)],
+    })
+    ok(
+      'too few to make a group earns nothing',
+      computeSpecials(lines, [s], NOW).lineSpecials.every((a) => a === undefined),
+    )
+  }
+  {
+    // The group price is WORSE than buying them — must not fire, must not claim.
+    const lines = [line(1, 10), line(2, 10), line(3, 10)]
+    const bad = special({
+      id: 1, priority: 1, shape: 'mix_and_match', triggerQty: 3, bundlePriceIncl: 100,
+      items: [trigger(1), trigger(2), trigger(3)],
+    })
+    const open = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 5, items: [scope(1)] })
+    const r = computeSpecials(lines, [bad, open], NOW)
+    ok(
+      'a group dearer than the items does not fire, and does not claim',
+      r.lineSpecials[0]?.specialId === 2,
+      'the promotion below it still gets its chance',
+    )
+  }
+  {
+    // The cheapest units fill the group, so the dear one stays at shelf price.
+    const lines = [line(1, 100), line(2, 20), line(3, 20), line(4, 20)]
+    const s = special({
+      shape: 'mix_and_match', triggerQty: 3, bundlePriceIncl: 50,
+      items: [trigger(1), trigger(2), trigger(3), trigger(4)],
+    })
+    const r = computeSpecials(lines, [s], NOW)
+    ok(
+      '*** the CHEAPEST units fill the group ***',
+      r.lineSpecials[0] === undefined,
+      'filling with the R100 item would give away more than the shop intended',
+    )
+  }
+
+  console.log('\n— Quantity breaks —')
+  {
+    const lines = [line(1, 10, 12)]
+    const s = special({
+      shape: 'quantity_break', items: [trigger(1)],
+      tiers: [pctTier(10, 5), pctTier(50, 10)],
+    })
+    ok(
+      '*** a break discounts EVERY unit, not just the ones past it ***',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 5),
+      'buying 11 against a 10-break discounts all eleven — that is what "break" means',
+    )
+  }
+  {
+    const lines = [line(1, 10, 60)]
+    const s = special({
+      shape: 'quantity_break', items: [trigger(1)],
+      tiers: [pctTier(10, 5), pctTier(50, 10)],
+    })
+    ok(
+      'the best break the basket reaches is the one that applies',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 10),
+    )
+  }
+  {
+    const lines = [line(1, 10, 5)]
+    const s = special({
+      shape: 'quantity_break', items: [trigger(1)], tiers: [pctTier(10, 5)],
+    })
+    ok('below the smallest break, nothing applies', computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined)
+  }
+  {
+    // Units add up ACROSS lines, which is what makes a break a trade price.
+    const lines = [line(1, 10, 6), line(2, 10, 6)]
+    const s = special({
+      shape: 'quantity_break', items: [trigger(1), trigger(2)], tiers: [pctTier(10, 5)],
+    })
+    const r = computeSpecials(lines, [s], NOW)
+    ok(
+      'units count across every qualifying line',
+      near(r.lineSpecials[0]?.pct ?? 0, 5) && near(r.lineSpecials[1]?.pct ?? 0, 5),
+      'six and six is twelve, which clears a ten-break',
+    )
+  }
+
+  console.log('\n— Free delivery —')
+  {
+    const lines = [line(1, 600)]
+    const s = special({ shape: 'free_delivery', spendAmountIncl: 500, runsInStore: false })
+    const r = computeSpecials(lines, [s], NOW, { channel: 'online' })
+    ok('a cleared threshold reports free delivery', r.freeDelivery)
+    ok('and discounts nothing', r.lineSpecials[0] === undefined)
+  }
+  {
+    const lines = [line(1, 100)]
+    const s = special({ shape: 'free_delivery', spendAmountIncl: 500 })
+    ok(
+      'an uncleared threshold does not',
+      !computeSpecials(lines, [s], NOW, { channel: 'online' }).freeDelivery,
+    )
+  }
+  {
+    const lines = [line(1, 600)]
+    const s = special({ shape: 'free_delivery', spendAmountIncl: 500, runsInStore: false })
+    ok(
+      'and it does nothing at the counter',
+      !computeSpecials(lines, [s], NOW).freeDelivery,
+      'nobody delivers a sale they carried out of the shop',
+    )
+  }
+
+  console.log('\n— A reward that scales, or does not —')
+  {
+    const lines = [line(1, 50, 6)]
+    const scaling = special({
+      shape: 'free_item', items: [trigger(1, 2), reward(9)],
+    })
+    const once = special({ ...scaling, rewardPerDeal: false })
+    ok(
+      'by default the reward scales with the deals',
+      computeSpecials(lines, [scaling], NOW).rewards[0]?.qty === 3,
+      'six units against a buy-two deal is three rewards',
+    )
+    ok(
+      'switched off, it is given once however much they buy',
+      computeSpecials(lines, [once], NOW).rewards[0]?.qty === 1,
+    )
+  }
+
   await databaseChecks()
 
   console.log(`\n${fails === 0 ? 'All specials checks passed.' : `${fails} FAILED.`}`)

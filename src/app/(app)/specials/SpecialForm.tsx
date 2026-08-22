@@ -88,6 +88,10 @@ const BUILT: ReadonlySet<SpecialShape> = new Set([
   'multibuy',
   'spend',
   'bonus_points',
+  'quantity_break',
+  'second_at_pct',
+  'mix_and_match',
+  'free_delivery',
 ])
 
 /** A row as the form holds it — the item plus what it is called and costs. */
@@ -872,6 +876,16 @@ function DealSection({
           showQty: true,
           allowDepartments: false,
         })}
+
+        <Checkbox
+          checked={draft.rewardPerDeal !== false}
+          label="Give it again for each extra deal"
+          onChange={(e) => patch({ rewardPerDeal: e.target.checked })}
+        />
+        <p className="text-xs text-muted">
+          On: six pizzas against a buy-two deal hands over three garlic breads. Off: however
+          much they buy, the free item is given once.
+        </p>
       </Section>
     )
   }
@@ -905,7 +919,17 @@ function DealSection({
     )
   }
 
-  if (shape === 'multibuy') {
+  /*
+   * The two laddered shapes share one editor.
+   *
+   * They ask the same first question — how many units — and differ only in the
+   * second: multibuy sets a PRICE for that quantity, a quantity break sets a
+   * PERCENTAGE off from that quantity up. One editor with one column swapped,
+   * rather than two nearly identical blocks that drift apart the first time a
+   * rung gains a field.
+   */
+  if (shape === 'multibuy' || shape === 'quantity_break') {
+    const byPrice = shape === 'multibuy'
     const tiers = draft.tiers
     const patchTier = (index: number, changes: Partial<(typeof tiers)[number]>) => {
       const next = [...tiers]
@@ -916,39 +940,63 @@ function DealSection({
       <Section
         icon={<Icons.ShoppingCart size={14} />}
         title="The deal"
-        hint="A quantity ladder — 3 for R25, 6 for R45. Any mix of the items below counts."
+        hint={
+          byPrice
+            ? 'A quantity ladder — 3 for R25, 6 for R45. Any mix of the items below counts.'
+            : 'Buy more, pay less per item — 10 or more at 5% off, 50 or more at 10%.'
+        }
       >
         <Field
-          label="Tiers"
-          hint="Bigger tiers fill first: nine units against 3-for and 6-for tiers is one six and one three. Units below the smallest tier pay the shelf price."
+          label={byPrice ? 'Tiers' : 'Quantity breaks'}
+          hint={
+            byPrice
+              ? 'Bigger tiers fill first: nine units against 3-for and 6-for tiers is one six and one three. Units below the smallest tier pay the shelf price.'
+              : 'A break is a threshold, not a group: buy 11 against a 10-break and ALL eleven get the discount. The best break the basket reaches is the one that applies.'
+          }
         >
           <div className="flex flex-col gap-2">
             {tiers.length === 0 && (
-              <p className="text-sm text-muted">No tiers yet — add the first rung of the ladder.</p>
+              <p className="text-sm text-muted">
+                {byPrice
+                  ? 'No tiers yet — add the first rung of the ladder.'
+                  : 'No breaks yet — add the first one.'}
+              </p>
             )}
             {tiers.map((tier, index) => (
               <div key={index} className="flex items-center gap-2">
+                <span className="text-sm text-muted">{byPrice ? '' : 'From'}</span>
                 <span className="w-24">
                   <NumberInput
                     value={tier.qty}
                     min={2}
-                    aria-label={`Tier ${index + 1} quantity`}
+                    aria-label={`${byPrice ? 'Tier' : 'Break'} ${index + 1} quantity`}
                     onChange={(e) => patchTier(index, { qty: Number(e.target.value) || 2 })}
                   />
                 </span>
-                <span className="text-sm text-muted">for</span>
+                <span className="text-sm text-muted">{byPrice ? 'for' : 'units,'}</span>
                 <span className="w-32">
-                  <CurrencyInput
-                    value={tier.priceIncl || ''}
-                    aria-label={`Tier ${index + 1} price`}
-                    onChange={(e) => patchTier(index, { priceIncl: Number(e.target.value) || 0 })}
-                  />
+                  {byPrice ? (
+                    <CurrencyInput
+                      value={tier.priceIncl || ''}
+                      aria-label={`Tier ${index + 1} price`}
+                      onChange={(e) => patchTier(index, { priceIncl: Number(e.target.value) || 0 })}
+                    />
+                  ) : (
+                    <NumberInput
+                      value={tier.discountPct || ''}
+                      min={0}
+                      max={100}
+                      aria-label={`Break ${index + 1} discount`}
+                      onChange={(e) => patchTier(index, { discountPct: Number(e.target.value) || 0 })}
+                    />
+                  )}
                 </span>
+                {!byPrice && <span className="text-sm text-muted">% off</span>}
                 <Button
                   variant="danger-ghost"
                   size="sm"
                   iconOnly
-                  aria-label={`Remove tier ${index + 1}`}
+                  aria-label={`Remove ${byPrice ? 'tier' : 'break'} ${index + 1}`}
                   onClick={() => patch({ tiers: tiers.filter((_, i) => i !== index) })}
                 >
                   <Icons.Trash size={14} />
@@ -963,17 +1011,21 @@ function DealSection({
                   patch({
                     tiers: [
                       ...tiers,
-                      // The next rung starts above the last, so the ladder
-                      // climbs by itself as rungs are added. A multibuy rung
-                      // prices a quantity, so the percentage stays at zero —
-                      // it is what the quantity_break shape ladders instead.
-                      { qty: (tiers.at(-1)?.qty ?? 1) + 2, priceIncl: 0, discountPct: 0 },
+                      /* The next rung starts above the last, so the ladder
+                         climbs by itself as rungs are added. Whichever column
+                         this shape does not use stays at zero — see 210 on why
+                         they are separate columns. */
+                      {
+                        qty: (tiers.at(-1)?.qty ?? 1) + (byPrice ? 2 : 9),
+                        priceIncl: 0,
+                        discountPct: 0,
+                      },
                     ],
                   })
                 }
               >
                 <Icons.Plus size={14} />
-                Add tier
+                {byPrice ? 'Add tier' : 'Add break'}
               </Button>
             </div>
           </div>
@@ -981,10 +1033,100 @@ function DealSection({
 
         {editor({
           role: 'trigger',
-          label: 'Counting towards the tiers',
-          hint: 'Products and/or whole departments — any mix fills a tier.',
-          empty: 'Nothing added yet — add the products or departments the tiers cover.',
+          label: byPrice ? 'Counting towards the tiers' : 'Counting towards the breaks',
+          hint: 'Products and/or whole departments — any mix counts.',
+          empty: 'Nothing added yet — add the products or departments this covers.',
         })}
+      </Section>
+    )
+  }
+
+  if (shape === 'second_at_pct') {
+    return (
+      <Section
+        icon={<Icons.ShoppingCart size={14} />}
+        title="The deal"
+        hint="Buy two, and the cheaper one is discounted."
+      >
+        <Field
+          label="Discount on the second"
+          hint="50 for half price, 100 for free. Repeats every two — four items means two discounted."
+        >
+          <NumberInput
+            value={draft.discountPct}
+            min={1}
+            max={100}
+            className="w-40"
+            onChange={(e) => patch({ discountPct: Number(e.target.value) || 0 })}
+          />
+        </Field>
+
+        {editor({
+          role: 'trigger',
+          label: 'Applies to',
+          hint: 'Any mix of these makes a pair — two different products both count.',
+          empty: 'Nothing added yet — add the products or departments the deal covers.',
+        })}
+      </Section>
+    )
+  }
+
+  if (shape === 'mix_and_match') {
+    return (
+      <Section
+        icon={<Icons.ShoppingCart size={14} />}
+        title="The deal"
+        hint="Any few from a group, for one price."
+      >
+        <div className="flex flex-wrap items-start gap-4">
+          <Field label="How many?" hint="Any mix of the items below.">
+            <NumberInput
+              value={draft.triggerQty}
+              min={2}
+              className="w-36"
+              onChange={(e) => patch({ triggerQty: Number(e.target.value) || 2 })}
+            />
+          </Field>
+          <Field label="For" hint="What that many costs together.">
+            <CurrencyInput
+              value={draft.bundlePriceIncl}
+              className="w-40"
+              onChange={(e) => patch({ bundlePriceIncl: Number(e.target.value) || 0 })}
+            />
+          </Field>
+        </div>
+
+        {editor({
+          role: 'trigger',
+          label: 'Choose from',
+          hint: 'Products and/or whole departments. The cheapest qualifying items fill the group first.',
+          empty: 'Nothing added yet — add what they can choose from.',
+        })}
+      </Section>
+    )
+  }
+
+  if (shape === 'free_delivery') {
+    return (
+      <Section
+        icon={<Icons.Truck size={14} />}
+        title="The deal"
+        hint="Spend enough and delivery is on the shop."
+      >
+        <Field
+          label="Customer spends"
+          hint="The sale's normal-price total that waives the delivery fee."
+        >
+          <CurrencyInput
+            value={draft.spendAmountIncl}
+            className="w-40"
+            onChange={(e) => patch({ spendAmountIncl: Number(e.target.value) || 0 })}
+          />
+        </Field>
+        <p className="text-xs text-muted">
+          Applies to online orders only — a sale carried out of the shop has no delivery to
+          waive. Nothing comes off the price of the goods.
+        </p>
       </Section>
     )
   }
