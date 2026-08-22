@@ -1,0 +1,34 @@
+-- ── Double points this weekend ────────────────────────────────────────────
+--
+-- A shop with a loyalty programme has exactly one lever on how fast points
+-- accrue: the TIER multiplier, which is a permanent property of a customer.
+-- There is no way to say "double points on Saturday" -- which is one of the
+-- most ordinary promotions a loyalty programme runs, and the reason many shops
+-- run one at all.
+--
+-- ── WHY IT IS A SPECIAL AND NOT A LOYALTY SETTING ─────────────────────────
+--
+-- Because it is a promotion. It starts and ends on a date, it runs on chosen
+-- days between chosen hours, it can be limited to one customer group or one
+-- channel, and it needs to be switched on and off in a hurry. Every one of
+-- those already exists on `specials` and none of it exists in the loyalty
+-- programme screen, which describes what a point is WORTH rather than when it
+-- is earned faster.
+--
+-- Putting it under loyalty would mean building a second scheduler, and then
+-- explaining to a shopkeeper why "promotions" live in two places.
+--
+-- ── AND WHY IT MULTIPLIES WITH THE TIER RATHER THAN REPLACING IT ──────────
+--
+-- The specials engine's rule is that discounts never compound: the better of a
+-- special and a manual discount wins. This is the deliberate exception, because
+-- the two multipliers answer different questions. A gold member's 1.5x is who
+-- they are; a double-points weekend is when they shopped. A gold member on a
+-- double-points weekend has both facts true at once and expects 3x -- taking
+-- the better of the two would silently tell them their membership counted for
+-- nothing that weekend.
+
+ALTER TABLE specials
+  -- Only read when shape = 'bonus_points'. 1.000 is no change, which is what
+  -- every other shape leaves it at.
+  ADD COLUMN points_multiplier DECIMAL(6,3) NOT NULL DEFAULT 1.000;

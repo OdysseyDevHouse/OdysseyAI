@@ -325,6 +325,12 @@ export type Special = {
   audienceGroupId?: number | null
   runsInStore?: boolean
   runsOnline?: boolean
+  /**
+   * `bonus_points` only: how much faster loyalty points accrue. See 213.
+   *
+   * Absent, and 1, both mean "no change" — every other shape leaves it alone.
+   */
+  pointsMultiplier?: number
   items: SpecialItem[]
   /** multibuy only: the quantity ladder, e.g. 3 for R25, 6 for R45. */
   tiers: SpecialTier[]
@@ -445,6 +451,8 @@ export type SpecialInput = {
   audienceGroupId?: number | null
   runsInStore?: boolean
   runsOnline?: boolean
+  /** `bonus_points` only. See 213. */
+  pointsMultiplier?: number
   items: SpecialItemInput[]
   tiers: SpecialTier[]
 }
@@ -563,6 +571,26 @@ export function validateSpecial(input: SpecialInput): string | null {
       }
       if (input.discountPct > 100) return pct
       break
+
+    case 'bonus_points':
+      if (!input.pointsMultiplier || input.pointsMultiplier <= 1) {
+        // Exactly 1 is not a promotion, it is the ordinary rate — and below 1
+        // would take points away from someone who was already owed them.
+        return 'Set how much faster points are earned — 2 for double points'
+      }
+      if (input.pointsMultiplier > 100) return 'That points multiplier is too large'
+      break
+
+    /*
+     * Declared in the enum by 210, not built yet. Listed so that BUILDING one
+     * is a compile error here until its rules are written, rather than a shape
+     * that silently validates and then does nothing.
+     */
+    case 'quantity_break':
+    case 'second_at_pct':
+    case 'mix_and_match':
+    case 'free_delivery':
+      return 'That kind of special is not available yet'
   }
 
   return null
@@ -1092,6 +1120,41 @@ export function computeSpecials(
   }
 
   return { lineSpecials, rewards }
+}
+
+/**
+ * How much faster points accrue right now, from any running bonus promotion.
+ *
+ * ── IT DOES NOT GO THROUGH computeSpecials ───────────────────────────────
+ *
+ * A bonus-points special discounts nothing and gives no product away, so it has
+ * no line to claim and must never take one — claiming would block a real
+ * promotion beneath it from reaching the same goods. It is answered separately,
+ * from the same list, against the same clock and audience rules.
+ *
+ * ── AND TWO RUNNING AT ONCE TAKE THE BIGGER, NOT THE PRODUCT ─────────────
+ *
+ * Unlike the tier multiplier, which stacks with this (see computeEarn), two
+ * promotions are two attempts at the same thing. A shop running a
+ * double-points weekend and a triple-points launch over one Saturday means the
+ * better of the two, not six times — the same "one promotion wins" rule the
+ * rest of the engine follows.
+ */
+export function pointsMultiplierFor(
+  specials: Special[],
+  now: Date,
+  context?: PricingContext,
+): number {
+  let best = 1
+  for (const special of specials) {
+    if (special.shape !== 'bonus_points') continue
+    if (!specialActiveAt(special, now)) continue
+    if (!specialReaches(special, context)) continue
+    // Below 1 is a misconfiguration, not a promotion — a bonus cannot take
+    // points away from someone who was already owed them.
+    best = Math.max(best, Number(special.pointsMultiplier) || 1)
+  }
+  return best
 }
 
 /**

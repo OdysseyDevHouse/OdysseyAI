@@ -87,6 +87,7 @@ const BUILT: ReadonlySet<SpecialShape> = new Set([
   'bundle_price',
   'multibuy',
   'spend',
+  'bonus_points',
 ])
 
 /** A row as the form holds it — the item plus what it is called and costs. */
@@ -712,6 +713,41 @@ function DealSection({
           empty: 'Nothing added yet — add the products or departments and set their prices.',
           showPrice: true,
         })}
+      </Section>
+    )
+  }
+
+  if (shape === 'bonus_points') {
+    return (
+      <Section
+        icon={<Icons.Star size={14} />}
+        title="The deal"
+        hint="Loyalty points earned faster while this runs."
+      >
+        <Field
+          label="Points multiplier"
+          hint="2 for double points, 3 for triple. Applies on top of the customer's tier."
+        >
+          <NumberInput
+            value={draft.pointsMultiplier ?? 2}
+            min={1}
+            max={100}
+            step={0.5}
+            className="w-40"
+            onChange={(e) => patch({ pointsMultiplier: Number(e.target.value) || 1 })}
+          />
+        </Field>
+        {/*
+          Said out loud, because it is the one place in this whole system where
+          two multipliers COMPOUND rather than the better one winning. A gold
+          member on a double-points weekend gets both, and a shopkeeper setting
+          this up should know that before the weekend rather than after it.
+        */}
+        <p className="text-xs text-muted">
+          A member on a higher tier already earns faster. This multiplies with that, so a 1.5×
+          tier on a double-points weekend earns 3×. It changes points only — nothing comes off
+          the price.
+        </p>
       </Section>
     )
   }

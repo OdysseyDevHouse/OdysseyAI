@@ -82,6 +82,7 @@ function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special
         : Number(r.audience_group_id),
     runsInStore: !!r.runs_in_store,
     runsOnline: !!r.runs_online,
+    pointsMultiplier: toNum(r.points_multiplier) || 1,
     items,
     tiers,
     // `rewardProducts` is deliberately NOT set here. It is filled in by
@@ -489,6 +490,9 @@ export async function saveSpecial(
       input.audience === 'group' ? (input.audienceGroupId ?? null) : null,
       input.runsInStore === false ? 0 : 1,
       input.runsOnline === false ? 0 : 1,
+      // Only meaningful for bonus_points; forced to 1 elsewhere so a shape
+      // edited away from it cannot keep a multiplier nothing reads.
+      (input.shape === 'bonus_points' ? Math.max(1, input.pointsMultiplier ?? 1) : 1).toFixed(3),
       updatedBy.slice(0, 120),
     ]
 
@@ -501,7 +505,7 @@ export async function saveSpecial(
                 max_deals_per_sale = ?, respect_max_discount = ?, min_margin_pct = ?,
                 never_below_cost = ?, max_redemptions = ?,
                 audience = ?, audience_group_id = ?, runs_in_store = ?, runs_online = ?,
-                updated_by = ?
+                points_multiplier = ?, updated_by = ?
           WHERE id = ?`,
         [...fields, id],
       )
@@ -519,8 +523,8 @@ export async function saveSpecial(
             max_deals_per_sale, respect_max_discount, min_margin_pct,
             never_below_cost, max_redemptions,
             audience, audience_group_id, runs_in_store, runs_online,
-            updated_by, priority)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            points_multiplier, updated_by, priority)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [...fields, nextPriority],
       )
       id = result.insertId

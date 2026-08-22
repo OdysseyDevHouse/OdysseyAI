@@ -123,11 +123,12 @@ function dealSummary(s: Special): string {
      * individually so that BUILDING one is a compile error here until its
      * summary is written, which is the point of listing them.
      */
+    case 'bonus_points':
+      return `${s.pointsMultiplier ?? 1}x loyalty points`
     case 'quantity_break':
     case 'second_at_pct':
     case 'mix_and_match':
     case 'free_delivery':
-    case 'bonus_points':
       return SHAPE_LABEL[s.shape]
   }
 }
@@ -473,6 +474,7 @@ function toInput(s: SpecialWithUse): SpecialInput {
     audienceGroupId: s.audienceGroupId,
     runsInStore: s.runsInStore,
     runsOnline: s.runsOnline,
+    pointsMultiplier: s.pointsMultiplier,
     triggerQty: s.triggerQty,
     bundlePriceIncl: s.bundlePriceIncl,
     spendAmountIncl: s.spendAmountIncl,

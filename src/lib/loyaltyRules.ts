@@ -133,12 +133,25 @@ export type EarnResult = {
  *   large enough balance funds itself forever. `fundedAmount` is that slice —
  *   points redeemed plus any rand-value voucher — and it comes off the basis
  *   before anything is multiplied.
+ *
+ * ── THE TWO MULTIPLIERS MULTIPLY ─────────────────────────────────────────
+ *
+ * `promoMultiplier` is a running bonus-points promotion (213) and it stacks
+ * with the tier's, which is the deliberate exception to how everything else in
+ * this system composes. Discounts take the better of two; these take both,
+ * because they answer different questions: a gold member's 1.5x is WHO THEY
+ * ARE, a double-points weekend is WHEN THEY SHOPPED, and a gold member shopping
+ * on that weekend has both facts true at once. Taking the better of the two
+ * would quietly tell them their membership counted for nothing that weekend.
+ *
+ * Defaulted to 1, so every caller that predates bonus points is unchanged.
  */
 export function computeEarn(
   lines: readonly EarnLine[],
   settings: LoyaltySettings,
   tier: LoyaltyTier | null,
   fundedAmount = 0,
+  promoMultiplier = 1,
 ): EarnResult {
   if (!settings.enabled || settings.earnRate <= 0) return { points: 0, basisAmount: 0 }
 
@@ -154,7 +167,10 @@ export function computeEarn(
   if (basis <= 0) return { points: 0, basisAmount: 0 }
 
   const multiplier = tier?.multiplier ?? 1
-  const points = Math.floor((basis / settings.earnRate) * multiplier)
+  // Clamped at 1 below rather than at 0: a promotion is a BONUS, and a
+  // misconfigured 0.5 must not quietly halve what a customer was already owed.
+  const promo = Math.max(1, Number(promoMultiplier) || 1)
+  const points = Math.floor((basis / settings.earnRate) * multiplier * promo)
 
   return { points: Math.max(0, points), basisAmount: basis }
 }

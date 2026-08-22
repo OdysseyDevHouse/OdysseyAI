@@ -680,7 +680,26 @@ export async function awardSaleLoyalty(
     discounted: l.discountIncl > 0,
   }))
 
-  const result = computeEarn(earnLines, settings, tier, input.fundedAmount ?? 0)
+  /*
+   * A running bonus-points promotion, if there is one (213).
+   *
+   * Read from the SPECIALS of the selling site rather than the loyalty owner's:
+   * a group shares one programme but each branch runs its own promotions, and
+   * "double points this weekend" is a decision the branch made about its own
+   * trading. Resolved against the clock here, at the moment of the sale, the
+   * same way every other special decides whether it is running.
+   *
+   * No audience is passed. A member is by definition attached — this function
+   * only runs when one is — and the channel is the till.
+   */
+  const { liveSpecials } = await import('./specials')
+  const { pointsMultiplierFor } = await import('../specialsEngine')
+  const promo = pointsMultiplierFor(await liveSpecials(siteId), new Date(), {
+    isMember: true,
+    channel: 'in_store',
+  })
+
+  const result = computeEarn(earnLines, settings, tier, input.fundedAmount ?? 0, promo)
   if (result.points <= 0) return null
 
   try {
@@ -693,7 +712,16 @@ export async function awardSaleLoyalty(
         documentId: input.documentId,
         documentNumber: input.documentNumber,
         tierName: tier?.name ?? '',
-        multiplier: tier?.multiplier ?? 1,
+        /*
+         * The multiplier ACTUALLY USED, tier and promotion combined.
+         *
+         * Recording only the tier's would make the ledger disagree with the
+         * points beside it — a gold member on a double-points weekend would
+         * show 1.5 against an entry worked out at 3, and "why did I get this
+         * many points" would be unanswerable from the row that exists to
+         * answer it.
+         */
+        multiplier: round((tier?.multiplier ?? 1) * promo, 3),
       })
       await refreshMember(tx, input.memberId, settings, tiers)
     })

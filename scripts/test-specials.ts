@@ -21,6 +21,7 @@ import {
   computeSpecials,
   effectiveDiscountPct,
   specialActiveAt,
+  pointsMultiplierFor,
   type BasketLine,
   type Special,
   type SpecialItem,
@@ -28,6 +29,7 @@ import {
   type SpecialShape,
   type SpecialGuards,
 } from '../src/lib/specialsEngine'
+import { computeEarn, LOYALTY_DEFAULTS } from '../src/lib/loyaltyRules'
 
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
@@ -700,6 +702,87 @@ async function main() {
       'an untargeted special still fires with no context at all',
       near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 10),
       'every caller that predates targeting must be unchanged',
+    )
+  }
+
+  /* ── Bonus points ───────────────────────────────────────────────────────
+   *
+   * A promotion that changes how fast points accrue rather than what anything
+   * costs. Two things must hold: it never touches a price, and it never claims
+   * a line — claiming would block a real discount below it from reaching the
+   * same goods.
+   */
+  console.log('\n— Bonus points —')
+  {
+    const lines = [line(1, 100)]
+    const bonus = special({ shape: 'bonus_points', pointsMultiplier: 2 })
+    const r = computeSpecials(lines, [bonus], NOW)
+    ok('a bonus-points special discounts nothing', r.lineSpecials[0] === undefined)
+    ok('and gives nothing away', r.rewards.length === 0)
+    ok('it reports its multiplier', pointsMultiplierFor([bonus], NOW) === 2)
+  }
+  {
+    // The claiming test: a bonus special must not shadow a real discount.
+    const lines = [line(1, 100)]
+    const bonus = special({ id: 1, priority: 1, shape: 'bonus_points', pointsMultiplier: 2 })
+    const discount = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 10, items: [scope(1)] })
+    const r = computeSpecials(lines, [bonus, discount], NOW)
+    ok(
+      '*** a bonus-points special claims NOTHING ***',
+      r.lineSpecials[0]?.specialId === 2 && near(r.lineSpecials[0]?.pct ?? 0, 10),
+      'a promotion that changes points must not block one that changes price',
+    )
+  }
+  {
+    const off = special({ shape: 'bonus_points', pointsMultiplier: 2, isActive: false })
+    ok('a switched-off bonus does not multiply', pointsMultiplierFor([off], NOW) === 1)
+    const future = special({ shape: 'bonus_points', pointsMultiplier: 2, startsAt: '2099-01-01T00:00' })
+    ok('nor does one that has not started', pointsMultiplierFor([future], NOW) === 1)
+    const targeted = special({ shape: 'bonus_points', pointsMultiplier: 2, audience: 'group', audienceGroupId: 9 })
+    ok(
+      'a targeted bonus skips the wrong customer',
+      pointsMultiplierFor([targeted], NOW, { groupId: 1 }) === 1,
+    )
+    ok('and applies to the right one', pointsMultiplierFor([targeted], NOW, { groupId: 9 }) === 2)
+  }
+  {
+    const two = special({ id: 1, shape: 'bonus_points', pointsMultiplier: 2 })
+    const three = special({ id: 2, shape: 'bonus_points', pointsMultiplier: 3 })
+    ok(
+      'two bonuses at once take the BIGGER, not the product',
+      pointsMultiplierFor([two, three], NOW) === 3,
+      'two promotions are two attempts at the same thing — 6x is nobody’s intention',
+    )
+  }
+  {
+    const bad = special({ shape: 'bonus_points', pointsMultiplier: 0.5 })
+    ok(
+      'a multiplier below 1 cannot take points away',
+      pointsMultiplierFor([bad], NOW) === 1,
+      'a bonus is a bonus',
+    )
+  }
+  {
+    // The compounding rule, which is the deliberate exception in this system.
+    const settings = { ...LOYALTY_DEFAULTS, enabled: true, earnRate: 1 }
+    const gold = { id: 1, name: 'Gold', step: 1, qualifyingSpend: 0, multiplier: 1.5, discountPct: 0, color: '', isActive: true }
+    const basket = [{ lineTotalIncl: 100, discounted: false }]
+    ok(
+      'the tier alone earns at its own rate',
+      computeEarn(basket, settings, gold).points === 150,
+    )
+    ok(
+      '*** tier and promotion MULTIPLY ***',
+      computeEarn(basket, settings, gold, 0, 2).points === 300,
+      'a 1.5x member on a double-points weekend earns 3x — both facts are true at once',
+    )
+    ok(
+      'a promotion alone still works with no tier',
+      computeEarn(basket, settings, null, 0, 2).points === 200,
+    )
+    ok(
+      'and no promotion changes nothing',
+      computeEarn(basket, settings, gold, 0, 1).points === 150,
     )
   }
 
