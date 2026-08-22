@@ -29,6 +29,7 @@ export function SalePane({
   lines,
   totals,
   lineSpecials,
+  specialNameById,
   selectedKey,
   customerLabel,
   baseline,
@@ -52,6 +53,14 @@ export function SalePane({
   lines: BasketLine[]
   totals: SaleTotals
   lineSpecials: ReturnType<typeof specialsFor>
+  /**
+   * Special id to name, for lines a promotion GAVE rather than discounted.
+   *
+   * A granted line has no entry in `lineSpecials` — nothing claimed it — so its
+   * badge has no other way to say which deal produced it. Optional, because a
+   * caller with no promotions running has nothing to look up.
+   */
+  specialNameById?: Map<number, string>
   selectedKey: string | null
   /** The attached account, or a typed walk-in name, or null for nobody. */
   customerLabel: string | null
@@ -275,7 +284,15 @@ export function SalePane({
               line={line}
               lineTotal={totals.perLine[index]?.lineTotalIncl ?? 0}
               effectiveDiscountPct={effectiveDiscountPct(line.discountPct, lineSpecials[index])}
-              specialName={lineSpecials[index]?.name ?? null}
+              /* A granted line has no entry in `lineSpecials` — it is free
+                 rather than discounted, so the engine never claimed it — but it
+                 does know which deal produced it. Named from the specials list
+                 so the badge can say WHICH promotion handed it over. */
+              specialName={
+                line.rewardSpecialId !== undefined
+                  ? (specialNameById?.get(line.rewardSpecialId) ?? null)
+                  : (lineSpecials[index]?.name ?? null)
+              }
               priceStructureName={priceStructureName}
               sessionState={lineSessionState(line, baseline)}
               /* No recorded order time means the line was rung before 167 or

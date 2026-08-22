@@ -17,6 +17,7 @@ import {
   isPriceOverridden,
   basketCount,
   lineFromProduct,
+  withRewards,
   type BasketLine,
 } from '../src/lib/basket'
 import type { TillProduct } from '../src/lib/site/tillSearch'
@@ -183,6 +184,61 @@ function main() {
     ok('stepping a line that is not there changes nothing', missing.length === 0)
     const noop = updateBasketLine([], 'nope', { qty: 5 })
     ok('updating a line that is not there changes nothing', noop.length === 0)
+  }
+
+  /* ── Rewards a deal hands over ──────────────────────────────────────────
+   *
+   * The engine answers "what does this basket earn" from scratch on every
+   * keystroke, so `withRewards` has to turn a repeated full answer into the
+   * smallest set of changes. The two things that must hold: it never touches a
+   * line the cashier owns, and an unchanged answer returns the SAME array —
+   * because the till calls it from an effect, and a new array every time is an
+   * infinite render loop.
+   */
+  {
+    const bread = product({ id: 99, code: 'BREAD', description: 'Garlic bread' })
+    const describe = (productId: number) =>
+      productId === 99 ? lineFromProduct(bread, 1, 0) : null
+
+    const pizza = lineFromProduct(product({ id: 1, description: 'Pizza' }), 2, 0)
+    const basket = [pizza]
+
+    const earned = withRewards(basket, [{ specialId: 7, productId: 99, qty: 1 }], describe)
+    ok('an earned reward is added to the basket', earned.length === 2)
+    ok('the reward is free', earned[1].unitPriceIncl === 0)
+    ok('and it is NOT a discount', earned[1].discountPct === 0)
+    ok('it remembers which special gave it', earned[1].rewardSpecialId === 7)
+    ok('the goods that earned it are untouched', earned[0] === pizza)
+
+    // The same answer again. This is the every-keystroke case.
+    const again = withRewards(earned, [{ specialId: 7, productId: 99, qty: 1 }], describe)
+    ok(
+      '*** the same answer returns the SAME array ***',
+      again === earned,
+      'a new array here is an infinite render loop at the till',
+    )
+
+    const more = withRewards(earned, [{ specialId: 7, productId: 99, qty: 2 }], describe)
+    ok('a changed quantity is applied', more[1].qty === 2)
+    ok('and it is a new array, so the screen updates', more !== earned)
+    ok('the reward keeps its key, so React does not remount it', more[1].key === earned[1].key)
+
+    const lost = withRewards(earned, [], describe)
+    ok('un-earning takes the reward back off', lost.length === 1)
+    ok('and leaves the cashier-owned line alone', lost[0] === pizza)
+
+    const unknown = withRewards(basket, [{ specialId: 7, productId: 404, qty: 1 }], describe)
+    ok(
+      'a reward naming an unknown product is simply not granted',
+      unknown.length === 1,
+      'better a deal that quietly does not pay than a blank line on a slip',
+    )
+
+    const nothing = withRewards(basket, [], describe)
+    ok('no rewards and none granted returns the same array', nothing === basket)
+
+    const zero = withRewards(basket, [{ specialId: 7, productId: 99, qty: 0 }], describe)
+    ok('a zero-quantity reward grants nothing', zero.length === 1)
   }
 
   console.log(fails === 0 ? '\nAll basket checks passed.' : `\n${fails} check(s) failed.`)

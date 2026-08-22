@@ -8,7 +8,9 @@ import {
   stepQty,
   updateBasketLine,
   withInstructions,
+  withRewards,
   type BasketLine,
+  type EarnedReward,
 } from '@/lib/basket'
 import { captureBaseline, type SessionBaseline } from '@/lib/lineSession'
 import type { ChosenOption } from '@/lib/instructionRules'
@@ -185,6 +187,26 @@ export type SaleAction =
   | { type: 'STEP'; key: string; delta: number }
   | { type: 'UPDATE'; key: string; changes: Partial<BasketLine> }
   | { type: 'REMOVE'; key: string }
+  /**
+   * Put the basket's earned rewards on it — the free garlic bread.
+   *
+   * ── WHY THE CALLER SENDS THE WHOLE ANSWER, NOT A CHANGE ──────────────────
+   *
+   * The specials engine does not emit events. It answers, from scratch, "what
+   * does this basket earn right now", and that answer shrinks as well as grows:
+   * take a pizza off and the free bread goes with it. So this action carries
+   * the CURRENT full answer and `withRewards` works out the difference.
+   *
+   * That makes it idempotent, which matters more than it looks: the caller
+   * dispatches it from an effect that runs after every basket change, so it
+   * will frequently be sent an answer identical to the one already applied.
+   * `withRewards` returns the very same array in that case, and the reducer
+   * hands back the very same state — so no render loop can start here.
+   *
+   * The reducer stays pure: the caller resolves the reward products, because
+   * only it holds the specials and the clock.
+   */
+  | { type: 'SYNC_REWARDS'; rewards: EarnedReward[]; describe: (productId: number) => BasketLine | null }
   /**
    * Take the last line back off — the Undo key.
    *
@@ -381,6 +403,22 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
         lines: removeBasketLine(state.lines, action.key),
         selectedKey: state.selectedKey === action.key ? null : state.selectedKey,
       }
+
+    case 'SYNC_REWARDS': {
+      const lines = withRewards(state.lines, action.rewards, action.describe)
+      // The SAME array back means nothing was earned or given up, which is the
+      // usual case on the usual keystroke. Returning the same state object is
+      // what stops the effect that dispatches this from looping.
+      if (lines === state.lines) return state
+      return {
+        ...state,
+        lines,
+        // A selected line that was a reward can vanish underneath the cursor —
+        // the goods that earned it were removed. Clear the selection rather
+        // than leave it pointing at a key no row has.
+        selectedKey: lines.some((l) => l.key === state.selectedKey) ? state.selectedKey : null,
+      }
+    }
 
     case 'UNDO': {
       const last = state.lines[state.lines.length - 1]

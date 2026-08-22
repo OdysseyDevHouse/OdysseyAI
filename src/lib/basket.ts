@@ -94,6 +94,30 @@ export type BasketLine = {
   kitchenSentQty?: number
   /** The card a gift-card line sells (147). Absent on ordinary lines. */
   giftCardCode?: string
+  /**
+   * The special that PUT this line in the basket, for a deal that hands
+   * something over rather than reducing a price.
+   *
+   * ── WHY A REWARD IS A LINE AND NOT A DISCOUNT ────────────────────────────
+   *
+   * "Buy two pizzas, get a garlic bread" gives the customer a THIRD THING. It
+   * cannot be expressed as a percentage off the pizzas: the slip has to show
+   * the bread, the kitchen has to make it, and stock has to move for it. So the
+   * engine returns rewards separately from line discounts, and they arrive here
+   * as ordinary lines at zero price.
+   *
+   * ── IT IS ALSO WHAT MAKES RECONCILIATION SAFE ────────────────────────────
+   *
+   * The basket is re-priced on every keystroke. Without a mark saying "the
+   * engine put this here", a recompute could not tell a reward it granted a
+   * moment ago from a line the cashier rang up by hand — so it would either
+   * duplicate the reward on every keypress or delete a real line. Everything
+   * carrying this id is the engine's to add and remove; everything without it
+   * belongs to the cashier and is never touched.
+   *
+   * Absent on every ordinary line, which is all of them until a deal fires.
+   */
+  rewardSpecialId?: number
 }
 
 /**
@@ -163,6 +187,109 @@ export function lineFromProduct(
     orderedAt: Date.now(),
     ...(product.giftCardCode ? { giftCardCode: product.giftCardCode } : {}),
   }
+}
+
+/** A product the basket has earned, as the specials engine reports it. */
+export type EarnedReward = {
+  specialId: number
+  productId: number
+  qty: number
+}
+
+/**
+ * The basket, with its earned rewards present exactly once each.
+ *
+ * ── WHY THIS IS A RECONCILIATION AND NOT AN "ADD" ────────────────────────
+ *
+ * The engine does not emit events. It answers, from scratch on every keystroke,
+ * "what does this basket earn right now" — so the answer shrinks as well as
+ * grows: removing a pizza takes the free garlic bread back. Something has to
+ * turn that repeated full answer into the smallest set of changes, and doing it
+ * by adding on earn and removing on un-earn would need change detection that is
+ * wrong the first time two deals overlap.
+ *
+ * So: every engine-owned line is derived from the current answer, and every
+ * cashier-owned line is left exactly as it is. Idempotent by construction —
+ * running it twice on the same answer changes nothing the second time, which is
+ * what makes it safe to call from a render.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ─────────────────────────────────────
+ *
+ * It never edits a line the cashier owns, and it never re-prices one. A reward
+ * is a new zero-priced line beside the goods that earned it; the goods keep the
+ * price they were rung at. That is what makes "buy two, get one free" show on
+ * the slip as three items with one at nothing, which is what the customer sees
+ * happening at the counter.
+ *
+ * `describe` resolves a product id to the line to add. It returns null when the
+ * till has never heard of the product — a reward naming a since-deleted item is
+ * simply not granted, rather than putting a blank line on the slip.
+ */
+export function withRewards(
+  lines: BasketLine[],
+  rewards: EarnedReward[],
+  describe: (productId: number) => BasketLine | null,
+): BasketLine[] {
+  const own = lines.filter((line) => line.rewardSpecialId === undefined)
+  // Nothing earned and nothing granted: return the SAME array, so a render
+  // that depends on this reference does not re-run for a basket that did not
+  // change. The common case, on every keystroke of every ordinary sale.
+  if (rewards.length === 0) return own.length === lines.length ? lines : own
+
+  const existing = new Map<string, BasketLine>()
+  for (const line of lines) {
+    if (line.rewardSpecialId !== undefined && line.productId !== null) {
+      existing.set(`${line.rewardSpecialId}-${line.productId}`, line)
+    }
+  }
+
+  const granted: BasketLine[] = []
+  rewards.forEach((reward, index) => {
+    if (reward.qty <= 0) return
+    const id = `${reward.specialId}-${reward.productId}`
+    const already = existing.get(id)
+    if (already) {
+      // Kept rather than rebuilt, so its key survives and React does not remount
+      // the row — and so an unchanged quantity is genuinely the same object.
+      granted.push(already.qty === reward.qty ? already : { ...already, qty: reward.qty })
+      return
+    }
+    const fresh = describe(reward.productId)
+    if (!fresh) return
+    granted.push({
+      ...fresh,
+      key: `r${reward.specialId}-${basketKey(reward.productId, index)}`,
+      qty: reward.qty,
+      // Free means free. Not a 100% discount: a discount is something a person
+      // chose to give and the price guard checks against their rights, while
+      // this is the promotion paying out exactly as it was set up.
+      unitPriceIncl: 0,
+      discountPct: 0,
+      rewardSpecialId: reward.specialId,
+    })
+  })
+
+  /*
+   * The SAME array back when nothing actually moved.
+   *
+   * This is what makes the function safe to call from an effect on every
+   * keystroke: an identical answer produces an identical array, the reducer
+   * returns the identical state, React re-renders nothing, and the effect does
+   * not fire again.
+   *
+   * "Nothing moved" has to be identity on every granted line, not a count.
+   * Comparing lengths alone would loop forever the first time a reward's
+   * quantity changed — the rebuilt line is a new object, so the basket really
+   * has changed, but a length check would call it unchanged and the old
+   * quantity would stay on the slip.
+   */
+  const unchanged =
+    own.length + granted.length === lines.length &&
+    granted.every((line, index) => lines[own.length + index] === line)
+  if (unchanged) return lines
+  // Rewards sit at the BOTTOM, under the goods that earned them, which is the
+  // order they happened in and the order a customer reads the slip in.
+  return [...own, ...granted]
 }
 
 /** What this line's answers add to ONE of it, VAT-inclusive and signed. */

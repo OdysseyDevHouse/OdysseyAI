@@ -18,26 +18,51 @@ import type { Department } from './types'
  * what the server works out at sync, by construction rather than by luck.
  */
 
+/**
+ * The basket as the specials engine should see it.
+ *
+ * ── A REWARD LINE IS NOT AN INPUT ────────────────────────────────────────
+ *
+ * Lines the engine itself granted go in at quantity zero. They keep their slot
+ * so results stay index-aligned with the basket, but they must not count
+ * towards anything: the engine's own docblock warns that feeding rewards back
+ * in inflates the deal count, and since this runs on every keystroke that
+ * inflation would compound — two pizzas earn a bread, the bread helps earn
+ * another, and the basket fills with free food.
+ *
+ * Zeroed rather than filtered, because filtering would shift every index after
+ * the removed line and silently apply discounts to the wrong goods.
+ */
+function engineLines(lines: BasketLine[]) {
+  return lines.map((line) => ({
+    productId: line.productId ?? -1,
+    departmentId: line.departmentId,
+    priceIncl: line.unitPriceIncl,
+    /* A refund goes in at zero for the same reason — goods coming back neither
+       qualify for a deal nor earn one; a three-for-two must not be completed
+       by a return. */
+    qty: line.rewardSpecialId !== undefined ? 0 : Math.max(line.qty, 0),
+  }))
+}
+
 /** Per-line specials for a basket, index-aligned with it. */
 export function specialsFor(lines: BasketLine[], specials: Special[], now: Date) {
   if (specials.length === 0) return lines.map(() => undefined)
-  return computeSpecials(
-    lines.map((line) => ({
-      productId: line.productId ?? -1,
-      departmentId: line.departmentId,
-      priceIncl: line.unitPriceIncl,
-      /*
-       * A refund line goes in at zero.
-       *
-       * It keeps its slot so the results stay index-aligned with the basket, but
-       * goods coming back neither qualify for a deal nor earn one — a
-       * three-for-two must not be completed by a return.
-       */
-      qty: Math.max(line.qty, 0),
-    })),
-    specials,
-    now,
-  ).lineSpecials
+  return computeSpecials(engineLines(lines), specials, now).lineSpecials
+}
+
+/**
+ * The products this basket has earned for nothing.
+ *
+ * Separate from `specialsFor` rather than returned beside it, because the two
+ * are consumed differently: the discounts are index-aligned with the lines and
+ * read on every render, while the rewards CHANGE the lines and so must be
+ * applied through the reducer. One function returning both would tempt a caller
+ * into doing the second during the first, which is a render that writes state.
+ */
+export function rewardsFor(lines: BasketLine[], specials: Special[], now: Date) {
+  if (specials.length === 0) return []
+  return computeSpecials(engineLines(lines), specials, now).rewards
 }
 
 export type SaleTotals = ReturnType<typeof totalsFor>
@@ -174,7 +199,11 @@ export function salePayloadLines(
          discount is byte-identical to before this parameter existed. */
       ...(share > 0 ? { discountIncl: round(ownDiscount + share, 2) } : {}),
       ...(share > 0 && discountCodeId ? { discountCodeId } : {}),
-      specialId: lineSpecials[index]?.specialId ?? null,
+      /* A reward line records the special that PUT it here. It carries no
+         discount of its own — it is free rather than reduced — so without this
+         the one line the promotion actually gave away would be the one line
+         with no trace of which promotion gave it. */
+      specialId: line.rewardSpecialId ?? lineSpecials[index]?.specialId ?? null,
       vatRatePct: line.vatRatePct,
       unitCostExcl: line.unitCostExcl,
       /* The answers, and the note. This whitelist is the ONLY thing that reaches

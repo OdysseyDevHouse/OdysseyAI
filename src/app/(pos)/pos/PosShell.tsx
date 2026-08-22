@@ -50,7 +50,8 @@ import {
 } from '@/lib/posOffline/draftOffline'
 import type { LocalDraft } from '@/lib/posOffline/db'
 import { offlineBlockedProduct, offlineBlockedTender } from '@/lib/offlineCapability'
-import type { Special } from '@/lib/specialsEngine'
+import type { Special, RewardProduct } from '@/lib/specialsEngine'
+import { toProductType } from '@/lib/productTypes'
 import {
   pendingPriceIndex,
   resolvedFromIndex,
@@ -129,6 +130,7 @@ import type { VoidType } from '@/lib/site/posVoids'
 import { useSaleState } from './useSaleState'
 import {
   specialsFor,
+  rewardsFor,
   totalsFor,
   salePayloadLines,
   returnPayloadLines,
@@ -810,7 +812,15 @@ export default function PosShell({
         cashierName: operatorName,
         terminalCode: terminal?.code ?? null,
         customerName: state.customer?.name || state.customerName.trim() || null,
-        lines: salePayloadLines(state.lines, lineSpecials, docShares),
+        /* The payload lines, plus the promotion's NAME on each — the one thing
+           a slip wants and the server does not. `salePayloadLines` is a
+           whitelist of what may reach the server (see its comment), so the name
+           is grafted on here rather than smuggled through it. Index-aligned by
+           construction: both arrays are maps of `state.lines`. */
+        lines: salePayloadLines(state.lines, lineSpecials, docShares).map((line, index) => ({
+          ...line,
+          specialName: lineSpecials[index]?.name ?? null,
+        })),
         tenders: paid.map((p) => ({
           name: tenders.find((t) => t.id === p.tenderTypeId)?.name ?? 'Tender',
           amount: p.amount,
@@ -1098,6 +1108,88 @@ export default function PosShell({
     () => specialsFor(state.lines, state.returning ? [] : specials, new Date(clock)),
     [state.lines, specials, clock, state.returning],
   )
+
+  /** Special id to name, so a granted line's badge can say which deal gave it. */
+  const specialNames = useMemo(
+    () => new Map(specials.map((s) => [s.id, s.name])),
+    [specials],
+  )
+
+  /**
+   * The products this basket has EARNED, put on it.
+   *
+   * ── WHY THIS IS AN EFFECT AND NOT PART OF THE MEMO ABOVE ─────────────────
+   *
+   * A reward changes the basket. `lineSpecials` only reads it. Computing a
+   * discount during a render is fine; adding a line during one is a render that
+   * writes state, so it happens here — after the render that noticed.
+   *
+   * The loop this obviously risks is closed in two places: `specialsFor` feeds
+   * reward lines to the engine at quantity zero, so a granted bread never helps
+   * earn another; and `withRewards` returns the same array when nothing has
+   * changed, so the reducer returns the same state and this effect settles after
+   * exactly one pass.
+   *
+   * ── AND WHY IT IS SILENT ON A RETURN ─────────────────────────────────────
+   *
+   * Same list as the discounts above: goods coming back earn nothing, so a
+   * return never grows a free item.
+   */
+  useEffect(() => {
+    const rewards = state.returning
+      ? []
+      : rewardsFor(state.lines, specials, new Date(clock))
+    // Nothing earned and nothing previously granted: the overwhelmingly common
+    // case, and not worth a dispatch that the reducer would only no-op on.
+    if (rewards.length === 0 && !state.lines.some((l) => l.rewardSpecialId !== undefined)) return
+
+    /*
+     * What a reward product IS comes from the special itself, not from a
+     * lookup. The till has never searched for the free garlic bread — nobody
+     * asked for it — so it is not in `results` or `browse`, and offline there
+     * is nothing to ask. `liveSpecials` resolves it server-side and it rides in
+     * the same catalogue payload the till already caches.
+     */
+    const described = new Map<number, RewardProduct>()
+    for (const special of specials) {
+      for (const product of special.rewardProducts ?? []) described.set(product.productId, product)
+    }
+
+    dispatch({
+      type: 'SYNC_REWARDS',
+      rewards,
+      describe: (productId) => {
+        const product = described.get(productId)
+        // A reward naming a product this till cannot describe is not granted.
+        // Better a deal that quietly does not pay than a blank line on a slip.
+        if (!product) return null
+        return {
+          key: '',
+          productId: product.productId,
+          productCode: product.code,
+          description: product.description,
+          // Narrowed here rather than in the engine, which is pure and must not
+          // know the product-type table. An unrecognised value falls back to
+          // 'normal' — the same rule every other read of this column follows.
+          productType: toProductType(product.productType),
+          departmentId: product.departmentId,
+          qty: 1,
+          unitPriceIncl: 0,
+          discountPct: 0,
+          vatRatePct: product.vatRatePct,
+          // Costed even though it is free: the giveaway has to show up against
+          // the promotion in the margin, or the deal looks like it cost nothing.
+          unitCostExcl: product.costExcl,
+          maxDiscountPct: 0,
+          shelfPriceIncl: 0,
+          allowFractions: false,
+          instructions: [],
+          note: '',
+          orderedAt: Date.now(),
+        }
+      },
+    })
+  }, [state.lines, state.returning, specials, clock])
 
   /**
    * A discount on the whole sale, spread onto the lines (rule 3).
@@ -2245,9 +2337,27 @@ export default function PosShell({
    * single-unit line this looks identical to a line void from the outside —
    * filing it as one would inflate line voids on every shop that sells singles.
    */
+  /**
+   * A reward line belongs to the promotion, not to the cashier.
+   *
+   * Its quantity, its price and its presence are all decided by the deal that
+   * granted it, and re-priced from scratch on the next keystroke — so an edit
+   * here would be silently undone a moment later, which is worse than being
+   * told no. The way to remove a free item is to remove the goods that earned
+   * it, and the message says so rather than just refusing.
+   *
+   * Returns true when it has handled the gesture, so callers read as a guard.
+   */
+  function refuseRewardEdit(line: BasketLine): boolean {
+    if (line.rewardSpecialId === undefined) return false
+    toast.info(`“${line.description}” is free with this deal — remove what earned it to take it off.`)
+    return true
+  }
+
   function stepLine(key: string, delta: number) {
     const line = state.lines.find((l) => l.key === key)
     if (!line) return
+    if (refuseRewardEdit(line)) return
 
     // Adding is not a void. Only the − key asks a question.
     if (delta > 0) {
@@ -2281,6 +2391,7 @@ export default function PosShell({
   function voidLine(key: string) {
     const line = state.lines.find((l) => l.key === key)
     if (!line) return
+    if (refuseRewardEdit(line)) return
 
     askVoid({
       voidType: 'line',
@@ -4920,6 +5031,7 @@ export default function PosShell({
           lines={state.lines}
           totals={totals}
           lineSpecials={lineSpecials}
+          specialNameById={specialNames}
           selectedKey={state.selectedKey}
           customerLabel={customerLabel}
           /* What the basket looked like when it was recalled, so each line can
@@ -4938,13 +5050,17 @@ export default function PosShell({
              empties the line. */
           onStep={stepLine}
           onEdit={(line) => {
+            if (refuseRewardEdit(line)) return
             setEditingField('qty')
             setEditing(line)
           }}
           /* "More" opens the MENU, not the pad. The pad is one of the things the
              menu leads to — see LineOptionsModal for why the rare per-line verbs
              live a tap deeper than +, − and Void. */
-          onLineMore={setLineOptions}
+          onLineMore={(line) => {
+            if (refuseRewardEdit(line)) return
+            setLineOptions(line)
+          }}
           onRemove={voidLine}
           onCustomer={() => setPickingCustomer(true)}
           /* Close SAVES in hospitality rather than clearing — see closeSale. In

@@ -639,13 +639,19 @@ async function databaseChecks() {
 /**
  * Pricing a basket, and recording WHY on the sale.
  *
- * The engine tests above prove the arithmetic. This proves the wiring: that a
- * special actually reaches a basket through `priceBasket`, and that the sale
- * line written afterwards remembers which special caused its discount — which
- * is the whole reason `special_id` exists.
+ * The engine tests above prove the arithmetic. This proves the WIRING: that a
+ * saved special is loaded by `liveSpecials` and reaches a basket through the
+ * same pure engine the till runs, and that the sale line written afterwards
+ * remembers which special caused its discount — which is the whole reason
+ * `special_id` exists.
+ *
+ * It deliberately prices the way the till does — `liveSpecials` then
+ * `computeSpecials` — rather than through a server-side helper of its own. A
+ * test that exercises a path no customer is charged through proves nothing
+ * about the one they are.
  */
 async function basketChecks() {
-  const { priceBasket, saveSpecial, listSpecials, deleteSpecial } = await import(
+  const { liveSpecials, saveSpecial, listSpecials, deleteSpecial } = await import(
     '../src/lib/site/specials'
   )
   const { saveDraft, getDocument } = await import('../src/lib/site/salesDocuments')
@@ -689,16 +695,21 @@ async function basketChecks() {
   ok('a special is set up', saved.ok, saved.ok ? '' : saved.error)
   if (!saved.ok) return
 
-  const priced = await priceBasket(SITE, [
-    { productId: product.id, departmentId: product.department_id, priceIncl: 100, qty: 1 },
-    // A product the special does not name, to prove it is not blanket-applied.
-    { productId: -1, departmentId: null, priceIncl: 50, qty: 1 },
-  ])
-  ok('the named product is discounted', near(priced.lines[0].discountPct, 20))
-  ok('and it says WHICH special did it', priced.lines[0].specialId === saved.id)
-  ok('the name comes with it, for the slip', priced.lines[0].specialName === `${TAG} basket`)
-  ok('an unrelated product is untouched', priced.lines[1].discountPct === 0)
-  ok('and carries no special', priced.lines[1].specialId === null)
+  const priced = computeSpecials(
+    [
+      { productId: product.id, departmentId: product.department_id, priceIncl: 100, qty: 1 },
+      // A product the special does not name, to prove it is not blanket-applied.
+      { productId: -1, departmentId: null, priceIncl: 50, qty: 1 },
+    ],
+    await liveSpecials(SITE),
+    new Date(),
+  ).lineSpecials
+  ok('the named product is discounted', near(priced[0]?.pct ?? 0, 20))
+  ok('and it says WHICH special did it', priced[0]?.specialId === saved.id)
+  ok('the name comes with it, for the slip', priced[0]?.name === `${TAG} basket`)
+  // Undefined IS "no special" in the engine's own vocabulary — the slot stays,
+  // holding nothing, so the results line up with the basket.
+  ok('an unrelated product is untouched, and carries no special', priced[1] === undefined)
 
   console.log('\n— The sale remembers the special —')
   const doc = await saveDraft(
@@ -713,8 +724,8 @@ async function basketChecks() {
           description: product.description,
           qty: 1,
           unitPriceIncl: 100,
-          discountPct: priced.lines[0].discountPct,
-          specialId: priced.lines[0].specialId,
+          discountPct: priced[0]?.pct ?? 0,
+          specialId: priced[0]?.specialId ?? null,
           vatRatePct: 15,
         },
       ],

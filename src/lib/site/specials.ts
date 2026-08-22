@@ -15,7 +15,9 @@ import {
   type SpecialInput,
   type SpecialItemInput,
   type SpecialRole,
+  type RewardProduct,
 } from '../specialsEngine'
+import { getSettings } from './settings'
 
 /**
  * Reading and writing specials.
@@ -62,6 +64,9 @@ function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special
     priority: Number(r.priority) || Number(r.id),
     items,
     tiers,
+    // `rewardProducts` is deliberately NOT set here. It is filled in by
+    // liveSpecials, for the payloads that hand goods over; the management
+    // screen only lists and edits, and must pay for no extra lookup.
   }
 }
 
@@ -124,7 +129,70 @@ export async function liveSpecials(siteId: number): Promise<Special[]> {
    * Compared as TEXT, not as dates. 'YYYY-MM-DDTHH:mm' sorts correctly, and
    * parsing would drag the timezone problem back in through the side door.
    */
-  return all.filter((s) => s.isActive && s.endsAt >= wallClockNow())
+  const live = all.filter((s) => s.isActive && s.endsAt >= wallClockNow())
+  return withRewardProducts(siteId, live)
+}
+
+/**
+ * The same specials, carrying what their reward products actually ARE.
+ *
+ * ── WHY THIS IS DONE HERE AND NOT AT THE TILL ────────────────────────────
+ *
+ * A reward names a product the customer never asked for, so the till has
+ * normally never looked it up — and it cannot go and fetch one in the middle of
+ * pricing a basket, least of all with the network gone. Resolving it here means
+ * the description rides in the catalogue payload the till already caches, and a
+ * deal can hand over a product offline.
+ *
+ * One query for every reward row across every live special, rather than one per
+ * special. Most shops have none, and then this does not query at all.
+ */
+async function withRewardProducts(siteId: number, specials: Special[]): Promise<Special[]> {
+  const wanted = new Set<number>()
+  for (const special of specials) {
+    for (const item of special.items) {
+      if (item.role === 'reward' && item.productId !== null) wanted.add(item.productId)
+    }
+  }
+  if (wanted.size === 0) return specials
+
+  const { cost_basis: costBasis } = await getSettings(siteId, ['cost_basis'])
+  const ids = [...wanted]
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT p.id, p.code, p.description, p.department_id, p.product_type,
+            COALESCE(v.rate, 0) AS vat_rate,
+            ${costBasis === 'last' ? 'p.last_cost' : 'p.average_cost'} AS cost_excl
+       FROM products p
+       LEFT JOIN vat_rates v ON v.id = p.selling_vat_rate_id
+      WHERE p.id IN (${ids.map(() => '?').join(',')})
+        -- An archived product must not be handed over. The deal simply does not
+        -- pay out, which is visible on the slip; putting a withdrawn item on it
+        -- would be worse than a promotion that quietly stopped.
+        AND p.is_archived = 0`,
+    ids,
+  )
+
+  const byId = new Map<number, RewardProduct>()
+  for (const r of rows) {
+    byId.set(Number(r.id), {
+      productId: Number(r.id),
+      code: String(r.code ?? ''),
+      description: String(r.description ?? ''),
+      departmentId: r.department_id === null ? null : Number(r.department_id),
+      vatRatePct: toNum(r.vat_rate),
+      costExcl: toNum(r.cost_excl),
+      productType: String(r.product_type ?? 'normal'),
+    })
+  }
+
+  return specials.map((special) => {
+    const products = special.items
+      .filter((i) => i.role === 'reward' && i.productId !== null)
+      .map((i) => byId.get(i.productId!))
+      .filter((p): p is RewardProduct => p !== undefined)
+    return products.length === 0 ? special : { ...special, rewardProducts: products }
+  })
 }
 
 /**
@@ -189,51 +257,48 @@ export function specialPriceFor(
   }
 }
 
-/**
- * What every line of a basket is entitled to, ready for the till.
+/*
+ * `priceBasket` USED TO LIVE HERE, AND ITS DELETION IS THE POINT.
  *
- * ── ONE CALL, SO THE TILL AND INVOICING CANNOT DISAGREE ──────────────────
+ * It loaded the live specials and ran `computeSpecials` server-side, returning
+ * a discount per line plus the rewards earned -- a whole second pricing path
+ * that nothing ever called. The till and the invoice editor both price in the
+ * BROWSER, from the same pure engine, because a basket has to re-price on every
+ * keystroke with the network gone.
  *
- * Both screens price the same basket the same way. Each doing its own load and
- * its own `computeSpecials` would be two chances to drift, and the drift would
- * only show up as a customer being charged one price on a slip and another on
- * an invoice for the same goods.
- *
- * Returns the discount as a PERCENTAGE per line, plus the special that caused
- * it, so the caller can write both to the sale line.
+ * Its docblock claimed to be the one call that stops the till and invoicing
+ * disagreeing. It was the opposite: a second implementation of the same
+ * arithmetic, kept alive only by its own test, free to drift out of step with
+ * the path that actually charges customers. That invariant is real -- it is
+ * held by `computeSpecials` being the only place the arithmetic exists.
  */
-export async function priceBasket(
+
+/**
+ * The names of these specials, keyed by id.
+ *
+ * What a slip needs and nothing else. `listSpecials` would answer this too, but
+ * it reads three tables and builds every item and tier of every promotion the
+ * shop has ever run, to print two words per line.
+ *
+ * TOLERANT BY DESIGN. A site that has not run 056 has no `specials` table, and
+ * a promotion deleted since the sale has no row — both come back as a missing
+ * key, and a missing key costs the line its promotion's NAME, never its
+ * discount. A slip must print.
+ */
+export async function specialNames(
   siteId: number,
-  lines: { productId: number; departmentId: number | null; priceIncl: number; qty: number }[],
-): Promise<{
-  lines: { discountPct: number; specialId: number | null; specialName: string | null }[]
-  rewards: { productId: number; qty: number; specialId: number; name: string }[]
-}> {
-  if (lines.length === 0) return { lines: [], rewards: [] }
+  ids: readonly number[],
+): Promise<Map<number, string>> {
+  const wanted = [...new Set(ids)]
+  if (wanted.length === 0) return new Map()
 
-  const specials = await liveSpecials(siteId)
-  if (specials.length === 0) {
-    return {
-      lines: lines.map(() => ({ discountPct: 0, specialId: null, specialName: null })),
-      rewards: [],
-    }
-  }
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT id, name FROM specials WHERE id IN (${wanted.map(() => '?').join(',')})`,
+    wanted,
+  ).catch(() => [] as Row[])
 
-  const { lineSpecials, rewards } = computeSpecials(lines, specials, new Date())
-
-  return {
-    lines: lineSpecials.map((applied) => ({
-      discountPct: applied?.pct ?? 0,
-      specialId: applied?.specialId ?? null,
-      specialName: applied?.name ?? null,
-    })),
-    rewards: rewards.map((r) => ({
-      productId: r.productId,
-      qty: r.qty,
-      specialId: r.specialId,
-      name: r.name,
-    })),
-  }
+  return new Map(rows.map((r) => [Number(r.id), String(r.name ?? '')]))
 }
 
 /**

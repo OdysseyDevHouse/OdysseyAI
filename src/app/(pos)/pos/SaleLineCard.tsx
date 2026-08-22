@@ -86,6 +86,15 @@ export function SaleLineCard({
 }) {
   const refund = line.qty < 0
   const discounted = effectiveDiscountPct > 0
+  /*
+   * A line the promotion put here, rather than one it reduced.
+   *
+   * It carries NO discount — it is free, not marked down — so the ordinary
+   * discount badge would never appear on the one line the deal actually gave
+   * away. Its own badge, in the same warning tone, because to a cashier
+   * glancing at the basket both mean "a promotion did this".
+   */
+  const granted = line.rewardSpecialId !== undefined
   /* Any of it, not all of it. A line of 3 with 1 sent is a line the kitchen has
      partly heard about, and telling the waiter it is unsent would invite a
      re-send of all three. The delta that actually prints is computed
@@ -137,7 +146,12 @@ export function SaleLineCard({
                   decoration, and decoration is what hides the one line that is
                   actually unusual — see odyssey-craft on colour as meaning. */}
               {refund && <Badge tone="danger" solid>Refund</Badge>}
-              {discounted && (
+              {granted && (
+                <Badge tone="warning" solid>
+                  {specialName ? `Free — ${specialName}` : 'Free'}
+                </Badge>
+              )}
+              {!granted && discounted && (
                 <Badge tone="warning" solid>
                   {specialName ?? `${formatQty(effectiveDiscountPct)}% off`}
                 </Badge>

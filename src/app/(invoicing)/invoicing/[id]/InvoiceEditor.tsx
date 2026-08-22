@@ -42,6 +42,7 @@ import {
   computeSpecials,
   effectiveDiscountPct,
   type Special,
+  type RewardProduct,
 } from '@/lib/specialsEngine'
 import type { SalesDocument } from '@/lib/site/salesDocuments'
 import type { PriceStructure, SalesRep } from '@/lib/site/lookups'
@@ -94,6 +95,16 @@ type EditorLine = {
   discountPct: number
   vatRatePct: number
   unitCostExcl: number
+  /**
+   * The special that PUT this line here — a product given away rather than
+   * discounted. See the same field on BasketLine for why a reward has to be a
+   * line rather than a percentage.
+   *
+   * It also marks the line as the ENGINE's rather than the typist's, which is
+   * what lets the reconciliation below add and remove rewards without ever
+   * touching a line somebody entered by hand.
+   */
+  rewardSpecialId?: number
 }
 
 let keySeq = 0
@@ -457,20 +468,107 @@ export default function InvoiceEditor({
    * someone's cursor while they type would be worse than a figure that is a
    * few minutes stale. It refreshes on the next edit or reload.
    */
-  const lineSpecials = useMemo(() => {
-    if (specials.length === 0) return lines.map(() => undefined)
-    return computeSpecials(
+  /**
+   * The lines as the engine should see them.
+   *
+   * A reward the engine granted goes in at quantity zero: it keeps its slot so
+   * the results stay index-aligned, but it must not count towards anything.
+   * Feeding a granted line back in inflates the deal count, and since this
+   * recomputes on every edit that inflation would compound.
+   */
+  const engineLines = useMemo(
+    () =>
       lines.map((l) => ({
         productId: l.productId ?? -1,
         departmentId: l.departmentId ?? null,
         priceIncl: l.unitPriceIncl,
         // A credit line earns nothing — see the engine's note on refunds.
-        qty: Math.max(l.qty, 0),
+        qty: l.rewardSpecialId !== undefined ? 0 : Math.max(l.qty, 0),
       })),
-      specials,
-      new Date(),
-    ).lineSpecials
-  }, [lines, specials])
+    [lines],
+  )
+
+  const lineSpecials = useMemo(() => {
+    if (specials.length === 0) return lines.map(() => undefined)
+    return computeSpecials(engineLines, specials, new Date()).lineSpecials
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `lines` only for
+    // the empty-specials shortcut above; engineLines already tracks it.
+  }, [engineLines, specials])
+
+  /**
+   * The products this invoice has EARNED, put on it.
+   *
+   * The same reconciliation the till does, and for the same reasons — see the
+   * SYNC_REWARDS action and `withRewards`. An effect rather than part of the
+   * memo above, because a reward CHANGES the lines and a render must not write
+   * state. It settles in one pass: nothing earned and nothing granted returns
+   * early, and an unchanged answer produces an identical array.
+   */
+  useEffect(() => {
+    if (specials.length === 0) return
+    const rewards = computeSpecials(engineLines, specials, new Date()).rewards
+    if (rewards.length === 0 && !lines.some((l) => l.rewardSpecialId !== undefined)) return
+
+    const described = new Map<number, RewardProduct>()
+    for (const special of specials) {
+      for (const product of special.rewardProducts ?? []) described.set(product.productId, product)
+    }
+
+    setLines((current) => {
+      const own = current.filter((l) => l.rewardSpecialId === undefined)
+      const existing = new Map(
+        current
+          .filter((l) => l.rewardSpecialId !== undefined)
+          .map((l) => [`${l.rewardSpecialId}-${l.productId}`, l]),
+      )
+
+      const granted: EditorLine[] = []
+      for (const reward of rewards) {
+        if (reward.qty <= 0) continue
+        const already = existing.get(`${reward.specialId}-${reward.productId}`)
+        if (already) {
+          granted.push(already.qty === reward.qty ? already : { ...already, qty: reward.qty })
+          continue
+        }
+        const product = described.get(reward.productId)
+        // A reward naming a product that cannot be described is not granted —
+        // better a deal that quietly does not pay than a blank line.
+        if (!product) continue
+        granted.push({
+          key: nextKey(),
+          productId: product.productId,
+          productCode: product.code,
+          description: product.description,
+          productType: product.productType,
+          departmentId: product.departmentId,
+          salesRepUserId: null,
+          qty: reward.qty,
+          // Free, not marked down: a discount is something a person chose to
+          // give, while this is the promotion paying out as it was set up.
+          unitPriceIncl: 0,
+          discountPct: 0,
+          vatRatePct: product.vatRatePct,
+          // Costed even though free, so the giveaway shows against the margin.
+          unitCostExcl: product.costExcl,
+          rewardSpecialId: reward.specialId,
+        })
+      }
+
+      /*
+       * The SAME array back when nothing moved, so React bails out of the
+       * re-render and this effect settles rather than looping.
+       *
+       * "Nothing moved" has to mean every granted line is the very object that
+       * was already there, in the same order, with no line dropped — comparing
+       * only the counts would loop forever the first time a reward's quantity
+       * changed, since a new object with the same length looks identical.
+       */
+      const unchanged =
+        own.length + granted.length === current.length &&
+        granted.every((line, index) => current[own.length + index] === line)
+      return unchanged ? current : [...own, ...granted]
+    })
+  }, [engineLines, specials, lines])
 
   const computed = useMemo(() => {
     const per = lines.map((l, i) =>
@@ -673,7 +771,11 @@ export default function InvoiceEditor({
         unitPriceIncl: l.unitPriceIncl,
         // What the screen showed, so the saved invoice matches it.
         discountPct: effectiveDiscountPct(l.discountPct, lineSpecials[i]),
-        specialId: lineSpecials[i]?.specialId ?? null,
+        /* A granted line records the special that PUT it here. It carries no
+           discount of its own — it is free rather than reduced — so without
+           this the one line the promotion actually gave away would be the one
+           line with no trace of which promotion gave it. */
+        specialId: l.rewardSpecialId ?? lineSpecials[i]?.specialId ?? null,
         vatRatePct: l.vatRatePct,
         unitCostExcl: l.unitCostExcl,
       })),

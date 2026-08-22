@@ -105,6 +105,46 @@ export type Special = {
   items: SpecialItem[]
   /** multibuy only: the quantity ladder, e.g. 3 for R25, 6 for R45. */
   tiers: SpecialTier[]
+  /**
+   * The reward products, described well enough to put one on a slip.
+   *
+   * ── WHY THE DESCRIPTION TRAVELS WITH THE SPECIAL ─────────────────────────
+   *
+   * A reward names a product the customer never asked for, so the till has
+   * typically never looked it up: it is not in the search results, not in the
+   * browsed department, and asking for it would mean a round trip in the middle
+   * of a keystroke — or, offline, an async read that a render cannot wait for.
+   *
+   * So the server sends what a free garlic bread IS along with the rule that
+   * grants it. It rides in the catalogue payload the till already caches, which
+   * is what lets a deal hand over a product with the network gone.
+   *
+   * Absent for every special that gives no product away, which is most of them
+   * — and optional so that the many places building a Special for a test or a
+   * form say nothing about rewards rather than each having to say "none".
+   */
+  rewardProducts?: RewardProduct[]
+}
+
+/** Enough of a product to put a granted line on a slip. */
+export type RewardProduct = {
+  productId: number
+  code: string
+  description: string
+  departmentId: number | null
+  vatRatePct: number
+  /** What it would have cost. Recorded on the line so the giveaway is costed. */
+  costExcl: number
+  /**
+   * Carried rather than assumed.
+   *
+   * A reward line is a real sale line and its type decides real behaviour —
+   * whether stock moves for it, whether it can be returned. Defaulting it to
+   * "normal" would silently move stock for a service, so the type travels with
+   * the product. Typed as a string here because this module is pure and must
+   * not import the product-type table; the till narrows it on the way in.
+   */
+  productType: string
 }
 
 /** What the engine needs to know about one thing in the basket. */
