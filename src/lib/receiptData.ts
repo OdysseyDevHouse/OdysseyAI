@@ -279,9 +279,20 @@ export function receiptDataFromBasket(input: {
        * sale: paper handed over at the counter claiming 0%, and a reprint after
        * sync claiming 8%. `lineTotals` has already resolved the amount, so the
        * percentage is arithmetic rather than a second source of truth.
+       *
+       * FALSY, not nullish — and that distinction is the whole fix. The caller
+       * this exists for is PosShell's snapshot, which passes
+       * `salePayloadLines` output; that always emits `discountPct`, as 0 on
+       * exactly the doc-discount-share line described above. A `??` here reads
+       * that 0 as "stated" and echoes it straight back, so the bug survives on
+       * the one path it was written for. A stated 0 and an absent one make the
+       * same claim — nothing came off by percentage — and neither is worth
+       * printing when rands did come off.
+       *
+       * A caller stating a REAL percentage still wins: it is not falsy.
        */
       discountPct: Math.abs(
-        l.discountPct ??
+        l.discountPct ||
           (computed[index].grossIncl > 0
             ? round((computed[index].discountIncl / computed[index].grossIncl) * 100, 3)
             : 0),

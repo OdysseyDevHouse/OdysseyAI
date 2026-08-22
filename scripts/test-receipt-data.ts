@@ -100,6 +100,61 @@ ok('*** the offline slip agrees with the posted one, line for line ***',
     JSON.stringify(offline.lines))
 ok('…and total for total', offline.totalIncl === built.totalIncl,
     `${offline.totalIncl} vs ${built.totalIncl}`)
+
+/*
+ * The SAME agreement, with the shape the real caller actually sends.
+ *
+ * The fixture above OMITS discountPct, so a nullish fallback satisfies it. But
+ * PosShell's snapshot passes `salePayloadLines` output, and that always emits
+ * discountPct — as 0 on exactly the line this is about, one reduced only by a
+ * document discount's apportioned share. A `??` reads that stated 0 as a claim
+ * and echoes it back, so the slip prints "0% off" beside a real R10 discount
+ * and the bug survives on the one path it was written for.
+ *
+ * Pinned separately rather than by changing the fixture above: both shapes are
+ * legitimate callers and both must derive the same percentage.
+ */
+const offlineStatedZero = receiptDataFromBasket({
+  siteName: site.name,
+  vatNumber: site.vatNumber,
+  documentNumber: 'INV000042',
+  documentDate: '2026-08-14',
+  printedAt: 'now',
+  cashierName: 'Ruth',
+  terminalCode: 'T1',
+  customerName: 'Walk-in',
+  lines: [
+    {
+      description: 'Burger', qty: 2, unitPriceIncl: 62.5,
+      // Stated, and zero — what salePayloadLines emits for a doc-discount line.
+      discountPct: 0, discountIncl: 10, vatRatePct: 15,
+      instructions: [
+        { optionName: 'extra bacon', qty: 1, printsOnReceipt: true },
+        { optionName: 'well done', qty: 1, printsOnReceipt: false },
+      ],
+    },
+  ],
+  tenders,
+  changeGiven: 5,
+})
+ok('*** a STATED zero percent is derived too, not echoed ***',
+    offlineStatedZero.lines[0].discountPct === built.lines[0].discountPct,
+    `offline ${offlineStatedZero.lines[0].discountPct}% vs posted ${built.lines[0].discountPct}%`)
+ok('…so the counter slip and the reprint make the same claim',
+    JSON.stringify(offlineStatedZero.lines) === JSON.stringify(built.lines))
+
+/* And a caller that states a REAL percentage still wins — the derivation is a
+   fallback for "nothing was claimed", not an override of what was. */
+const offlineStatedPct = receiptDataFromBasket({
+  siteName: site.name, vatNumber: site.vatNumber, documentNumber: 'INV000042',
+  documentDate: '2026-08-14', printedAt: 'now', cashierName: 'Ruth',
+  terminalCode: 'T1', customerName: 'Walk-in',
+  lines: [{ description: 'Burger', qty: 2, unitPriceIncl: 62.5,
+            discountPct: 8, vatRatePct: 15 }],
+  tenders, changeGiven: 5,
+})
+ok('a stated percentage is not overridden', offlineStatedPct.lines[0].discountPct === 8,
+    `${offlineStatedPct.lines[0].discountPct}%`)
 ok('…and VAT for VAT', JSON.stringify(offline.vatByRate) === JSON.stringify(built.vatByRate))
 ok('offline carries no loyalty and copy 0', offline.loyalty === null && offline.copyNumber === 0)
 
