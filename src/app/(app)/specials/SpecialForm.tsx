@@ -38,6 +38,7 @@ import {
   // The pure engine, NOT lib/site/specials — importing the server module from
   // a client component pulls mysql2 into the browser bundle.
 } from '@/lib/specialsEngine'
+import type { SpecialWithUse } from '@/lib/site/specials'
 import { saveSpecialAction } from './actions'
 
 /**
@@ -112,6 +113,7 @@ export default function SpecialForm({
   rows: initialRows,
   departments,
   customerGroups,
+  others,
   onClose,
   onSaved,
 }: {
@@ -121,6 +123,8 @@ export default function SpecialForm({
   departments: DepartmentOption[]
   /** For a special aimed at one group. Empty when the shop keeps none. */
   customerGroups: CustomerGroupOption[]
+  /** Every other special, so this one can warn about being shadowed. */
+  others: SpecialWithUse[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -408,6 +412,9 @@ export default function SpecialForm({
         {/* What it does to a real basket, run through the real engine. */}
         <DealPreview draft={draft} rows={rows} />
 
+        {/* And whether something above it will get there first. */}
+        <OverlapWarning draft={draft} rows={rows} others={others} />
+
         {/* ── Who and where ─────────────────────────────────────────────── */}
         <AudienceSection draft={draft} patch={patch} customerGroups={customerGroups} />
 
@@ -451,6 +458,83 @@ function Section({
       <div className="mt-3 flex flex-col gap-3">{children}</div>
     </div>
   )
+}
+
+/* ── Is something else already claiming these products? ──────────────────── */
+
+/**
+ * A promotion higher in the list that already covers what this one covers.
+ *
+ * ── WHY THIS IS WORTH SAYING ─────────────────────────────────────────────
+ *
+ * Only ONE special applies to a product: the first in the list to involve a
+ * line owns it. The list header explains that rule, and the rule is right — but
+ * it is explained on a screen someone has already left by the time they are
+ * setting up the deal that will be shadowed. The result is a promotion that
+ * saves correctly, switches on correctly, and never fires, with nothing
+ * anywhere saying why.
+ *
+ * NON-BLOCKING, deliberately. Overlapping promotions are a legitimate thing to
+ * arrange — a shop may well want the three-for-two to beat the ten percent, and
+ * expressing that is exactly what the ordering is for. This says what will
+ * happen; it does not argue.
+ */
+function OverlapWarning({
+  draft,
+  rows,
+  others,
+}: {
+  draft: SpecialInput
+  rows: FormRow[]
+  others: SpecialWithUse[]
+}) {
+  const keep = ROLES_USED[draft.shape]
+  const mine = rows.filter((r) => keep.includes(r.role))
+  // A store-wide happy hour covers everything, so it overlaps with anything.
+  const wholeStore = draft.shape === 'happy_hour' && mine.length === 0
+  if (mine.length === 0 && !wholeStore) return null
+
+  const myProducts = new Set(mine.map((r) => r.productId).filter((v): v is number => v !== null))
+  const myDepartments = new Set(
+    mine.map((r) => r.departmentId).filter((v): v is number => v !== null),
+  )
+
+  const clash = others.find((other) => {
+    if (other.id === draft.id) return false
+    if (!other.isActive) return false
+    // Windows that do not meet cannot shadow each other. Compared as text,
+    // which is a correct chronological comparison in this format (057).
+    if (other.endsAt < draft.startsAt || other.startsAt > draft.endsAt) return false
+    // Only a promotion ABOVE this one can take its lines. One below is the one
+    // being shadowed, which is its own business.
+    if (draft.id !== null && other.priority >= (othersPriorityOf(others, draft.id) ?? Infinity)) {
+      return false
+    }
+    const theirs = other.items
+    // A store-wide happy hour on either side overlaps with everything.
+    if (theirs.length === 0 && other.shape === 'happy_hour') return true
+    if (wholeStore) return true
+    return theirs.some(
+      (i) =>
+        (i.productId !== null && myProducts.has(i.productId)) ||
+        (i.departmentId !== null && myDepartments.has(i.departmentId)),
+    )
+  })
+
+  if (!clash) return null
+
+  return (
+    <p className="rounded-control bg-warning-soft px-3 py-2 text-xs text-warning">
+      <Icons.Info size={14} className="mr-1.5 inline align-text-bottom" />
+      “{clash.name}” is higher in the list and covers some of the same products in an overlapping
+      window, so it will apply instead. Move this one above it to change that.
+    </p>
+  )
+}
+
+/** Where a saved special sits in the firing order. */
+function othersPriorityOf(others: SpecialWithUse[], id: number): number | undefined {
+  return others.find((s) => s.id === id)?.priority
 }
 
 /* ── What it actually does to a basket ───────────────────────────────────── */

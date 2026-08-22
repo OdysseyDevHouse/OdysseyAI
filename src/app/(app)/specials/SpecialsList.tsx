@@ -436,6 +436,19 @@ export default function SpecialsList({
                             {special.redemptionsCount}/{special.maxRedemptions} used
                           </span>
                         )}
+                        {/*
+                          A promotion that has been running and has never been
+                          used. Almost always means it is shadowed by one above
+                          it, or that its products never sell together — and
+                          either way it is invisible without being told.
+
+                          Only once it is genuinely RUNNING: a scheduled or
+                          switched-off special has had no chance yet, and saying
+                          "never used" of one would be alarming and wrong.
+                        */}
+                        {status === 'running' && special.redemptionsCount === 0 && (
+                          <span className="text-warning">Not used yet</span>
+                        )}
                       </span>
                     </span>
 
@@ -492,6 +505,7 @@ export default function SpecialsList({
           rows={editingRows}
           departments={departments}
           customerGroups={customerGroups}
+          others={rows}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
