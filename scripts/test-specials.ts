@@ -26,6 +26,7 @@ import {
   type SpecialItem,
   type SpecialTier,
   type SpecialShape,
+  type SpecialGuards,
 } from '../src/lib/specialsEngine'
 
 let fails = 0
@@ -453,6 +454,168 @@ async function main() {
     ok(
       'a discount over 100% is clamped',
       near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 100),
+    )
+  }
+
+  /* ── Guards ─────────────────────────────────────────────────────────────
+   *
+   * The ceilings that stop a promotion running away. This is the money-losing
+   * class of bug: until 211 a mistyped 90 in the discount box discounted the
+   * whole store by 90 percent on every sale, and the till already refused
+   * exactly that from a cashier.
+   *
+   * The rule under all of it: a guard CLAMPS and still claims. If it cancelled
+   * instead, the line would fall through to whatever promotion sits below —
+   * very likely the one the guard was protecting against.
+   */
+  console.log('\n— Guards —')
+  function guards(over: Partial<SpecialGuards> = {}): SpecialGuards {
+    return {
+      maxDealsPerSale: 0,
+      respectMaxDiscount: false,
+      minMarginPct: 0,
+      neverBelowCost: false,
+      ...over,
+    }
+  }
+
+  {
+    // Cost 60 excl, sells 100 incl. A 50% special would take it to 50 — under.
+    const lines: BasketLine[] = [{ productId: 1, departmentId: 10, priceIncl: 100, qty: 1, costExcl: 60 }]
+    const s = special({
+      shape: 'happy_hour', discountPct: 50, items: [scope(1)],
+      guards: guards({ neverBelowCost: true }),
+    })
+    const r = computeSpecials(lines, [s], NOW)
+    ok(
+      '*** never-below-cost clamps rather than cancels ***',
+      near(r.lineSpecials[0]?.pct ?? 0, 40),
+      'R100 down to cost R60 is 40% off, not the 50% asked for',
+    )
+  }
+  {
+    const lines: BasketLine[] = [{ productId: 1, departmentId: 10, priceIncl: 100, qty: 1, costExcl: 60 }]
+    const s = special({
+      shape: 'happy_hour', discountPct: 20, items: [scope(1)],
+      guards: guards({ neverBelowCost: true }),
+    })
+    ok(
+      'a discount that stays above cost is untouched',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 20),
+    )
+  }
+  {
+    // Already selling under cost. A promotion must not deepen the loss.
+    const lines: BasketLine[] = [{ productId: 1, departmentId: 10, priceIncl: 50, qty: 1, costExcl: 60 }]
+    const s = special({
+      shape: 'happy_hour', discountPct: 10, items: [scope(1)],
+      guards: guards({ neverBelowCost: true }),
+    })
+    ok(
+      'a line already below cost gets nothing off',
+      computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined,
+    )
+  }
+  {
+    // 25% margin on a 100 line means a floor of 80, so 20% is the most.
+    const lines: BasketLine[] = [{ productId: 1, departmentId: 10, priceIncl: 100, qty: 1, costExcl: 60 }]
+    const s = special({
+      shape: 'happy_hour', discountPct: 90, items: [scope(1)],
+      guards: guards({ minMarginPct: 25 }),
+    })
+    ok(
+      'a minimum margin holds the discount to it',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 20),
+      'cost 60 at 25% margin floors the price at 80',
+    )
+  }
+  {
+    const lines: BasketLine[] = [{ productId: 1, departmentId: 10, priceIncl: 100, qty: 1, costExcl: 60, maxDiscountPct: 5 }]
+    const s = special({
+      shape: 'happy_hour', discountPct: 30, items: [scope(1)],
+      guards: guards({ respectMaxDiscount: true }),
+    })
+    ok(
+      "*** a special can be held to the product's own ceiling ***",
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 5),
+      'the same ceiling the till already enforces on a cashier',
+    )
+  }
+  {
+    const lines: BasketLine[] = [{ productId: 1, departmentId: 10, priceIncl: 100, qty: 1, costExcl: 60, maxDiscountPct: 5 }]
+    const s = special({ shape: 'happy_hour', discountPct: 30, items: [scope(1)] })
+    ok(
+      'and is NOT held to it unless asked',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 30),
+      'switching this on for everyone would gut the promotions shops already run',
+    )
+  }
+  {
+    // No cost supplied — the storefront's case.
+    const lines = [line(1, 100)]
+    const s = special({
+      shape: 'happy_hour', discountPct: 50, items: [scope(1)],
+      guards: guards({ neverBelowCost: true, minMarginPct: 40 }),
+    })
+    ok(
+      '*** an unknown cost SKIPS the margin guard rather than refusing ***',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 50),
+      'refusing here would silently stop every promotion on the shop front',
+    )
+  }
+  {
+    // 9 units, buy-3-get-cheapest-free, limited to 2 deals.
+    const lines = [line(1, 10, 9)]
+    const s = special({
+      shape: 'cheapest_free', triggerQty: 3, items: [trigger(1)],
+      guards: guards({ maxDealsPerSale: 2 }),
+    })
+    const r = computeSpecials(lines, [s], NOW)
+    ok(
+      '*** a per-sale limit caps how often a combo repeats ***',
+      near(r.lineSpecials[0]?.pct ?? 0, (2 / 9) * 100),
+      'two free units out of nine, not three',
+    )
+  }
+  {
+    const lines = [line(1, 10, 9)]
+    const s = special({ shape: 'cheapest_free', triggerQty: 3, items: [trigger(1)] })
+    ok(
+      'and with no limit set it repeats as before',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, (3 / 9) * 100),
+      'zero means unlimited, not none',
+    )
+  }
+  {
+    // A ladder repeats too: 9 units against a 3-for tier is three rungs.
+    const lines = [line(1, 10, 9)]
+    const capped = special({
+      shape: 'multibuy', items: [trigger(1)], tiers: [tier(3, 25)],
+      guards: guards({ maxDealsPerSale: 1 }),
+    })
+    const free = special({ shape: 'multibuy', items: [trigger(1)], tiers: [tier(3, 25)] })
+    const cappedPct = computeSpecials(lines, [capped], NOW).lineSpecials[0]?.pct ?? 0
+    const freePct = computeSpecials(lines, [free], NOW).lineSpecials[0]?.pct ?? 0
+    ok('a limit caps a multibuy ladder as well', cappedPct < freePct, `${cappedPct} < ${freePct}`)
+    ok(
+      'and it is exactly one rung',
+      near(cappedPct, (5 / 90) * 100),
+      'one group of 3 saves R5 on a R90 line',
+    )
+  }
+  {
+    // The guard must not release the line to a lower-priority special.
+    const lines: BasketLine[] = [{ productId: 1, departmentId: 10, priceIncl: 100, qty: 1, costExcl: 90 }]
+    const guarded = special({
+      id: 1, priority: 1, shape: 'happy_hour', discountPct: 50, items: [scope(1)],
+      guards: guards({ neverBelowCost: true }),
+    })
+    const greedy = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 50, items: [scope(1)] })
+    const r = computeSpecials(lines, [guarded, greedy], NOW)
+    ok(
+      '*** a clamped special STILL claims its line ***',
+      r.lineSpecials[0]?.specialId === 1 && near(r.lineSpecials[0]?.pct ?? 0, 10),
+      'otherwise the unguarded special below it inherits the line — the very thing the guard was for',
     )
   }
 

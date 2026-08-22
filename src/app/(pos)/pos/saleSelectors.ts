@@ -42,6 +42,15 @@ function engineLines(lines: BasketLine[]) {
        qualify for a deal nor earn one; a three-for-two must not be completed
        by a return. */
     qty: line.rewardSpecialId !== undefined ? 0 : Math.max(line.qty, 0),
+    /*
+     * What the margin guards need, and the till already has.
+     *
+     * Both ride on every basket line and are cached offline, so a special that
+     * refuses to sell below cost does so with the network gone — which is
+     * exactly when nobody is watching the numbers.
+     */
+    costExcl: line.unitCostExcl,
+    maxDiscountPct: line.maxDiscountPct,
   }))
 }
 

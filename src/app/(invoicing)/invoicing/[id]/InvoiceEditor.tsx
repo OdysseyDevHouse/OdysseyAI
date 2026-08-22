@@ -484,6 +484,10 @@ export default function InvoiceEditor({
         priceIncl: l.unitPriceIncl,
         // A credit line earns nothing — see the engine's note on refunds.
         qty: l.rewardSpecialId !== undefined ? 0 : Math.max(l.qty, 0),
+        // For the margin guards. An invoice line carries its cost the same way
+        // a till line does, so a special that refuses to sell below cost holds
+        // on both screens rather than only at the counter.
+        costExcl: l.unitCostExcl,
       })),
     [lines],
   )

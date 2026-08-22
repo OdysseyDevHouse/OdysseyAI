@@ -36,9 +36,11 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 /** Long enough to describe a deal, short enough to fit a column on a list. */
 const NAME_MAX = 100
 
-function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special {
+function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): SpecialWithUse {
   const shape = String(r.shape)
   return {
+    maxRedemptions: r.max_redemptions === null ? null : Number(r.max_redemptions),
+    redemptionsCount: Number(r.redemptions_count ?? 0),
     id: Number(r.id),
     name: String(r.name),
     // Coerced rather than trusted: one row written by a future version must
@@ -61,6 +63,12 @@ function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special
     // A row written before priorities existed sorts by its id instead, which
     // is at least stable and matches the order it was created in.
     priority: Number(r.priority) || Number(r.id),
+    guards: {
+      maxDealsPerSale: Number(r.max_deals_per_sale ?? 0),
+      respectMaxDiscount: !!r.respect_max_discount,
+      minMarginPct: toNum(r.min_margin_pct),
+      neverBelowCost: !!r.never_below_cost,
+    },
     items,
     tiers,
     // `rewardProducts` is deliberately NOT set here. It is filled in by
@@ -82,8 +90,24 @@ function mapItem(r: Row): SpecialItem {
   }
 }
 
+/**
+ * A special plus the counters only the management screen and the server care
+ * about.
+ *
+ * Kept OFF `Special` deliberately: that type is what the pure engine reads and
+ * what gets shipped to every till, and a running total that changes on every
+ * sale has no business in a cached catalogue payload. The engine decides what a
+ * basket earns; whether the promotion has any uses left is decided here, before
+ * it is ever sent.
+ */
+export type SpecialWithUse = Special & {
+  /** Null is unlimited. */
+  maxRedemptions: number | null
+  redemptionsCount: number
+}
+
 /** Every special, in firing order. Includes the switched-off ones. */
-export async function listSpecials(siteId: number): Promise<Special[]> {
+export async function listSpecials(siteId: number): Promise<SpecialWithUse[]> {
   const [specials, items, tiers] = await Promise.all([
     siteQuery<Row>(siteId, `SELECT * FROM specials ORDER BY priority, id`),
     siteQuery<Row>(siteId, `SELECT * FROM special_items ORDER BY id`),
@@ -132,7 +156,21 @@ export async function liveSpecials(siteId: number): Promise<Special[]> {
    * Compared as TEXT, not as dates. 'YYYY-MM-DDTHH:mm' sorts correctly, and
    * parsing would drag the timezone problem back in through the side door.
    */
-  const live = all.filter((s) => s.isActive && s.endsAt >= wallClockNow())
+  const live = all.filter(
+    (s) =>
+      s.isActive &&
+      s.endsAt >= wallClockNow() &&
+      /*
+       * A promotion that has been used up stops being offered.
+       *
+       * Filtered HERE rather than in the engine, because "how many are left" is
+       * a fact about the shop's whole trading day and the engine only ever sees
+       * one basket. A till holding a cached catalogue may still show it for a
+       * few minutes; the lock at finalise is what actually refuses the last
+       * one, exactly as a discount code works.
+       */
+      (s.maxRedemptions === null || s.redemptionsCount < s.maxRedemptions),
+  )
   return withRewardProducts(siteId, live)
 }
 
@@ -409,6 +447,13 @@ export async function saveSpecial(
       Math.max(0, Math.floor(input.triggerQty)),
       input.bundlePriceIncl.toFixed(4),
       input.spendAmountIncl.toFixed(4),
+      // The guards. Absent means no limits, which is what every column here
+      // defaults to — see 211.
+      Math.max(0, Math.floor(input.guards?.maxDealsPerSale ?? 0)),
+      input.guards?.respectMaxDiscount ? 1 : 0,
+      Math.min(Math.max(input.guards?.minMarginPct ?? 0, 0), 99.999).toFixed(3),
+      input.guards?.neverBelowCost ? 1 : 0,
+      input.maxRedemptions == null ? null : Math.max(1, Math.floor(input.maxRedemptions)),
       updatedBy.slice(0, 120),
     ]
 
@@ -417,8 +462,9 @@ export async function saveSpecial(
         `UPDATE specials
             SET name = ?, shape = ?, is_active = ?, starts_at = ?, ends_at = ?,
                 daily_start = ?, daily_end = ?, days_of_week = ?, discount_pct = ?,
-                trigger_qty = ?, bundle_price_incl = ?,
-                spend_amount_incl = ?, updated_by = ?
+                trigger_qty = ?, bundle_price_incl = ?, spend_amount_incl = ?,
+                max_deals_per_sale = ?, respect_max_discount = ?, min_margin_pct = ?,
+                never_below_cost = ?, max_redemptions = ?, updated_by = ?
           WHERE id = ?`,
         [...fields, id],
       )
@@ -432,8 +478,10 @@ export async function saveSpecial(
         `INSERT INTO specials
            (name, shape, is_active, starts_at, ends_at, daily_start, daily_end,
             days_of_week, discount_pct, trigger_qty,
-            bundle_price_incl, spend_amount_incl, updated_by, priority)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            bundle_price_incl, spend_amount_incl,
+            max_deals_per_sale, respect_max_discount, min_margin_pct,
+            never_below_cost, max_redemptions, updated_by, priority)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [...fields, nextPriority],
       )
       id = result.insertId
@@ -490,6 +538,86 @@ export async function saveSpecial(
 
     return { ok: true as const, id }
   })
+}
+
+/**
+ * Record that a sale used these promotions, and refuse any that ran out.
+ *
+ * ── THIS IS THE CONCURRENCY GUARD ────────────────────────────────────────
+ *
+ * The row is locked FOR UPDATE and the limit re-checked against the locked
+ * value. Two tills finishing the last use of a "first 100 customers" promotion
+ * in the same instant would otherwise both read 99, both pass, and the shop
+ * would honour 101. The same guard `redeemCode` uses, for the same reason.
+ *
+ * ── BUT UNLIKE A DISCOUNT CODE, IT NEVER FAILS THE SALE ──────────────────
+ *
+ * `redeemCode` throws when a code is spent, and rightly: the shopper typed that
+ * code and is owed an explanation. Nobody types a special. It applied itself
+ * because of what was in the basket, and refusing the whole sale over it would
+ * punish a customer for the shop's own promotion running out mid-transaction.
+ *
+ * So an exhausted special is simply not recorded, and the caller is told which
+ * ones did not take. The goods still sell. The discount was already shown on
+ * screen and on the slip, and honouring what was quoted for the one sale that
+ * straddles the limit is cheaper than an argument at the counter.
+ *
+ * Returns the special ids that WERE recorded.
+ */
+export async function recordRedemptions(
+  tx: import('mysql2/promise').PoolConnection,
+  input: {
+    specialIds: number[]
+    documentId: number
+    customerId: number | null
+    /** What each special took off this sale, VAT inclusive, by special id. */
+    amountBySpecial: Map<number, number>
+  },
+): Promise<number[]> {
+  if (input.specialIds.length === 0 || !input.documentId) return []
+
+  const taken: number[] = []
+  // Ascending, so two sales touching the same pair of specials always lock them
+  // in the same order. Two tills locking A then B and B then A deadlock, and
+  // MariaDB resolves that by killing one of the sales.
+  for (const id of [...new Set(input.specialIds)].sort((a, b) => a - b)) {
+    const [rows] = await tx.query<Row[]>(
+      `SELECT id, max_redemptions, redemptions_count FROM specials WHERE id = ? FOR UPDATE`,
+      [id],
+    )
+    const row = rows[0]
+    if (!row) continue
+
+    const max = row.max_redemptions === null ? null : Number(row.max_redemptions)
+    const used = Number(row.redemptions_count ?? 0)
+    if (max !== null && used >= max) continue
+
+    await tx.query(`UPDATE specials SET redemptions_count = redemptions_count + 1 WHERE id = ?`, [
+      id,
+    ])
+    /*
+     * INSERT IGNORE against the unique key on (special_id, document_id).
+     *
+     * A sale that rings the same promotion across four lines used it ONCE. The
+     * caller already de-duplicates, but a re-finalise after a partial failure
+     * would otherwise double-count — and the counter above is incremented from
+     * the locked read, so a duplicate row here would put the two out of step
+     * permanently.
+     */
+    await tx.query(
+      `INSERT IGNORE INTO special_redemptions
+         (special_id, document_id, customer_id, amount_incl)
+       VALUES (?,?,?,?)`,
+      [
+        id,
+        input.documentId,
+        input.customerId,
+        (input.amountBySpecial.get(id) ?? 0).toFixed(4),
+      ],
+    )
+    taken.push(id)
+  }
+  return taken
 }
 
 export async function deleteSpecial(siteId: number, id: number): Promise<ActionResult> {

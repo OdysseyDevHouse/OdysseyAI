@@ -4,6 +4,7 @@ import { useState, useTransition, type ReactNode } from 'react'
 import {
   Badge,
   Button,
+  Checkbox,
   CurrencyInput,
   Field,
   Icons,
@@ -390,6 +391,9 @@ export default function SpecialForm({
           busy={busy}
         />
 
+        {/* ── Limits ────────────────────────────────────────────────────── */}
+        <LimitsSection draft={draft} patch={patch} />
+
         {error && (
           <p role="alert" className="rounded-control bg-danger-soft px-3 py-2 text-sm text-danger">
             <Icons.Info size={15} className="mr-1.5 inline align-text-bottom" />
@@ -428,6 +432,109 @@ function Section({
     </div>
   )
 }
+
+/* ── What stops it running away ──────────────────────────────────────────── */
+
+/** The guards, as one section under the deal. Every field means "no limit" empty. */
+function LimitsSection({
+  draft,
+  patch,
+}: {
+  draft: SpecialInput
+  patch: (changes: Partial<SpecialInput>) => void
+}) {
+  const g = draft.guards ?? {
+    maxDealsPerSale: 0,
+    respectMaxDiscount: false,
+    minMarginPct: 0,
+    neverBelowCost: false,
+  }
+  const setGuard = (changes: Partial<typeof g>) => patch({ guards: { ...g, ...changes } })
+
+  /* Only the combos repeat, so only they can be limited per sale. A happy hour
+     applies once to a line whatever the quantity, and offering a "deals per
+     sale" box there would be a control that does nothing. */
+  const repeats = REPEATING.has(draft.shape)
+
+  return (
+    <Section
+      icon={<Icons.ShieldCheck size={14} />}
+      title="Limits"
+      hint="Optional. What stops the promotion giving away more than you meant."
+    >
+      <div className="flex flex-wrap items-start gap-4">
+        {repeats && (
+          <Field
+            label="Deals per sale"
+            hint="0 for no limit. Stops one basket taking the deal over and over."
+          >
+            <NumberInput
+              value={g.maxDealsPerSale || ''}
+              min={0}
+              className="w-36"
+              placeholder="No limit"
+              onChange={(e) => setGuard({ maxDealsPerSale: Number(e.target.value) || 0 })}
+            />
+          </Field>
+        )}
+        <Field label="Total uses" hint="Blank for no limit — e.g. the first 100 customers.">
+          <NumberInput
+            value={draft.maxRedemptions ?? ''}
+            min={1}
+            className="w-36"
+            placeholder="No limit"
+            onChange={(e) =>
+              patch({ maxRedemptions: Number(e.target.value) > 0 ? Number(e.target.value) : null })
+            }
+          />
+        </Field>
+        <Field label="Minimum margin %" hint="0 for no floor. Never discount past this margin.">
+          <NumberInput
+            value={g.minMarginPct || ''}
+            min={0}
+            max={99}
+            className="w-36"
+            placeholder="No floor"
+            onChange={(e) => setGuard({ minMarginPct: Number(e.target.value) || 0 })}
+          />
+        </Field>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Checkbox
+          checked={g.neverBelowCost}
+          label="Never sell below cost"
+          onChange={(e) => setGuard({ neverBelowCost: e.target.checked })}
+        />
+        <Checkbox
+          checked={g.respectMaxDiscount}
+          label="Respect each product's own discount limit"
+          onChange={(e) => setGuard({ respectMaxDiscount: e.target.checked })}
+        />
+        {/* Said out loud, because it is surprising: the till already refuses a
+            cashier this discount, and a special has been going around that rule
+            since specials existed. Off by default — see 211 for why turning it
+            on for everyone would gut promotions shops already run. */}
+        <p className="text-xs text-muted">
+          A cashier is already held to each product’s discount limit. Tick this to hold the
+          promotion to it too. Cost-based limits are applied at the till, where the cost is known.
+        </p>
+      </div>
+    </Section>
+  )
+}
+
+/** The shapes that can complete their deal more than once on one sale. */
+const REPEATING: ReadonlySet<SpecialShape> = new Set([
+  'cheapest_free',
+  'percent_off',
+  'bundle_price',
+  'multibuy',
+  'quantity_break',
+  'second_at_pct',
+  'mix_and_match',
+  'free_item',
+])
 
 /* ── The type-dependent half ─────────────────────────────────────────────── */
 

@@ -185,6 +185,37 @@ export type SpecialItem = {
   priceIncl: number
 }
 
+/**
+ * The ceilings a promotion is held to.
+ *
+ * ── THEY CLAMP RATHER THAN CANCEL ────────────────────────────────────────
+ *
+ * When a guard bites, the discount is REDUCED and the line is still claimed.
+ * Cancelling the special instead would release the line to whatever promotion
+ * sits below it — very likely the one the guard was protecting against. A
+ * smaller discount is a bad day; a different, unguarded special firing in its
+ * place is a worse one.
+ *
+ * ── AND THEY NEED WHAT THE TILL ALREADY HAS ──────────────────────────────
+ *
+ * The margin guards read `unitCostExcl` and `maxDiscountPct` off the basket
+ * line. Both already ride on every till line and are cached offline, so this
+ * costs no new plumbing — but a caller that does not supply them (the
+ * storefront, a test) has those guards SKIPPED rather than guessed at. Refusing
+ * to discount because a cost is unknown would silently stop promotions on the
+ * shop front.
+ */
+export type SpecialGuards = {
+  /** How many times one sale may complete this deal. 0 is unlimited. */
+  maxDealsPerSale: number
+  /** Hold the discount to the product's own `maxDiscountPct` ceiling. */
+  respectMaxDiscount: boolean
+  /** Never take a line below this gross margin. 0 is off. */
+  minMarginPct: number
+  /** Never sell below cost. */
+  neverBelowCost: boolean
+}
+
 export type Special = {
   id: number
   name: string
@@ -203,6 +234,14 @@ export type Special = {
   bundlePriceIncl: number
   spendAmountIncl: number
   priority: number
+  /**
+   * What stops this promotion running away. See 211.
+   *
+   * All of it optional so that a Special built by a test or a form says nothing
+   * about guards rather than each having to say "none", and absent always means
+   * "no limit" — the behaviour before any of this existed.
+   */
+  guards?: SpecialGuards
   items: SpecialItem[]
   /** multibuy only: the quantity ladder, e.g. 3 for R25, 6 for R45. */
   tiers: SpecialTier[]
@@ -255,6 +294,23 @@ export type BasketLine = {
   /** Unit price including VAT, before any discount. */
   priceIncl: number
   qty: number
+  /**
+   * What one of these cost, EXCLUDING VAT. For the margin guards.
+   *
+   * Optional, and absent means those guards are skipped rather than guessed at
+   * — the storefront prices a shelf without costs in hand, and refusing to
+   * discount because a cost is unknown would silently stop promotions there.
+   * The till already carries this on every line, cached offline.
+   */
+  costExcl?: number
+  /**
+   * The product's own discount ceiling, as the line editor enforces it.
+   *
+   * Read only when a special asks for it. Zero means "no discount allowed" for
+   * a cashier — the products.ts rule — so a guard reading zero holds the
+   * special to nothing, which is exactly what that setting says.
+   */
+  maxDiscountPct?: number
 }
 
 /** What a line ended up entitled to. */
@@ -297,6 +353,10 @@ export type SpecialInput = {
   triggerQty: number
   bundlePriceIncl: number
   spendAmountIncl: number
+  /** See SpecialGuards. Absent means no limits, as it did before 211. */
+  guards?: SpecialGuards
+  /** How many times the promotion may be used in total. Null is unlimited. */
+  maxRedemptions?: number | null
   items: SpecialItemInput[]
   tiers: SpecialTier[]
 }
@@ -331,6 +391,27 @@ export function validateSpecial(input: SpecialInput): string | null {
 
   if (!/^[01]{7}$/.test(input.daysOfWeek) || !input.daysOfWeek.includes('1')) {
     return 'Pick at least one day of the week'
+  }
+
+  /*
+   * The guards. Checked before the shape, because a nonsensical ceiling is
+   * wrong whatever kind of deal it is guarding.
+   */
+  if (input.guards) {
+    const g = input.guards
+    if (g.maxDealsPerSale < 0 || !Number.isFinite(g.maxDealsPerSale)) {
+      return 'The deals-per-sale limit cannot be negative — use 0 for no limit'
+    }
+    if (g.minMarginPct < 0 || g.minMarginPct >= 100) {
+      return 'The minimum margin must be between 0 and 100 percent'
+    }
+  }
+  if (input.maxRedemptions !== null && input.maxRedemptions !== undefined) {
+    if (input.maxRedemptions < 1 || !Number.isFinite(input.maxRedemptions)) {
+      // Zero would be a promotion that is switched on and cannot fire, which is
+      // what the Active switch is for and says far more clearly.
+      return 'The total-uses limit must be at least 1 — leave it blank for no limit'
+    }
   }
 
   const scope = input.items.filter((i) => i.role === 'scope')
@@ -472,6 +553,79 @@ function matches(item: SpecialItem, line: BasketLine): boolean {
 
 const clampPct = (n: number) => Math.min(Math.max(Number(n) || 0, 0), 100)
 
+/** How many deals this special is allowed to complete on one sale. */
+function capDeals(deals: number, guards: SpecialGuards | undefined): number {
+  const cap = Math.floor(guards?.maxDealsPerSale ?? 0)
+  // Zero is "unlimited", not "none" — a shop that has set no limit has not
+  // asked for a promotion that never fires.
+  return cap > 0 ? Math.min(deals, cap) : deals
+}
+
+/**
+ * The discount this line may actually be given, after the guards.
+ *
+ * ── IT RETURNS A SMALLER NUMBER, NEVER ZERO-BY-REFUSAL ───────────────────
+ *
+ * A guard that bites reduces the percentage. The caller still claims the line,
+ * so the promotion below does not inherit it — see SpecialGuards on why that
+ * matters more than it looks.
+ *
+ * ── A MISSING FACT SKIPS ITS GUARD ───────────────────────────────────────
+ *
+ * The margin guards need a cost, and the ceiling guard needs the product's own
+ * limit. Where the caller has not supplied one — the storefront pricing a shelf
+ * — that guard is skipped rather than assumed. Treating an unknown cost as zero
+ * would refuse every discount on the shop front; treating it as infinite would
+ * be a guard that never guards. Skipping is the honest third answer, and the
+ * till, which is where money actually changes hands, always has both.
+ */
+function guardPct(
+  pct: number,
+  line: BasketLine | undefined,
+  guards: SpecialGuards | undefined,
+): number {
+  let held = clampPct(pct)
+  if (held <= 0 || !guards || !line) return held
+
+  if (guards.respectMaxDiscount && line.maxDiscountPct !== undefined) {
+    // Zero means "no discount allowed" for a cashier — the products.ts rule —
+    // so a special asked to respect it is held to nothing as well. A shop that
+    // set that ceiling and then asked for it to be respected has said this
+    // twice.
+    held = Math.min(held, Math.max(line.maxDiscountPct, 0))
+  }
+
+  const cost = line.costExcl
+  if (cost !== undefined && cost > 0 && line.priceIncl > 0) {
+    /*
+     * The margin guards work in the line's own inclusive money.
+     *
+     * `costExcl` excludes VAT and `priceIncl` includes it, so comparing them
+     * directly would understate the margin by the VAT rate and refuse
+     * discounts a shop is perfectly happy with. The engine does not know the
+     * rate — it deals in percentages, by design — so the comparison is made
+     * against the ratio the caller can actually verify: cost against what the
+     * customer pays. That is CONSERVATIVE, protecting slightly more margin
+     * than asked for, which is the right direction for a guard to be wrong in.
+     */
+    const floorFromCost = guards.neverBelowCost ? cost : 0
+    const floorFromMargin =
+      guards.minMarginPct > 0 ? cost / (1 - Math.min(guards.minMarginPct, 99.9) / 100) : 0
+    const floor = Math.max(floorFromCost, floorFromMargin)
+
+    if (floor > 0) {
+      // The most that can come off before the price reaches the floor. Negative
+      // when the shelf price is already under it, and then nothing may come off
+      // at all — the shop is already selling at a loss, and a promotion must
+      // not deepen it.
+      const allowed = ((line.priceIncl - floor) / line.priceIncl) * 100
+      held = Math.min(held, Math.max(allowed, 0))
+    }
+  }
+
+  return held
+}
+
 /**
  * Keep whichever entitlement is worth more.
  *
@@ -543,7 +697,10 @@ export function computeSpecials(
           .reduce((sum, { line }) => sum + Math.max(line.qty, 0), 0)
         deals = Math.min(deals, Math.floor(have / Math.max(row.qty, 1)))
       }
-      return Number.isFinite(deals) ? deals : 0
+      if (!Number.isFinite(deals)) return 0
+      // "Limit 2 per customer". Without it a combo repeats without end, and
+      // three hundred tins earns a hundred free ones.
+      return capDeals(deals, special.guards)
     }
 
     const claim = (entries: { index: number }[]) => {
@@ -551,11 +708,18 @@ export function computeSpecials(
     }
 
     const give = (index: number, pct: number) => {
-      if (pct <= 0) return
+      /*
+       * EVERY discount this engine grants passes through here, which is why the
+       * guards live here rather than in each of the nine shapes. A guard added
+       * to `happy_hour` and forgotten in `multibuy` would be a ceiling that
+       * holds until somebody picks the other shape.
+       */
+      const held = guardPct(pct, lines[index], special.guards)
+      if (held <= 0) return
       lineSpecials[index] = keepBest(lineSpecials[index], {
         specialId: special.id,
         name: special.name,
-        pct,
+        pct: held,
       })
     }
 
@@ -631,7 +795,11 @@ export function computeSpecials(
 
         const qualifying = matching(triggers)
         const totalQty = qualifying.reduce((sum, { line }) => sum + Math.max(line.qty, 0), 0)
-        let dealUnits = Math.floor(totalQty / need)
+        // Capped here as well as in dealCount(): this shape counts its own
+        // groups rather than going through that helper, so the limit has to be
+        // applied on both paths or "limit 2" would hold for a bundle and not
+        // for a three-for-two.
+        let dealUnits = capDeals(Math.floor(totalQty / need), special.guards)
         if (dealUnits < 1) break
 
         // Cheapest first — the customer gets the deal on the least valuable
@@ -716,10 +884,20 @@ export function computeSpecials(
         /** Value saved per line index, summed across every tier fired. */
         const savings = new Map<number, number>()
         let fired = false
+        /*
+         * How many rungs may still fire, across every tier.
+         *
+         * A ladder repeats: nine units against a three-for tier is three
+         * groups, and nothing stopped ninety units becoming thirty. The cap
+         * counts RUNGS rather than tiers, so "limit 2" means two groups at the
+         * laddered price and the rest at shelf price — which is what a shop
+         * setting that limit means by it.
+         */
+        let rungsLeft = capDeals(Number.MAX_SAFE_INTEGER, special.guards)
 
         for (const tier of tiers) {
           const need = Math.floor(tier.qty)
-          while (unitsLeft >= need) {
+          while (unitsLeft >= need && rungsLeft > 0) {
             const alloc: { index: number; units: number; priceIncl: number }[] = []
             let want = need
             let value = 0
@@ -742,6 +920,7 @@ export function computeSpecials(
               remaining.set(a.index, (remaining.get(a.index) ?? 0) - a.units)
             }
             unitsLeft -= need
+            rungsLeft -= 1
             fired = true
           }
         }

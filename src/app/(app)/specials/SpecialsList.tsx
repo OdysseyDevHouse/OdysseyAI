@@ -30,7 +30,7 @@ import {
   setSpecialActiveAction,
 } from './actions'
 import SpecialForm, { type DepartmentOption, type FormRow } from './SpecialForm'
-import type { ResolvedItem } from '@/lib/site/specials'
+import type { ResolvedItem, SpecialWithUse } from '@/lib/site/specials'
 
 /**
  * The shop's promotions, in the order they fire.
@@ -157,7 +157,7 @@ export default function SpecialsList({
   items,
   departments,
 }: {
-  specials: Special[]
+  specials: SpecialWithUse[]
   /** Every special's items, already resolved to names and prices. */
   items: ResolvedItem[]
   departments: DepartmentOption[]
@@ -172,7 +172,7 @@ export default function SpecialsList({
    * list. Without that, `useState(specials)` seeds once and a newly saved
    * special never appears: the toast says "saved" over an empty list.
    */
-  const [pending, setPending] = useState<Special[] | null>(null)
+  const [pending, setPending] = useState<SpecialWithUse[] | null>(null)
   const [lastServer, setLastServer] = useState(specials)
   if (lastServer !== specials) {
     setLastServer(specials)
@@ -206,7 +206,7 @@ export default function SpecialsList({
     setEditingRows([])
   }
 
-  function openEdit(special: Special) {
+  function openEdit(special: SpecialWithUse) {
     setEditing(toInput(special))
     setEditingRows(
       items
@@ -430,7 +430,7 @@ export default function SpecialsList({
   )
 }
 
-function toInput(s: Special): SpecialInput {
+function toInput(s: SpecialWithUse): SpecialInput {
   return {
     id: s.id,
     name: s.name,
@@ -442,6 +442,11 @@ function toInput(s: Special): SpecialInput {
     dailyEnd: s.dailyEnd,
     daysOfWeek: s.daysOfWeek,
     discountPct: s.discountPct,
+    /* Carried through, or editing anything about a special would silently
+       clear the limits someone set on it — a partial save that wipes its
+       siblings is exactly the shape of bug this file has produced before. */
+    guards: s.guards ? { ...s.guards } : undefined,
+    maxRedemptions: s.maxRedemptions,
     triggerQty: s.triggerQty,
     bundlePriceIncl: s.bundlePriceIncl,
     spendAmountIncl: s.spendAmountIncl,

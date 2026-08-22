@@ -1100,6 +1100,40 @@ export async function finaliseDocument(
       }
 
       /*
+       * Record which promotions this sale used, and how much they cost.
+       *
+       * Beside the discount code above and for the same reasons: after the
+       * number is issued, so a use row can never precede its document, and
+       * inside the transaction, so a rolled-back sale does not leave a
+       * promotion counted as spent.
+       *
+       * UNLIKE the code, it cannot refuse the sale. Nobody typed a special —
+       * it applied itself because of what was in the basket — so a promotion
+       * that runs out between the screen and the drawer is honoured for this
+       * one sale and simply not recorded. See recordRedemptions.
+       *
+       * A special is counted ONCE per sale even when it discounted four lines,
+       * because a "first 100 customers" campaign counts customers.
+       */
+      const usedSpecials = new Map<number, number>()
+      for (const line of document.lines) {
+        if (!line.specialId) continue
+        usedSpecials.set(
+          line.specialId,
+          (usedSpecials.get(line.specialId) ?? 0) + (line.discountIncl ?? 0),
+        )
+      }
+      if (usedSpecials.size > 0) {
+        const { recordRedemptions } = await import('./specials')
+        await recordRedemptions(tx, {
+          specialIds: [...usedSpecials.keys()],
+          documentId: document.id,
+          customerId: customerId ?? null,
+          amountBySpecial: usedSpecials,
+        })
+      }
+
+      /*
        * Gift cards used to be written HERE, inside the sale's transaction, so a
        * refusal rolled the whole sale back. They are written after the commit
        * now — see "gift cards, after the commit" below — because under a shared
