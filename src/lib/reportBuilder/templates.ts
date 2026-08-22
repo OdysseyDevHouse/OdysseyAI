@@ -1,5 +1,5 @@
-import { MAX_ROWS, type CustomReportSpec } from './spec'
-import type { Capability } from '../site/permissions'
+import { MAX_ROWS, type CustomReportSpec } from "./spec";
+import type { Capability } from "../site/permissions";
 
 /**
  * The built-in report catalogue.
@@ -23,9 +23,9 @@ import type { Capability } from '../site/permissions'
 
 export interface ReportTemplate {
   /** Stable id — appears in URLs, favourites and schedules. Never reuse one. */
-  id: string
-  name: string
-  description: string
+  id: string;
+  name: string;
+  description: string;
   /*
    * "Multi-store" carries no template of its own — its two reports are dedicated
    * pages, listed by the hub — but it is named here because this union is what
@@ -33,19 +33,19 @@ export interface ReportTemplate {
    * `HubItem.category` is typed from it.
    */
   category:
-    | 'Sales'
-    | 'Stock'
-    | 'Customers'
-    | 'Suppliers'
-    | 'Money'
-    | 'Operations'
-    | 'Job cards'
-    | 'Multi-store'
+    | "Sales"
+    | "Stock"
+    | "Customers"
+    | "Suppliers"
+    | "Money"
+    | "Operations"
+    | "Job cards"
+    | "Multi-store";
   /** Capability needed to see it in the catalogue at all. */
-  permission: Capability
+  permission: Capability;
   /** Extra capability the report's headline figures need (cost/margin). */
-  financial?: boolean
-  spec: Omit<CustomReportSpec, 'name'>
+  financial?: boolean;
+  spec: Omit<CustomReportSpec, "name">;
   /**
    * Other ways of cutting the SAME question, offered as a switch on the report.
    *
@@ -72,17 +72,17 @@ export interface ReportTemplate {
    * CATALOGUE is a presentation change and must not break a shop's integration
    * or silently drop the report somebody scheduled at 06:00.
    */
-  variants?: ReportVariant[]
+  variants?: ReportVariant[];
 }
 
 export interface ReportVariant {
   /** URL value: /reports/sales-by?cut=product. Stable — it is a bookmark. */
-  key: string
+  key: string;
   /** The switch's label. Terse: it sits in a row of six. */
-  label: string
+  label: string;
   /** Replaces the report's name and subtitle when this cut is showing. */
-  name: string
-  description: string
+  name: string;
+  description: string;
   /**
    * The template id this cut replaces in the catalogue, if any.
    *
@@ -90,25 +90,24 @@ export interface ReportVariant {
    * inherit a store's saved columns from, so consolidating does not reset the
    * column choices a shop already made on the old report.
    */
-  legacyId?: string
-  spec: Omit<CustomReportSpec, 'name'>
+  legacyId?: string;
+  spec: Omit<CustomReportSpec, "name">;
 }
 
 /** Terser template authoring — every spec shares these defaults. */
-function spec(s: Partial<CustomReportSpec> & Pick<CustomReportSpec, 'source'>): Omit<
-  CustomReportSpec,
-  'name'
-> {
+function spec(
+  s: Partial<CustomReportSpec> & Pick<CustomReportSpec, "source">,
+): Omit<CustomReportSpec, "name"> {
   return {
     version: 1,
-    period: { key: 'thisMonth' },
+    period: { key: "thisMonth" },
     columns: [],
     filters: [],
     groupFields: [],
     totalFilters: [],
     limit: 5000,
     ...s,
-  }
+  };
 }
 
 export const TEMPLATES: ReportTemplate[] = [
@@ -134,329 +133,373 @@ export const TEMPLATES: ReportTemplate[] = [
    * counting.
    */
   {
-    id: 'invoice-history',
-    name: 'Invoice history',
+    id: "invoice-history",
+    name: "Invoice history",
     description:
-      'Every document raised in the period — as a list of documents with their totals, or line by line with cost and margin.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "Every document raised in the period — as a list of documents with their totals, or line by line with cost and margin.",
+    category: "Sales",
+    permission: "reports.view",
     /* Must match the first cut — the report renders before anyone has chosen. */
     spec: spec({
-      source: 'sales',
+      source: "sales",
       columns: [
-        { field: 'documentNumber' },
-        { field: 'documentDate' },
-        { field: 'docType' },
-        { field: 'status' },
-        { field: 'customerName' },
-        { field: 'accountCode' },
-        { field: 'userName' },
-        { field: 'terminalCode' },
-        { field: 'reference' },
-        { field: 'subtotalExcl' },
-        { field: 'vatTotal' },
-        { field: 'discountTotal' },
-        { field: 'roundingAdj' },
-        { field: 'totalIncl' },
+        { field: "documentNumber" },
+        { field: "documentDate" },
+        { field: "docType" },
+        { field: "status" },
+        { field: "customerName" },
+        { field: "accountCode" },
+        { field: "userName" },
+        { field: "terminalCode" },
+        { field: "reference" },
+        { field: "subtotalExcl" },
+        { field: "vatTotal" },
+        { field: "discountTotal" },
+        { field: "roundingAdj" },
+        { field: "totalIncl" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'documentDate', dir: 'desc' },
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "documentDate", dir: "desc" },
     }),
     variants: [
       {
-        key: 'document',
-        label: 'Documents',
-        name: 'Invoice history',
-        description: 'Every document raised in the period, with its total and who served.',
+        key: "document",
+        label: "Documents",
+        name: "Invoice history",
+        description:
+          "Every document raised in the period, with its total and who served.",
         /* Was its own tile, 'Invoice list'. The id is kept resolvable because a
            shop's favourites, saved columns, 06:00 schedules and the public API
            all name it — see the note on ReportTemplate.variants. */
-        legacyId: 'invoice-list',
+        legacyId: "invoice-list",
         spec: spec({
-          source: 'sales',
+          source: "sales",
           /* The columns the v2 invoice history carried. A store that only wants a
              total and a name hides the rest — which is now a thing it can do. */
           columns: [
-            { field: 'documentNumber' },
-            { field: 'documentDate' },
-            { field: 'docType' },
-            { field: 'status' },
-            { field: 'customerName' },
-            { field: 'accountCode' },
-            { field: 'userName' },
-            { field: 'terminalCode' },
+            { field: "documentNumber" },
+            { field: "documentDate" },
+            { field: "docType" },
+            { field: "status" },
+            { field: "customerName" },
+            { field: "accountCode" },
+            { field: "userName" },
+            { field: "terminalCode" },
             /* The customer's own order number, which is what `reference` holds. */
-            { field: 'reference' },
-            { field: 'subtotalExcl' },
-            { field: 'vatTotal' },
-            { field: 'discountTotal' },
-            { field: 'roundingAdj' },
-            { field: 'totalIncl' },
+            { field: "reference" },
+            { field: "subtotalExcl" },
+            { field: "vatTotal" },
+            { field: "discountTotal" },
+            { field: "roundingAdj" },
+            { field: "totalIncl" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'documentDate', dir: 'desc' },
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "documentDate", dir: "desc" },
         }),
       },
       {
-        key: 'detail',
-        label: 'Detail',
-        name: 'Invoice detail history',
-        description: 'Every line on every document — the line-by-line twin of the invoice history.',
-        legacyId: 'invoice-detail-list',
+        key: "detail",
+        label: "Detail",
+        name: "Invoice detail history",
+        description:
+          "Every line on every document — the line-by-line twin of the invoice history.",
+        legacyId: "invoice-detail-list",
         spec: spec({
-          source: 'saleLines',
+          source: "saleLines",
           /* The widest report in the catalogue, deliberately: v2's detailed history
              was the one people exported and pivoted, so it carries the identity,
              the money and the margin rather than making each a separate report.
              Cost and GP drop out for a role without products.cost. */
           columns: [
-            { field: 'documentDate' },
-            { field: 'documentNumber' },
-            { field: 'customerName' },
-            { field: 'accountCode' },
-            { field: 'userName' },
-            { field: 'terminalCode' },
-            { field: 'productCode' },
-            { field: 'description' },
-            { field: 'lineDepartment' },
-            { field: 'qty' },
-            { field: 'unitPriceIncl' },
-            { field: 'vatRatePct' },
-            { field: 'discountPct' },
-            { field: 'discountIncl' },
-            { field: 'lineTotalExcl' },
-            { field: 'lineVat' },
-            { field: 'lineTotalIncl' },
-            { field: 'unitCostExcl' },
-            { field: 'lineCostExcl' },
-            { field: 'grossProfit' },
+            { field: "documentDate" },
+            { field: "documentNumber" },
+            { field: "customerName" },
+            { field: "accountCode" },
+            { field: "userName" },
+            { field: "terminalCode" },
+            { field: "productCode" },
+            { field: "description" },
+            { field: "lineDepartment" },
+            { field: "qty" },
+            { field: "unitPriceIncl" },
+            { field: "vatRatePct" },
+            { field: "discountPct" },
+            { field: "discountIncl" },
+            { field: "lineTotalExcl" },
+            { field: "lineVat" },
+            { field: "lineTotalIncl" },
+            { field: "unitCostExcl" },
+            { field: "lineCostExcl" },
+            { field: "grossProfit" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'documentDate', dir: 'desc' },
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "documentDate", dir: "desc" },
         }),
       },
     ],
   },
   {
-    id: 'cashup-history',
-    name: 'Cash-up history',
-    description: 'Every shift closed in the period, with its drawer variance.',
+    id: "cashup-history",
+    name: "Cash-up history",
+    description: "Every shift closed in the period, with its drawer variance.",
     /* Sales, not Operations: a cash-up is what the till TOOK, so whoever
        reaches for it is reading the day's takings rather than auditing how the
        shop ran. It joins Drawer variance by person, filed under Sales for the
        same reason. The per-tender breakdowns and the till-void reports stay in
        Operations — those ask whether the counting and the keying were done
        properly, which is a different question. */
-    category: 'Sales',
-    permission: 'sales.cashup',
+    category: "Sales",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'shifts',
+      source: "shifts",
       columns: [
-        { field: 'openedAt' },
-        { field: 'terminalCode' },
-        { field: 'userName' },
-        { field: 'expectedTotal' },
-        { field: 'countedTotal' },
-        { field: 'variance' },
+        { field: "openedAt" },
+        { field: "terminalCode" },
+        { field: "userName" },
+        { field: "expectedTotal" },
+        { field: "countedTotal" },
+        { field: "variance" },
       ],
-      sort: { key: 'openedAt', dir: 'desc' },
+      sort: { key: "openedAt", dir: "desc" },
     }),
   },
-  /*
-   * ── The performance reports ──────────────────────────────────────────────
-   *
-   * Product, department, cashier and till are FOUR TILES, each under its own
-   * name, as v2 had them. They were briefly cuts of a single "Sales by…" tile;
-   * they are separate again because that is how people look for them — someone
-   * wanting "Product performance" searches the catalogue for that phrase, and a
-   * cut hidden inside another report is not findable by its own name.
-   *
-   * EACH KEEPS ITS ORIGINAL ID, and must. 'sales-by-product' and its siblings
-   * are in `report_favorites`, `report_columns`, `report_group_by` and
-   * `report_schedules` on every live site, and are documented keys of the public
-   * POST /api/v1/reports/run. Reusing them means a shop's saved column choices,
-   * starred reports and 06:00 emails all carry straight over: only the NAME on
-   * the tile changed. A tidier '…-performance' id would have orphaned every one
-   * of those.
-   *
-   * WHY EACH HAS ITS OWN SPEC RATHER THAN ONE SHARED SHAPE: product and
-   * department run on `saleLines`, which carries cost and so can show gross
-   * profit. Cashier and till run on `sales`, where one row IS one basket, so
-   * `__rows` is a basket count and `totalIncl avg` a real average basket. Moving
-   * those two onto saleLines to share a spec would silently turn both into LINE
-   * counts — the wrong answer to the question they ask. The cost of that is that
-   * cashier and till can never show margin; see the note on each.
-   */
   {
     /*
-     * What each promotion actually cost, and what it actually sold.
+     * ── Performance ──────────────────────────────────────────────────────────
      *
-     * `sales_document_lines.special_id` has been written on every discounted
-     * line since 056, expressly so this question could be answered from the
-     * sales data rather than guessed at — and until the catalog gained a field
-     * for it, nothing could ask. The column was collecting evidence nobody
-     * could read.
+     * "Who and what is earning" — one question, asked of five different things:
+     * the products, the departments they sit in, the people serving, the tills
+     * they serve on, and the promotions running over the top of all of it.
      *
-     * Grouped by the promotion and its kind. The two figures that matter sit
-     * beside each other: `discountIncl` is what was given away, `lineTotalIncl`
-     * is what came in anyway, and `grossProfit` says whether the shop was
-     * better off for running it. A promotion that shifted volume at a profit
-     * and one that discounted people who would have bought regardless look
-     * identical in a plain sales report and quite different here.
+     * These were FIVE TILES, each under its own name, as v2 had them. They are
+     * one tile with a switch because that is how the question is actually asked:
+     * a manager looking at a slow month does not want "Product performance", they
+     * want to know where the month went, and the answer is found by trying
+     * product, then department, then cashier. Five tiles made that three trips
+     * back to the hub; the switch makes it three clicks in one place, with the
+     * period, the store scope and the date range all held steady across them —
+     * which is what makes the comparison mean anything.
      *
-     * Financial, because the margin column is the point and margin is gated.
+     * EACH CUT KEEPS ITS ORIGINAL ID as its `legacyId`, and must. 'sales-by-product'
+     * and its siblings are in `report_favorites`, `report_columns`,
+     * `report_group_by` and `report_schedules` on every live site, and are
+     * documented keys of the public POST /api/v1/reports/run. Keeping them means a
+     * shop's saved column choices, starred reports and 06:00 emails all carry
+     * straight over, and each cut inherits the columns already chosen on the tile
+     * it replaces. Only the way they are REACHED changed.
+     *
+     * WHY EACH CUT HAS ITS OWN SPEC RATHER THAN ONE SHARED SHAPE: product,
+     * department and promotion run on `saleLines`, which carries cost and so can
+     * show gross profit. Cashier and till run on `sales`, where one row IS one
+     * basket, so `__rows` is a basket count and `totalIncl avg` a real average
+     * basket. Moving those two onto saleLines to share a spec would silently turn
+     * both into LINE counts — the wrong answer to the question they ask. The cost
+     * of that is that cashier and till can never show margin; see the note on each.
+     *
+     * PRODUCT IS THE DEFAULT CUT, so `spec` below must match the product variant:
+     * the report has to render before anyone has chosen anything, and "what sold"
+     * is the one of the five that is asked without needing a reason.
      */
-    id: 'specials-performance',
-    name: 'Promotion performance',
-    description: 'What each special cost you, what it sold, and whether it was worth running.',
-    category: 'Sales',
-    permission: 'reports.view',
-    financial: true,
-    spec: spec({
-      source: 'saleLines',
-      groupFields: ['specialName', 'specialShape'],
-      columns: [
-        { field: 'qty', agg: 'sum' },
-        { field: 'lineTotalIncl', agg: 'sum' },
-        { field: 'discountIncl', agg: 'sum' },
-        { field: 'grossProfit', agg: 'sum' },
-        { field: 'grossProfitPct', agg: 'avg' },
-      ],
-      filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        /* Promotional lines only. Without this every ordinary sale arrives in
-           one enormous unnamed group and buries the promotions this report
-           exists to compare. */
-        { field: 'onSpecial', op: 'eq', value: 'Yes' },
-      ],
-      sort: { key: 'discountIncl_sum', dir: 'desc' },
-    }),
-  },
-  {
-    id: 'sales-by-product',
-    name: 'Product performance',
-    description: 'What sold, how much of it, and what it made. The top-sellers list.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'saleLines',
-      /* Department is a GROUP field, not a column: on a summarised report an
-         unaggregated text column takes defaultAgg, which for text is `count` —
-         it would have rendered "Count department" showing a row count. Grouping
-         by it is also free, since a product sits in one department. */
-      groupFields: ['lineDepartment', 'productCode', 'description'],
-      /* v2's Product performance, which carried the department, the cost and
-         the VAT beside the margin.
-         Stock on hand is NOT here. It is a live per-product figure, so summing
-         it multiplies the shop's stock by how often the product sold, and the
-         `max` that fixes the arithmetic labels the column "Highest stock on
-         hand now" — accurate and daft for a number that is the same on every
-         row. A store that wants it beside sales adds it as a grouping, where it
-         adds no rows and keeps its own name. stock-on-hand answers it plainly. */
-      columns: [
-        { field: 'qty', agg: 'sum' },
-        { field: 'lineCostExcl', agg: 'sum' },
-        { field: 'lineTotalExcl', agg: 'sum' },
-        { field: 'lineVat', agg: 'sum' },
-        { field: 'lineTotalIncl', agg: 'sum' },
-        { field: 'discountIncl', agg: 'sum' },
-        { field: 'grossProfit', agg: 'sum' },
-        { field: 'grossProfitPct', agg: 'avg' },
-      ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
-    }),
-  },
-  {
-    id: 'sales-by-department',
-    name: 'Department performance',
-    description: 'Which parts of the business are earning, and at what margin.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'saleLines',
-      groupFields: ['lineDepartment'],
-      /* Cost and excl. selling added, as v2's Department performance carried
-         them. Its "Turnover %" — each department's share of the total — has no
-         equivalent: a percent-of-grand-total column is not something the spec
-         model can express, and it is a known gap rather than an oversight. */
-      columns: [
-        { field: 'qty', agg: 'sum' },
-        { field: 'lineCostExcl', agg: 'sum' },
-        { field: 'lineTotalExcl', agg: 'sum' },
-        { field: 'lineTotalIncl', agg: 'sum' },
-        { field: 'grossProfit', agg: 'sum' },
-        { field: 'grossProfitPct', agg: 'avg' },
-      ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'lineTotalIncl_sum', dir: 'desc' },
-      chartType: 'pie',
-    }),
-  },
-  {
-    id: 'sales-by-cashier',
-    name: 'Cashier performance',
-    description: 'Turnover, basket count and average basket for each person serving.',
-    category: 'Sales',
-    permission: 'reports.view',
-    spec: spec({
-      source: 'sales',
-      groupFields: ['userName'],
-      /* Deliberately still on `sales` rather than `saleLines`, though that
-         source has no cost and so this report can never show margin.
-         `__rows` here is a BASKET count and `totalIncl avg` a real average
-         basket; on saleLines both would silently become line counts, which is
-         the wrong answer to the question this report asks.
-         v2's "Clerk performance" was a different report — one row per clerk AND
-         product — and would be a separate template rather than this one bent out
-         of shape. */
-      columns: [
-        { field: '__rows' },
-        { field: 'totalIncl', agg: 'sum' },
-        { field: 'totalIncl', agg: 'avg' },
-        { field: 'subtotalExcl', agg: 'sum' },
-        { field: 'vatTotal', agg: 'sum' },
-        { field: 'discountTotal', agg: 'sum' },
-      ],
-      filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'invoice' },
-      ],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
-    }),
-  },
-  {
-    id: 'sales-by-till',
-    name: 'Till performance',
+    id: "performance",
+    name: "Performance",
     description:
-      'Turnover, basket count and average basket for each till — which lanes carry the shop.',
-    category: 'Sales',
-    permission: 'reports.view',
-    /* On `sales` for the same reason as the cashier report above: one row is one
-       basket, so the count and the average are basket figures. No margin here
-       either, and for the same reason. */
+      "Who and what is earning — by product, department, cashier, till or promotion, over the same period.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
-      groupFields: ['terminalCode'],
+      source: "saleLines",
+      groupFields: ["lineDepartment", "productCode", "description"],
       columns: [
-        { field: '__rows' },
-        { field: 'totalIncl', agg: 'sum' },
-        { field: 'totalIncl', agg: 'avg' },
+        { field: "qty", agg: "sum" },
+        { field: "lineCostExcl", agg: "sum" },
+        { field: "lineTotalExcl", agg: "sum" },
+        { field: "lineVat", agg: "sum" },
+        { field: "lineTotalIncl", agg: "sum" },
+        { field: "discountIncl", agg: "sum" },
+        { field: "grossProfit", agg: "sum" },
+        { field: "grossProfitPct", agg: "avg" },
       ],
-      filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'invoice' },
-      ],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "lineTotalIncl_sum", dir: "desc" },
     }),
+    variants: [
+      {
+        key: "product",
+        label: "Product",
+        name: "Product performance",
+        description:
+          "What sold, how much of it, and what it made. The top-sellers list.",
+        legacyId: "sales-by-product",
+        spec: spec({
+          source: "saleLines",
+          /* Department is a GROUP field, not a column: on a summarised report an
+             unaggregated text column takes defaultAgg, which for text is `count` —
+             it would have rendered "Count department" showing a row count. Grouping
+             by it is also free, since a product sits in one department. */
+          groupFields: ["lineDepartment", "productCode", "description"],
+          /* v2's Product performance, which carried the department, the cost and
+             the VAT beside the margin.
+             Stock on hand is NOT here. It is a live per-product figure, so summing
+             it multiplies the shop's stock by how often the product sold, and the
+             `max` that fixes the arithmetic labels the column "Highest stock on
+             hand now" — accurate and daft for a number that is the same on every
+             row. A store that wants it beside sales adds it as a grouping, where it
+             adds no rows and keeps its own name. stock-on-hand answers it plainly. */
+          columns: [
+            { field: "qty", agg: "sum" },
+            { field: "lineCostExcl", agg: "sum" },
+            { field: "lineTotalExcl", agg: "sum" },
+            { field: "lineVat", agg: "sum" },
+            { field: "lineTotalIncl", agg: "sum" },
+            { field: "discountIncl", agg: "sum" },
+            { field: "grossProfit", agg: "sum" },
+            { field: "grossProfitPct", agg: "avg" },
+          ],
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "lineTotalIncl_sum", dir: "desc" },
+        }),
+      },
+      {
+        key: "department",
+        label: "Department",
+        name: "Department performance",
+        description:
+          "Which parts of the business are earning, and at what margin.",
+        legacyId: "sales-by-department",
+        spec: spec({
+          source: "saleLines",
+          groupFields: ["lineDepartment"],
+          /* Cost and excl. selling added, as v2's Department performance carried
+             them. Its "Turnover %" — each department's share of the total — has no
+             equivalent: a percent-of-grand-total column is not something the spec
+             model can express, and it is a known gap rather than an oversight. */
+          columns: [
+            { field: "qty", agg: "sum" },
+            { field: "lineCostExcl", agg: "sum" },
+            { field: "lineTotalExcl", agg: "sum" },
+            { field: "lineTotalIncl", agg: "sum" },
+            { field: "grossProfit", agg: "sum" },
+            { field: "grossProfitPct", agg: "avg" },
+          ],
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "lineTotalIncl_sum", dir: "desc" },
+          chartType: "pie",
+        }),
+      },
+      {
+        key: "cashier",
+        label: "Cashier",
+        name: "Cashier performance",
+        description:
+          "Turnover, basket count and average basket for each person serving.",
+        legacyId: "sales-by-cashier",
+        spec: spec({
+          source: "sales",
+          groupFields: ["userName"],
+          /* Deliberately still on `sales` rather than `saleLines`, though that
+             source has no cost and so this cut can never show margin.
+             `__rows` here is a BASKET count and `totalIncl avg` a real average
+             basket; on saleLines both would silently become line counts, which is
+             the wrong answer to the question this cut asks.
+             v2's "Clerk performance" was a different report — one row per clerk AND
+             product — and would be a separate template rather than this one bent out
+             of shape. */
+          columns: [
+            { field: "__rows" },
+            { field: "totalIncl", agg: "sum" },
+            { field: "totalIncl", agg: "avg" },
+            { field: "subtotalExcl", agg: "sum" },
+            { field: "vatTotal", agg: "sum" },
+            { field: "discountTotal", agg: "sum" },
+          ],
+          filters: [
+            { field: "status", op: "eq", value: "finalised" },
+            { field: "docType", op: "eq", value: "invoice" },
+          ],
+          sort: { key: "totalIncl_sum", dir: "desc" },
+        }),
+      },
+      {
+        key: "till",
+        label: "Till",
+        name: "Till performance",
+        description:
+          "Turnover, basket count and average basket for each till — which lanes carry the shop.",
+        legacyId: "sales-by-till",
+        /* On `sales` for the same reason as the cashier cut above: one row is one
+           basket, so the count and the average are basket figures. No margin here
+           either, and for the same reason. */
+        spec: spec({
+          source: "sales",
+          groupFields: ["terminalCode"],
+          columns: [
+            { field: "__rows" },
+            { field: "totalIncl", agg: "sum" },
+            { field: "totalIncl", agg: "avg" },
+          ],
+          filters: [
+            { field: "status", op: "eq", value: "finalised" },
+            { field: "docType", op: "eq", value: "invoice" },
+          ],
+          sort: { key: "totalIncl_sum", dir: "desc" },
+        }),
+      },
+      {
+        key: "promotion",
+        label: "Promotion",
+        name: "Promotion performance",
+        description:
+          "What each special cost you, what it sold, and whether it was worth running.",
+        legacyId: "specials-performance",
+        /*
+         * What each promotion actually cost, and what it actually sold.
+         *
+         * `sales_document_lines.special_id` has been written on every discounted
+         * line since 056, expressly so this question could be answered from the
+         * sales data rather than guessed at — and until the catalog gained a field
+         * for it, nothing could ask. The column was collecting evidence nobody
+         * could read.
+         *
+         * Grouped by the promotion and its kind. The two figures that matter sit
+         * beside each other: `discountIncl` is what was given away, `lineTotalIncl`
+         * is what came in anyway, and `grossProfit` says whether the shop was
+         * better off for running it. A promotion that shifted volume at a profit
+         * and one that discounted people who would have bought regardless look
+         * identical in a plain sales report and quite different here.
+         *
+         * LAST of the five cuts, not first: the other four are read routinely, and
+         * this one is read when there is a promotion to judge.
+         */
+        spec: spec({
+          source: "saleLines",
+          groupFields: ["specialName", "specialShape"],
+          columns: [
+            { field: "qty", agg: "sum" },
+            { field: "lineTotalIncl", agg: "sum" },
+            { field: "discountIncl", agg: "sum" },
+            { field: "grossProfit", agg: "sum" },
+            { field: "grossProfitPct", agg: "avg" },
+          ],
+          filters: [
+            { field: "status", op: "eq", value: "finalised" },
+            /* Promotional lines only. Without this every ordinary sale arrives in
+               one enormous unnamed group and buries the promotions this cut
+               exists to compare. */
+            { field: "onSpecial", op: "eq", value: "Yes" },
+          ],
+          sort: { key: "discountIncl_sum", dir: "desc" },
+        }),
+      },
+    ],
   },
   /*
    * ── Sales by … ───────────────────────────────────────────────────────────
    *
-   * The two TIME cuts, kept as one tile. Product, department, cashier and till
-   * left to become the performance reports above; day and month stayed because
-   * neither has a "performance" name to go under, and they genuinely are one
-   * question at two grains — "how did trade move over time, and at what margin".
+   * The two TIME cuts, kept as their own tile. Product, department, cashier and
+   * till left to become cuts of `performance` above; day and month stayed here
+   * because neither is a "performance" question — nothing is being ranked
+   * against anything — and they genuinely are one question at two grains: "how
+   * did trade move over time, and at what margin".
    *
    * Both run on `saleLines`, so both carry gross profit. That is what separates
    * them from `turnover-by`, which answers the same shape of question on the
@@ -466,74 +509,75 @@ export const TEMPLATES: ReportTemplate[] = [
    * report has to render before anyone has chosen anything.
    */
   {
-    id: 'sales-by',
-    name: 'Sales by day or month',
+    id: "sales-by",
+    name: "Sales by day or month",
     description:
-      'What was sold over the period and what it made, by trading day or by month.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "What was sold over the period and what it made, by trading day or by month.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'saleLines',
-      groupFields: ['day'],
+      source: "saleLines",
+      groupFields: ["day"],
       columns: [
-        { field: 'lineTotalIncl', agg: 'sum' },
-        { field: 'lineTotalExcl', agg: 'sum' },
-        { field: 'lineVat', agg: 'sum' },
-        { field: 'grossProfit', agg: 'sum' },
-        { field: 'grossProfitPct', agg: 'avg' },
+        { field: "lineTotalIncl", agg: "sum" },
+        { field: "lineTotalExcl", agg: "sum" },
+        { field: "lineVat", agg: "sum" },
+        { field: "grossProfit", agg: "sum" },
+        { field: "grossProfitPct", agg: "avg" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'day', dir: 'asc' },
-      chartType: 'line',
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "day", dir: "asc" },
+      chartType: "line",
     }),
     variants: [
       {
-        key: 'day',
-        label: 'Day',
-        name: 'Sales by day',
-        description: 'Turnover, VAT and profit for each trading day in the period.',
-        legacyId: 'sales-summary-by-day',
+        key: "day",
+        label: "Day",
+        name: "Sales by day",
+        description:
+          "Turnover, VAT and profit for each trading day in the period.",
+        legacyId: "sales-summary-by-day",
         spec: spec({
-          source: 'saleLines',
-          groupFields: ['day'],
+          source: "saleLines",
+          groupFields: ["day"],
           columns: [
-            { field: 'lineTotalIncl', agg: 'sum' },
-            { field: 'lineTotalExcl', agg: 'sum' },
-            { field: 'lineVat', agg: 'sum' },
-            { field: 'grossProfit', agg: 'sum' },
-            { field: 'grossProfitPct', agg: 'avg' },
+            { field: "lineTotalIncl", agg: "sum" },
+            { field: "lineTotalExcl", agg: "sum" },
+            { field: "lineVat", agg: "sum" },
+            { field: "grossProfit", agg: "sum" },
+            { field: "grossProfitPct", agg: "avg" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'day', dir: 'asc' },
-          chartType: 'line',
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "day", dir: "asc" },
+          chartType: "line",
         }),
       },
       {
-        key: 'month',
-        label: 'Month',
-        name: 'Sales by month',
+        key: "month",
+        label: "Month",
+        name: "Sales by month",
         description:
-          'Turnover and profit month by month — the shape of the year rather than of the week.',
-        legacyId: 'sales-by-month',
+          "Turnover and profit month by month — the shape of the year rather than of the week.",
+        legacyId: "sales-by-month",
         /* The one cut that overrides the period: a month-by-month report over
            "this month" is a single row, which is not a report. Choosing this cut
            therefore also moves the period to the year — and because the period
            picker stays live beside it, a reader who wants a narrower span can
            still say so. */
         spec: spec({
-          source: 'saleLines',
-          period: { key: 'thisYear' },
-          groupFields: ['month'],
+          source: "saleLines",
+          period: { key: "thisYear" },
+          groupFields: ["month"],
           columns: [
-            { field: 'lineTotalIncl', agg: 'sum' },
-            { field: 'lineTotalExcl', agg: 'sum' },
-            { field: 'lineVat', agg: 'sum' },
-            { field: 'grossProfit', agg: 'sum' },
-            { field: 'grossProfitPct', agg: 'avg' },
+            { field: "lineTotalIncl", agg: "sum" },
+            { field: "lineTotalExcl", agg: "sum" },
+            { field: "lineVat", agg: "sum" },
+            { field: "grossProfit", agg: "sum" },
+            { field: "grossProfitPct", agg: "avg" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'month', dir: 'asc' },
-          chartType: 'line',
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "month", dir: "asc" },
+          chartType: "line",
         }),
       },
     ],
@@ -552,256 +596,273 @@ export const TEMPLATES: ReportTemplate[] = [
      * chart change. They still get a spec each rather than a swapped
      * groupFields, because the PERIOD has to move with the grain — see below.
      */
-    id: 'turnover-by',
-    name: 'Turnover by hour, day, month or year',
+    id: "turnover-by",
+    name: "Turnover by hour, day, month or year",
     description:
-      'Takings, basket count and average basket over time — by hour of day to see when the shop is busy, or by day, month and year to see which way the business is going.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "Takings, basket count and average basket over time — by hour of day to see when the shop is busy, or by day, month and year to see which way the business is going.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
-      groupFields: ['hour'],
+      source: "sales",
+      groupFields: ["hour"],
       columns: [
-        { field: '__rows' },
-        { field: 'totalIncl', agg: 'sum' },
-        { field: 'totalIncl', agg: 'avg' },
+        { field: "__rows" },
+        { field: "totalIncl", agg: "sum" },
+        { field: "totalIncl", agg: "avg" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'hour', dir: 'asc' },
-      chartType: 'bar',
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "hour", dir: "asc" },
+      chartType: "bar",
     }),
     variants: [
       {
-        key: 'hour',
-        label: 'Hour',
-        name: 'Turnover by hour',
-        description: 'When the shop is busy — takings and basket count by hour of day.',
+        key: "hour",
+        label: "Hour",
+        name: "Turnover by hour",
+        description:
+          "When the shop is busy — takings and basket count by hour of day.",
         /* Was 'Trading by hour'. The id is kept because it is in favourites,
            schedules and the public API; only the NAME changed. */
-        legacyId: 'sales-by-hour',
+        legacyId: "sales-by-hour",
         spec: spec({
-          source: 'sales',
-          groupFields: ['hour'],
+          source: "sales",
+          groupFields: ["hour"],
           columns: [
-            { field: '__rows' },
-            { field: 'totalIncl', agg: 'sum' },
-            { field: 'totalIncl', agg: 'avg' },
+            { field: "__rows" },
+            { field: "totalIncl", agg: "sum" },
+            { field: "totalIncl", agg: "avg" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'hour', dir: 'asc' },
-          chartType: 'bar',
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "hour", dir: "asc" },
+          chartType: "bar",
         }),
       },
       {
-        key: 'day',
-        label: 'Day',
-        name: 'Turnover by day',
-        description: 'Takings, basket count and average basket for each trading day.',
+        key: "day",
+        label: "Day",
+        name: "Turnover by day",
+        description:
+          "Takings, basket count and average basket for each trading day.",
         spec: spec({
-          source: 'sales',
-          groupFields: ['day'],
+          source: "sales",
+          groupFields: ["day"],
           columns: [
-            { field: '__rows' },
-            { field: 'totalIncl', agg: 'sum' },
-            { field: 'totalIncl', agg: 'avg' },
+            { field: "__rows" },
+            { field: "totalIncl", agg: "sum" },
+            { field: "totalIncl", agg: "avg" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'day', dir: 'asc' },
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "day", dir: "asc" },
           /* A line, not bars: a day-by-day series is read as a trend, where
              hour-of-day is read as a profile of the trading day. */
-          chartType: 'line',
+          chartType: "line",
         }),
       },
       {
-        key: 'month',
-        label: 'Month',
-        name: 'Turnover by month',
-        description: 'Takings, basket count and average basket month by month.',
+        key: "month",
+        label: "Month",
+        name: "Turnover by month",
+        description: "Takings, basket count and average basket month by month.",
         /* The period moves with the grain: a month-by-month report over "this
            month" is a single row, which is not a report. Same for the year cut
            below. The period picker stays live, so a reader wanting a narrower
            span can still say so. */
         spec: spec({
-          source: 'sales',
-          period: { key: 'thisYear' },
-          groupFields: ['month'],
+          source: "sales",
+          period: { key: "thisYear" },
+          groupFields: ["month"],
           columns: [
-            { field: '__rows' },
-            { field: 'totalIncl', agg: 'sum' },
-            { field: 'totalIncl', agg: 'avg' },
+            { field: "__rows" },
+            { field: "totalIncl", agg: "sum" },
+            { field: "totalIncl", agg: "avg" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'month', dir: 'asc' },
-          chartType: 'line',
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "month", dir: "asc" },
+          chartType: "line",
         }),
       },
       {
-        key: 'year',
-        label: 'Year',
-        name: 'Turnover by year',
-        description: 'Takings, basket count and average basket for each year on record.',
+        key: "year",
+        label: "Year",
+        name: "Turnover by year",
+        description:
+          "Takings, basket count and average basket for each year on record.",
         spec: spec({
-          source: 'sales',
+          source: "sales",
           /* The only multi-year period there is — a year-by-year report needs
              more than one year in it to say anything at all. Added for exactly
              this cut; see PeriodKey in spec.ts. */
-          period: { key: 'last5Years' },
-          groupFields: ['year'],
+          period: { key: "last5Years" },
+          groupFields: ["year"],
           columns: [
-            { field: '__rows' },
-            { field: 'totalIncl', agg: 'sum' },
-            { field: 'totalIncl', agg: 'avg' },
+            { field: "__rows" },
+            { field: "totalIncl", agg: "sum" },
+            { field: "totalIncl", agg: "avg" },
           ],
-          filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-          sort: { key: 'year', dir: 'asc' },
-          chartType: 'bar',
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "year", dir: "asc" },
+          chartType: "bar",
         }),
       },
     ],
   },
   {
-    id: 'sales-by-tender',
-    name: 'Payments by tender',
-    description: 'What money arrived and in what form — reconcile against the bank and the drawer.',
-    category: 'Sales',
-    permission: 'reports.view',
+    id: "sales-by-tender",
+    name: "Payments by tender",
+    description:
+      "What money arrived and in what form — reconcile against the bank and the drawer.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'tenders',
-      groupFields: ['tenderName'],
-      columns: [{ field: '__rows' }, { field: 'netAmount', agg: 'sum' }, { field: 'surcharge', agg: 'sum' }],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'netAmount_sum', dir: 'desc' },
-      chartType: 'pie',
+      source: "tenders",
+      groupFields: ["tenderName"],
+      columns: [
+        { field: "__rows" },
+        { field: "netAmount", agg: "sum" },
+        { field: "surcharge", agg: "sum" },
+      ],
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "netAmount_sum", dir: "desc" },
+      chartType: "pie",
     }),
   },
   {
-    id: 'vat-by-rate',
-    name: 'VAT by rate',
-    description: 'Output tax grouped by the rate stored on each line, so a rate change cannot restate a filed return.',
-    category: 'Sales',
-    permission: 'reports.financial',
+    id: "vat-by-rate",
+    name: "VAT by rate",
+    description:
+      "Output tax grouped by the rate stored on each line, so a rate change cannot restate a filed return.",
+    category: "Sales",
+    permission: "reports.financial",
     spec: spec({
-      source: 'saleLines',
+      source: "saleLines",
       /* Per DAY and rate, which is what a VAT return is assembled from — v2's
          Daily TAXES report. Grouping by rate alone gives the period total, and
          a store that wants only that removes the day column. */
-      groupFields: ['day', 'vatRatePct'],
+      groupFields: ["day", "vatRatePct"],
       columns: [
-        { field: 'lineTotalExcl', agg: 'sum' },
-        { field: 'lineVat', agg: 'sum' },
-        { field: 'lineTotalIncl', agg: 'sum' },
+        { field: "lineTotalExcl", agg: "sum" },
+        { field: "lineVat", agg: "sum" },
+        { field: "lineTotalIncl", agg: "sum" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'day', dir: 'asc' },
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "day", dir: "asc" },
     }),
   },
   /* Invoice history and its detail cut used to sit here as two tiles. They are
      one report now — the first tile under Sales — with the grain chosen ON it.
      See the entry at the top of this category; both ids still resolve. */
-  /* Sales by month and Sales by till used to sit here. They are cuts of
-     `sales-by` now — see its variants. Both ids still resolve. */
+  /* Sales by month used to sit here; it is a cut of `sales-by` now. Sales by
+     till was here too, and is a cut of `performance`. Both ids still resolve —
+     see the variants on each. */
   {
-    id: 'credit-notes',
-    name: 'Credit notes',
-    description: 'What went back and who authorised it. Returns are normal; a pattern in them is worth reading.',
-    category: 'Sales',
-    permission: 'reports.view',
+    id: "credit-notes",
+    name: "Credit notes",
+    description:
+      "What went back and who authorised it. Returns are normal; a pattern in them is worth reading.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
+      source: "sales",
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'customerName' },
-        { field: 'userName' },
-        { field: 'reference' },
-        { field: 'totalIncl' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "customerName" },
+        { field: "userName" },
+        { field: "reference" },
+        { field: "totalIncl" },
       ],
       filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'credit_sale' },
+        { field: "status", op: "eq", value: "finalised" },
+        { field: "docType", op: "eq", value: "credit_sale" },
       ],
-      sort: { key: 'documentDate', dir: 'desc' },
+      sort: { key: "documentDate", dir: "desc" },
     }),
   },
   {
     /* Id kept for the reason void-history's is — see there. */
-    id: 'discounts-and-voids',
-    name: 'Discounts and cancellations by cashier',
+    id: "discounts-and-voids",
+    name: "Discounts and cancellations by cashier",
     description:
-      'None of these is wrong on its own. Someone far outside their colleagues’ numbers is the pattern worth a conversation.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "None of these is wrong on its own. Someone far outside their colleagues’ numbers is the pattern worth a conversation.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
-      groupFields: ['userName', 'status'],
-      columns: [{ field: '__rows' }, { field: 'discountTotal', agg: 'sum' }, { field: 'totalIncl', agg: 'sum' }],
+      source: "sales",
+      groupFields: ["userName", "status"],
+      columns: [
+        { field: "__rows" },
+        { field: "discountTotal", agg: "sum" },
+        { field: "totalIncl", agg: "sum" },
+      ],
       filters: [],
-      sort: { key: 'discountTotal_sum', dir: 'desc' },
+      sort: { key: "discountTotal_sum", dir: "desc" },
     }),
   },
   {
     /* Id kept for the reason void-history's is — see there. */
-    id: 'voids-by-reason',
-    name: 'Cancellations by reason',
+    id: "voids-by-reason",
+    name: "Cancellations by reason",
     description:
-      'What cancelling is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "What cancelling is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
-      groupFields: ['cancelReasonName'],
-      columns: [{ field: '__rows' }, { field: 'totalIncl', agg: 'sum' }],
-      filters: [{ field: 'status', op: 'eq', value: 'cancelled' }],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
+      source: "sales",
+      groupFields: ["cancelReasonName"],
+      columns: [{ field: "__rows" }, { field: "totalIncl", agg: "sum" }],
+      filters: [{ field: "status", op: "eq", value: "cancelled" }],
+      sort: { key: "totalIncl_sum", dir: "desc" },
     }),
   },
   {
-    id: 'returns-by-reason',
-    name: 'Returns by reason',
+    id: "returns-by-reason",
+    name: "Returns by reason",
     description:
-      'Why goods come back, and what it costs. Faulty is a supplier conversation; wrong size is a description one.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "Why goods come back, and what it costs. Faulty is a supplier conversation; wrong size is a description one.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
-      groupFields: ['returnReasonName'],
-      columns: [{ field: '__rows' }, { field: 'totalIncl', agg: 'sum' }],
+      source: "sales",
+      groupFields: ["returnReasonName"],
+      columns: [{ field: "__rows" }, { field: "totalIncl", agg: "sum" }],
       filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'credit_sale' },
+        { field: "status", op: "eq", value: "finalised" },
+        { field: "docType", op: "eq", value: "credit_sale" },
       ],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
+      sort: { key: "totalIncl_sum", dir: "desc" },
     }),
   },
 
   /* ── Stock ───────────────────────────────────────────────────────────────── */
   {
-    id: 'stock-valuation',
-    name: 'Stock valuation',
-    description: 'What is on the shelf and what it cost — the money tied up in stock.',
-    category: 'Stock',
-    permission: 'reports.financial',
+    id: "stock-valuation",
+    name: "Stock valuation",
+    description:
+      "What is on the shelf and what it cost — the money tied up in stock.",
+    category: "Stock",
+    permission: "reports.financial",
     financial: true,
     spec: spec({
-      source: 'products',
-      groupFields: ['department'],
+      source: "products",
+      groupFields: ["department"],
       columns: [
-        { field: '__rows' },
-        { field: 'stockOnHand', agg: 'sum' },
-        { field: 'stockValue', agg: 'sum' },
+        { field: "__rows" },
+        { field: "stockOnHand", agg: "sum" },
+        { field: "stockValue", agg: "sum" },
       ],
-      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
-      sort: { key: 'stockValue_sum', dir: 'desc' },
+      filters: [{ field: "isArchived", op: "eq", value: "No" }],
+      sort: { key: "stockValue_sum", dir: "desc" },
     }),
   },
   {
-    id: 'stock-on-hand',
-    name: 'Stock on hand',
-    description: 'What is on the shelf right now, by product. Quantities only — no cost, so anyone may read it.',
-    category: 'Stock',
-    permission: 'products.view',
+    id: "stock-on-hand",
+    name: "Stock on hand",
+    description:
+      "What is on the shelf right now, by product. Quantities only — no cost, so anyone may read it.",
+    category: "Stock",
+    permission: "products.view",
     spec: spec({
-      source: 'products',
+      source: "products",
       // A stock list that stops at 5,000 is a stocktake sheet missing pages.
       limit: MAX_ROWS,
       /* No cost columns, on purpose — this report is products.view so that
@@ -809,80 +870,81 @@ export const TEMPLATES: ReportTemplate[] = [
          behind reports.financial. Max level added to complete the pair with
          min, which v2's stock-on-hand carried. */
       columns: [
-        { field: 'code' },
-        { field: 'barcode' },
-        { field: 'description' },
-        { field: 'department' },
-        { field: 'stockOnHand' },
-        { field: 'minStock' },
-        { field: 'maxStock' },
-        { field: 'lastSoldDate' },
+        { field: "code" },
+        { field: "barcode" },
+        { field: "description" },
+        { field: "department" },
+        { field: "stockOnHand" },
+        { field: "minStock" },
+        { field: "maxStock" },
+        { field: "lastSoldDate" },
       ],
-      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
-      sort: { key: 'description', dir: 'asc' },
+      filters: [{ field: "isArchived", op: "eq", value: "No" }],
+      sort: { key: "description", dir: "asc" },
     }),
   },
   {
-    id: 'dead-stock-by-age',
-    name: 'Dead stock by age',
+    id: "dead-stock-by-age",
+    name: "Dead stock by age",
     description:
-      'The money on the shelf, grouped by how long since it last sold — where the bands past 90 days are the capital quietly going stale.',
-    category: 'Stock',
-    permission: 'reports.financial',
+      "The money on the shelf, grouped by how long since it last sold — where the bands past 90 days are the capital quietly going stale.",
+    category: "Stock",
+    permission: "reports.financial",
     financial: true,
     spec: spec({
-      source: 'products',
-      groupFields: ['ageBand'],
+      source: "products",
+      groupFields: ["ageBand"],
       columns: [
-        { field: '__rows' },
-        { field: 'stockOnHand', agg: 'sum' },
-        { field: 'stockValue', agg: 'sum' },
+        { field: "__rows" },
+        { field: "stockOnHand", agg: "sum" },
+        { field: "stockValue", agg: "sum" },
       ],
       filters: [
-        { field: 'isArchived', op: 'eq', value: 'No' },
-        { field: 'stockOnHand', op: 'gt', value: '0' },
+        { field: "isArchived", op: "eq", value: "No" },
+        { field: "stockOnHand", op: "gt", value: "0" },
       ],
-      sort: { key: 'stockValue_sum', dir: 'desc' },
+      sort: { key: "stockValue_sum", dir: "desc" },
     }),
   },
   {
-    id: 'dead-stock-detail',
-    name: 'Dead stock detail',
+    id: "dead-stock-detail",
+    name: "Dead stock detail",
     description:
-      'Every stocked product that has not sold in six months — the clearance list, with what each line is still worth.',
-    category: 'Stock',
-    permission: 'reports.financial',
+      "Every stocked product that has not sold in six months — the clearance list, with what each line is still worth.",
+    category: "Stock",
+    permission: "reports.financial",
     financial: true,
     spec: spec({
-      source: 'products',
+      source: "products",
       limit: MAX_ROWS,
       columns: [
-        { field: 'code' },
-        { field: 'description' },
-        { field: 'department' },
-        { field: 'stockOnHand' },
-        { field: 'stockValue' },
-        { field: 'lastSoldDate' },
-        { field: 'daysSinceSold' },
-        { field: 'ageBand' },
+        { field: "code" },
+        { field: "description" },
+        { field: "department" },
+        { field: "stockOnHand" },
+        { field: "stockValue" },
+        { field: "lastSoldDate" },
+        { field: "daysSinceSold" },
+        { field: "ageBand" },
       ],
       filters: [
-        { field: 'isArchived', op: 'eq', value: 'No' },
-        { field: 'stockOnHand', op: 'gt', value: '0' },
+        { field: "isArchived", op: "eq", value: "No" },
+        { field: "stockOnHand", op: "gt", value: "0" },
         // gt 180, not gte: the boundary day still belongs to the 91–180 band.
-        { field: 'daysSinceSold', op: 'gt', value: '180' },
+        { field: "daysSinceSold", op: "gt", value: "180" },
       ],
-      sort: { key: 'stockValue', dir: 'desc' },
+      sort: { key: "stockValue", dir: "desc" },
     }),
   },
   {
-    id: 'product-price-list',
-    name: 'Product price list',
-    description: 'Every selling price in one list — for a shelf-edge check or a printed catalogue.',
-    category: 'Stock',
-    permission: 'products.view',
+    id: "product-price-list",
+    name: "Product price list",
+    description:
+      "Every selling price in one list — for a shelf-edge check or a printed catalogue.",
+    category: "Stock",
+    permission: "products.view",
     spec: spec({
-      source: 'products',
+      source: "products",
       // A price list is printed and worked through — a truncated one is wrong
       // in a way nobody notices until a shelf has no price.
       limit: MAX_ROWS,
@@ -890,53 +952,53 @@ export const TEMPLATES: ReportTemplate[] = [
          cost columns drop out for a role without products.cost, which is why
          this can stay a products.view report and still show them to a buyer. */
       columns: [
-        { field: 'code' },
-        { field: 'barcode' },
-        { field: 'description' },
-        { field: 'department' },
-        { field: 'stockOnHand' },
-        { field: 'lastCost' },
-        { field: 'averageCost' },
-        { field: 'sellingPriceIncl' },
-        { field: 'marginPct' },
+        { field: "code" },
+        { field: "barcode" },
+        { field: "description" },
+        { field: "department" },
+        { field: "stockOnHand" },
+        { field: "lastCost" },
+        { field: "averageCost" },
+        { field: "sellingPriceIncl" },
+        { field: "marginPct" },
       ],
-      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
-      sort: { key: 'description', dir: 'asc' },
+      filters: [{ field: "isArchived", op: "eq", value: "No" }],
+      sort: { key: "description", dir: "asc" },
     }),
   },
   {
-    id: 'price-list-by-supplier',
-    name: 'Price list per supplier',
+    id: "price-list-by-supplier",
+    name: "Price list per supplier",
     description:
-      'What each supplier charges and what it sells for, from the lines actually bought — the buying list before an order goes out.',
-    category: 'Stock',
-    permission: 'purchasing.view',
+      "What each supplier charges and what it sells for, from the lines actually bought — the buying list before an order goes out.",
+    category: "Stock",
+    permission: "purchasing.view",
     spec: spec({
-      source: 'purchaseLines',
-      period: { key: 'thisYear' },
+      source: "purchaseLines",
+      period: { key: "thisYear" },
       limit: MAX_ROWS,
-      groupFields: ['supplierName', 'productCode', 'description'],
+      groupFields: ["supplierName", "productCode", "description"],
       columns: [
-        { field: 'unitCostExcl', agg: 'max' },
-        { field: 'qtyReceived', agg: 'sum' },
+        { field: "unitCostExcl", agg: "max" },
+        { field: "qtyReceived", agg: "sum" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'supplierName', dir: 'asc' },
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "supplierName", dir: "asc" },
     }),
   },
   {
-    id: 'product-movement',
-    name: 'Product movement',
+    id: "product-movement",
+    name: "Product movement",
     description:
-      'Every movement grouped by product — what came in, what went out and where a count went wrong.',
-    category: 'Stock',
-    permission: 'stock.view',
+      "Every movement grouped by product — what came in, what went out and where a count went wrong.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockMovements',
+      source: "stockMovements",
       /* Department joins the grouping rather than sitting as a column: a
          product has one, and an unaggregated text column on a summarised
          report silently renders as a COUNT. */
-      groupFields: ['productDepartment', 'productCode', 'productDescription'],
+      groupFields: ["productDepartment", "productCode", "productDescription"],
       /* v2 showed an opening and a closing quantity here. Neither is offered,
          and deliberately: stock_movements records qty_after per movement, so a
          CLOSING balance would have to be "the last one in the period" and the
@@ -945,81 +1007,82 @@ export const TEMPLATES: ReportTemplate[] = [
          honest figure this source can give, and stock-on-hand answers "what is
          there now" without guessing. */
       columns: [
-        { field: '__rows' },
-        { field: 'qtyChange', agg: 'sum' },
-        { field: 'movementValue', agg: 'sum' },
+        { field: "__rows" },
+        { field: "qtyChange", agg: "sum" },
+        { field: "movementValue", agg: "sum" },
       ],
-      sort: { key: 'qtyChange_sum', dir: 'asc' },
+      sort: { key: "qtyChange_sum", dir: "asc" },
     }),
   },
   {
-    id: 'below-minimum',
-    name: 'Below minimum level',
-    description: 'Products at or under their reorder point — what to buy next.',
-    category: 'Stock',
-    permission: 'products.view',
+    id: "below-minimum",
+    name: "Below minimum level",
+    description: "Products at or under their reorder point — what to buy next.",
+    category: "Stock",
+    permission: "products.view",
     spec: spec({
-      source: 'products',
+      source: "products",
       columns: [
-        { field: 'code' },
-        { field: 'description' },
-        { field: 'department' },
-        { field: 'stockOnHand' },
-        { field: 'minStock' },
-        { field: 'maxStock' },
-        { field: 'shortfall' },
+        { field: "code" },
+        { field: "description" },
+        { field: "department" },
+        { field: "stockOnHand" },
+        { field: "minStock" },
+        { field: "maxStock" },
+        { field: "shortfall" },
       ],
-      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
-      totalFilters: [{ key: 'shortfall', op: 'gt', value: '0' }],
-      sort: { key: 'shortfall', dir: 'desc' },
+      filters: [{ field: "isArchived", op: "eq", value: "No" }],
+      totalFilters: [{ key: "shortfall", op: "gt", value: "0" }],
+      sort: { key: "shortfall", dir: "desc" },
     }),
   },
   {
-    id: 'slow-movers',
-    name: 'Slow movers',
-    description: 'Stock on hand that has not sold in a long time — money sitting on a shelf.',
-    category: 'Stock',
-    permission: 'products.view',
+    id: "slow-movers",
+    name: "Slow movers",
+    description:
+      "Stock on hand that has not sold in a long time — money sitting on a shelf.",
+    category: "Stock",
+    permission: "products.view",
     spec: spec({
-      source: 'products',
+      source: "products",
       columns: [
-        { field: 'code' },
-        { field: 'description' },
-        { field: 'department' },
-        { field: 'stockOnHand' },
-        { field: 'lastSoldDate' },
-        { field: 'daysSinceSold' },
-        { field: 'averageCost' },
-        { field: 'stockValue' },
+        { field: "code" },
+        { field: "description" },
+        { field: "department" },
+        { field: "stockOnHand" },
+        { field: "lastSoldDate" },
+        { field: "daysSinceSold" },
+        { field: "averageCost" },
+        { field: "stockValue" },
       ],
-      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
-      totalFilters: [{ key: 'stockOnHand', op: 'gt', value: '0' }],
-      sort: { key: 'daysSinceSold', dir: 'desc' },
+      filters: [{ field: "isArchived", op: "eq", value: "No" }],
+      totalFilters: [{ key: "stockOnHand", op: "gt", value: "0" }],
+      sort: { key: "daysSinceSold", dir: "desc" },
     }),
   },
   {
-    id: 'stock-movements',
-    name: 'Stock movements',
-    description: 'Every change in stock in the period, and what caused it.',
-    category: 'Stock',
-    permission: 'stock.view',
+    id: "stock-movements",
+    name: "Stock movements",
+    description: "Every change in stock in the period, and what caused it.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockMovements',
+      source: "stockMovements",
       columns: [
-        { field: 'movedAt' },
-        { field: 'productCode' },
-        { field: 'productDescription' },
-        { field: 'movementType' },
-        { field: 'qtyChange' },
-        { field: 'qtyAfter' },
-        { field: 'userName' },
+        { field: "movedAt" },
+        { field: "productCode" },
+        { field: "productDescription" },
+        { field: "movementType" },
+        { field: "qtyChange" },
+        { field: "qtyAfter" },
+        { field: "userName" },
       ],
-      sort: { key: 'movedAt', dir: 'desc' },
+      sort: { key: "movedAt", dir: "desc" },
     }),
   },
   {
-    id: 'shrinkage-by-product',
-    name: 'Shrinkage by product',
+    id: "shrinkage-by-product",
+    name: "Shrinkage by product",
     /*
      * Counted stock only — source = 'stock_take'.
      *
@@ -1032,47 +1095,49 @@ export const TEMPLATES: ReportTemplate[] = [
      *
      * Sorted by value ascending, so the worst write-off is the first row.
      */
-    description: 'What counting found missing, by product — the losses worth acting on.',
-    category: 'Stock',
-    permission: 'stock.view',
+    description:
+      "What counting found missing, by product — the losses worth acting on.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockMovements',
-      groupFields: ['productCode', 'productDescription'],
+      source: "stockMovements",
+      groupFields: ["productCode", "productDescription"],
       columns: [
-        { field: '__rows' },
-        { field: 'qtyChange', agg: 'sum' },
-        { field: 'movementValue', agg: 'sum' },
+        { field: "__rows" },
+        { field: "qtyChange", agg: "sum" },
+        { field: "movementValue", agg: "sum" },
       ],
-      filters: [{ field: 'source', op: 'eq', value: 'stock_take' }],
-      sort: { key: 'movementValue_sum', dir: 'asc' },
+      filters: [{ field: "source", op: "eq", value: "stock_take" }],
+      sort: { key: "movementValue_sum", dir: "asc" },
     }),
   },
   {
-    id: 'shrinkage-by-department',
-    name: 'Shrinkage by department',
-    description: 'Where stock is going missing — the aisle to count next.',
-    category: 'Stock',
-    permission: 'stock.view',
+    id: "shrinkage-by-department",
+    name: "Shrinkage by department",
+    description: "Where stock is going missing — the aisle to count next.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockMovements',
-      groupFields: ['productDepartment'],
+      source: "stockMovements",
+      groupFields: ["productDepartment"],
       columns: [
-        { field: '__rows' },
-        { field: 'qtyChange', agg: 'sum' },
-        { field: 'movementValue', agg: 'sum' },
+        { field: "__rows" },
+        { field: "qtyChange", agg: "sum" },
+        { field: "movementValue", agg: "sum" },
       ],
-      filters: [{ field: 'source', op: 'eq', value: 'stock_take' }],
-      sort: { key: 'movementValue_sum', dir: 'asc' },
+      filters: [{ field: "source", op: "eq", value: "stock_take" }],
+      sort: { key: "movementValue_sum", dir: "asc" },
     }),
   },
   {
-    id: 'stock-adjustments',
-    name: 'Stock adjustments',
-    description: 'Write-offs and corrections only — the movements a person chose to make.',
-    category: 'Stock',
-    permission: 'stock.view',
+    id: "stock-adjustments",
+    name: "Stock adjustments",
+    description:
+      "Write-offs and corrections only — the movements a person chose to make.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockMovements',
+      source: "stockMovements",
       /* One row per ADJUSTMENT, not per person — v2's grain, and the useful
          one: "who adjusted what, when, and by how much" is the question this
          report is opened to answer. The per-person rollup is a group away, and
@@ -1080,382 +1145,415 @@ export const TEMPLATES: ReportTemplate[] = [
          The adjustment REASON is the column this still lacks; it lives in
          stock_adjustments (100), which has no catalog source yet. */
       columns: [
-        { field: 'movedAt' },
-        { field: 'productCode' },
-        { field: 'productDescription' },
-        { field: 'productDepartment' },
-        { field: 'userName' },
-        { field: 'qtyChange' },
-        { field: 'qtyAfter' },
-        { field: 'unitCostExcl' },
-        { field: 'movementValue' },
-        { field: 'note' },
+        { field: "movedAt" },
+        { field: "productCode" },
+        { field: "productDescription" },
+        { field: "productDepartment" },
+        { field: "userName" },
+        { field: "qtyChange" },
+        { field: "qtyAfter" },
+        { field: "unitCostExcl" },
+        { field: "movementValue" },
+        { field: "note" },
       ],
-      filters: [{ field: 'movementType', op: 'eq', value: 'adjustment' }],
-      sort: { key: 'movedAt', dir: 'desc' },
+      filters: [{ field: "movementType", op: "eq", value: "adjustment" }],
+      sort: { key: "movedAt", dir: "desc" },
     }),
   },
   {
-    id: 'ingredient-usage',
-    name: 'Ingredients used in production',
-    description: 'What manufacturing consumed, by product — the flour behind the bread.',
-    category: 'Stock',
-    permission: 'stock.view',
+    id: "ingredient-usage",
+    name: "Ingredients used in production",
+    description:
+      "What manufacturing consumed, by product — the flour behind the bread.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockMovements',
-      groupFields: ['productCode', 'productDescription'],
-      columns: [{ field: '__rows' }, { field: 'qtyChange', agg: 'sum' }, { field: 'movementValue', agg: 'sum' }],
+      source: "stockMovements",
+      groupFields: ["productCode", "productDescription"],
+      columns: [
+        { field: "__rows" },
+        { field: "qtyChange", agg: "sum" },
+        { field: "movementValue", agg: "sum" },
+      ],
       // manufacture_out only. The matching manufacture_in is the finished item
       // arriving, and summing both together would net a build to roughly zero
       // and answer nothing.
-      filters: [{ field: 'movementType', op: 'eq', value: 'manufacture_out' }],
-      sort: { key: 'movementValue_sum', dir: 'asc' },
+      filters: [{ field: "movementType", op: "eq", value: "manufacture_out" }],
+      sort: { key: "movementValue_sum", dir: "asc" },
     }),
   },
   {
-    id: 'production-output',
-    name: 'What was manufactured',
-    description: 'Finished goods built, by product, with what they cost to make.',
-    category: 'Stock',
-    permission: 'stock.view',
+    id: "production-output",
+    name: "What was manufactured",
+    description:
+      "Finished goods built, by product, with what they cost to make.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockMovements',
-      groupFields: ['productCode', 'productDescription'],
-      columns: [{ field: '__rows' }, { field: 'qtyChange', agg: 'sum' }, { field: 'movementValue', agg: 'sum' }],
-      filters: [{ field: 'movementType', op: 'eq', value: 'manufacture_in' }],
-      sort: { key: 'movementValue_sum', dir: 'desc' },
+      source: "stockMovements",
+      groupFields: ["productCode", "productDescription"],
+      columns: [
+        { field: "__rows" },
+        { field: "qtyChange", agg: "sum" },
+        { field: "movementValue", agg: "sum" },
+      ],
+      filters: [{ field: "movementType", op: "eq", value: "manufacture_in" }],
+      sort: { key: "movementValue_sum", dir: "desc" },
     }),
   },
 
   /* ── Customers ───────────────────────────────────────────────────────────── */
   {
-    id: 'customer-balances',
-    name: 'Customer balances',
-    description: 'Who owes what, against their limit.',
-    category: 'Customers',
-    permission: 'customers.view',
+    id: "customer-balances",
+    name: "Customer balances",
+    description: "Who owes what, against their limit.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'customers',
+      source: "customers",
       columns: [
-        { field: 'code' },
-        { field: 'name' },
-        { field: 'status' },
-        { field: 'balance' },
-        { field: 'creditLimit' },
-        { field: 'availableCredit' },
+        { field: "code" },
+        { field: "name" },
+        { field: "status" },
+        { field: "balance" },
+        { field: "creditLimit" },
+        { field: "availableCredit" },
       ],
-      totalFilters: [{ key: 'balance', op: 'ne', value: '0' }],
-      sort: { key: 'balance', dir: 'desc' },
+      totalFilters: [{ key: "balance", op: "ne", value: "0" }],
+      sort: { key: "balance", dir: "desc" },
     }),
   },
   {
-    id: 'overdue-accounts',
-    name: 'Overdue accounts',
-    description: 'Unpaid invoices past their due date, oldest first.',
-    category: 'Customers',
-    permission: 'customers.view',
+    id: "overdue-accounts",
+    name: "Overdue accounts",
+    description: "Unpaid invoices past their due date, oldest first.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'customerTransactions',
-      period: { key: 'lastYear' },
+      source: "customerTransactions",
+      period: { key: "lastYear" },
       columns: [
-        { field: 'customerName' },
-        { field: 'docNumber' },
-        { field: 'docDate' },
-        { field: 'dueDate' },
-        { field: 'daysOverdue' },
-        { field: 'amountOutstanding' },
+        { field: "customerName" },
+        { field: "docNumber" },
+        { field: "docDate" },
+        { field: "dueDate" },
+        { field: "daysOverdue" },
+        { field: "amountOutstanding" },
       ],
-      filters: [{ field: 'docType', op: 'eq', value: 'invoice' }],
+      filters: [{ field: "docType", op: "eq", value: "invoice" }],
       totalFilters: [
-        { key: 'amountOutstanding', op: 'gt', value: '0' },
-        { key: 'daysOverdue', op: 'gt', value: '0' },
+        { key: "amountOutstanding", op: "gt", value: "0" },
+        { key: "daysOverdue", op: "gt", value: "0" },
       ],
-      sort: { key: 'daysOverdue', dir: 'desc' },
+      sort: { key: "daysOverdue", dir: "desc" },
     }),
   },
   {
-    id: 'customer-age-analysis',
-    name: 'Age analysis',
+    id: "customer-age-analysis",
+    name: "Age analysis",
     description:
-      'Every unsettled document by how long it has been outstanding. The debtors ageing you work the phone from.',
-    category: 'Customers',
-    permission: 'customers.view',
+      "Every unsettled document by how long it has been outstanding. The debtors ageing you work the phone from.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'customerTransactions',
-      period: { key: 'thisYear' },
+      source: "customerTransactions",
+      period: { key: "thisYear" },
       columns: [
-        { field: 'customerCode' },
-        { field: 'customerName' },
-        { field: 'docNumber' },
-        { field: 'docDate' },
-        { field: 'dueDate' },
-        { field: 'daysOverdue' },
-        { field: 'amountOutstanding' },
+        { field: "customerCode" },
+        { field: "customerName" },
+        { field: "docNumber" },
+        { field: "docDate" },
+        { field: "dueDate" },
+        { field: "daysOverdue" },
+        { field: "amountOutstanding" },
       ],
       // Settled documents are not part of an ageing, and leaving them in pushed
       // the report past its row cap — which truncates the OLDEST debt, the one
       // line the report exists to show.
-      filters: [{ field: 'amountOutstanding', op: 'gt', value: '0' }],
-      sort: { key: 'daysOverdue', dir: 'desc' },
+      filters: [{ field: "amountOutstanding", op: "gt", value: "0" }],
+      sort: { key: "daysOverdue", dir: "desc" },
     }),
   },
   {
-    id: 'customer-age-analysis-bucketed',
-    name: 'Age analysis, bucketed',
+    id: "customer-age-analysis-bucketed",
+    name: "Age analysis, bucketed",
     description:
-      'One row per account with Current/30/60/90/120+ columns — the classic ladder, aged from today. For an as-at ladder use the Age analysis page, which rolls allocations back.',
-    category: 'Customers',
-    permission: 'customers.view',
+      "One row per account with Current/30/60/90/120+ columns — the classic ladder, aged from today. For an as-at ladder use the Age analysis page, which rolls allocations back.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'customerTransactions',
-      period: { key: 'thisYear' },
-      groupFields: ['customerCode', 'customerName'],
+      source: "customerTransactions",
+      period: { key: "thisYear" },
+      groupFields: ["customerCode", "customerName"],
       columns: [
-        { field: 'agedCurrent', agg: 'sum' },
-        { field: 'aged30', agg: 'sum' },
-        { field: 'aged60', agg: 'sum' },
-        { field: 'aged90', agg: 'sum' },
-        { field: 'aged120', agg: 'sum' },
-        { field: 'amountOutstanding', agg: 'sum' },
+        { field: "agedCurrent", agg: "sum" },
+        { field: "aged30", agg: "sum" },
+        { field: "aged60", agg: "sum" },
+        { field: "aged90", agg: "sum" },
+        { field: "aged120", agg: "sum" },
+        { field: "amountOutstanding", agg: "sum" },
       ],
-      filters: [{ field: 'amountOutstanding', op: 'gt', value: '0' }],
-      sort: { key: 'amountOutstanding_sum', dir: 'desc' },
+      filters: [{ field: "amountOutstanding", op: "gt", value: "0" }],
+      sort: { key: "amountOutstanding_sum", dir: "desc" },
     }),
   },
   {
-    id: 'customer-payments',
-    name: 'Customer payments',
-    description: 'Money received from accounts in the period, and who receipted it.',
-    category: 'Customers',
-    permission: 'customers.view',
+    id: "customer-payments",
+    name: "Customer payments",
+    description:
+      "Money received from accounts in the period, and who receipted it.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'customerTransactions',
+      source: "customerTransactions",
       columns: [
-        { field: 'docDate' },
-        { field: 'docNumber' },
-        { field: 'customerName' },
-        { field: 'reference' },
-        { field: 'userName' },
-        { field: 'amountSigned' },
+        { field: "docDate" },
+        { field: "docNumber" },
+        { field: "customerName" },
+        { field: "reference" },
+        { field: "userName" },
+        { field: "amountSigned" },
       ],
-      filters: [{ field: 'docType', op: 'eq', value: 'payment' }],
-      sort: { key: 'docDate', dir: 'desc' },
+      filters: [{ field: "docType", op: "eq", value: "payment" }],
+      sort: { key: "docDate", dir: "desc" },
     }),
   },
   {
-    id: 'sales-by-customer',
-    name: 'Customer performance',
-    description: 'Who buys the most — turnover and basket count per account.',
+    id: "sales-by-customer",
+    name: "Customer performance",
+    description: "Who buys the most — turnover and basket count per account.",
     /* Named to sit with the other four performance reports, but filed under
        Customers rather than Sales: someone reading it is asking about an
        ACCOUNT, and the rest of what they want — its balance, its ageing, its
        ledger — is here. On `sales`, so the count is a basket count and there is
        no margin, exactly as for cashier and till. */
-    category: 'Customers',
-    permission: 'reports.view',
+    category: "Customers",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
-      groupFields: ['customerName'],
-      columns: [{ field: '__rows' }, { field: 'totalIncl', agg: 'sum' }, { field: 'totalIncl', agg: 'avg' }],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
+      source: "sales",
+      groupFields: ["customerName"],
+      columns: [
+        { field: "__rows" },
+        { field: "totalIncl", agg: "sum" },
+        { field: "totalIncl", agg: "avg" },
+      ],
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "totalIncl_sum", dir: "desc" },
     }),
   },
   {
-    id: 'customer-ledger',
-    name: 'Customer ledger',
-    description: 'Every transaction on every account in the period.',
-    category: 'Customers',
-    permission: 'customers.view',
+    id: "customer-ledger",
+    name: "Customer ledger",
+    description: "Every transaction on every account in the period.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'customerTransactions',
+      source: "customerTransactions",
       columns: [
-        { field: 'docDate' },
-        { field: 'customerName' },
-        { field: 'docType' },
-        { field: 'docNumber' },
-        { field: 'amountSigned' },
-        { field: 'amountOutstanding' },
+        { field: "docDate" },
+        { field: "customerName" },
+        { field: "docType" },
+        { field: "docNumber" },
+        { field: "amountSigned" },
+        { field: "amountOutstanding" },
       ],
-      sort: { key: 'docDate', dir: 'desc' },
+      sort: { key: "docDate", dir: "desc" },
     }),
   },
 
   /* ── Suppliers ───────────────────────────────────────────────────────────── */
   {
-    id: 'purchases-by-supplier',
-    name: 'Purchases by supplier',
-    description: 'What was bought from whom in the period.',
-    category: 'Suppliers',
-    permission: 'purchasing.view',
+    id: "purchases-by-supplier",
+    name: "Purchases by supplier",
+    description: "What was bought from whom in the period.",
+    category: "Suppliers",
+    permission: "purchasing.view",
     spec: spec({
-      source: 'purchases',
-      groupFields: ['supplierName'],
-      columns: [{ field: '__rows' }, { field: 'subtotalExcl', agg: 'sum' }, { field: 'totalIncl', agg: 'sum' }],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'totalIncl_sum', dir: 'desc' },
+      source: "purchases",
+      groupFields: ["supplierName"],
+      columns: [
+        { field: "__rows" },
+        { field: "subtotalExcl", agg: "sum" },
+        { field: "totalIncl", agg: "sum" },
+      ],
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "totalIncl_sum", dir: "desc" },
     }),
   },
   {
-    id: 'goods-received',
-    name: 'Goods received',
-    description: 'Every GRV line in the period — what arrived and what it cost.',
-    category: 'Suppliers',
-    permission: 'purchasing.view',
+    id: "goods-received",
+    name: "Goods received",
+    description:
+      "Every GRV line in the period — what arrived and what it cost.",
+    category: "Suppliers",
+    permission: "purchasing.view",
     spec: spec({
-      source: 'purchaseLines',
+      source: "purchaseLines",
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'supplierName' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'qtyReceived' },
-        { field: 'unitCostExcl' },
-        { field: 'lineTotalExcl' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "supplierName" },
+        { field: "productCode" },
+        { field: "description" },
+        { field: "qtyReceived" },
+        { field: "unitCostExcl" },
+        { field: "lineTotalExcl" },
       ],
       filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'grv' },
+        { field: "status", op: "eq", value: "finalised" },
+        { field: "docType", op: "eq", value: "grv" },
       ],
-      sort: { key: 'documentDate', dir: 'desc' },
+      sort: { key: "documentDate", dir: "desc" },
     }),
   },
   {
-    id: 'outstanding-orders',
-    name: 'Outstanding purchase orders',
-    description: 'Ordered but not yet received — what the supplier still owes you.',
-    category: 'Suppliers',
-    permission: 'purchasing.view',
+    id: "outstanding-orders",
+    name: "Outstanding purchase orders",
+    description:
+      "Ordered but not yet received — what the supplier still owes you.",
+    category: "Suppliers",
+    permission: "purchasing.view",
     spec: spec({
-      source: 'purchaseLines',
-      period: { key: 'lastYear' },
+      source: "purchaseLines",
+      period: { key: "lastYear" },
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'supplierName' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'qtyOrdered' },
-        { field: 'qtyReceived' },
-        { field: 'qtyOutstanding' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "supplierName" },
+        { field: "productCode" },
+        { field: "description" },
+        { field: "qtyOrdered" },
+        { field: "qtyReceived" },
+        { field: "qtyOutstanding" },
       ],
-      filters: [{ field: 'docType', op: 'eq', value: 'purchase_order' }],
-      totalFilters: [{ key: 'qtyOutstanding', op: 'gt', value: '0' }],
-      sort: { key: 'documentDate', dir: 'asc' },
+      filters: [{ field: "docType", op: "eq", value: "purchase_order" }],
+      totalFilters: [{ key: "qtyOutstanding", op: "gt", value: "0" }],
+      sort: { key: "documentDate", dir: "asc" },
     }),
   },
   {
-    id: 'supplier-balances',
-    name: 'Supplier balances',
-    description: 'What is owed to each supplier right now.',
-    category: 'Suppliers',
-    permission: 'suppliers.view',
+    id: "supplier-balances",
+    name: "Supplier balances",
+    description: "What is owed to each supplier right now.",
+    category: "Suppliers",
+    permission: "suppliers.view",
     spec: spec({
-      source: 'suppliers',
-      columns: [{ field: 'code' }, { field: 'name' }, { field: 'status' }, { field: 'termsDays' }, { field: 'balance' }],
-      totalFilters: [{ key: 'balance', op: 'ne', value: '0' }],
-      sort: { key: 'balance', dir: 'desc' },
+      source: "suppliers",
+      columns: [
+        { field: "code" },
+        { field: "name" },
+        { field: "status" },
+        { field: "termsDays" },
+        { field: "balance" },
+      ],
+      totalFilters: [{ key: "balance", op: "ne", value: "0" }],
+      sort: { key: "balance", dir: "desc" },
     }),
   },
 
   /* ── Money ───────────────────────────────────────────────────────────────── */
   {
-    id: 'expenses-by-category',
-    name: 'Expenses by category',
-    description: 'Where the money went, grouped by expense account.',
-    category: 'Money',
-    permission: 'cashbook.view',
+    id: "expenses-by-category",
+    name: "Expenses by category",
+    description: "Where the money went, grouped by expense account.",
+    category: "Money",
+    permission: "cashbook.view",
     spec: spec({
-      source: 'expenseLines',
-      groupFields: ['categoryName'],
-      columns: [{ field: '__rows' }, { field: 'lineExcl', agg: 'sum' }, { field: 'lineVat', agg: 'sum' }, { field: 'lineIncl', agg: 'sum' }],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'lineIncl_sum', dir: 'desc' },
-      chartType: 'pie',
+      source: "expenseLines",
+      groupFields: ["categoryName"],
+      columns: [
+        { field: "__rows" },
+        { field: "lineExcl", agg: "sum" },
+        { field: "lineVat", agg: "sum" },
+        { field: "lineIncl", agg: "sum" },
+      ],
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "lineIncl_sum", dir: "desc" },
+      chartType: "pie",
     }),
   },
   {
-    id: 'gl-detail',
-    name: 'Journal detail',
+    id: "gl-detail",
+    name: "Journal detail",
     description:
-      'Every posted debit and credit in the period, with the journal that carried it. The ledger, line by line.',
-    category: 'Money',
-    permission: 'reports.financial',
+      "Every posted debit and credit in the period, with the journal that carried it. The ledger, line by line.",
+    category: "Money",
+    permission: "reports.financial",
     spec: spec({
-      source: 'journalLines',
+      source: "journalLines",
       columns: [
-        { field: 'journalDate' },
-        { field: 'journalNumber' },
-        { field: 'source' },
-        { field: 'accountCode' },
-        { field: 'accountName' },
-        { field: 'lineDescription' },
-        { field: 'debit' },
-        { field: 'credit' },
+        { field: "journalDate" },
+        { field: "journalNumber" },
+        { field: "source" },
+        { field: "accountCode" },
+        { field: "accountName" },
+        { field: "lineDescription" },
+        { field: "debit" },
+        { field: "credit" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
-      sort: { key: 'journalDate', dir: 'desc' },
+      filters: [{ field: "status", op: "eq", value: "posted" }],
+      sort: { key: "journalDate", dir: "desc" },
     }),
   },
   {
-    id: 'gl-by-account',
-    name: 'Movement by account',
+    id: "gl-by-account",
+    name: "Movement by account",
     description:
-      'Each account’s debits, credits and net movement for the period — the figure between two trial balances.',
-    category: 'Money',
-    permission: 'reports.financial',
+      "Each account’s debits, credits and net movement for the period — the figure between two trial balances.",
+    category: "Money",
+    permission: "reports.financial",
     spec: spec({
-      source: 'journalLines',
-      groupFields: ['accountCode', 'accountName', 'accountType'],
+      source: "journalLines",
+      groupFields: ["accountCode", "accountName", "accountType"],
       columns: [
-        { field: 'debit', agg: 'sum' },
-        { field: 'credit', agg: 'sum' },
-        { field: 'amount', agg: 'sum' },
+        { field: "debit", agg: "sum" },
+        { field: "credit", agg: "sum" },
+        { field: "amount", agg: "sum" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
-      sort: { key: 'accountCode', dir: 'asc' },
+      filters: [{ field: "status", op: "eq", value: "posted" }],
+      sort: { key: "accountCode", dir: "asc" },
     }),
   },
   {
-    id: 'account-balances',
-    name: 'Account balances',
-    description: 'The chart of accounts and where each balance stands right now.',
-    category: 'Money',
-    permission: 'reports.financial',
+    id: "account-balances",
+    name: "Account balances",
+    description:
+      "The chart of accounts and where each balance stands right now.",
+    category: "Money",
+    permission: "reports.financial",
     spec: spec({
-      source: 'glAccounts',
+      source: "glAccounts",
       columns: [
-        { field: 'accountCode' },
-        { field: 'name' },
-        { field: 'accountType' },
-        { field: 'subtype' },
-        { field: 'balanceDisplay' },
+        { field: "accountCode" },
+        { field: "name" },
+        { field: "accountType" },
+        { field: "subtype" },
+        { field: "balanceDisplay" },
       ],
-      totalFilters: [{ key: 'balanceDisplay', op: 'ne', value: '0' }],
-      sort: { key: 'accountCode', dir: 'asc' },
+      totalFilters: [{ key: "balanceDisplay", op: "ne", value: "0" }],
+      sort: { key: "accountCode", dir: "asc" },
     }),
   },
   {
-    id: 'expenses-detail',
-    name: 'Expense detail',
-    description: 'Every expense line in the period.',
-    category: 'Money',
-    permission: 'cashbook.view',
+    id: "expenses-detail",
+    name: "Expense detail",
+    description: "Every expense line in the period.",
+    category: "Money",
+    permission: "cashbook.view",
     spec: spec({
-      source: 'expenseLines',
+      source: "expenseLines",
       columns: [
-        { field: 'expenseDate' },
-        { field: 'documentNumber' },
-        { field: 'supplierName' },
-        { field: 'categoryName' },
-        { field: 'lineDescription' },
-        { field: 'lineExcl' },
-        { field: 'lineVat' },
-        { field: 'lineIncl' },
+        { field: "expenseDate" },
+        { field: "documentNumber" },
+        { field: "supplierName" },
+        { field: "categoryName" },
+        { field: "lineDescription" },
+        { field: "lineExcl" },
+        { field: "lineVat" },
+        { field: "lineIncl" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'finalised' }],
-      sort: { key: 'expenseDate', dir: 'desc' },
+      filters: [{ field: "status", op: "eq", value: "finalised" }],
+      sort: { key: "expenseDate", dir: "desc" },
     }),
   },
 
@@ -1472,31 +1570,31 @@ export const TEMPLATES: ReportTemplate[] = [
    * somebody ends up scrolling past the one they wanted.
    */
   {
-    id: 'jobs-by-technician',
-    name: 'Jobs by technician',
+    id: "jobs-by-technician",
+    name: "Jobs by technician",
     description:
-      'How many jobs each person carried in the period, and how long they took on average.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "How many jobs each person carried in the period, and how long they took on average.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCards',
-      groupFields: ['ownerName'],
+      source: "jobCards",
+      groupFields: ["ownerName"],
       columns: [
-        { field: '__rows' },
-        { field: 'daysOpen', agg: 'avg' },
-        { field: 'daysOverdue', agg: 'avg' },
+        { field: "__rows" },
+        { field: "daysOpen", agg: "avg" },
+        { field: "daysOverdue", agg: "avg" },
       ],
       // Worst average turnaround first: the row somebody opened this for.
-      sort: { key: 'daysOpen_avg', dir: 'desc' },
+      sort: { key: "daysOpen_avg", dir: "desc" },
     }),
   },
   {
-    id: 'job-cost-absorbed',
-    name: 'Work we did not charge for',
+    id: "job-cost-absorbed",
+    name: "Work we did not charge for",
     description:
-      'Every job carrying internal, written-off or undecided cost — the figure that quietly eats a service margin.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Every job carrying internal, written-off or undecided cost — the figure that quietly eats a service margin.",
+    category: "Job cards",
+    permission: "jobs.view",
     /*
      * No `financial: true` — the flag is declared on ReportTemplate but read by
      * nothing, so setting it would look like a guard and be none. The real gate is
@@ -1504,42 +1602,42 @@ export const TEMPLATES: ReportTemplate[] = [
      * a technician with those columns silently absent rather than refusing.
      */
     spec: spec({
-      source: 'jobCards',
+      source: "jobCards",
       columns: [
-        { field: 'documentNumber' },
-        { field: 'customerName' },
-        { field: 'title' },
-        { field: 'statusName' },
-        { field: 'totalCost' },
-        { field: 'absorbedCost' },
-        { field: 'undecidedCost' },
+        { field: "documentNumber" },
+        { field: "customerName" },
+        { field: "title" },
+        { field: "statusName" },
+        { field: "totalCost" },
+        { field: "absorbedCost" },
+        { field: "undecidedCost" },
       ],
       /*
        * Not filtered to "absorbed > 0": a total filter would hide the jobs where
        * the cost is still UNDECIDED, which are the ones somebody can still act on.
        * Sorting does the job without throwing rows away.
        */
-      sort: { key: 'absorbedCost', dir: 'desc' },
+      sort: { key: "absorbedCost", dir: "desc" },
     }),
   },
   {
-    id: 'job-parts-used',
-    name: 'Parts and labour used on jobs',
+    id: "job-parts-used",
+    name: "Parts and labour used on jobs",
     description:
-      'Every line on every job, grouped by what kind of thing it was and who pays for it.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Every line on every job, grouped by what kind of thing it was and who pays for it.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCardLines',
-      groupFields: ['lineKind', 'billingState'],
+      source: "jobCardLines",
+      groupFields: ["lineKind", "billingState"],
       columns: [
-        { field: '__rows' },
-        { field: 'qty', agg: 'sum' },
-        { field: 'lineCost', agg: 'sum' },
-        { field: 'intendedProfit', agg: 'sum' },
+        { field: "__rows" },
+        { field: "qty", agg: "sum" },
+        { field: "lineCost", agg: "sum" },
+        { field: "intendedProfit", agg: "sum" },
       ],
-      sort: { key: 'lineCost_sum', dir: 'desc' },
-      chartType: 'bar',
+      sort: { key: "lineCost_sum", dir: "desc" },
+      chartType: "bar",
     }),
   },
 
@@ -1555,109 +1653,109 @@ export const TEMPLATES: ReportTemplate[] = [
    * up", and one is the timesheet a payroll run needs.
    */
   {
-    id: 'job-time-and-labour',
-    name: 'Time and labour on jobs',
+    id: "job-time-and-labour",
+    name: "Time and labour on jobs",
     description:
-      'Hours booked against jobs, by person — what was worked, what was on break, and what is still running.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Hours booked against jobs, by person — what was worked, what was on break, and what is still running.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobTime',
-      groupFields: ['userName'],
+      source: "jobTime",
+      groupFields: ["userName"],
       columns: [
-        { field: '__rows' },
-        { field: 'hours', agg: 'sum' },
-        { field: 'breakMinutes', agg: 'sum' },
+        { field: "__rows" },
+        { field: "hours", agg: "sum" },
+        { field: "breakMinutes", agg: "sum" },
       ],
-      sort: { key: 'hours_sum', dir: 'desc' },
-      chartType: 'bar',
+      sort: { key: "hours_sum", dir: "desc" },
+      chartType: "bar",
     }),
   },
   {
-    id: 'job-travel',
-    name: 'Travel on jobs',
+    id: "job-travel",
+    name: "Travel on jobs",
     description:
-      'Every trip with its expected, recorded and chargeable kilometres — and whether anybody checked it.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Every trip with its expected, recorded and chargeable kilometres — and whether anybody checked it.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobTravel',
+      source: "jobTravel",
       columns: [
-        { field: 'travelledOn' },
-        { field: 'jobNumber' },
-        { field: 'userName' },
-        { field: 'expectedKm' },
-        { field: 'recordedKm' },
-        { field: 'chargeableKm' },
-        { field: 'varianceKm' },
-        { field: 'travelCharge' },
-        { field: 'verified' },
+        { field: "travelledOn" },
+        { field: "jobNumber" },
+        { field: "userName" },
+        { field: "expectedKm" },
+        { field: "recordedKm" },
+        { field: "chargeableKm" },
+        { field: "varianceKm" },
+        { field: "travelCharge" },
+        { field: "verified" },
       ],
       // Biggest overrun first — the row an approver is looking for.
-      sort: { key: 'varianceKm', dir: 'desc' },
+      sort: { key: "varianceKm", dir: "desc" },
     }),
   },
   {
-    id: 'job-travel-unverified',
-    name: 'Travel nobody has checked',
+    id: "job-travel-unverified",
+    name: "Travel nobody has checked",
     description:
-      'Kilometres claimed and never approved. Each one is either money owed to a technician or money the business should not pay.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Kilometres claimed and never approved. Each one is either money owed to a technician or money the business should not pay.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobTravel',
-      filters: [{ field: 'verified', op: 'eq', value: 'No' }],
+      source: "jobTravel",
+      filters: [{ field: "verified", op: "eq", value: "No" }],
       columns: [
-        { field: 'travelledOn' },
-        { field: 'jobNumber' },
-        { field: 'userName' },
-        { field: 'recordedKm' },
-        { field: 'varianceKm' },
-        { field: 'travelCharge' },
-        { field: 'toleranceBreached' },
+        { field: "travelledOn" },
+        { field: "jobNumber" },
+        { field: "userName" },
+        { field: "recordedKm" },
+        { field: "varianceKm" },
+        { field: "travelCharge" },
+        { field: "toleranceBreached" },
       ],
-      sort: { key: 'travelledOn', dir: 'asc' },
+      sort: { key: "travelledOn", dir: "asc" },
     }),
   },
   {
-    id: 'job-visit-performance',
-    name: 'Did we turn up on time',
+    id: "job-visit-performance",
+    name: "Did we turn up on time",
     description:
-      'Every booked visit by outcome — attended, late, cancelled or a no-show. On time means within fifteen minutes.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Every booked visit by outcome — attended, late, cancelled or a no-show. On time means within fifteen minutes.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobVisits',
-      groupFields: ['status'],
+      source: "jobVisits",
+      groupFields: ["status"],
       columns: [
-        { field: '__rows' },
-        { field: 'minutesLate', agg: 'avg' },
-        { field: 'onSiteMinutes', agg: 'avg' },
+        { field: "__rows" },
+        { field: "minutesLate", agg: "avg" },
+        { field: "onSiteMinutes", agg: "avg" },
       ],
       /* The row-count column's OUTPUT key — '__rows' is the input marker, and
          a sort naming it was silently dropped by validateSpec. */
-      sort: { key: 'rowCount', dir: 'desc' },
-      chartType: 'bar',
+      sort: { key: "rowCount", dir: "desc" },
+      chartType: "bar",
     }),
   },
   {
-    id: 'job-visits-missed',
-    name: 'Visits that did not happen',
+    id: "job-visits-missed",
+    name: "Visits that did not happen",
     description:
-      'Bookings cancelled or missed, with the reason recorded at the time. A customer whose name repeats here is one about to leave.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Bookings cancelled or missed, with the reason recorded at the time. A customer whose name repeats here is one about to leave.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobVisits',
-      filters: [{ field: 'attended', op: 'eq', value: 'No' }],
+      source: "jobVisits",
+      filters: [{ field: "attended", op: "eq", value: "No" }],
       columns: [
-        { field: 'startsAt' },
-        { field: 'jobNumber' },
-        { field: 'customerName' },
-        { field: 'status' },
-        { field: 'outcomeReason' },
+        { field: "startsAt" },
+        { field: "jobNumber" },
+        { field: "customerName" },
+        { field: "status" },
+        { field: "outcomeReason" },
       ],
-      sort: { key: 'startsAt', dir: 'desc' },
+      sort: { key: "startsAt", dir: "desc" },
     }),
   },
 
@@ -1669,15 +1767,15 @@ export const TEMPLATES: ReportTemplate[] = [
    * wants is now a screen they build themselves.
    */
   {
-    id: 'jobs-open-by-stage',
-    name: 'Where the work is',
+    id: "jobs-open-by-stage",
+    name: "Where the work is",
     description:
-      'Every open job by the stage it has reached, oldest first. The one to read at a stand-up: a stage that is filling up is a bottleneck.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Every open job by the stage it has reached, oldest first. The one to read at a stand-up: a stage that is filling up is a bottleneck.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCards',
-      groupFields: ['statusName'],
+      source: "jobCards",
+      groupFields: ["statusName"],
       /*
        * Deliberately NOT daysOverdue here.
        *
@@ -1688,142 +1786,139 @@ export const TEMPLATES: ReportTemplate[] = [
        * honestly, and "Jobs past their date" reports lateness properly.
        */
       columns: [
-        { field: '__rows' },
-        { field: 'daysOpen', agg: 'avg' },
-        { field: 'daysOpen', agg: 'max' },
+        { field: "__rows" },
+        { field: "daysOpen", agg: "avg" },
+        { field: "daysOpen", agg: "max" },
       ],
       /* 'rowCount', not '__rows': outputKey() renames the synthetic row-count
          field, and validateSpec drops a sort whose key it cannot find — so the
          spec compiled fine and the report simply came back in the wrong order.
          test:report-templates catches exactly this. */
-      sort: { key: 'rowCount', dir: 'desc' },
-      chartType: 'bar',
+      sort: { key: "rowCount", dir: "desc" },
+      chartType: "bar",
     }),
   },
   {
-    id: 'jobs-overdue',
-    name: 'Jobs past their date',
+    id: "jobs-overdue",
+    name: "Jobs past their date",
     description:
-      'Anything promised for a day that has been and gone, worst first. Every row is a customer who was told something that did not happen.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Anything promised for a day that has been and gone, worst first. Every row is a customer who was told something that did not happen.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCards',
+      source: "jobCards",
       // A closed job cannot be late any more — closedLate reports that separately.
-      filters: [{ field: 'daysOverdue', op: 'gt', value: '0' }],
+      filters: [{ field: "daysOverdue", op: "gt", value: "0" }],
       columns: [
-        { field: 'documentNumber' },
-        { field: 'customerName' },
-        { field: 'title' },
-        { field: 'statusName' },
-        { field: 'ownerName' },
-        { field: 'dueAt' },
-        { field: 'daysOverdue' },
+        { field: "documentNumber" },
+        { field: "customerName" },
+        { field: "title" },
+        { field: "statusName" },
+        { field: "ownerName" },
+        { field: "dueAt" },
+        { field: "daysOverdue" },
       ],
-      sort: { key: 'daysOverdue', dir: 'desc' },
+      sort: { key: "daysOverdue", dir: "desc" },
     }),
   },
   {
-    id: 'jobs-by-customer',
-    name: 'Work by customer',
+    id: "jobs-by-customer",
+    name: "Work by customer",
     description:
-      'How many jobs each customer has had and what they absorbed. The top of this list is who the business actually works for.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "How many jobs each customer has had and what they absorbed. The top of this list is who the business actually works for.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCards',
-      groupFields: ['customerName'],
+      source: "jobCards",
+      groupFields: ["customerName"],
       columns: [
-        { field: '__rows' },
-        { field: 'totalCost', agg: 'sum' },
-        { field: 'daysOpen', agg: 'avg' },
+        { field: "__rows" },
+        { field: "totalCost", agg: "sum" },
+        { field: "daysOpen", agg: "avg" },
       ],
       // 'rowCount', not '__rows' — see jobs-open-by-stage above.
-      sort: { key: 'rowCount', dir: 'desc' },
-      chartType: 'bar',
+      sort: { key: "rowCount", dir: "desc" },
+      chartType: "bar",
     }),
   },
   {
-    id: 'jobs-sla-breaches',
-    name: 'Promises that were missed',
+    id: "jobs-sla-breaches",
+    name: "Promises that were missed",
     description:
-      'Jobs answered or finished later than the service target said. Grouped by promise, so a target nobody ever meets shows up as the target rather than as the team.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Jobs answered or finished later than the service target said. Grouped by promise, so a target nobody ever meets shows up as the target rather than as the team.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCards',
-      filters: [{ field: 'respondedLate', op: 'eq', value: 'Yes' }],
+      source: "jobCards",
+      filters: [{ field: "respondedLate", op: "eq", value: "Yes" }],
       columns: [
-        { field: 'documentNumber' },
-        { field: 'customerName' },
-        { field: 'slaPolicy' },
-        { field: 'respondBy' },
-        { field: 'respondedAt' },
-        { field: 'respondedByName' },
+        { field: "documentNumber" },
+        { field: "customerName" },
+        { field: "slaPolicy" },
+        { field: "respondBy" },
+        { field: "respondedAt" },
+        { field: "respondedByName" },
       ],
-      sort: { key: 'respondBy', dir: 'desc' },
+      sort: { key: "respondBy", dir: "desc" },
     }),
   },
   {
-    id: 'job-work-not-decided',
-    name: 'Costs nobody has decided about',
+    id: "job-work-not-decided",
+    name: "Costs nobody has decided about",
     description:
-      'Lines still marked pending — work done that nobody has said is billable or absorbed. The commonest way a job leaks money, because it leaks quietly.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Lines still marked pending — work done that nobody has said is billable or absorbed. The commonest way a job leaks money, because it leaks quietly.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCardLines',
-      filters: [{ field: 'billingState', op: 'eq', value: 'pending' }],
+      source: "jobCardLines",
+      filters: [{ field: "billingState", op: "eq", value: "pending" }],
       columns: [
-        { field: 'jobNumber' },
-        { field: 'customerName' },
-        { field: 'description' },
-        { field: 'qty' },
-        { field: 'lineCost' },
+        { field: "jobNumber" },
+        { field: "customerName" },
+        { field: "description" },
+        { field: "qty" },
+        { field: "lineCost" },
       ],
-      sort: { key: 'lineCost', dir: 'desc' },
+      sort: { key: "lineCost", dir: "desc" },
     }),
   },
   {
-    id: 'job-write-offs',
-    name: 'What was written off',
+    id: "job-write-offs",
+    name: "What was written off",
     description:
-      'Work done and deliberately not charged, by customer. A customer who appears here repeatedly is being subsidised, which is a decision worth making on purpose.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Work done and deliberately not charged, by customer. A customer who appears here repeatedly is being subsidised, which is a decision worth making on purpose.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCardLines',
-      filters: [{ field: 'billingState', op: 'eq', value: 'written_off' }],
-      groupFields: ['customerName'],
-      columns: [
-        { field: '__rows' },
-        { field: 'lineCost', agg: 'sum' },
-      ],
-      sort: { key: 'lineCost_sum', dir: 'desc' },
-      chartType: 'bar',
+      source: "jobCardLines",
+      filters: [{ field: "billingState", op: "eq", value: "written_off" }],
+      groupFields: ["customerName"],
+      columns: [{ field: "__rows" }, { field: "lineCost", agg: "sum" }],
+      sort: { key: "lineCost_sum", dir: "desc" },
+      chartType: "bar",
     }),
   },
   {
-    id: 'job-billable-not-invoiced',
-    name: 'Billable work not yet invoiced',
+    id: "job-billable-not-invoiced",
+    name: "Billable work not yet invoiced",
     description:
-      'Lines the business intends to charge for that no invoice has taken. Straightforwardly money it has earned and not asked for.',
-    category: 'Job cards',
-    permission: 'jobs.view',
+      "Lines the business intends to charge for that no invoice has taken. Straightforwardly money it has earned and not asked for.",
+    category: "Job cards",
+    permission: "jobs.view",
     spec: spec({
-      source: 'jobCardLines',
+      source: "jobCardLines",
       filters: [
-        { field: 'billingState', op: 'eq', value: 'quoted' },
-        { field: 'invoicedQty', op: 'eq', value: '0' },
+        { field: "billingState", op: "eq", value: "quoted" },
+        { field: "invoicedQty", op: "eq", value: "0" },
       ],
       columns: [
-        { field: 'jobNumber' },
-        { field: 'customerName' },
-        { field: 'description' },
-        { field: 'qty' },
-        { field: 'intendedPriceIncl' },
+        { field: "jobNumber" },
+        { field: "customerName" },
+        { field: "description" },
+        { field: "qty" },
+        { field: "intendedPriceIncl" },
       ],
-      sort: { key: 'intendedPriceIncl', dir: 'desc' },
+      sort: { key: "intendedPriceIncl", dir: "desc" },
     }),
   },
 
@@ -1834,47 +1929,51 @@ export const TEMPLATES: ReportTemplate[] = [
      the order the hub renders. The per-tender breakdowns and the till-void
      reports below stay in Operations. */
   {
-    id: 'cash-variance-by-user',
-    name: 'Drawer variance by person',
+    id: "cash-variance-by-user",
+    name: "Drawer variance by person",
     description:
-      'Ranked by how far out the drawer was, ignoring direction — a consistent R100 over is as worth asking about as R100 short.',
-    category: 'Sales',
-    permission: 'sales.cashup',
+      "Ranked by how far out the drawer was, ignoring direction — a consistent R100 over is as worth asking about as R100 short.",
+    category: "Sales",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'shifts',
-      groupFields: ['userName'],
-      columns: [{ field: '__rows' }, { field: 'variance', agg: 'sum' }, { field: 'varianceAbs', agg: 'sum' }],
-      sort: { key: 'varianceAbs_sum', dir: 'desc' },
+      source: "shifts",
+      groupFields: ["userName"],
+      columns: [
+        { field: "__rows" },
+        { field: "variance", agg: "sum" },
+        { field: "varianceAbs", agg: "sum" },
+      ],
+      sort: { key: "varianceAbs_sum", dir: "desc" },
     }),
   },
   {
-    id: 'refund-history',
-    name: 'Refund history',
+    id: "refund-history",
+    name: "Refund history",
     description:
-      'Every credit note line — what was handed back, why, by whom, and what it cost in margin.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "Every credit note line — what was handed back, why, by whom, and what it cost in margin.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'saleLines',
+      source: "saleLines",
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'customerName' },
-        { field: 'userName' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "customerName" },
+        { field: "userName" },
         /* The reason a report could not show until the codes existed: it lived
            in internal_note as free text, so it could be read one row at a time
            and never counted. */
-        { field: 'returnReasonName' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'qty' },
-        { field: 'lineTotalIncl' },
+        { field: "returnReasonName" },
+        { field: "productCode" },
+        { field: "description" },
+        { field: "qty" },
+        { field: "lineTotalIncl" },
       ],
       filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'docType', op: 'eq', value: 'credit_sale' },
+        { field: "status", op: "eq", value: "finalised" },
+        { field: "docType", op: "eq", value: "credit_sale" },
       ],
-      sort: { key: 'documentDate', dir: 'desc' },
+      sort: { key: "documentDate", dir: "desc" },
     }),
   },
   {
@@ -1885,104 +1984,106 @@ export const TEMPLATES: ReportTemplate[] = [
      * email — for a change of wording. Ids are data; names are display. The
      * name and description below say "cancelled", which is the only word the
      * database has had since 022 merged the two states. */
-    id: 'void-history',
-    name: 'Cancellation history',
+    id: "void-history",
+    name: "Cancellation history",
     description:
-      'Documents that were cancelled, with the reason given. A run of the same reason on one till is the pattern to ask about.',
-    category: 'Sales',
-    permission: 'reports.view',
+      "Documents that were cancelled, with the reason given. A run of the same reason on one till is the pattern to ask about.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'sales',
+      source: "sales",
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'customerName' },
-        { field: 'userName' },
-        { field: 'terminalCode' },
-        { field: 'cancelReasonName' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "customerName" },
+        { field: "userName" },
+        { field: "terminalCode" },
+        { field: "cancelReasonName" },
         /* The free text as well as the code. The code is what groups; this is
            where the detail lives on the reasons that allow a note, and it is
            the only column that reads at all on a cancellation raised before
            102. Its FIELD KEY is still voidReason for the same reason this
            report's id is — it is stored inside saved reports and schedules. */
-        { field: 'voidReason' },
-        { field: 'totalIncl' },
+        { field: "voidReason" },
+        { field: "totalIncl" },
       ],
       /* 'cancelled' is the only value there is: 022 merged 'void' into it —
          "they always meant the same thing, and only 'void' was ever written". */
-      filters: [{ field: 'status', op: 'eq', value: 'cancelled' }],
-      sort: { key: 'documentDate', dir: 'desc' },
+      filters: [{ field: "status", op: "eq", value: "cancelled" }],
+      sort: { key: "documentDate", dir: "desc" },
     }),
   },
   {
-    id: 'discount-history',
-    name: 'Discount history',
-    description: 'Every discounted line, not a per-person total — the detail behind an outlier.',
-    category: 'Sales',
-    permission: 'reports.view',
+    id: "discount-history",
+    name: "Discount history",
+    description:
+      "Every discounted line, not a per-person total — the detail behind an outlier.",
+    category: "Sales",
+    permission: "reports.view",
     spec: spec({
-      source: 'saleLines',
+      source: "saleLines",
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'userName' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'lineDepartment' },
-        { field: 'qty' },
-        { field: 'discountPct' },
-        { field: 'discountIncl' },
-        { field: 'lineCostExcl' },
-        { field: 'lineTotalExcl' },
-        { field: 'lineTotalIncl' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "userName" },
+        { field: "productCode" },
+        { field: "description" },
+        { field: "lineDepartment" },
+        { field: "qty" },
+        { field: "discountPct" },
+        { field: "discountIncl" },
+        { field: "lineCostExcl" },
+        { field: "lineTotalExcl" },
+        { field: "lineTotalIncl" },
       ],
       filters: [
-        { field: 'status', op: 'eq', value: 'finalised' },
-        { field: 'discountIncl', op: 'gt', value: '0' },
+        { field: "status", op: "eq", value: "finalised" },
+        { field: "discountIncl", op: "gt", value: "0" },
       ],
-      sort: { key: 'discountIncl', dir: 'desc' },
+      sort: { key: "discountIncl", dir: "desc" },
     }),
   },
   {
-    id: 'clerk-shifts',
-    name: 'Clerk time shifts',
-    description: 'When each person opened and closed a till, and how long the shift ran.',
-    category: 'Sales',
-    permission: 'sales.cashup',
+    id: "clerk-shifts",
+    name: "Clerk time shifts",
+    description:
+      "When each person opened and closed a till, and how long the shift ran.",
+    category: "Sales",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'shifts',
+      source: "shifts",
       columns: [
-        { field: 'openedAt' },
-        { field: 'closedAt' },
-        { field: 'userName' },
-        { field: 'terminalCode' },
-        { field: 'closedByName' },
-        { field: 'shiftHours' },
+        { field: "openedAt" },
+        { field: "closedAt" },
+        { field: "userName" },
+        { field: "terminalCode" },
+        { field: "closedByName" },
+        { field: "shiftHours" },
       ],
-      sort: { key: 'openedAt', dir: 'desc' },
+      sort: { key: "openedAt", dir: "desc" },
     }),
   },
   {
-    id: 'activity-log',
-    name: 'Activity log',
-    description: 'Who changed what, and when.',
-    category: 'Operations',
-    permission: 'setup.view',
+    id: "activity-log",
+    name: "Activity log",
+    description: "Who changed what, and when.",
+    category: "Operations",
+    permission: "setup.view",
     spec: spec({
-      source: 'activity',
+      source: "activity",
       columns: [
-        { field: 'createdAt' },
-        { field: 'userName' },
-        { field: 'action' },
-        { field: 'entityType' },
-        { field: 'entityLabel' },
-        { field: 'detail' },
+        { field: "createdAt" },
+        { field: "userName" },
+        { field: "action" },
+        { field: "entityType" },
+        { field: "entityLabel" },
+        { field: "detail" },
         /* The before-and-after values. This is the column that makes the log
            answer "who changed this price" — the one question v2 had a whole
            report for and this system could not answer at all. */
-        { field: 'changes' },
+        { field: "changes" },
       ],
-      sort: { key: 'createdAt', dir: 'desc' },
+      sort: { key: "createdAt", dir: "desc" },
     }),
   },
 
@@ -1992,63 +2093,63 @@ export const TEMPLATES: ReportTemplate[] = [
    * for want of data but for want of a source over the table holding it.
    */
   {
-    id: 'cashup-by-tender',
-    name: 'Cash-up by tender',
+    id: "cashup-by-tender",
+    name: "Cash-up by tender",
     description:
-      'What each tender was expected to hold and what was counted. One tender short on one till is the pattern; every tender short is a counting habit.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "What each tender was expected to hold and what was counted. One tender short on one till is the pattern; every tender short is a counting habit.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'shiftCounts',
+      source: "shiftCounts",
       columns: [
-        { field: 'openedAt' },
-        { field: 'terminalCode' },
-        { field: 'userName' },
-        { field: 'tenderName' },
-        { field: 'expected' },
-        { field: 'counted' },
-        { field: 'variance' },
+        { field: "openedAt" },
+        { field: "terminalCode" },
+        { field: "userName" },
+        { field: "tenderName" },
+        { field: "expected" },
+        { field: "counted" },
+        { field: "variance" },
       ],
-      sort: { key: 'openedAt', dir: 'desc' },
+      sort: { key: "openedAt", dir: "desc" },
     }),
   },
   {
-    id: 'variance-by-tender',
-    name: 'Variance by tender',
+    id: "variance-by-tender",
+    name: "Variance by tender",
     description:
-      'Where the drawer goes wrong, totalled by tender. Cash drifts; card should not.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "Where the drawer goes wrong, totalled by tender. Cash drifts; card should not.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'shiftCounts',
-      groupFields: ['tenderName'],
+      source: "shiftCounts",
+      groupFields: ["tenderName"],
       columns: [
-        { field: '__rows' },
-        { field: 'expected', agg: 'sum' },
-        { field: 'counted', agg: 'sum' },
-        { field: 'variance', agg: 'sum' },
+        { field: "__rows" },
+        { field: "expected", agg: "sum" },
+        { field: "counted", agg: "sum" },
+        { field: "variance", agg: "sum" },
       ],
-      sort: { key: 'variance_sum', dir: 'asc' },
+      sort: { key: "variance_sum", dir: "asc" },
     }),
   },
   {
-    id: 'drawer-movements',
-    name: 'Payouts and drops',
+    id: "drawer-movements",
+    name: "Payouts and drops",
     description:
-      'Money in and out of the drawer that was not a sale, with the reason given. v2 split this into three reports; the Kind column is the split.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "Money in and out of the drawer that was not a sale, with the reason given. v2 split this into three reports; the Kind column is the split.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'shiftMovements',
+      source: "shiftMovements",
       columns: [
-        { field: 'movedAt' },
-        { field: 'terminalCode' },
-        { field: 'userName' },
-        { field: 'movementType' },
-        { field: 'amount' },
-        { field: 'reason' },
+        { field: "movedAt" },
+        { field: "terminalCode" },
+        { field: "userName" },
+        { field: "movementType" },
+        { field: "amount" },
+        { field: "reason" },
       ],
-      sort: { key: 'movedAt', dir: 'desc' },
+      sort: { key: "movedAt", dir: "desc" },
     }),
   },
   /*
@@ -2072,390 +2173,391 @@ export const TEMPLATES: ReportTemplate[] = [
    * abandoned basket twice.
    */
   {
-    id: 'till-voids-by-reason',
-    name: 'Till voids by reason',
+    id: "till-voids-by-reason",
+    name: "Till voids by reason",
     description:
-      'What is being taken off sales before they are paid for, and why. Items and lines only — a voided sale appears through its lines, so nothing is counted twice.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "What is being taken off sales before they are paid for, and why. Items and lines only — a voided sale appears through its lines, so nothing is counted twice.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'posVoids',
-      groupFields: ['reasonName'],
-      filters: [{ field: 'voidType', op: 'ne', value: 'sale' }],
+      source: "posVoids",
+      groupFields: ["reasonName"],
+      filters: [{ field: "voidType", op: "ne", value: "sale" }],
       columns: [
-        { field: '__rows' },
-        { field: 'qty', agg: 'sum' },
-        { field: 'value', agg: 'sum' },
+        { field: "__rows" },
+        { field: "qty", agg: "sum" },
+        { field: "value", agg: "sum" },
       ],
-      sort: { key: 'value_sum', dir: 'desc' },
-      chartType: 'pie',
+      sort: { key: "value_sum", dir: "desc" },
+      chartType: "pie",
     }),
   },
   {
-    id: 'till-voids-by-operator',
-    name: 'Till voids by operator',
+    id: "till-voids-by-operator",
+    name: "Till voids by operator",
     description:
-      'Who is voiding, how often, and for how much. The first place to look when stock goes missing without a sale behind it.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "Who is voiding, how often, and for how much. The first place to look when stock goes missing without a sale behind it.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'posVoids',
-      groupFields: ['userName'],
-      filters: [{ field: 'voidType', op: 'ne', value: 'sale' }],
+      source: "posVoids",
+      groupFields: ["userName"],
+      filters: [{ field: "voidType", op: "ne", value: "sale" }],
       columns: [
-        { field: '__rows' },
-        { field: 'qty', agg: 'sum' },
-        { field: 'value', agg: 'sum' },
+        { field: "__rows" },
+        { field: "qty", agg: "sum" },
+        { field: "value", agg: "sum" },
       ],
-      sort: { key: 'value_sum', dir: 'desc' },
+      sort: { key: "value_sum", dir: "desc" },
     }),
   },
   {
-    id: 'till-void-history',
-    name: 'Till void history',
+    id: "till-void-history",
+    name: "Till void history",
     description:
-      'Every void at the till, with the kind, the reason and the note — the detail behind a total somebody is questioning.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "Every void at the till, with the kind, the reason and the note — the detail behind a total somebody is questioning.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'posVoids',
+      source: "posVoids",
       columns: [
-        { field: 'voidedAt' },
-        { field: 'voidType' },
-        { field: 'description' },
-        { field: 'qty' },
-        { field: 'value' },
-        { field: 'reasonName' },
-        { field: 'note' },
-        { field: 'userName' },
-        { field: 'terminalCode' },
+        { field: "voidedAt" },
+        { field: "voidType" },
+        { field: "description" },
+        { field: "qty" },
+        { field: "value" },
+        { field: "reasonName" },
+        { field: "note" },
+        { field: "userName" },
+        { field: "terminalCode" },
       ],
-      sort: { key: 'voidedAt', dir: 'desc' },
+      sort: { key: "voidedAt", dir: "desc" },
     }),
   },
   {
-    id: 'tips-by-person',
-    name: 'Tips by person',
-    description: 'What each person was tipped, and how it reached them.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+    id: "tips-by-person",
+    name: "Tips by person",
+    description: "What each person was tipped, and how it reached them.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'tips',
-      groupFields: ['userName'],
+      source: "tips",
+      groupFields: ["userName"],
       columns: [
-        { field: '__rows' },
-        { field: 'amount', agg: 'sum' },
-        { field: 'amount', agg: 'avg' },
+        { field: "__rows" },
+        { field: "amount", agg: "sum" },
+        { field: "amount", agg: "avg" },
       ],
-      sort: { key: 'amount_sum', dir: 'desc' },
+      sort: { key: "amount_sum", dir: "desc" },
     }),
   },
   {
-    id: 'tips-by-tender',
-    name: 'Tips by person and tender',
+    id: "tips-by-tender",
+    name: "Tips by person and tender",
     description:
-      'One row per person with Cash / Card / EFT / Account / Other columns, and what that came to as a share of the bills that carried a tip. Other is every remaining tender, so the columns always add up to the total. Filtering by How can push the percentage above the true share — see the Tip % column.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "One row per person with Cash / Card / EFT / Account / Other columns, and what that came to as a share of the bills that carried a tip. Other is every remaining tender, so the columns always add up to the total. Filtering by How can push the percentage above the true share — see the Tip % column.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'tips',
-      groupFields: ['userName'],
+      source: "tips",
+      groupFields: ["userName"],
       columns: [
-        { field: '__rows' },
-        { field: 'tipCash', agg: 'sum' },
-        { field: 'tipCard', agg: 'sum' },
-        { field: 'tipEft', agg: 'sum' },
-        { field: 'tipAccount', agg: 'sum' },
-        { field: 'tipOther', agg: 'sum' },
-        { field: 'amount', agg: 'sum' },
+        { field: "__rows" },
+        { field: "tipCash", agg: "sum" },
+        { field: "tipCard", agg: "sum" },
+        { field: "tipEft", agg: "sum" },
+        { field: "tipAccount", agg: "sum" },
+        { field: "tipOther", agg: "sum" },
+        { field: "amount", agg: "sum" },
         /* `avg` is what makes this the WEIGHTED percentage: isWeightedPercent only fires
            on a percent field with a ratio under `avg`, and then emits SUM(num)/SUM(den)
            rather than an aggregate of the row-level rates. With `sum` the engine would
            emit SUM(<percent expr>) — a nonsense figure that still looks like a
            percentage, and nothing would flag it. */
-        { field: 'tipPct', agg: 'avg' },
+        { field: "tipPct", agg: "avg" },
       ],
-      sort: { key: 'amount_sum', dir: 'desc' },
+      sort: { key: "amount_sum", dir: "desc" },
     }),
   },
   {
-    id: 'tip-history',
-    name: 'Tip history',
+    id: "tip-history",
+    name: "Tip history",
     description:
-      'Every tip, with how it arrived and whether it was ever reassigned — the detail behind a disputed total.',
-    category: 'Operations',
-    permission: 'sales.cashup',
+      "Every tip, with how it arrived and whether it was ever reassigned — the detail behind a disputed total.",
+    category: "Operations",
+    permission: "sales.cashup",
     spec: spec({
-      source: 'tips',
+      source: "tips",
       columns: [
-        { field: 'takenAt' },
-        { field: 'userName' },
-        { field: 'documentNumber' },
-        { field: 'source' },
-        { field: 'tenderName' },
-        { field: 'tenderCode' },
-        { field: 'amount' },
-        { field: 'reassignedByName' },
-        { field: 'reassignReason' },
+        { field: "takenAt" },
+        { field: "userName" },
+        { field: "documentNumber" },
+        { field: "source" },
+        { field: "tenderName" },
+        { field: "tenderCode" },
+        { field: "amount" },
+        { field: "reassignedByName" },
+        { field: "reassignReason" },
       ],
-      sort: { key: 'takenAt', dir: 'desc' },
+      sort: { key: "takenAt", dir: "desc" },
     }),
   },
   {
-    id: 'stock-take-history',
-    name: 'Stock take history',
+    id: "stock-take-history",
+    name: "Stock take history",
     description:
-      'Every counted line — what the book said, what was counted, and what the difference was worth.',
-    category: 'Stock',
-    permission: 'stock.view',
+      "Every counted line — what the book said, what was counted, and what the difference was worth.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockTakeLines',
+      source: "stockTakeLines",
       // A count sheet is worked through line by line; a truncated one is a
       // stocktake missing pages.
       limit: MAX_ROWS,
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'postedQtyBefore' },
-        { field: 'countedQty' },
-        { field: 'varianceQty' },
-        { field: 'varianceValue' },
-        { field: 'countedBy' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "productCode" },
+        { field: "description" },
+        { field: "postedQtyBefore" },
+        { field: "countedQty" },
+        { field: "varianceQty" },
+        { field: "varianceValue" },
+        { field: "countedBy" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
-      sort: { key: 'documentDate', dir: 'desc' },
+      filters: [{ field: "status", op: "eq", value: "posted" }],
+      sort: { key: "documentDate", dir: "desc" },
     }),
   },
   {
-    id: 'count-accuracy',
-    name: 'Count accuracy by person',
+    id: "count-accuracy",
+    name: "Count accuracy by person",
     description:
-      'Who counts accurately. Lines counted against lines that came out wrong — a training figure, not a disciplinary one.',
-    category: 'Operations',
-    permission: 'stock.view',
+      "Who counts accurately. Lines counted against lines that came out wrong — a training figure, not a disciplinary one.",
+    category: "Operations",
+    permission: "stock.view",
     spec: spec({
-      source: 'stockTakeLines',
-      groupFields: ['countedBy'],
+      source: "stockTakeLines",
+      groupFields: ["countedBy"],
       columns: [
-        { field: '__rows' },
-        { field: 'varianceQty', agg: 'sum' },
-        { field: 'varianceValue', agg: 'sum' },
+        { field: "__rows" },
+        { field: "varianceQty", agg: "sum" },
+        { field: "varianceValue", agg: "sum" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
-      sort: { key: 'varianceValue_sum', dir: 'asc' },
+      filters: [{ field: "status", op: "eq", value: "posted" }],
+      sort: { key: "varianceValue_sum", dir: "asc" },
     }),
   },
   {
-    id: 'adjustment-history',
-    name: 'Adjustment history',
+    id: "adjustment-history",
+    name: "Adjustment history",
     description:
-      'Every write-off and correction, with the reason it was given and what it cost.',
-    category: 'Stock',
-    permission: 'stock.view',
+      "Every write-off and correction, with the reason it was given and what it cost.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'adjustmentLines',
+      source: "adjustmentLines",
       columns: [
-        { field: 'documentDate' },
-        { field: 'documentNumber' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'reasonName' },
-        { field: 'qtyBefore' },
-        { field: 'qtyChange' },
-        { field: 'qtyAfter' },
-        { field: 'valueExcl' },
-        { field: 'userName' },
+        { field: "documentDate" },
+        { field: "documentNumber" },
+        { field: "productCode" },
+        { field: "description" },
+        { field: "reasonName" },
+        { field: "qtyBefore" },
+        { field: "qtyChange" },
+        { field: "qtyAfter" },
+        { field: "valueExcl" },
+        { field: "userName" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
-      sort: { key: 'documentDate', dir: 'desc' },
+      filters: [{ field: "status", op: "eq", value: "posted" }],
+      sort: { key: "documentDate", dir: "desc" },
     }),
   },
   {
-    id: 'shrinkage-by-reason',
-    name: 'Shrinkage by reason',
+    id: "shrinkage-by-reason",
+    name: "Shrinkage by reason",
     description:
-      'What stock is being lost to, and what each cause costs. One reason far ahead of the rest is either a process problem or a person one.',
-    category: 'Stock',
-    permission: 'stock.view',
+      "What stock is being lost to, and what each cause costs. One reason far ahead of the rest is either a process problem or a person one.",
+    category: "Stock",
+    permission: "stock.view",
     spec: spec({
-      source: 'adjustmentLines',
-      groupFields: ['reasonName'],
+      source: "adjustmentLines",
+      groupFields: ["reasonName"],
       columns: [
-        { field: '__rows' },
-        { field: 'qtyChange', agg: 'sum' },
-        { field: 'valueExcl', agg: 'sum' },
+        { field: "__rows" },
+        { field: "qtyChange", agg: "sum" },
+        { field: "valueExcl", agg: "sum" },
       ],
-      filters: [{ field: 'status', op: 'eq', value: 'posted' }],
-      sort: { key: 'valueExcl_sum', dir: 'asc' },
-      chartType: 'pie',
+      filters: [{ field: "status", op: "eq", value: "posted" }],
+      sort: { key: "valueExcl_sum", dir: "asc" },
+      chartType: "pie",
     }),
   },
   {
-    id: 'supplier-price-list',
-    name: 'Supplier price list',
+    id: "supplier-price-list",
+    name: "Supplier price list",
     description:
-      'What each supplier charges for what — including products never yet ordered, which a purchase history cannot show.',
-    category: 'Suppliers',
-    permission: 'purchasing.view',
+      "What each supplier charges for what — including products never yet ordered, which a purchase history cannot show.",
+    category: "Suppliers",
+    permission: "purchasing.view",
     spec: spec({
-      source: 'productSuppliers',
+      source: "productSuppliers",
       limit: MAX_ROWS,
       columns: [
-        { field: 'supplierName' },
-        { field: 'productCode' },
-        { field: 'description' },
-        { field: 'supplierCode' },
-        { field: 'packSize' },
-        { field: 'supplierCost' },
-        { field: 'currentSoh' },
-        { field: 'sellingPriceIncl' },
-        { field: 'marginPct' },
+        { field: "supplierName" },
+        { field: "productCode" },
+        { field: "description" },
+        { field: "supplierCode" },
+        { field: "packSize" },
+        { field: "supplierCost" },
+        { field: "currentSoh" },
+        { field: "sellingPriceIncl" },
+        { field: "marginPct" },
       ],
-      filters: [{ field: 'isArchived', op: 'eq', value: 'No' }],
-      sort: { key: 'supplierName', dir: 'asc' },
+      filters: [{ field: "isArchived", op: "eq", value: "No" }],
+      sort: { key: "supplierName", dir: "asc" },
     }),
   },
   {
-    id: 'supplier-ledger',
-    name: 'Supplier ledger',
+    id: "supplier-ledger",
+    name: "Supplier ledger",
     description:
-      'Every invoice, payment and credit on a supplier account. The creditor twin of the customer ledger.',
-    category: 'Suppliers',
-    permission: 'suppliers.view',
+      "Every invoice, payment and credit on a supplier account. The creditor twin of the customer ledger.",
+    category: "Suppliers",
+    permission: "suppliers.view",
     spec: spec({
-      source: 'supplierTransactions',
+      source: "supplierTransactions",
       columns: [
-        { field: 'docDate' },
-        { field: 'supplierName' },
-        { field: 'docNumber' },
-        { field: 'docType' },
-        { field: 'reference' },
-        { field: 'amountSigned' },
-        { field: 'amountOutstanding' },
+        { field: "docDate" },
+        { field: "supplierName" },
+        { field: "docNumber" },
+        { field: "docType" },
+        { field: "reference" },
+        { field: "amountSigned" },
+        { field: "amountOutstanding" },
       ],
-      sort: { key: 'docDate', dir: 'desc' },
+      sort: { key: "docDate", dir: "desc" },
     }),
   },
   {
-    id: 'supplier-ageing',
-    name: 'What we owe, by age',
+    id: "supplier-ageing",
+    name: "What we owe, by age",
     description:
-      'Unsettled supplier documents oldest first — what a payment run is built from.',
-    category: 'Suppliers',
-    permission: 'suppliers.view',
+      "Unsettled supplier documents oldest first — what a payment run is built from.",
+    category: "Suppliers",
+    permission: "suppliers.view",
     spec: spec({
-      source: 'supplierTransactions',
+      source: "supplierTransactions",
       columns: [
-        { field: 'supplierName' },
-        { field: 'docNumber' },
-        { field: 'docDate' },
-        { field: 'dueDate' },
-        { field: 'daysOverdue' },
-        { field: 'amountOutstanding' },
+        { field: "supplierName" },
+        { field: "docNumber" },
+        { field: "docDate" },
+        { field: "dueDate" },
+        { field: "daysOverdue" },
+        { field: "amountOutstanding" },
       ],
       /* Settled documents are history; this report is a list of what to pay.
          The ageing is on the total, so it filters after summarising. */
-      totalFilters: [{ key: 'amountOutstanding', op: 'gt', value: '0' }],
-      sort: { key: 'daysOverdue', dir: 'desc' },
+      totalFilters: [{ key: "amountOutstanding", op: "gt", value: "0" }],
+      sort: { key: "daysOverdue", dir: "desc" },
     }),
   },
   {
-    id: 'supplier-age-analysis-bucketed',
-    name: 'Creditors ageing, bucketed',
+    id: "supplier-age-analysis-bucketed",
+    name: "Creditors ageing, bucketed",
     description:
-      'One row per supplier with Current/30/60/90/120+ columns — what is owed and how late, aged from today.',
-    category: 'Suppliers',
-    permission: 'suppliers.view',
+      "One row per supplier with Current/30/60/90/120+ columns — what is owed and how late, aged from today.",
+    category: "Suppliers",
+    permission: "suppliers.view",
     spec: spec({
-      source: 'supplierTransactions',
-      period: { key: 'thisYear' },
-      groupFields: ['supplierCode', 'supplierName'],
+      source: "supplierTransactions",
+      period: { key: "thisYear" },
+      groupFields: ["supplierCode", "supplierName"],
       columns: [
-        { field: 'agedCurrent', agg: 'sum' },
-        { field: 'aged30', agg: 'sum' },
-        { field: 'aged60', agg: 'sum' },
-        { field: 'aged90', agg: 'sum' },
-        { field: 'aged120', agg: 'sum' },
-        { field: 'amountOutstanding', agg: 'sum' },
+        { field: "agedCurrent", agg: "sum" },
+        { field: "aged30", agg: "sum" },
+        { field: "aged60", agg: "sum" },
+        { field: "aged90", agg: "sum" },
+        { field: "aged120", agg: "sum" },
+        { field: "amountOutstanding", agg: "sum" },
       ],
-      filters: [{ field: 'amountOutstanding', op: 'gt', value: '0' }],
-      sort: { key: 'amountOutstanding_sum', dir: 'desc' },
+      filters: [{ field: "amountOutstanding", op: "gt", value: "0" }],
+      sort: { key: "amountOutstanding_sum", dir: "desc" },
     }),
   },
   {
-    id: 'loyalty-activity',
-    name: 'Loyalty activity',
+    id: "loyalty-activity",
+    name: "Loyalty activity",
     description:
-      'Points earned and redeemed, and what they were earned against — what the programme costs and who uses it.',
-    category: 'Customers',
-    permission: 'customers.view',
+      "Points earned and redeemed, and what they were earned against — what the programme costs and who uses it.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'loyaltyLedger',
+      source: "loyaltyLedger",
       columns: [
-        { field: 'happenedAt' },
+        { field: "happenedAt" },
         // The member, for the same reason as the members template below.
-        { field: 'memberName' },
-        { field: 'entryType' },
-        { field: 'documentNumber' },
-        { field: 'tierName' },
-        { field: 'basisAmount' },
-        { field: 'points' },
+        { field: "memberName" },
+        { field: "entryType" },
+        { field: "documentNumber" },
+        { field: "tierName" },
+        { field: "basisAmount" },
+        { field: "points" },
       ],
-      sort: { key: 'happenedAt', dir: 'desc' },
+      sort: { key: "happenedAt", dir: "desc" },
     }),
   },
   {
-    id: 'loyalty-liability',
-    name: 'Loyalty liability',
+    id: "loyalty-liability",
+    name: "Loyalty liability",
     description:
-      'What the programme owes: points on the books and money in wallets. The wallet figure is a real debt; points are worth what redemption makes them.',
-    category: 'Customers',
-    permission: 'customers.view',
+      "What the programme owes: points on the books and money in wallets. The wallet figure is a real debt; points are worth what redemption makes them.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'loyaltyMembers',
-      groupFields: ['tierName'],
+      source: "loyaltyMembers",
+      groupFields: ["tierName"],
       columns: [
-        { field: '__rows' },
-        { field: 'pointsBalance', agg: 'sum' },
-        { field: 'walletBalance', agg: 'sum' },
+        { field: "__rows" },
+        { field: "pointsBalance", agg: "sum" },
+        { field: "walletBalance", agg: "sum" },
       ],
-      sort: { key: 'walletBalance_sum', dir: 'desc' },
+      sort: { key: "walletBalance_sum", dir: "desc" },
     }),
   },
   {
-    id: 'loyalty-members',
-    name: 'Loyalty members',
-    description: 'Who is on the programme, in which tier, and when they were last seen.',
-    category: 'Customers',
-    permission: 'customers.view',
+    id: "loyalty-members",
+    name: "Loyalty members",
+    description:
+      "Who is on the programme, in which tier, and when they were last seen.",
+    category: "Customers",
+    permission: "customers.view",
     spec: spec({
-      source: 'loyaltyMembers',
+      source: "loyaltyMembers",
       limit: MAX_ROWS,
       // The MEMBER's own number and name lead. They used to be the customer's,
       // which is blank for every member who never opened an account — so the
       // report that answers "who is on the programme" would have shown a column
       // of gaps for exactly the people it is about.
       columns: [
-        { field: 'memberNumber' },
-        { field: 'memberName' },
-        { field: 'phone' },
-        { field: 'tierName' },
-        { field: 'pointsBalance' },
-        { field: 'walletBalance' },
-        { field: 'lastActivityAt' },
-        { field: 'daysSinceActivity' },
+        { field: "memberNumber" },
+        { field: "memberName" },
+        { field: "phone" },
+        { field: "tierName" },
+        { field: "pointsBalance" },
+        { field: "walletBalance" },
+        { field: "lastActivityAt" },
+        { field: "daysSinceActivity" },
       ],
-      sort: { key: 'daysSinceActivity', dir: 'desc' },
+      sort: { key: "daysSinceActivity", dir: "desc" },
     }),
   },
-]
+];
 
-const BY_ID = new Map(TEMPLATES.map((t) => [t.id, t]))
+const BY_ID = new Map(TEMPLATES.map((t) => [t.id, t]));
 
 export function getTemplate(id: string): ReportTemplate | undefined {
-  return BY_ID.get(id)
+  return BY_ID.get(id);
 }
 
 /**
@@ -2466,16 +2568,19 @@ export function getTemplate(id: string): ReportTemplate | undefined {
  * favourites, column choices, group-by choices and 06:00 schedules point at
  * these ids, as does the public API — see the note on ReportTemplate.variants.
  */
-const BY_LEGACY_ID = new Map<string, { template: ReportTemplate; variant: ReportVariant }>(
+const BY_LEGACY_ID = new Map<
+  string,
+  { template: ReportTemplate; variant: ReportVariant }
+>(
   TEMPLATES.flatMap((template) =>
     (template.variants ?? [])
       .filter((v) => v.legacyId)
       .map((variant) => [variant.legacyId!, { template, variant }] as const),
   ),
-)
+);
 
 export function getLegacyVariant(id: string) {
-  return BY_LEGACY_ID.get(id)
+  return BY_LEGACY_ID.get(id);
 }
 
 /** The cut a report is showing: the named one, or its first (the default). */
@@ -2483,18 +2588,20 @@ export function resolveVariant(
   t: ReportTemplate,
   key: string | null | undefined,
 ): ReportVariant | null {
-  if (!t.variants?.length) return null
+  if (!t.variants?.length) return null;
   // An unknown key falls back to the default rather than 404ing — a hand-edited
   // or stale bookmarked URL should degrade to the report, not to nothing.
-  return t.variants.find((v) => v.key === key) ?? t.variants[0]
+  return t.variants.find((v) => v.key === key) ?? t.variants[0];
 }
 
 /** A template as a runnable spec, with its name filled in. */
 export function templateSpec(t: ReportTemplate): CustomReportSpec {
-  return { ...t.spec, name: t.name }
+  return { ...t.spec, name: t.name };
 }
 
 /** The templates a capability set may see. */
-export function templatesFor(can: (c: Capability) => boolean): ReportTemplate[] {
-  return TEMPLATES.filter((t) => can(t.permission))
+export function templatesFor(
+  can: (c: Capability) => boolean,
+): ReportTemplate[] {
+  return TEMPLATES.filter((t) => can(t.permission));
 }

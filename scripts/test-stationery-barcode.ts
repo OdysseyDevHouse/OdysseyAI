@@ -228,7 +228,7 @@ function receipt(number = 'INV0001'): ReceiptData {
     terminalCode: 'TILL 1',
     customerName: null,
     customerVatNo: null,
-    lines: [{ qty: 1, description: 'Bread', unitPriceIncl: 20, lineTotalIncl: 20, notes: [] }] as ReceiptData['lines'],
+    lines: [{ qty: 1, description: 'Bread', unitPriceIncl: 20, lineTotalIncl: 20, discountPct: 0, discountIncl: 0, specialName: null, notes: [] }] as ReceiptData['lines'],
     subtotalExcl: 17.39,
     vatTotal: 2.61,
     discountTotal: 0,
