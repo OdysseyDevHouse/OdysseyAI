@@ -204,6 +204,25 @@ function block(b: SlipBlock, r: ReceiptData): string {
               !gift && line.qty !== 1
                 ? `<div class="text-[0.9167em] text-muted">@ ${escapeHtml(formatMoney(line.unitPriceIncl))}</div>`
                 : ''
+            /* What came off this line and what took it off — see ReceiptSlip,
+               whose shipped layout this mirrors block for block, including the
+               reward case where a promotion GAVE the line rather than reducing
+               it and the money column reads "Free". */
+            const saved =
+              !gift && (line.discountIncl > 0 || line.specialName)
+                ? `<div class="flex justify-between gap-2 text-[0.9167em] text-success-ink">` +
+                  `<span class="min-w-0 flex-1">${escapeHtml(
+                    `${line.specialName ?? ''}${
+                      line.discountIncl > 0
+                        ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct)}% off`
+                        : ''
+                    }`,
+                  )}</span>` +
+                  (line.discountIncl > 0
+                    ? `<span class="numeric shrink-0">−${escapeHtml(formatMoney(line.discountIncl))}</span>`
+                    : `<span class="shrink-0 font-semibold">Free</span>`) +
+                  `</div>`
+                : ''
             const notes = line.notes
               .map((n) => `<div class="pl-3 text-[0.9167em] text-muted">${escapeHtml(n)}</div>`)
               .join('')
@@ -211,6 +230,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
               `<li class="py-0.5"><div class="flex justify-between gap-2">` +
               `<span class="min-w-0 flex-1 text-ink">${escapeHtml(label)}</span>${money}</div>` +
               unit +
+              saved +
               notes +
               `</li>`
             )

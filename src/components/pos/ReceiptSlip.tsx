@@ -60,6 +60,30 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
             {!gift && line.qty !== 1 && (
               <div className="text-[11px] text-muted">@ {formatMoney(line.unitPriceIncl)}</div>
             )}
+            {/* What this line saved, and what saved it.
+                Below the price rather than beside it, because the discount is a
+                fact ABOUT the price above — and on 72mm there is no room for a
+                third column anyway. The promotion's name leads when there is
+                one: "Winter Sale" tells a customer why, where "10% off" only
+                tells them what they can already work out. */}
+            {!gift && (line.discountIncl > 0 || line.specialName) && (
+              <div className="flex justify-between gap-2 text-[11px] text-success-ink">
+                <span className="min-w-0 flex-1">
+                  {line.specialName ?? ''}
+                  {line.discountIncl > 0
+                    ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct)}% off`
+                    : ''}
+                </span>
+                {line.discountIncl > 0 ? (
+                  <span className="numeric shrink-0">−{formatMoney(line.discountIncl)}</span>
+                ) : (
+                  /* A REWARD line: the promotion handed this over rather than
+                     reducing it, so there is no amount to show. Saying "Free"
+                     is what stops a R0.00 line reading as a pricing error. */
+                  <span className="shrink-0 font-semibold">Free</span>
+                )}
+              </div>
+            )}
             {line.notes.map((note, j) => (
               <div key={j} className="pl-3 text-[11px] text-muted">
                 {note}

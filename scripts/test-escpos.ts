@@ -72,18 +72,51 @@ const receipt: ReceiptData = {
   terminalCode: 'T1',
   customerName: null,
   customerVatNo: null,
+  /* The pudding is on a special and the coffee is not, so one render exercises
+     both branches: a line that must show what it saved, and one that must stay
+     silent rather than printing "0% off". */
   lines: [
-    { description: 'Crème brûlée', qty: 2, unitPriceIncl: 45, lineTotalIncl: 90, notes: ['no nuts'] },
-    { description: 'Coffee', qty: 1, unitPriceIncl: 25, lineTotalIncl: 25, notes: [] },
+    {
+      description: 'Crème brûlée',
+      qty: 2,
+      unitPriceIncl: 45,
+      lineTotalIncl: 81,
+      discountPct: 10,
+      discountIncl: 9,
+      specialName: 'Pudding Hour',
+      notes: ['no nuts'],
+    },
+    {
+      description: 'Coffee',
+      qty: 1,
+      unitPriceIncl: 25,
+      lineTotalIncl: 25,
+      discountPct: 0,
+      discountIncl: 0,
+      specialName: null,
+      notes: [],
+    },
+    /* A REWARD line — the promotion GAVE this, it did not reduce it. A special
+       with no discount, which is the case that used to print a bare R0.00. */
+    {
+      description: 'Garlic Bread',
+      qty: 1,
+      unitPriceIncl: 0,
+      lineTotalIncl: 0,
+      discountPct: 0,
+      discountIncl: 0,
+      specialName: 'Pudding Hour',
+      notes: [],
+    },
   ],
-  subtotalExcl: 100,
-  vatTotal: 15,
-  discountTotal: 0,
-  totalIncl: 115,
+  subtotalExcl: 92.17,
+  vatTotal: 13.83,
+  discountTotal: 9,
+  totalIncl: 106,
   roundingAdj: 0,
-  vatByRate: [{ ratePct: 15, excl: 100, vat: 15, incl: 115 }],
-  tenders: [{ name: 'Cash', amount: 120, changeGiven: 5, reference: null }],
-  changeGiven: 5,
+  vatByRate: [{ ratePct: 15, excl: 92.17, vat: 13.83, incl: 106 }],
+  tenders: [{ name: 'Cash', amount: 110, changeGiven: 4, reference: null }],
+  changeGiven: 4,
   loyalty: { pointsEarned: 11, balance: 42 },
   copyNumber: 0,
   footerText: 'Thank you!',
@@ -96,6 +129,20 @@ ok('the slip says TAX INVOICE', asText.includes('TAX INVOICE'))
 ok('the accents survived as CP858 bytes, not mojibake',
     contains(bytes, [0x8a]) /* è */ && contains(bytes, [0x96]) /* û */ && contains(bytes, [0x82]) /* é */)
 ok('the note is on the slip', asText.includes('no nuts'))
+ok('*** a discounted line names the special and shows the percentage ***',
+    asText.includes('Pudding Hour') && asText.includes('10% off'))
+ok('*** …and what it took off, in rands ***', /-R\s?9\.00/.test(asText))
+/* One "off" row on the slip, not two. Substring-matching '0% off' would be
+   satisfied by the pudding's own '10% off' and prove nothing. */
+ok('an undiscounted line says nothing about a discount',
+    (asText.match(/% off/g) ?? []).length === 1)
+/* The giveaway. It has a special but NO discount, so it must name the promotion
+   and say Free — never a bare R0.00, which reads as a pricing error — and it
+   must not claim a percentage came off it. */
+ok('*** a reward line says which promotion gave it, and that it is Free ***',
+    /Pudding Hour +Free/.test(asText))
+ok('…and never claims a percentage came off a giveaway',
+    !/Pudding Hour +[\d.]+% off/.test(asText))
 ok('the change row prints', asText.includes('Change'))
 ok('the loyalty footer prints', asText.includes('balance 42'))
 ok('the slip ends with feed + cut', hex(bytes.slice(-6)) === '1b 64 03 1d 56 42 00'.slice(0, 17) || contains(bytes.slice(-8), [0x1d, 0x56, 0x42, 0x00]))
@@ -105,7 +152,7 @@ ok('*** a reprint says COPY ***', new TextDecoder('latin1').decode(copy).include
 
 const gift = renderReceipt({ ...receipt, gift: true })
 const giftText = new TextDecoder('latin1').decode(gift)
-ok('*** the gift slip shows NO money ***', !/R\d/.test(giftText.replace(/GIFT RECEIPT/g, '')) && !giftText.includes('115'))
+ok('*** the gift slip shows NO money ***', !/R\d/.test(giftText.replace(/GIFT RECEIPT/g, '')) && !giftText.includes('106'))
 ok('…but keeps the number for the exchange', giftText.includes('INV000123'))
 ok('…and says what it is', giftText.includes('GIFT RECEIPT'))
 

@@ -6,6 +6,7 @@ import { getSetting } from '@/lib/site/settings'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
 import { loyaltyQueryOne } from '@/lib/site/loyaltyDb'
 import { memberIdForCustomer } from '@/lib/site/loyalty'
+import { specialNames } from '@/lib/site/specials'
 import { toNum } from '@/lib/decimals'
 import { receiptDataFor, type ReceiptTender } from '@/lib/receiptData'
 import { ReceiptSlip } from '@/components/pos/ReceiptSlip'
@@ -46,13 +47,20 @@ export default async function SlipPage({
   const doc = await getDocument(site.id, id)
   if (!doc || doc.status !== 'finalised' || doc.docType !== 'invoice') notFound()
 
-  const [tenderRows, footerText] = await Promise.all([
+  const [tenderRows, footerText, promotionNames] = await Promise.all([
     siteQuery<Record<string, unknown>>(
       site.id,
       'SELECT tender_name, amount, change_given, reference FROM sales_tenders WHERE document_id = ? ORDER BY id',
       [id],
     ),
     getSetting(site.id, 'receipt_footer_text').catch(() => ''),
+    /* The names behind the specials this sale's lines were discounted by, so
+       the slip can say WHICH promotion took the money off rather than only how
+       much. Only the ids actually on the document are asked for. */
+    specialNames(
+      site.id,
+      doc.lines.map((l) => l.specialId).filter((v): v is number => v !== null),
+    ),
   ])
   const tenders: ReceiptTender[] = tenderRows.map((t) => ({
     name: String(t.tender_name),
@@ -107,6 +115,7 @@ export default async function SlipPage({
       loyalty,
       copyNumber: doc.printCount,
       footerText,
+      specialNames: promotionNames,
       qrLinks: await qrContextFor(site.id),
     },
   )

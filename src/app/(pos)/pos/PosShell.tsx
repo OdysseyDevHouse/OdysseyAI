@@ -819,7 +819,16 @@ export default function PosShell({
            construction: both arrays are maps of `state.lines`. */
         lines: salePayloadLines(state.lines, lineSpecials, docShares).map((line, index) => ({
           ...line,
-          specialName: lineSpecials[index]?.name ?? null,
+          /* A REWARD line has no entry in `lineSpecials` — it was not discounted,
+             it was handed over, and the promotion that granted it lives in
+             `rewardSpecialId`. Reading only lineSpecials here would leave the one
+             line the promotion actually gave away as an unexplained R0.00 on the
+             offline slip. Same fallback SalePane draws the on-screen badge with. */
+          specialName:
+            lineSpecials[index]?.name ??
+            (state.lines[index]?.rewardSpecialId !== undefined
+              ? (specialNames.get(state.lines[index].rewardSpecialId!) ?? null)
+              : null),
         })),
         tenders: paid.map((p) => ({
           name: tenders.find((t) => t.id === p.tenderTypeId)?.name ?? 'Tender',

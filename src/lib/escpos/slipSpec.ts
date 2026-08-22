@@ -275,6 +275,24 @@ function emitBlock(
         } else {
           job.line(twoCol(label, formatMoney(line.lineTotalIncl), columns))
           if (line.qty !== 1) job.line(`  @ ${formatMoney(line.unitPriceIncl)}`)
+          /* What came off this line and why — ASCII throughout, like every
+             other money row here: the encoder folds '·' to '.' and there is no
+             minus sign on the roll.
+             A REWARD line has a special but no discount: the promotion handed
+             it over rather than reducing it, so the money column reads "Free"
+             and a R0.00 line stops looking like a pricing error. */
+          if (line.discountIncl > 0 || line.specialName) {
+            const off = line.discountIncl > 0
+              ? `${line.specialName ? ' - ' : ''}${formatQty(line.discountPct)}% off`
+              : ''
+            job.line(
+              twoCol(
+                `  ${line.specialName ?? ''}${off}`,
+                line.discountIncl > 0 ? `-${formatMoney(line.discountIncl)}` : 'Free',
+                columns,
+              ),
+            )
+          }
         }
         for (const note of line.notes) {
           for (const piece of wrapText(`  ${note}`, columns)) job.line(piece)
