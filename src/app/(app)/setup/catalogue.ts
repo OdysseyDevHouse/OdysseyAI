@@ -334,6 +334,9 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
       {
         href: '/setup/linked-stores',
         description: 'Branches that share products, customers or loyalty with this one.',
+        /* “online” and “storefront” deliberately absent: one shop for the group is
+           set up on the online store’s own Setup screen, and a hit here would send
+           somebody looking for it to the wrong page. */
         keywords: 'multi store group branches sharing',
         icon: 'Store',
         tone: 'violet',

@@ -17,7 +17,6 @@ import type { GroupMember, StoreContents } from '@/lib/storeGroups'
 import StoreCard from './StoreCard'
 import LegalEntityCard from './LegalEntityCard'
 import HeadOfficeCard from './HeadOfficeCard'
-import GroupStorefront, { type BranchRow } from './GroupStorefront'
 import { linkStoreAction, type LinkFormState } from './actions'
 
 /**
@@ -48,7 +47,6 @@ export default function LinkedStoresSetup({
   members,
   contents,
   available,
-  groupStorefront,
   primarySiteId,
   legalEntity,
   sharesLoyaltyWallet,
@@ -69,12 +67,6 @@ export default function LinkedStoresSetup({
   sharesLoyaltyWallet: boolean
   /** Whether separate companies here pool gift card value. */
   sharesGiftCards: boolean
-  /** Null when these stores are not a group yet — there is nothing to configure. */
-  groupStorefront: {
-    enabled: boolean
-    primaryName: string | null
-    branches: BranchRow[]
-  } | null
 }) {
   const [state, formAction] = useActionState<LinkFormState, FormData>(linkStoreAction, {
     error: null,
@@ -97,18 +89,6 @@ export default function LinkedStoresSetup({
           }
         />
       </Card>
-
-      {/* Above the per-store cards because it decides what the group IS to a
-          shopper, where those decide what each store contributes to a product
-          edit. Hidden entirely until there is a group to configure. */}
-      {groupStorefront && (
-        <GroupStorefront
-          enabled={groupStorefront.enabled}
-          primaryName={groupStorefront.primaryName}
-          branches={groupStorefront.branches}
-          members={members}
-        />
-      )}
 
       {/* Asked before the store cards, because it gates their master-file
           switches — the answer has to come first on the page as well as in the

@@ -169,8 +169,9 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
     items: [
       {
         href: '/online-store/setup',
-        description: 'The name, the domain, delivery charges, and whether the shop is live.',
-        keywords: 'domain url delivery fees shipping open closed launch go live',
+        description: 'The name, the domain, delivery charges, and whether the shop is live. A chain also sets up one shop for the whole group here.',
+        keywords:
+          'domain url delivery fees shipping open closed launch go live group branches one shop nearest branch pins map coordinates',
         icon: 'Settings',
         tone: 'slate',
         capability: 'online.edit',

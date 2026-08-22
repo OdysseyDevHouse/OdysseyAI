@@ -49,12 +49,25 @@ export default function SetupForm({
   counts,
   zones,
   storePath,
+  groupCard,
 }: {
   settings: OnlineSettings
   counts: PublishCounts
   zones: DeliveryZone[]
   /** The public shop's path. The origin is added in the browser. */
   storePath: string
+  /**
+   * The chain's “one shop for the group” card, or null for a shop that is not
+   * in one.
+   *
+   * Passed IN rather than rendered after this component, because everything
+   * above saves together on one button and that card saves per row. Rendered
+   * after the Save card it reads as part of that save — somebody would set a
+   * pin, press Save settings, and be told their settings were saved while the
+   * pin they were actually looking at went nowhere. It goes above the button,
+   * where the boundary is visible.
+   */
+  groupCard: React.ReactNode
 }) {
   const toast = useToast()
   const [saving, startSaving] = useTransition()
@@ -683,6 +696,8 @@ export default function SetupForm({
           </Field>
         </div>
       </SettingGroup>
+
+      {groupCard}
 
       <Card>
         <CardHeader

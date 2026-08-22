@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react'
 import { useFormStatus } from 'react-dom'
 import {
+  Accordion,
   Badge,
   Button,
   Callout,
@@ -20,7 +21,7 @@ import {
   refreshBranchPinsAction,
   setBranchPinAction,
   setGroupStorefrontAction,
-  type LinkFormState,
+  type GroupFormState,
 } from './actions'
 
 /**
@@ -55,7 +56,7 @@ function SubmitButton({ children, variant = 'secondary' }: { children: string; v
 }
 
 function PinForm({ branch }: { branch: BranchRow }) {
-  const [state, formAction] = useActionState<LinkFormState, FormData>(setBranchPinAction, {
+  const [state, formAction] = useActionState<GroupFormState, FormData>(setBranchPinAction, {
     error: null,
   })
 
@@ -104,11 +105,21 @@ export default function GroupStorefront({
   members: GroupMember[]
 }) {
   const [on, setOn] = useState(enabled)
-  const [toggleState, toggleAction] = useActionState<LinkFormState, FormData>(
+  /*
+   * Which branch is being pinned, or null for none.
+   *
+   * One at a time, and shut by default. Twenty branches is a normal size for a
+   * chain and twenty open coordinate forms is most of this screen — which is
+   * fine on a page about the group and wrong on a page that is mostly about
+   * THIS shop's own settings. Folded, the list reads as what it is: a roll of
+   * branches with a state each, that you open when you have a pair to type in.
+   */
+  const [pinning, setPinning] = useState<number | null>(null)
+  const [toggleState, toggleAction] = useActionState<GroupFormState, FormData>(
     setGroupStorefrontAction,
     { error: null },
   )
-  const [refreshState, refreshAction] = useActionState<LinkFormState, FormData>(
+  const [refreshState, refreshAction] = useActionState<GroupFormState, FormData>(
     refreshBranchPinsAction,
     { error: null },
   )
@@ -186,20 +197,31 @@ export default function GroupStorefront({
             </Callout>
           )}
 
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
             {rows.map((branch) => (
-              <div key={branch.siteId} className="rounded-card border border-border p-4">
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-ink">{branch.displayName}</span>
-                  {branch.acceptsOnline ? (
-                    <Badge tone="success">Taking online orders</Badge>
-                  ) : (
-                    <Badge tone="neutral">Online shop off</Badge>
-                  )}
-                  {branch.latitude === null && <Badge tone="warning">Not on the map</Badge>}
-                </div>
+              <Accordion
+                key={branch.siteId}
+                title={branch.displayName}
+                open={pinning === branch.siteId}
+                onToggle={() =>
+                  setPinning((cur) => (cur === branch.siteId ? null : branch.siteId))
+                }
+                /* The two things worth knowing without opening the row: is this
+                   branch taking orders at all, and can it be sorted by distance.
+                   Both are the reason somebody would open it. */
+                badge={
+                  <span className="flex items-center gap-2">
+                    {branch.latitude === null && <Badge tone="warning">Not on the map</Badge>}
+                    {branch.acceptsOnline ? (
+                      <Badge tone="success">Taking online orders</Badge>
+                    ) : (
+                      <Badge tone="neutral">Online shop off</Badge>
+                    )}
+                  </span>
+                }
+              >
                 <PinForm branch={branch} />
-              </div>
+              </Accordion>
             ))}
           </div>
 

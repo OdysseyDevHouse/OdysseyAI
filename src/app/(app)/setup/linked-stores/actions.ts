@@ -8,13 +8,11 @@ import {
   addMember,
   removeMember,
   setMemberSharing,
-  setGroupOnlineMode,
   setGroupLegalEntity,
   setGroupLoyaltyWallet,
   setGroupGiftCards,
   setGroupPrimary,
 } from '@/lib/storeGroups'
-import { setBranchPin, syncBranchPin } from '@/lib/control/storeBranches'
 
 export type LinkFormState = {
   error: string | null
@@ -203,121 +201,4 @@ export async function setLegalEntityAction(
 
   revalidatePath('/setup/linked-stores')
   return { error: null, saved: raw }
-}
-
-/**
- * Switches the group's shared storefront on or off.
- *
- * The preconditions live in setGroupOnlineMode, not here — this action is one
- * caller of it and a rule enforced only in a screen is a rule the next caller
- * skips. All this does is establish who is asking.
- */
-export async function setGroupStorefrontAction(
-  _prev: LinkFormState,
-  form: FormData,
-): Promise<LinkFormState> {
-  const ctx = await actorForModule('multi_branch', 'setup.edit')
-  if ('ok' in ctx) return ctx
-  const { siteId } = ctx
-
-  const group = await groupForSite(siteId)
-  if (!group) return { error: 'Link a store first — there is no group to switch on.' }
-
-  const result = await setGroupOnlineMode(group.id, form.get('enabled') === 'on')
-  if (!result.ok) return { error: result.error }
-
-  revalidatePath('/setup/linked-stores')
-  return { error: null }
-}
-
-/**
- * Pins a branch on the map, or clears its pin.
- *
- * Both fields empty clears it deliberately — that is how a shop pinned in the
- * wrong place is un-pinned rather than left somewhere plausible but wrong. An
- * unpinned branch still appears in the picker, chosen by name instead of by
- * distance, so clearing one costs sorting and never a sale.
- *
- * The store being pinned must be a member of the caller's own group. Without
- * that check this action would write a row for any site id posted to it.
- */
-export async function setBranchPinAction(
-  _prev: LinkFormState,
-  form: FormData,
-): Promise<LinkFormState> {
-  const ctx = await actorForModule('multi_branch', 'setup.edit')
-  if ('ok' in ctx) return ctx
-  const { siteId } = ctx
-
-  const targetSiteId = Number(form.get('siteId'))
-  if (!Number.isFinite(targetSiteId) || targetSiteId <= 0) {
-    return { error: 'That store is no longer linked.' }
-  }
-
-  const group = await groupForSite(siteId)
-  if (!group) return { error: 'That store is no longer linked.' }
-  const { membersOfGroup } = await import('@/lib/storeGroups')
-  const members = await membersOfGroup(group.id)
-  if (!members.some((m) => m.siteId === targetSiteId)) {
-    return { error: 'That store is not in this group.' }
-  }
-
-  const rawLat = String(form.get('latitude') ?? '').trim()
-  const rawLng = String(form.get('longitude') ?? '').trim()
-
-  if (rawLat === '' && rawLng === '') {
-    const cleared = await setBranchPin(targetSiteId, null, null)
-    if (!cleared.ok) return { error: cleared.error }
-    revalidatePath('/setup/linked-stores')
-    return { error: null }
-  }
-
-  // Number('') is 0, which would silently put a half-filled form in the Gulf of
-  // Guinea. Both fields are parsed strictly and a blank one is not a zero.
-  const latitude = rawLat === '' ? Number.NaN : Number(rawLat)
-  const longitude = rawLng === '' ? Number.NaN : Number(rawLng)
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    return { error: 'Enter both a latitude and a longitude, or clear both.' }
-  }
-
-  const result = await setBranchPin(targetSiteId, latitude, longitude)
-  if (!result.ok) return { error: result.error }
-
-  revalidatePath('/setup/linked-stores')
-  return { error: null }
-}
-
-/**
- * Refreshes the published copy of every branch in the group.
- *
- * The copy is written whenever a shop saves its online-store settings, so this
- * exists for the cases that bypass that: a shop migrated after the group was
- * built, or a pin edited directly in its own database. Reported per store rather
- * than aborting, because one unreachable branch must not stop the other nine
- * being refreshed.
- */
-export async function refreshBranchPinsAction(
-  _prev: LinkFormState,
-  _form: FormData,
-): Promise<LinkFormState> {
-  const ctx = await actorForModule('multi_branch', 'setup.edit')
-  if ('ok' in ctx) return ctx
-  const { siteId } = ctx
-
-  const group = await groupForSite(siteId)
-  if (!group) return { error: 'Link a store first.' }
-
-  const { membersOfGroup } = await import('@/lib/storeGroups')
-  const members = await membersOfGroup(group.id)
-  const results = await Promise.all(
-    members.filter((m) => m.hasDatabase).map((m) => syncBranchPin(m.siteId)),
-  )
-  const failed = results.filter((r) => !r.ok).length
-
-  revalidatePath('/setup/linked-stores')
-  return failed === 0
-    ? { error: null }
-    : {
-        error: `${failed} store${failed === 1 ? '' : 's'} could not be read. The rest were refreshed.`,
-      }
 }
