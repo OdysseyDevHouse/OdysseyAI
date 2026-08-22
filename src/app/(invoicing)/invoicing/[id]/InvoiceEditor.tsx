@@ -492,12 +492,29 @@ export default function InvoiceEditor({
     [lines],
   )
 
+  /**
+   * Who the invoice is for, so a targeted promotion knows whether to fire.
+   *
+   * The customer is already state here, re-fetched whenever it changes. There
+   * is no loyalty member concept on this screen, so `isMember` is false and a
+   * members-only special correctly does not apply to an invoice.
+   */
+  const pricingContext = useMemo(
+    () => ({
+      accountType: customer?.accountType ?? null,
+      groupId: customer?.groupId ?? null,
+      isMember: false,
+      channel: 'in_store' as const,
+    }),
+    [customer],
+  )
+
   const lineSpecials = useMemo(() => {
     if (specials.length === 0) return lines.map(() => undefined)
-    return computeSpecials(engineLines, specials, new Date()).lineSpecials
+    return computeSpecials(engineLines, specials, new Date(), pricingContext).lineSpecials
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `lines` only for
     // the empty-specials shortcut above; engineLines already tracks it.
-  }, [engineLines, specials])
+  }, [engineLines, specials, pricingContext])
 
   /**
    * The products this invoice has EARNED, put on it.
@@ -510,7 +527,7 @@ export default function InvoiceEditor({
    */
   useEffect(() => {
     if (specials.length === 0) return
-    const rewards = computeSpecials(engineLines, specials, new Date()).rewards
+    const rewards = computeSpecials(engineLines, specials, new Date(), pricingContext).rewards
     if (rewards.length === 0 && !lines.some((l) => l.rewardSpecialId !== undefined)) return
 
     const described = new Map<number, RewardProduct>()
@@ -572,7 +589,7 @@ export default function InvoiceEditor({
         granted.every((line, index) => current[own.length + index] === line)
       return unchanged ? current : [...own, ...granted]
     })
-  }, [engineLines, specials, lines])
+  }, [engineLines, specials, lines, pricingContext])
 
   const computed = useMemo(() => {
     const per = lines.map((l, i) =>

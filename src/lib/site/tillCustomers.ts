@@ -75,6 +75,13 @@ export type TillCustomer = {
    * product at its own ceiling when applied — see checkPricing.
    */
   discountPct: number
+  /**
+   * The customer group, for a special that is only for one of them.
+   *
+   * NOT resolved like the two fields above — this is the group itself rather
+   * than something inherited from it, and null means the customer is in none.
+   */
+  groupId: number | null
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -117,6 +124,7 @@ function mapCustomer(r: Row, spend: PeriodSpend = NO_SPEND): TillCustomer {
       r.discount_pct !== null && r.discount_pct !== undefined
         ? toNum(r.discount_pct)
         : toNum(r.group_discount_pct),
+    groupId: r.group_id === null || r.group_id === undefined ? null : Number(r.group_id),
   }
 }
 
@@ -227,7 +235,7 @@ const SELECT_CUSTOMER = `
   SELECT c.id, c.code, c.name, c.status, c.account_type, c.credit_limit,
          c.daily_limit, c.monthly_limit, c.balance,
          c.payment_terms_days, c.vat_number, c.phone,
-         c.price_structure_id, c.discount_pct,
+         c.price_structure_id, c.discount_pct, c.group_id,
          cg.price_structure_id AS group_price_structure_id,
          cg.default_discount_pct AS group_discount_pct
     FROM customers c

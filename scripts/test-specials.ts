@@ -619,6 +619,90 @@ async function main() {
     )
   }
 
+  /* ── Who it is for, and where ───────────────────────────────────────────
+   *
+   * A targeted special that does NOT reach the shopper must leave its lines
+   * entirely alone — unclaimed — so the next promotion down still gets its
+   * chance. That is the opposite of a guard, which fires and clamps.
+   */
+  console.log('\n— Audience and channel —')
+  {
+    const lines = [line(1, 100)]
+    const s = special({ shape: 'happy_hour', discountPct: 10, items: [scope(1)], audience: 'account' })
+    ok(
+      'an account-only special skips a walk-in',
+      computeSpecials(lines, [s], NOW).lineSpecials[0] === undefined,
+    )
+    ok(
+      'and applies once an account is attached',
+      near(computeSpecials(lines, [s], NOW, { accountType: 'open_item' }).lineSpecials[0]?.pct ?? 0, 10),
+    )
+  }
+  {
+    const lines = [line(1, 100)]
+    const s = special({ shape: 'happy_hour', discountPct: 10, items: [scope(1)], audience: 'member' })
+    ok(
+      'a members-only special skips a non-member',
+      computeSpecials(lines, [s], NOW, { accountType: 'open_item' }).lineSpecials[0] === undefined,
+      'having an account is not the same as carrying a card',
+    )
+    ok(
+      'and applies to a member',
+      near(computeSpecials(lines, [s], NOW, { isMember: true }).lineSpecials[0]?.pct ?? 0, 10),
+    )
+  }
+  {
+    const lines = [line(1, 100)]
+    const s = special({
+      shape: 'happy_hour', discountPct: 10, items: [scope(1)],
+      audience: 'group', audienceGroupId: 7,
+    })
+    ok('a group special skips the wrong group', computeSpecials(lines, [s], NOW, { groupId: 3 }).lineSpecials[0] === undefined)
+    ok('and applies to the right one', near(computeSpecials(lines, [s], NOW, { groupId: 7 }).lineSpecials[0]?.pct ?? 0, 10))
+    const orphan = special({ ...s, audienceGroupId: null })
+    ok(
+      'a special whose group was deleted reaches nobody',
+      computeSpecials(lines, [orphan], NOW, { groupId: 7 }).lineSpecials[0] === undefined,
+      '212 nulls the id rather than deleting the promotion, so this must not match everyone',
+    )
+  }
+  {
+    const lines = [line(1, 100)]
+    const webOnly = special({
+      shape: 'happy_hour', discountPct: 10, items: [scope(1)],
+      runsInStore: false, runsOnline: true,
+    })
+    ok('a web-only special does not fire at the counter', computeSpecials(lines, [webOnly], NOW).lineSpecials[0] === undefined)
+    ok(
+      'and does online',
+      near(computeSpecials(lines, [webOnly], NOW, { channel: 'online' }).lineSpecials[0]?.pct ?? 0, 10),
+    )
+  }
+  {
+    // The whole point of not claiming: the next promotion down still gets it.
+    const lines = [line(1, 100)]
+    const targeted = special({
+      id: 1, priority: 1, shape: 'happy_hour', discountPct: 50,
+      items: [scope(1)], audience: 'member',
+    })
+    const open = special({ id: 2, priority: 2, shape: 'happy_hour', discountPct: 10, items: [scope(1)] })
+    const r = computeSpecials(lines, [targeted, open], NOW)
+    ok(
+      '*** a special that does not reach the shopper claims NOTHING ***',
+      r.lineSpecials[0]?.specialId === 2 && near(r.lineSpecials[0]?.pct ?? 0, 10),
+      'the walk-in still gets the open promotion below it',
+    )
+  }
+  {
+    const lines = [line(1, 100)]
+    const s = special({ shape: 'happy_hour', discountPct: 10, items: [scope(1)] })
+    ok(
+      'an untargeted special still fires with no context at all',
+      near(computeSpecials(lines, [s], NOW).lineSpecials[0]?.pct ?? 0, 10),
+      'every caller that predates targeting must be unchanged',
+    )
+  }
+
   await databaseChecks()
 
   console.log(`\n${fails === 0 ? 'All specials checks passed.' : `${fails} FAILED.`}`)

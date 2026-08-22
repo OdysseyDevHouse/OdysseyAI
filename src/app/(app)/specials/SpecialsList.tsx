@@ -17,6 +17,7 @@ import {
 import { formatMoney } from '@/lib/decimals'
 import {
   SHAPE_LABEL,
+  AUDIENCE_LABEL,
   specialActiveAt,
   type Special,
   type SpecialInput,
@@ -29,7 +30,11 @@ import {
   reorderSpecialsAction,
   setSpecialActiveAction,
 } from './actions'
-import SpecialForm, { type DepartmentOption, type FormRow } from './SpecialForm'
+import SpecialForm, {
+  type CustomerGroupOption,
+  type DepartmentOption,
+  type FormRow,
+} from './SpecialForm'
 import type { ResolvedItem, SpecialWithUse } from '@/lib/site/specials'
 
 /**
@@ -156,11 +161,13 @@ export default function SpecialsList({
   specials,
   items,
   departments,
+  customerGroups,
 }: {
   specials: SpecialWithUse[]
   /** Every special's items, already resolved to names and prices. */
   items: ResolvedItem[]
   departments: DepartmentOption[]
+  customerGroups: CustomerGroupOption[]
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -375,6 +382,20 @@ export default function SpecialsList({
                             ))}
                           </span>
                         )}
+                        {/* Only when they are NOT the default. A row saying
+                            "Everyone, both channels, no limit" on every
+                            promotion is noise that hides the one that is
+                            actually restricted. */}
+                        {special.audience && special.audience !== 'everyone' && (
+                          <span>{AUDIENCE_LABEL[special.audience]} only</span>
+                        )}
+                        {special.runsInStore === false && <span>Online only</span>}
+                        {special.runsOnline === false && <span>In store only</span>}
+                        {special.maxRedemptions !== null && (
+                          <span>
+                            {special.redemptionsCount}/{special.maxRedemptions} used
+                          </span>
+                        )}
                       </span>
                     </span>
 
@@ -419,6 +440,7 @@ export default function SpecialsList({
           value={editing}
           rows={editingRows}
           departments={departments}
+          customerGroups={customerGroups}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null)
@@ -447,6 +469,10 @@ function toInput(s: SpecialWithUse): SpecialInput {
        siblings is exactly the shape of bug this file has produced before. */
     guards: s.guards ? { ...s.guards } : undefined,
     maxRedemptions: s.maxRedemptions,
+    audience: s.audience,
+    audienceGroupId: s.audienceGroupId,
+    runsInStore: s.runsInStore,
+    runsOnline: s.runsOnline,
     triggerQty: s.triggerQty,
     bundlePriceIncl: s.bundlePriceIncl,
     spendAmountIncl: s.spendAmountIncl,

@@ -138,6 +138,78 @@ export type SpecialTier = {
 /** The shapes that read `tiers`. */
 export const LADDERED: ReadonlySet<SpecialShape> = new Set(['multibuy', 'quantity_break'])
 
+/** Who a promotion is for. See 212. */
+export const AUDIENCES = ['everyone', 'account', 'member', 'group'] as const
+export type Audience = (typeof AUDIENCES)[number]
+
+export const AUDIENCE_LABEL: Record<Audience, string> = {
+  everyone: 'Everyone',
+  account: 'Account customers',
+  member: 'Loyalty members',
+  group: 'One customer group',
+}
+
+/** Where a sale is happening, for the channel switches. */
+export type Channel = 'in_store' | 'online'
+
+/**
+ * Who the sale is for, so a targeted special knows whether to fire.
+ *
+ * ── OPTIONAL, AND ABSENT MEANS "A WALK-IN AT THE COUNTER" ────────────────
+ *
+ * Every caller that predates targeting passes nothing, and gets exactly the
+ * behaviour it had: an untargeted special fires, a targeted one does not. That
+ * is the safe direction — a promotion meant for account customers must not
+ * leak to a walk-in because a screen forgot to say who was standing there.
+ */
+export type PricingContext = {
+  /** The account attached to the sale, if any. */
+  accountType?: string | null
+  /** Which customer group that account is in. */
+  groupId?: number | null
+  /** Whether a loyalty member is attached. */
+  isMember?: boolean
+  /** Defaults to in-store. */
+  channel?: Channel
+}
+
+/**
+ * May this special fire for this sale?
+ *
+ * Exported because the till wants to EXPLAIN a promotion the customer nearly
+ * qualified for — "attach the account and this applies" is worth saying, and
+ * cannot be said by a function that only returns a price.
+ */
+export function specialReaches(special: Special, context: PricingContext | undefined): boolean {
+  const channel = context?.channel ?? 'in_store'
+  if (channel === 'in_store' && special.runsInStore === false) return false
+  if (channel === 'online' && special.runsOnline === false) return false
+
+  switch (special.audience ?? 'everyone') {
+    case 'everyone':
+      return true
+    case 'account':
+      /*
+       * An account, not merely a name typed on the sale.
+       *
+       * A cash account is still an account — the shop opened a record for that
+       * customer, which is what "account customers only" means to the person
+       * setting the promotion up. `accountType` is present exactly when a real
+       * customer row is attached, so its presence IS the test.
+       */
+      return !!context?.accountType
+    case 'member':
+      return !!context?.isMember
+    case 'group':
+      // A special aimed at a group nobody is in reaches nobody, which is what
+      // a deleted group leaves behind (212 sets the id to NULL rather than
+      // deleting the promotion).
+      return (
+        special.audienceGroupId != null && context?.groupId === special.audienceGroupId
+      )
+  }
+}
+
 
 export type SpecialRole = 'scope' | 'trigger' | 'reward'
 
@@ -242,6 +314,17 @@ export type Special = {
    * "no limit" — the behaviour before any of this existed.
    */
   guards?: SpecialGuards
+  /**
+   * Who it is for, and where it runs. See 212 and `specialReaches`.
+   *
+   * All optional, and absent means the behaviour before targeting existed:
+   * everyone, both channels. `runsInStore`/`runsOnline` are checked against
+   * `=== false` precisely so that `undefined` reads as "yes".
+   */
+  audience?: Audience
+  audienceGroupId?: number | null
+  runsInStore?: boolean
+  runsOnline?: boolean
   items: SpecialItem[]
   /** multibuy only: the quantity ladder, e.g. 3 for R25, 6 for R45. */
   tiers: SpecialTier[]
@@ -357,6 +440,11 @@ export type SpecialInput = {
   guards?: SpecialGuards
   /** How many times the promotion may be used in total. Null is unlimited. */
   maxRedemptions?: number | null
+  /** Who it is for, and where it runs. See 212. */
+  audience?: Audience
+  audienceGroupId?: number | null
+  runsInStore?: boolean
+  runsOnline?: boolean
   items: SpecialItemInput[]
   tiers: SpecialTier[]
 }
@@ -652,6 +740,11 @@ export function computeSpecials(
   lines: BasketLine[],
   specials: Special[],
   now: Date,
+  /**
+   * Who the sale is for. Omitted means a walk-in at the counter — see
+   * PricingContext on why that is the safe default rather than a permissive one.
+   */
+  context?: PricingContext,
 ): SpecialsResult {
   const lineSpecials: (AppliedSpecial | undefined)[] = new Array(lines.length).fill(undefined)
   const rewards: SpecialReward[] = []
@@ -662,6 +755,16 @@ export function computeSpecials(
 
   for (const special of ordered) {
     if (!specialActiveAt(special, now)) continue
+    /*
+     * Not for this customer, or not for this channel.
+     *
+     * `continue` rather than any kind of partial application, and crucially
+     * WITHOUT claiming: a promotion the shopper does not qualify for must leave
+     * its lines free for the next one down. That is the opposite of the guards
+     * above, which clamp and claim — because a guarded special did fire and
+     * this one never applied at all.
+     */
+    if (!specialReaches(special, context)) continue
 
     /*
      * A line is available if no higher-priority special has claimed it AND

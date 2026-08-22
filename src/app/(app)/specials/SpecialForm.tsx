@@ -22,6 +22,9 @@ import type { ProductPick } from '@/lib/site/products'
 import {
   SHAPE_GROUPS,
   SHAPE_LABEL,
+  AUDIENCES,
+  AUDIENCE_LABEL,
+  type Audience,
   ROLES_USED,
   groupOf,
   validateSpecial,
@@ -100,6 +103,7 @@ export default function SpecialForm({
   value,
   rows: initialRows,
   departments,
+  customerGroups,
   onClose,
   onSaved,
 }: {
@@ -107,6 +111,8 @@ export default function SpecialForm({
   /** The saved items, already resolved to names and prices. */
   rows: FormRow[]
   departments: DepartmentOption[]
+  /** For a special aimed at one group. Empty when the shop keeps none. */
+  customerGroups: CustomerGroupOption[]
   onClose: () => void
   onSaved: () => void
 }) {
@@ -391,6 +397,9 @@ export default function SpecialForm({
           busy={busy}
         />
 
+        {/* ── Who and where ─────────────────────────────────────────────── */}
+        <AudienceSection draft={draft} patch={patch} customerGroups={customerGroups} />
+
         {/* ── Limits ────────────────────────────────────────────────────── */}
         <LimitsSection draft={draft} patch={patch} />
 
@@ -430,6 +439,99 @@ function Section({
       </div>
       <div className="mt-3 flex flex-col gap-3">{children}</div>
     </div>
+  )
+}
+
+/* ── Who it is for, and where it runs ────────────────────────────────────── */
+
+/** A customer group, for a special aimed at one of them. */
+export type CustomerGroupOption = { id: number; name: string }
+
+function AudienceSection({
+  draft,
+  patch,
+  customerGroups,
+}: {
+  draft: SpecialInput
+  patch: (changes: Partial<SpecialInput>) => void
+  customerGroups: CustomerGroupOption[]
+}) {
+  const audience = draft.audience ?? 'everyone'
+  const inStore = draft.runsInStore !== false
+  const online = draft.runsOnline !== false
+
+  return (
+    <Section
+      icon={<Icons.Users size={14} />}
+      title="Who it is for"
+      hint="By default everyone, at the counter and online."
+    >
+      <SegmentedControl
+        value={audience}
+        onChange={(v) => patch({ audience: v as Audience })}
+        options={AUDIENCES.map((a) => ({ value: a, label: AUDIENCE_LABEL[a] }))}
+      />
+
+      {audience === 'group' && (
+        <Field label="Which group">
+          <Select
+            value={draft.audienceGroupId ?? ''}
+            className="w-72"
+            onChange={(e) =>
+              patch({ audienceGroupId: e.target.value ? Number(e.target.value) : null })
+            }
+          >
+            <option value="">Choose a customer group…</option>
+            {customerGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
+
+      <Field
+        label="Where it runs"
+        hint="Switch one off for a counter-only or web-only promotion."
+      >
+        <div className="flex flex-wrap gap-4">
+          <Checkbox
+            checked={inStore}
+            label="At the counter"
+            onChange={(e) => patch({ runsInStore: e.target.checked })}
+          />
+          <Checkbox
+            checked={online}
+            label="Online shop"
+            onChange={(e) => patch({ runsOnline: e.target.checked })}
+          />
+        </div>
+      </Field>
+
+      {/*
+        Said plainly rather than discovered.
+
+        The shop front prices a shelf for whoever is looking at it, and a
+        signed-in shopper is not carried into that pricing — so a targeted
+        special genuinely does not apply online. Letting a shop believe
+        otherwise would mean a price shown and then not honoured at checkout.
+      */}
+      {audience !== 'everyone' && online && (
+        <p className="rounded-control bg-warning-soft px-3 py-2 text-xs text-warning">
+          <Icons.Info size={14} className="mr-1.5 inline align-text-bottom" />
+          Targeted promotions apply at the counter, where the till knows who the customer is.
+          The online shop prices for everyone, so this one will not show there yet.
+        </p>
+      )}
+
+      {!inStore && !online && (
+        <p className="rounded-control bg-danger-soft px-3 py-2 text-xs text-danger">
+          <Icons.Info size={14} className="mr-1.5 inline align-text-bottom" />
+          With both switched off this promotion cannot run anywhere.
+        </p>
+      )}
+    </Section>
   )
 }
 

@@ -7,6 +7,8 @@ import {
   SPECIAL_SHAPES,
   LADDERED,
   ROLES_USED,
+  AUDIENCES,
+  type Audience,
   type Special,
   type SpecialItem,
   type SpecialTier,
@@ -69,6 +71,17 @@ function mapSpecial(r: Row, items: SpecialItem[], tiers: SpecialTier[]): Special
       minMarginPct: toNum(r.min_margin_pct),
       neverBelowCost: !!r.never_below_cost,
     },
+    // Coerced like the shape above: a row written by a future version must not
+    // take down every till that reads it.
+    audience: (AUDIENCES as readonly string[]).includes(String(r.audience))
+      ? (String(r.audience) as Audience)
+      : 'everyone',
+    audienceGroupId:
+      r.audience_group_id === null || r.audience_group_id === undefined
+        ? null
+        : Number(r.audience_group_id),
+    runsInStore: !!r.runs_in_store,
+    runsOnline: !!r.runs_online,
     items,
     tiers,
     // `rewardProducts` is deliberately NOT set here. It is filled in by
@@ -271,6 +284,20 @@ export function specialPriceFor(
   line: { productId: number; departmentId: number | null; priceIncl: number },
   specials: Special[],
   now: Date,
+  /**
+   * Which channel is asking. Defaults to the shop front, because that is what
+   * every caller of this function is — a shelf price for a shopper looking at a
+   * product page.
+   *
+   * ── NO AUDIENCE, DELIBERATELY ────────────────────────────────────────────
+   *
+   * A signed-in shopper is not threaded into StorefrontContext, so this cannot
+   * honestly answer "is this an account customer". Rather than guess, it passes
+   * no audience at all — which means a TARGETED special does not price the shop
+   * front. That is the safe direction: showing a members-only price to everyone
+   * is a promise the checkout would then have to break.
+   */
+  channel: 'online' | 'in_store' = 'online',
 ): { priceIncl: number; wasPriceIncl: number; specialId: number; name: string } | null {
   const singleUnit = specials.filter(
     (s) => s.shape === 'happy_hour' || s.shape === 'special_price',
@@ -281,6 +308,7 @@ export function specialPriceFor(
     [{ ...line, qty: 1 }],
     singleUnit,
     now,
+    { channel },
   )
   const applied = lineSpecials[0]
   if (!applied) return null
@@ -454,6 +482,13 @@ export async function saveSpecial(
       Math.min(Math.max(input.guards?.minMarginPct ?? 0, 0), 99.999).toFixed(3),
       input.guards?.neverBelowCost ? 1 : 0,
       input.maxRedemptions == null ? null : Math.max(1, Math.floor(input.maxRedemptions)),
+      // Who and where. Blanked unless the audience actually names a group, so a
+      // promotion switched from "one group" back to "everyone" cannot keep a
+      // group id that nothing reads and the next person has to puzzle over.
+      input.audience ?? 'everyone',
+      input.audience === 'group' ? (input.audienceGroupId ?? null) : null,
+      input.runsInStore === false ? 0 : 1,
+      input.runsOnline === false ? 0 : 1,
       updatedBy.slice(0, 120),
     ]
 
@@ -464,7 +499,9 @@ export async function saveSpecial(
                 daily_start = ?, daily_end = ?, days_of_week = ?, discount_pct = ?,
                 trigger_qty = ?, bundle_price_incl = ?, spend_amount_incl = ?,
                 max_deals_per_sale = ?, respect_max_discount = ?, min_margin_pct = ?,
-                never_below_cost = ?, max_redemptions = ?, updated_by = ?
+                never_below_cost = ?, max_redemptions = ?,
+                audience = ?, audience_group_id = ?, runs_in_store = ?, runs_online = ?,
+                updated_by = ?
           WHERE id = ?`,
         [...fields, id],
       )
@@ -480,8 +517,10 @@ export async function saveSpecial(
             days_of_week, discount_pct, trigger_qty,
             bundle_price_incl, spend_amount_incl,
             max_deals_per_sale, respect_max_discount, min_margin_pct,
-            never_below_cost, max_redemptions, updated_by, priority)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            never_below_cost, max_redemptions,
+            audience, audience_group_id, runs_in_store, runs_online,
+            updated_by, priority)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [...fields, nextPriority],
       )
       id = result.insertId

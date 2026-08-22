@@ -1104,9 +1104,28 @@ export default function PosShell({
    * no-receipt return rather than a consequence of this line — the alternative is
    * refusing returns with no receipt, which shops do not do.
    */
+  /**
+   * Who is being served, so a targeted promotion knows whether to fire.
+   *
+   * The customer and the member are already in this component's state — the
+   * cashier attached them — and passing them is all targeting needs at the
+   * till. Absent means a walk-in, which is exactly what a basket with nobody
+   * attached is, and a special aimed at account customers correctly does not
+   * apply to one.
+   */
+  const pricingContext = useMemo(
+    () => ({
+      accountType: state.customer?.accountType ?? null,
+      groupId: state.customer?.groupId ?? null,
+      isMember: state.member !== null,
+      channel: 'in_store' as const,
+    }),
+    [state.customer, state.member],
+  )
+
   const lineSpecials = useMemo(
-    () => specialsFor(state.lines, state.returning ? [] : specials, new Date(clock)),
-    [state.lines, specials, clock, state.returning],
+    () => specialsFor(state.lines, state.returning ? [] : specials, new Date(clock), pricingContext),
+    [state.lines, specials, clock, state.returning, pricingContext],
   )
 
   /** Special id to name, so a granted line's badge can say which deal gave it. */
@@ -1138,7 +1157,7 @@ export default function PosShell({
   useEffect(() => {
     const rewards = state.returning
       ? []
-      : rewardsFor(state.lines, specials, new Date(clock))
+      : rewardsFor(state.lines, specials, new Date(clock), pricingContext)
     // Nothing earned and nothing previously granted: the overwhelmingly common
     // case, and not worth a dispatch that the reducer would only no-op on.
     if (rewards.length === 0 && !state.lines.some((l) => l.rewardSpecialId !== undefined)) return
@@ -1189,7 +1208,7 @@ export default function PosShell({
         }
       },
     })
-  }, [state.lines, state.returning, specials, clock])
+  }, [state.lines, state.returning, specials, clock, pricingContext])
 
   /**
    * A discount on the whole sale, spread onto the lines (rule 3).

@@ -1,6 +1,11 @@
 import { lineTotals, documentTotals, apportionDiscount } from '@/lib/documentMath'
 import { round } from '@/lib/decimals'
-import { computeSpecials, effectiveDiscountPct, type Special } from '@/lib/specialsEngine'
+import {
+  computeSpecials,
+  effectiveDiscountPct,
+  type Special,
+  type PricingContext,
+} from '@/lib/specialsEngine'
 import type { BasketLine } from '@/lib/basket'
 import type { Department } from './types'
 
@@ -55,9 +60,15 @@ function engineLines(lines: BasketLine[]) {
 }
 
 /** Per-line specials for a basket, index-aligned with it. */
-export function specialsFor(lines: BasketLine[], specials: Special[], now: Date) {
+export function specialsFor(
+  lines: BasketLine[],
+  specials: Special[],
+  now: Date,
+  /** Who is being served. Omitted means a walk-in — see PricingContext. */
+  context?: PricingContext,
+) {
   if (specials.length === 0) return lines.map(() => undefined)
-  return computeSpecials(engineLines(lines), specials, now).lineSpecials
+  return computeSpecials(engineLines(lines), specials, now, context).lineSpecials
 }
 
 /**
@@ -69,9 +80,14 @@ export function specialsFor(lines: BasketLine[], specials: Special[], now: Date)
  * applied through the reducer. One function returning both would tempt a caller
  * into doing the second during the first, which is a render that writes state.
  */
-export function rewardsFor(lines: BasketLine[], specials: Special[], now: Date) {
+export function rewardsFor(
+  lines: BasketLine[],
+  specials: Special[],
+  now: Date,
+  context?: PricingContext,
+) {
   if (specials.length === 0) return []
-  return computeSpecials(engineLines(lines), specials, now).rewards
+  return computeSpecials(engineLines(lines), specials, now, context).rewards
 }
 
 export type SaleTotals = ReturnType<typeof totalsFor>
