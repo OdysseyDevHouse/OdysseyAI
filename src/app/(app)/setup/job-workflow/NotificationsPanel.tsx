@@ -11,11 +11,18 @@ import {
   Checkbox,
   Field,
   Input,
+  Select,
   Switch,
   TextLink,
   useToast,
 } from '@/components/ui'
 import { saveJobSettingsAction } from '../../jobs/actions'
+import {
+  STOCK_WARN_MODES,
+  STOCK_WARN_LABEL,
+  STOCK_WARN_HINT,
+  type StockWarnMode,
+} from '@/lib/jobStatusModel'
 
 /**
  * How a job behaves, and who hears about it.
@@ -59,6 +66,8 @@ export default function NotificationsPanel({
   portalAllowComments: initialPortalComments,
   portalAllowUploads: initialPortalUploads,
   portalAllowQuoteAccept: initialPortalQuotes,
+  stockWarnMode: initialWarnMode,
+  autoAwaitingParts: initialAwaitingParts,
   portalUrl,
   mailConfigured,
   cronConfigured,
@@ -83,6 +92,10 @@ export default function NotificationsPanel({
   portalAllowComments: boolean
   portalAllowUploads: boolean
   portalAllowQuoteAccept: boolean
+  /** What happens when a job asks for more of a part than the shop has (§26.7). */
+  stockWarnMode: string
+  /** Whether a job moves itself in and out of Awaiting Parts (§28). */
+  autoAwaitingParts: boolean
   /** The link a customer signs in at. Null if the token could not be minted. */
   portalUrl: string | null
   /** SMTP is set up. Without it every switch below is decoration. */
@@ -114,6 +127,8 @@ export default function NotificationsPanel({
   const [portalComments, setPortalComments] = useState(initialPortalComments)
   const [portalUploads, setPortalUploads] = useState(initialPortalUploads)
   const [portalQuotes, setPortalQuotes] = useState(initialPortalQuotes)
+  const [warnMode, setWarnMode] = useState(initialWarnMode)
+  const [awaitingParts, setAwaitingParts] = useState(initialAwaitingParts)
 
   function toggleEvent(key: string, on: boolean) {
     setEvents((prev) => (on ? [...new Set([...prev, key])] : prev.filter((e) => e !== key)))
@@ -142,6 +157,8 @@ export default function NotificationsPanel({
         portalAllowComments: portalComments,
         portalAllowUploads: portalUploads,
         portalAllowQuoteAccept: portalQuotes,
+        stockWarnMode: warnMode,
+        autoAwaitingParts: awaitingParts,
       })
       if (result.ok) {
         toast.success(result.message)
@@ -155,7 +172,7 @@ export default function NotificationsPanel({
   return (
     <Card>
       <CardHeader
-        title="Closing, telling people, and what happens on its own"
+        title="Closing, parts, telling people, and what happens on its own"
         description="Everything a job does without somebody deciding it there and then."
         action={
           <Button onClick={save} disabled={pending}>
@@ -193,6 +210,43 @@ export default function NotificationsPanel({
                 disabled={pending}
               />
             </Field>
+          </div>
+
+          {/* ── Parts and stock ────────────────────────────────────────── */}
+          <div className="space-y-3 border-t border-border pt-5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">
+              Parts and stock
+            </p>
+
+            <Field
+              label="When a job needs more of a part than the shop has"
+              hint="The shelf still has the last word: none of these can conjure stock that is not there."
+            >
+              <Select
+                value={warnMode}
+                onChange={(e) => setWarnMode(e.target.value)}
+                disabled={pending}
+                className="max-w-[20rem]"
+              >
+                {STOCK_WARN_MODES.map((m) => (
+                  <option key={m} value={m}>
+                    {STOCK_WARN_LABEL[m]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {/* The chosen mode explains itself, rather than four hints stacked
+                up where three of them are always wrong. */}
+            <p className="text-xs text-muted">
+              {STOCK_WARN_HINT[(warnMode as StockWarnMode) in STOCK_WARN_LABEL ? (warnMode as StockWarnMode) : 'inform']}
+            </p>
+
+            <Switch
+              checked={awaitingParts}
+              onChange={setAwaitingParts}
+              label="Move a job to Awaiting Parts by itself"
+              hint="In when somebody asks for a part, and back out once every request is settled. A job that could only leave by hand would be a trap."
+            />
           </div>
 
           {/* ── Telling people ─────────────────────────────────────────── */}

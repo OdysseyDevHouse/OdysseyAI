@@ -114,6 +114,7 @@ import {
   formatClock,
   isDayMask,
   parseClock,
+  isStockWarnMode,
   type ItemKind,
   type ResponseType,
   type WorkPhase,
@@ -1657,6 +1658,8 @@ export async function saveJobSettingsAction(input: {
   portalAllowComments: boolean
   portalAllowUploads: boolean
   portalAllowQuoteAccept: boolean
+  stockWarnMode: string
+  autoAwaitingParts: boolean
 }): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
   const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
@@ -1735,6 +1738,15 @@ export async function saveJobSettingsAction(input: {
     ['portal_allow_comments', input.portalAllowComments ? '1' : '0'],
     ['portal_allow_uploads', input.portalAllowUploads ? '1' : '0'],
     ['portal_allow_quote_accept', input.portalAllowQuoteAccept ? '1' : '0'],
+    /*
+     * Validated rather than clamped, unlike the cap above: an unrecognised warn
+     * mode has no safe nearest value. Falling back to 'inform' is the right
+     * answer for a READ (see stockWarnMode), because failing open there costs a
+     * warning; storing it here would silently record something other than what
+     * was chosen, and a shop that picked 'prevent' would find it had not stuck.
+     */
+    ['job_stock_warn_mode', isStockWarnMode(input.stockWarnMode) ? input.stockWarnMode : 'inform'],
+    ['job_auto_awaiting_parts', input.autoAwaitingParts ? '1' : '0'],
   ] as const) {
     const saved = await setSetting(ctx.siteId, key, value)
     if (!saved.ok) return saved

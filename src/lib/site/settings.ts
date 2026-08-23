@@ -688,6 +688,52 @@ export const SETTING_DEFAULTS = {
   job_part_requests_enabled: '1',
 
   /**
+   * What happens when a job asks for more of a part than the shop can cover
+   * (§26.7): 'inform' | 'confirm' | 'prevent' | 'order'.
+   *
+   * FOUR modes because the right answer genuinely differs by trade. A workshop
+   * that can walk to the storeroom wants to be told and left alone; a franchise
+   * counting every unit wants a manager to acknowledge it; a business selling
+   * from one bonded store wants it refused outright.
+   *
+   * 'inform' is the DEFAULT because it is what the screen already did. Shipping
+   * a stricter mode would start refusing work on sites that never asked for it,
+   * and the first thing anybody does with a system that blocks them for reasons
+   * they did not choose is find a way around it — usually by not recording the
+   * part at all, which is worse than the shortage.
+   *
+   * 'prevent' does NOT contradict stockWarning.ts, which says it "does not
+   * refuse... a shop that has sold something it cannot immediately hand over
+   * usually knows what it is doing". That is about a TILL, where the customer is
+   * holding the goods and the sale has effectively happened. Issuing to a van is
+   * the opposite: the parts are not in anybody's hands yet, and refusing costs
+   * nothing but a trip to the storeroom.
+   *
+   * Note 'order' is 'inform' plus an offer, never a refusal — it needs
+   * job_part_requests_enabled to be on to have anywhere to send the request.
+   */
+  job_stock_warn_mode: 'inform',
+
+  /**
+   * Whether a job moves itself to Awaiting Parts, and back out again (§28).
+   *
+   * The status has been seeded since 104, is counted on the dashboard and shows
+   * on every board — and until now NOTHING SET IT. A stage a business can see,
+   * filter by and report on, that no code path can ever put a job into, is worse
+   * than no stage at all: it reads as a feature that quietly does not work.
+   *
+   * ON by default for that reason. This is not new behaviour being imposed; it
+   * is the behaviour the seeded status has always implied.
+   *
+   * It moves a job IN when a part is requested and OUT when every request on
+   * the job is settled. Coming out is what makes it safe to switch on: a status
+   * a job can enter automatically and only leave by hand is a trap, and a
+   * dispatcher who finds forty jobs stuck in Awaiting Parts will turn the whole
+   * thing off rather than clear them one at a time.
+   */
+  job_auto_awaiting_parts: '1',
+
+  /**
    * Whether a missed promise tells a named manager (164, §17.5).
    *
    * OFF by default, unlike the part requests above. Escalation names a person

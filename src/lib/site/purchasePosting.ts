@@ -1342,7 +1342,7 @@ export async function receiveGoods(
      */
     if (input.orderId) {
       const { markReceivedForDocument } = await import('./jobPartRequests')
-      await markReceivedForDocument(siteId, input.orderId)
+      await markReceivedForDocument(siteId, actor, input.orderId)
     }
 
     // The outbound mirror of the bell — thin ids-and-totals payload; a

@@ -1274,3 +1274,44 @@ export function describeItemProgress(items: readonly {
   if (outstanding > 0) parts.push(`${outstanding} still required`)
   return parts.join(', ')
 }
+
+/* ── Stock availability warnings (§26.7) ─────────────────────────────────── */
+
+/**
+ * What the shop wants to happen when a job asks for more than it has.
+ *
+ * Pure and here rather than in a server module because the issue dialog needs
+ * the same vocabulary the action enforces. A mode the screen understood and the
+ * server did not would be a warning somebody could click past.
+ */
+export const STOCK_WARN_MODES = ['inform', 'confirm', 'prevent', 'order'] as const
+export type StockWarnMode = (typeof STOCK_WARN_MODES)[number]
+
+export const STOCK_WARN_LABEL: Record<StockWarnMode, string> = {
+  inform: 'Just say so',
+  confirm: 'Ask them to confirm',
+  prevent: 'Do not allow it',
+  order: 'Offer to order it',
+}
+
+export const STOCK_WARN_HINT: Record<StockWarnMode, string> = {
+  inform: 'Shows what is short and lets the work carry on.',
+  confirm: 'Shows what is short and makes somebody agree to it before it goes ahead.',
+  prevent: 'Refuses until the stock is there. Strict, and right where every unit is counted.',
+  order: 'Shows what is short and offers to raise a part request for the difference.',
+}
+
+export function isStockWarnMode(value: string): value is StockWarnMode {
+  return (STOCK_WARN_MODES as readonly string[]).includes(value)
+}
+
+/**
+ * Does this mode stop the work, rather than merely comment on it?
+ *
+ * Only `prevent` refuses outright. `confirm` refuses ONCE — the caller re-sends
+ * with an acknowledgement — which is why it is not folded in here: the two need
+ * different messages and only one of them can be got past.
+ */
+export function warnModeBlocks(mode: StockWarnMode): boolean {
+  return mode === 'prevent'
+}

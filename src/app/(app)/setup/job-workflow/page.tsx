@@ -91,6 +91,8 @@ export default async function JobWorkflowPage() {
       'portal_allow_comments',
       'portal_allow_uploads',
       'portal_allow_quote_accept',
+      'job_stock_warn_mode',
+      'job_auto_awaiting_parts',
     ]),
     /*
      * Tolerant: a nicety on a setup screen. A site mid-migration must still be
@@ -221,6 +223,8 @@ export default async function JobWorkflowPage() {
           portalAllowComments={settings.portal_allow_comments === '1'}
           portalAllowUploads={settings.portal_allow_uploads === '1'}
           portalAllowQuoteAccept={settings.portal_allow_quote_accept === '1'}
+          stockWarnMode={settings.job_stock_warn_mode ?? 'inform'}
+          autoAwaitingParts={settings.job_auto_awaiting_parts !== '0'}
           portalUrl={portalUrl}
           /*
            * Both read on the SERVER. isConfigured() reads process.env, which a

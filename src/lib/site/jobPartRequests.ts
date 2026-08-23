@@ -4,6 +4,8 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb
 import { logActivity, type Actor } from './activityLog'
 import { getSetting } from './settings'
 import { notify } from './notifications'
+import { setStatus } from './jobCards'
+import { statusForRole } from './jobStatuses'
 
 /**
  * Asking for a part the shop does not have (§28).
@@ -278,7 +280,132 @@ export async function requestPart(
     href: '/jobs/part-requests',
   })
 
+  // The job is now waiting on somebody else (§28). Never fatal — see the helper.
+  await moveToAwaitingParts(siteId, actor, input.jobCardId)
+
   return { ok: true, id: Number(res.insertId) }
+}
+
+/* ── Awaiting Parts, in and out (§28) ─────────────────────────────────────── */
+
+/**
+ * Found by CODE, not by role.
+ *
+ * 104 seeds this status with `role = ''` deliberately: the six required roles
+ * are the lifecycle a business cannot delete its way out of, and waiting for a
+ * part is not one of them — a workshop that fits only what it stocks never needs
+ * the stage. So there is no `statusForRole('parts')` to call.
+ *
+ * `code` is the right handle regardless: jobStatuses freezes it at creation
+ * precisely so a rename relabels every job sitting in the status rather than
+ * stranding it. A business that renamed this to "Waiting on supplier" still has
+ * code 'parts', and this still finds it.
+ *
+ * Null when the business deleted or deactivated the status, which is a real
+ * answer and not an error — it means "this shop does not track that", and the
+ * callers below simply do nothing.
+ */
+async function awaitingPartsStatusId(siteId: number): Promise<number | null> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id FROM job_statuses WHERE code = 'parts' AND is_active = 1 LIMIT 1`,
+    [],
+  ).catch(() => null)
+  return row ? Number(row.id) : null
+}
+
+async function autoAwaitingParts(siteId: number): Promise<boolean> {
+  return (await getSetting(siteId, 'job_auto_awaiting_parts').catch(() => '1')) !== '0'
+}
+
+/**
+ * Put a job into Awaiting Parts because something was asked for.
+ *
+ * ── WHY THIS CANNOT THROW ──────────────────────────────────────────────────
+ *
+ * It runs at the tail of requestPart, after the request is already written. A
+ * status move that failed and took the request with it would mean a technician
+ * pressing "ask for this part" and getting an error, with nothing recorded —
+ * strictly worse than a job that is on the wrong stage but has its request.
+ *
+ * Same shape as the notify() call beside it, and the same reasoning.
+ *
+ * ── AND WHY IT ONLY MOVES AN OPEN JOB ──────────────────────────────────────
+ *
+ * setStatus would happily move a closed one, and moving a closed job back into
+ * an open stage because somebody logged a late part request would reopen work
+ * that was finished — silently, from a screen that never mentioned closing.
+ */
+async function moveToAwaitingParts(siteId: number, actor: Actor, jobId: number): Promise<void> {
+  try {
+    if (!(await autoAwaitingParts(siteId))) return
+    const statusId = await awaitingPartsStatusId(siteId)
+    if (statusId === null) return
+
+    const job = await siteQueryOne<Row>(
+      siteId,
+      `SELECT status, status_id FROM job_cards WHERE id = ?`,
+      [jobId],
+    )
+    if (!job || String(job.status) !== 'open') return
+    if (Number(job.status_id) === statusId) return
+
+    await setStatus(siteId, actor, jobId, statusId, 'Waiting for a part that was asked for.')
+  } catch {
+    /* Reported by nothing, and deliberately: the request is what mattered. */
+  }
+}
+
+/**
+ * Take a job back OUT of Awaiting Parts once nothing is outstanding.
+ *
+ * This is the half that makes the automation safe to have on. A stage a job
+ * enters by itself and can only leave by hand is a trap — a dispatcher who finds
+ * forty jobs sitting in Awaiting Parts turns the feature off rather than
+ * clearing them one by one.
+ *
+ * "Settled" means no request on the job is still `requested`, `approved` or
+ * `ordered`. A cancelled one is settled: the buyer decided it is not coming, and
+ * the job is no longer waiting for it.
+ *
+ * Moves to `in_progress` rather than back to whatever it was before, because
+ * nothing records that. A job whose parts have arrived IS work that can proceed,
+ * which is what that stage means; guessing at a previous status would need a
+ * history this table does not keep.
+ */
+export async function clearAwaitingPartsIfSettled(
+  siteId: number,
+  actor: Actor,
+  jobId: number,
+): Promise<void> {
+  try {
+    if (!(await autoAwaitingParts(siteId))) return
+    const statusId = await awaitingPartsStatusId(siteId)
+    if (statusId === null) return
+
+    const job = await siteQueryOne<Row>(
+      siteId,
+      `SELECT status, status_id FROM job_cards WHERE id = ?`,
+      [jobId],
+    )
+    // Only a job actually sitting in the stage is moved. One a dispatcher put
+    // somewhere else by hand has been decided about, and must not be overridden.
+    if (!job || String(job.status) !== 'open' || Number(job.status_id) !== statusId) return
+
+    const outstanding = await siteQueryOne<Row>(
+      siteId,
+      `SELECT COUNT(*) AS n FROM job_part_requests
+        WHERE job_card_id = ? AND status IN ('requested','approved','ordered')`,
+      [jobId],
+    )
+    if (Number(outstanding?.n ?? 0) > 0) return
+
+    const onward = await statusForRole(siteId, 'in_progress')
+    if (!onward) return
+    await setStatus(siteId, actor, jobId, onward.id, 'Every part that was asked for has arrived.')
+  } catch {
+    /* Same stance as moving in: the goods arriving is what mattered. */
+  }
 }
 
 /** A buyer agrees, or refuses. Both record who and why. */
@@ -291,7 +418,7 @@ export async function decideRequest(
 ): Promise<RequestActionResult> {
   const req = await siteQueryOne<Row>(
     siteId,
-    `SELECT id, status, description FROM job_part_requests WHERE id = ?`,
+    `SELECT id, status, description, job_card_id FROM job_part_requests WHERE id = ?`,
     [id],
   )
   if (!req) return { ok: false, error: 'That request no longer exists.' }
@@ -320,6 +447,21 @@ export async function decideRequest(
       WHERE id = ? AND status = 'requested'`,
     [decision, actor.userId, actor.userName.slice(0, 120), note?.trim().slice(0, 400) || null, id],
   )
+
+  /*
+   * A CANCELLED request settles the job's wait just as a delivered one does
+   * (§28): the buyer has decided the part is not coming, so the job is no longer
+   * waiting for it. Leaving it in Awaiting Parts would strand it in a stage
+   * nothing will ever move it out of.
+   *
+   * Approving does NOT settle anything — the part is still on its way — so this
+   * only runs on the refusal branch, and clearAwaitingPartsIfSettled checks
+   * every other request on the job before moving anything.
+   */
+  if (decision === 'cancelled') {
+    await clearAwaitingPartsIfSettled(siteId, actor, Number(req.job_card_id))
+  }
+
   return { ok: true }
 }
 
@@ -398,6 +540,13 @@ export async function linkToOrder(
  */
 export async function markReceivedForDocument(
   siteId: number,
+  /**
+   * Whoever booked the goods in. Threaded through so the status move out of
+   * Awaiting Parts is attributed to a person in the activity log rather than
+   * appearing from nowhere — a job that changed stage with no name against it is
+   * the kind of entry that makes an audit trail less trusted, not more.
+   */
+  actor: Actor,
   documentId: number,
 ): Promise<void> {
   try {
@@ -443,6 +592,16 @@ export async function markReceivedForDocument(
         body: `${Number(c.qty)} for ${text(c.job_number) ?? `job #${Number(c.job_card_id)}`}`,
         href: `/jobs/${Number(c.job_card_id)}`,
       })
+    }
+
+    /*
+     * And take each job back out of Awaiting Parts if nothing is outstanding
+     * (§28). Deduplicated: one delivery can settle three requests on one job,
+     * and three status moves would write three activity entries saying the same
+     * thing.
+     */
+    for (const jobId of new Set(candidates.map((c) => Number(c.job_card_id)))) {
+      await clearAwaitingPartsIfSettled(siteId, actor, jobId)
     }
   } catch {
     // A receipt that committed must not be reported as failed because the

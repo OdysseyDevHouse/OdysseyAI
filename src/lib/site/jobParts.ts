@@ -4,7 +4,8 @@ import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { postTransfer, todayIso } from './stockTransfers'
 import { logActivity, type Actor } from './activityLog'
-import { BILLABLE_STATES } from '../jobStatusModel'
+import { BILLABLE_STATES, isStockWarnMode, type StockWarnMode } from '../jobStatusModel'
+import { getSetting } from './settings'
 import { releaseLineFor } from './jobReservations'
 
 /**
@@ -90,7 +91,13 @@ export type IssueLineInput = {
 
 export type IssueResult =
   | { ok: true; transferId: number; documentNumber: string; lineCount: number }
-  | { ok: false; error: string }
+  /**
+   * `needsConfirmation` distinguishes "you may do this once you agree" from
+   * "no". Only the `confirm` warn mode sets it, and the screen re-sends with
+   * `acknowledged: true`. A plain refusal never carries it, so a caller that
+   * ignores the flag simply gets the strict behaviour rather than a way through.
+   */
+  | { ok: false; error: string; needsConfirmation?: boolean }
 
 export type PartsActionResult = { ok: true } | { ok: false; error: string }
 
@@ -178,6 +185,21 @@ export async function partsPromised(
   )
 }
 
+/**
+ * What this shop wants to happen when a part is short (§26.7).
+ *
+ * Falls back to 'inform' on anything unexpected — an unmigrated site, a value
+ * somebody typed straight into the table, a setting read that failed. Failing
+ * OPEN is right here and would be wrong almost anywhere else in this module:
+ * the strict modes exist to protect stock accuracy, and defaulting to one
+ * because a settings read hiccuped would refuse real work for no reason a
+ * technician standing at a storeroom could ever diagnose.
+ */
+export async function stockWarnMode(siteId: number): Promise<StockWarnMode> {
+  const raw = await getSetting(siteId, 'job_stock_warn_mode').catch(() => 'inform')
+  return isStockWarnMode(raw) ? raw : 'inform'
+}
+
 /** What is sitting on each van, for the stocktake and the chase-up. */
 export async function vanHoldings(siteId: number, locationId?: number): Promise<VanHolding[]> {
   const rows = await siteQuery<Row>(
@@ -230,6 +252,12 @@ export async function issueParts(
   jobId: number,
   vanLocationId: number,
   lines: readonly IssueLineInput[],
+  /**
+   * `acknowledged` is somebody agreeing to a shortage the `confirm` mode
+   * stopped. It is meaningless in every other mode: `prevent` ignores it — an
+   * acknowledgement is not permission — and `inform` never asked.
+   */
+  options: { acknowledged?: boolean } = {},
 ): Promise<IssueResult> {
   const wanted = lines.filter((l) => round(l.qty, 3) > 0)
   if (wanted.length === 0) return { ok: false, error: 'Choose at least one part to issue.' }
@@ -303,6 +331,54 @@ export async function issueParts(
       }
     }
     planned.push({ part, qty })
+  }
+
+  /*
+   * ── What the shop wants to happen when the shelf cannot cover it (§26.7) ──
+   *
+   * Checked HERE, before postTransfer, for two reasons. Nothing has been written
+   * yet, so a refusal leaves no half-issued job; and the message can name the
+   * job's own line — "Only 2 of JCT thermostat on the shelf" — where
+   * postTransfer can only speak about products and locations.
+   *
+   * postTransfer still has the last word on whether the stock is physically
+   * there. This is the shop's POLICY about a shortage it can already see; that
+   * is the invariant, and it stays where it is.
+   *
+   * `confirm` refuses once and is got past by re-sending with `acknowledged`.
+   * `prevent` cannot be got past at all — which is the whole difference between
+   * them, and why they are not one branch with a flag.
+   */
+  const shortfalls = planned
+    .map(({ part, qty }) => ({ part, qty, short: round(qty - part.mainOnHand, 3) }))
+    .filter((s) => s.short > 0)
+
+  if (shortfalls.length > 0) {
+    const mode = await stockWarnMode(siteId)
+    const worst = shortfalls.slice().sort((a, b) => b.short - a.short)[0]!
+    const detail =
+      `${worst.part.description} is short by ${worst.short}` +
+      (shortfalls.length > 1 ? ` and ${shortfalls.length - 1} other ${shortfalls.length === 2 ? 'part is' : 'parts are'} short too` : '')
+
+    if (mode === 'prevent') {
+      return {
+        ok: false,
+        error: `${detail}. This shop does not allow issuing more than the shelf holds.`,
+      }
+    }
+    if (mode === 'confirm' && !options.acknowledged) {
+      return {
+        ok: false,
+        needsConfirmation: true,
+        error: `${detail}. Confirm to issue anyway.`,
+      }
+    }
+    /*
+     * 'inform' and 'order' both proceed. The offer to raise a part request is
+     * the SCREEN's job — it already knows the outstanding quantities and has the
+     * button — because an action that quietly created a purchase request as a
+     * side effect of issuing stock would be doing something nobody asked for.
+     */
   }
 
   const jobLabel = job.document_number ? String(job.document_number) : `#${jobId}`
@@ -433,6 +509,46 @@ export async function returnParts(
       }
     }
     planned.push({ part, qty })
+  }
+
+  /*
+   * ── What the van PHYSICALLY holds, which issued_qty does not answer ───────
+   *
+   * The check above asks the job's own figure. Since a part fitted off a van is
+   * billed off that van (see salesPosting), the two can legitimately differ:
+   * a line issued four and invoiced two has `issued_qty` of four — invoicing
+   * does not decrement it, because that column tracks what left the shelf for
+   * the technician — while the bakkie holds two.
+   *
+   * Asking for four back then passes the job-side check and is refused by
+   * postTransfer with "JCP123 has only 2 in JCT bakkie — cannot move 4". Correct,
+   * and from the wrong layer: the message names a product code and a location
+   * where the person is looking at a job line, and it arrives after the caller
+   * believed the request was valid.
+   *
+   * So the pile is checked here too, and the refusal names the line. postTransfer
+   * keeps the last word — this is a better message, never a substitute for the
+   * invariant.
+   */
+  const onVan = await siteQuery<Row>(
+    siteId,
+    `SELECT product_id, stock_on_hand
+       FROM product_location_stock
+      WHERE location_id = ? AND product_id IN (${planned.map(() => '?').join(',')})`,
+    [vanLocationId, ...planned.map((p) => p.part.productId)],
+  ).catch(() => [])
+
+  const heldBy = new Map(onVan.map((r) => [Number(r.product_id), toNum(r.stock_on_hand)]))
+  for (const { part, qty } of planned) {
+    const held = heldBy.get(part.productId as number) ?? 0
+    if (qty > held) {
+      return {
+        ok: false,
+        error:
+          `${part.description}: only ${held} of the ${part.issuedQty} issued ${held === 1 ? 'is' : 'are'} still on the van` +
+          (part.invoicedQty > 0 ? ` — ${part.invoicedQty} ${part.invoicedQty === 1 ? 'was' : 'were'} fitted and invoiced.` : '.'),
+      }
+    }
   }
 
   const toRow = await siteQueryOne<Row>(

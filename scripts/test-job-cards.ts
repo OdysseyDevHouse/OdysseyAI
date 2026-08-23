@@ -2890,6 +2890,154 @@ async function main() {
       )
     }
 
+    /* ══ (J39) The four things a shop can ask for when stock is short ════
+     *
+     * §26.7. Before this, the job screen informed and postTransfer refused —
+     * two of the four, neither configurable.
+     *
+     * Every mode is restored at the end of the block: leaving a site on
+     * 'prevent' would refuse real work with nothing on screen explaining why,
+     * which is the worst kind of litter this suite can leave.
+     */
+    {
+      const warnWas = await getSetting(SITE, 'job_stock_warn_mode').catch(() => 'inform')
+
+      /*
+       * A SCARCE product, not the fixture's thermostat.
+       *
+       * The shortage has to be the only thing under test. The thermostat has 36
+       * on the shelf and a line needing 6, so no quantity is both within what
+       * the job needs and beyond what the shop has — the outstanding check would
+       * fire first and this block would be testing that instead.
+       *
+       * So: a product with two on the shelf and a job line wanting five.
+       */
+      const scarceRow = await siteExecute(
+        SITE,
+        `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)
+         VALUES (?,?,'normal',2,50,50,?,1)`,
+        [`JCW${stamp}`, 'JCT scarce gasket', vatRate?.id ?? null],
+      )
+      const scarce = scarceRow.insertId
+      await siteExecute(
+        SITE,
+        `INSERT INTO product_location_stock (product_id, location_id, stock_on_hand) VALUES (?,?,2)`,
+        [scarce, mainId],
+      )
+      const beforeLines = await jobParts(SITE, pJob)
+      const scarceSaved = await saveLines(
+        SITE,
+        actor,
+        pJob,
+        [
+          ...beforeLines.map((p) => ({
+            id: p.lineId, lineKind: 'part' as const, billingState: p.billingState as never,
+            productId: p.productId, productCode: p.productCode, description: p.description,
+            qty: p.qty, unitCostExcl: 60, unitPriceIncl: 138, vatRatePct: 15, discountPct: 0,
+            note: null, supplierId: null, expenseCategoryId: null,
+          })),
+          {
+            id: null, lineKind: 'part' as const, billingState: 'quoted' as never,
+            productId: scarce, productCode: `JCW${stamp}`, description: 'JCT scarce gasket',
+            qty: 5, unitCostExcl: 50, unitPriceIncl: 115, vatRatePct: 15, discountPct: 0,
+            note: null, supplierId: null, expenseCategoryId: null,
+          },
+        ],
+        MONEY_FROM_TRUSTED_CALLER,
+      )
+      ok('(J39) a scarce part goes on the job', scarceSaved.ok, scarceSaved.ok ? '' : scarceSaved.error)
+
+      const wLine = (await jobParts(SITE, pJob)).find((p) => p.productId === scarce)!
+      const tooMany = 5
+
+      ok(
+        '(J39) the fixture can actually ask for more than the shelf holds',
+        tooMany > wLine.mainOnHand && tooMany <= wLine.outstandingQty,
+        `wants ${tooMany}, shelf ${wLine.mainOnHand}, outstanding ${wLine.outstandingQty}`,
+      )
+
+      await setSetting(SITE, 'job_stock_warn_mode', 'prevent')
+      const prevented = await issueParts(SITE, actor, pJob, van.id, [
+        { jobCardLineId: wLine.lineId, productId: scarce, qty: tooMany },
+      ])
+      ok(
+        '(J39) *** prevent refuses, and names the job line rather than a product code ***',
+        !prevented.ok && prevented.error.includes(wLine.description),
+        prevented.ok ? 'ACCEPTED' : prevented.error,
+      )
+      ok(
+        '(J39) and an acknowledgement is NOT permission',
+        !(await issueParts(SITE, actor, pJob, van.id, [
+          { jobCardLineId: wLine.lineId, productId: scarce, qty: tooMany },
+        ], { acknowledged: true })).ok,
+      )
+
+      await setSetting(SITE, 'job_stock_warn_mode', 'confirm')
+      const unconfirmed = await issueParts(SITE, actor, pJob, van.id, [
+        { jobCardLineId: wLine.lineId, productId: scarce, qty: tooMany },
+      ])
+      ok(
+        '(J39) *** confirm refuses ONCE, and says it can be got past ***',
+        !unconfirmed.ok && unconfirmed.needsConfirmation === true,
+        unconfirmed.ok ? 'ACCEPTED' : unconfirmed.error,
+      )
+
+      /*
+       * Acknowledged, it proceeds as far as postTransfer — which then refuses on
+       * the pile itself. That IS the design: the mode is the shop's policy about
+       * a shortage, and the invariant is not negotiable by policy.
+       */
+      const acknowledged = await issueParts(SITE, actor, pJob, van.id, [
+        { jobCardLineId: wLine.lineId, productId: scarce, qty: tooMany },
+      ], { acknowledged: true })
+      ok(
+        '(J39) *** but agreeing does not conjure stock — the pile still refuses ***',
+        !acknowledged.ok && acknowledged.needsConfirmation !== true,
+        acknowledged.ok ? 'ACCEPTED' : acknowledged.error,
+      )
+
+      await setSetting(SITE, 'job_stock_warn_mode', 'inform')
+      const informed = await issueParts(SITE, actor, pJob, van.id, [
+        { jobCardLineId: wLine.lineId, productId: scarce, qty: tooMany },
+      ])
+      ok(
+        '(J39) inform does not stop it either — the pile does, as it always did',
+        !informed.ok && informed.needsConfirmation !== true,
+        informed.ok ? 'ACCEPTED' : informed.error,
+      )
+
+      // And a request WITHIN the shelf is untouched by any of it.
+      const fine = await issueParts(SITE, actor, pJob, van.id, [
+        { jobCardLineId: wLine.lineId, productId: scarce, qty: 1 },
+      ])
+      ok('(J39) a request the shelf can cover is unaffected', fine.ok, fine.ok ? '' : fine.error)
+      if (fine.ok) {
+        await returnParts(SITE, actor, pJob, van.id, [
+          { jobCardLineId: wLine.lineId, productId: scarce, qty: 1 },
+        ])
+      }
+
+      await setSetting(SITE, 'job_stock_warn_mode', warnWas)
+      ok(
+        '(J39) the warn mode was put back as it was',
+        (await getSetting(SITE, 'job_stock_warn_mode')) === warnWas,
+        warnWas,
+      )
+
+      /*
+       * The scarce part goes with the block that made it. Its job line first —
+       * a product with a job_card_lines row pointing at it cannot be deleted —
+       * then the pile, then the product.
+       */
+      await siteExecute(SITE, `DELETE FROM job_card_lines WHERE product_id = ?`, [scarce])
+      // The issue-and-return above left two transfer lines, and stock_transfer_lines
+      // has its own FK onto products. Missing this fails the delete, loudly.
+      await siteExecute(SITE, `DELETE FROM stock_transfer_lines WHERE product_id = ?`, [scarce])
+      await siteExecute(SITE, `DELETE FROM product_location_stock WHERE product_id = ?`, [scarce])
+      await siteExecute(SITE, `DELETE FROM stock_movements WHERE product_id = ?`, [scarce])
+      await siteExecute(SITE, `DELETE FROM products WHERE id = ?`, [scarce])
+    }
+
     // ── Drift ───────────────────────────────────────────────────────────
     const cleanDrift = await reconcileJobParts(SITE)
     ok(
@@ -6308,6 +6456,35 @@ async function main() {
       reason: 'Customer waiting',
     })
     ok('(J32) a technician can ask for a part', asked.ok, asked.ok ? '' : asked.error)
+
+    /* ══ (J38) Awaiting Parts moves by itself, and comes back out ═════════
+     *
+     * The status has been seeded since 104, counted on the dashboard and shown
+     * on every board — and until now nothing set it. A stage a business can see,
+     * filter by and report on, that no code path can put a job into, reads as a
+     * feature that quietly does not work.
+     *
+     * Coming OUT is the half that matters most. A status a job enters by itself
+     * and can only leave by hand is a trap: a dispatcher who finds forty jobs
+     * stuck there switches the feature off rather than clearing them one by one.
+     */
+    const partsStatus = await siteQueryOne<any>(
+      SITE,
+      `SELECT id, name FROM job_statuses WHERE code = 'parts' AND is_active = 1`,
+      [],
+    )
+    const statusOf = async (id: number) =>
+      Number((await siteQueryOne<any>(SITE, 'SELECT status_id FROM job_cards WHERE id=?', [id]))?.status_id)
+
+    if (partsStatus) {
+      ok(
+        '(J38) *** asking for a part puts the job into Awaiting Parts ***',
+        (await statusOf(prJobId)) === Number(partsStatus.id),
+        `status ${await statusOf(prJobId)}, expected ${Number(partsStatus.id)}`,
+      )
+    } else {
+      ok('(J38) SKIPPED — this site has no Awaiting Parts status', true)
+    }
     if (!asked.ok) throw new Error('part request fixture failed')
     const reqId = asked.id
 
@@ -6381,7 +6558,7 @@ async function main() {
      * flipped to "arrived" the moment it was ordered would tell a technician
      * their part was in when it was still on a lorry.
      */
-    await markReceivedForDocument(SITE, poId)
+    await markReceivedForDocument(SITE, actor, poId)
     ok(
       '(J32) *** nothing received yet, so nothing is claimed ***',
       (await requestsForJob(SITE, prJobId))[0]?.status === 'ordered',
@@ -6390,11 +6567,47 @@ async function main() {
     await siteExecute(SITE, `UPDATE purchase_document_lines SET qty_received = 4 WHERE id = ?`, [
       plId,
     ])
-    await markReceivedForDocument(SITE, poId)
+    await markReceivedForDocument(SITE, actor, poId)
     ok(
       '(J32) once the goods arrive, the request says so',
       (await requestsForJob(SITE, prJobId))[0]?.status === 'received',
     )
+
+    if (partsStatus) {
+      ok(
+        '(J38) *** and the job comes back OUT of Awaiting Parts by itself ***',
+        (await statusOf(prJobId)) !== Number(partsStatus.id),
+        `status ${await statusOf(prJobId)}, which must not be ${Number(partsStatus.id)}`,
+      )
+      /*
+       * Not vacuous: the job left because nothing is outstanding. Put it back
+       * into the stage with a second unsettled request and it must STAY, or the
+       * clear-out is firing on any receipt rather than on a settled job.
+       */
+      const second = await requestPart(SITE, actor, {
+        jobCardId: prJobId,
+        description: `JCT${stamp} second part`,
+        qty: 1,
+        reason: null,
+      })
+      ok('(J38) a second request puts it back', second.ok && (await statusOf(prJobId)) === Number(partsStatus.id))
+
+      await markReceivedForDocument(SITE, actor, poId)
+      ok(
+        '(J38) *** and a receipt that settles NOTHING leaves it there ***',
+        (await statusOf(prJobId)) === Number(partsStatus.id),
+        `status ${await statusOf(prJobId)}`,
+      )
+
+      // Declining the outstanding one settles the wait: the buyer has decided it
+      // is not coming, so the job is no longer waiting for it.
+      if (second.ok) await decideRequest(SITE, actor, second.id, 'cancelled', 'Not available.')
+      ok(
+        '(J38) *** declining the last one settles it too ***',
+        (await statusOf(prJobId)) !== Number(partsStatus.id),
+        `status ${await statusOf(prJobId)}`,
+      )
+    }
 
     /*
      * The CLAIM is stamped before the bell, so running the tail twice cannot
@@ -6406,7 +6619,7 @@ async function main() {
       `SELECT COUNT(*) AS n FROM notifications WHERE event = 'job_part_received' AND title LIKE ?`,
       [`%${stamp}%`],
     )
-    await markReceivedForDocument(SITE, poId)
+    await markReceivedForDocument(SITE, actor, poId)
     const afterSecond = await siteQuery<{ n: number }>(
       SITE,
       `SELECT COUNT(*) AS n FROM notifications WHERE event = 'job_part_received' AND title LIKE ?`,
