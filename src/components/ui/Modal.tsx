@@ -146,7 +146,10 @@ export function Modal({
         if (closeOnBackdrop && event.target === ref.current) onClose()
       }}
     >
-      <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+      {/* `shrink-0` throughout the chrome: the panel is a flex column now, so
+          without it a tall body squeezes the header and footer instead of
+          being capped by them. */}
+      <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-5 py-4">
         <div className="flex min-w-0 items-center gap-3">
           {titleMedia}
           <div className="min-w-0">
@@ -160,7 +163,7 @@ export function Modal({
       </div>
 
       {subheader && (
-        <div className="border-b border-border bg-surface-2 px-5 py-3">{subheader}</div>
+        <div className="shrink-0 border-b border-border bg-surface-2 px-5 py-3">{subheader}</div>
       )}
 
       {/*
@@ -193,8 +196,26 @@ export function Modal({
               : bodyFills
                 ? /* The body owns the height and its children do the scrolling. `min-h-0`
                      because a flex child will not shrink below its content without it —
-                     the panes would grow past the panel instead of overflowing. */
-                  `flex min-h-0 flex-col ${bodyTall ? 'h-[82vh]' : 'h-[70vh]'}`
+                     the panes would grow past the panel instead of overflowing.
+
+                     `flex-1` and NOT a fixed `h-[82vh]`: the panel is a bounded
+                     flex column, so the body takes exactly what the header and
+                     footer leave. Sized as a fraction of the VIEWPORT it did
+                     not — 82vh plus ~9rem of chrome overflows the panel's own
+                     ceiling, and the panel grew a second scrollbar beside the
+                     pane that was already scrolling. That is the cash-up's two
+                     scrollbars.
+
+                     The vh figure survives as the flex BASIS, not a min-height:
+                     this mode is for a dialog that is a workspace, and one with
+                     little in it should still open at a workspace's size rather
+                     than collapsing to a strip. A basis is the size the body
+                     ASKS for — it still shrinks to whatever the panel's ceiling
+                     leaves, where a min-height would win against that ceiling
+                     and put the second scrollbar straight back on a short
+                     screen. `min-h-0` for the same reason it was always here:
+                     the panes overflow inside themselves instead of growing. */
+                  `flex min-h-0 flex-col ${bodyTall ? 'basis-[82vh]' : 'basis-[70vh]'} grow shrink`
                 : /* `bodyGrows` swaps the default ceiling for one that reserves
                      the header, the footer and the panel's own margin, and
                      nothing more — so the body ends where the WINDOW does
@@ -222,7 +243,7 @@ export function Modal({
         width, which is the property that matters on a small till.
       */}
       {footer && (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-3.5">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-3.5">
           {footer}
         </div>
       )}

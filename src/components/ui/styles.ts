@@ -248,10 +248,30 @@ export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full'
  * every unaligned label inside the dialog silently came out right-aligned. The
  * panel has to state its own alignment so its contents never depend on the
  * markup that happened to open it.
+ *
+ * `open:flex flex-col` + `overflow-hidden`: the PANEL itself must never scroll.
+ * A dialog whose body scrolls its own children instead of scrolling as one
+ * piece — the till's cash-up, with a pinned numpad and three panes — otherwise
+ * ends up with TWO scrollbars: the inner pane's, and the panel's own, because
+ * the UA caps a <dialog> at `calc(100% - 2em)` and header + body + footer
+ * outgrow it. Laying the panel out as a column lets the body take what is
+ * actually left after the header and footer rather than guessing at a fraction
+ * of the viewport, and clips anything that still would not fit.
+ *
+ * `open:flex` and NEVER a bare `flex`. A <dialog> is hidden by exactly one UA
+ * rule — `dialog:not([open]) { display: none }` — so an unconditional
+ * `display: flex` overrides it and every CLOSED dialog in the app paints where
+ * it stands. That shipped for real: eight stacked bulk-action dialogs on the
+ * customers list, on landing. The layout is only ever needed while the dialog
+ * is open, so it is scoped to `[open]` and a closed one keeps the UA's
+ * `display: none`.
+ *
+ * The max-height restates the UA's own ceiling in `dvh`, so a phone's
+ * disappearing browser chrome cannot push the footer under the address bar.
  */
 export const MODAL_PANEL =
-  'm-auto w-[calc(100vw-2rem)] rounded-card border border-border bg-surface p-0 text-left text-ink shadow-pop ' +
-  'backdrop:bg-ink/40'
+  'm-auto open:flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-card ' +
+  'border border-border bg-surface p-0 text-left text-ink shadow-pop backdrop:bg-ink/40'
 
 export const MODAL_SIZE: Record<ModalSize, string> = {
   sm: 'max-w-md',
