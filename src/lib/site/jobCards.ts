@@ -1357,15 +1357,58 @@ export async function assignOwner(
  * evidence of something a customer was charged for, and removing one would leave
  * the invoice referring to nothing.
  */
+/**
+ * Which money fields the caller is allowed to write (§26.6).
+ *
+ * Passed in rather than read here, because this module has no session: the
+ * action resolves the capability set at the boundary and hands down the answer,
+ * exactly as it already does for `actor`.
+ *
+ * ── WHY THIS PARAMETER IS REQUIRED AND NOT DEFAULTED ───────────────────────
+ *
+ * It was written with a default of "may write nothing", on the reasoning that a
+ * forgetful call site should fail closed. That default is worse than no default:
+ * failing closed here does not refuse the save, it SILENTLY WRITES ZERO over
+ * every cost and price on the job, because the safe value for a field you may
+ * not set is the stored one and a new line has no stored one.
+ *
+ * A caller that forgets should not compile. Ten call sites in the test suite
+ * proved the point the moment the default existed — every one of them zeroed the
+ * figures it had just written and reported a job that gave away a R4 200 part.
+ * In production the same mistake would be a margin quietly going to zero.
+ *
+ * So: no default. `MONEY_FROM_TRUSTED_CALLER` exists for the callers that are
+ * not a user request at all — a test fixture, a migration, a recurrence template
+ * copying a priced line forward — and it is named to be conspicuous in review.
+ */
+export type MoneyRights = {
+  readonly cost: boolean
+  readonly price: boolean
+  readonly discount: boolean
+}
+
+/**
+ * For callers that are not acting on behalf of a person: fixtures, series
+ * generation, anything copying figures that were already authorised once.
+ *
+ * Never reach for this in a server action. An action has a capability set, and
+ * the whole point of §26.6 is that it is consulted.
+ */
+export const MONEY_FROM_TRUSTED_CALLER: MoneyRights = { cost: true, price: true, discount: true }
+
 export async function saveLines(
   siteId: number,
   actor: Actor,
   jobId: number,
   lines: readonly JobLineInput[],
+  money: MoneyRights,
 ): Promise<JobActionResult> {
   for (const line of lines) {
     if (!line.description.trim()) return { ok: false, error: 'Every line needs a description.' }
     if (line.qty < 0) return { ok: false, error: 'A quantity cannot be negative.' }
+    if (line.discountPct < 0 || line.discountPct > 100) {
+      return { ok: false, error: 'A discount must be between 0 and 100 per cent.' }
+    }
   }
 
   /*
@@ -1390,9 +1433,51 @@ export async function saveLines(
     if (!jobRows[0]) return { ok: false as const, error: 'That job no longer exists.' }
 
     const [existingRows] = await tx.query<Row[]>(
-      `SELECT id, invoiced_doc_id, invoiced_qty, description FROM job_card_lines WHERE job_card_id = ?`,
+      `SELECT id, invoiced_doc_id, invoiced_qty, description,
+              unit_cost_excl, unit_price_incl, discount_pct
+         FROM job_card_lines WHERE job_card_id = ?`,
       [jobId],
     )
+
+    /*
+     * ── The money the caller may not write ─────────────────────────────────
+     *
+     * PRD §39.2: "Server-side authorisation is required. Hiding a field or
+     * button in the interface is not sufficient protection." The line editor
+     * already omits the cost and price inputs for somebody without the right,
+     * but the action takes a JSON payload, and a payload can say anything.
+     *
+     * So each money field is resolved here, from the STORED row rather than the
+     * request, whenever the caller lacks the matching right. Rejecting the save
+     * instead would be worse: a technician legitimately editing a description on
+     * a priced line would be told to go away because the form round-tripped a
+     * figure they were never shown and cannot change.
+     *
+     * A NEW line has no stored row to fall back to, so it takes zero. That is
+     * the honest answer — a technician may record that a part was fitted, and
+     * somebody with the right prices it afterwards. It also means an unpriced
+     * line reads as unpriced rather than as free, which the billing states and
+     * the "costs nobody has decided about" report already know how to surface.
+     */
+    const storedMoney = new Map(
+      existingRows.map((r) => [
+        Number(r.id),
+        {
+          cost: toNum(r.unit_cost_excl),
+          price: toNum(r.unit_price_incl),
+          discount: toNum(r.discount_pct),
+        },
+      ]),
+    )
+
+    const moneyFor = (line: JobLineInput) => {
+      const stored = line.id === null ? null : storedMoney.get(line.id)
+      return {
+        cost: money.cost ? line.unitCostExcl : (stored?.cost ?? 0),
+        price: money.price ? line.unitPriceIncl : (stored?.price ?? 0),
+        discount: money.discount ? line.discountPct : (stored?.discount ?? 0),
+      }
+    }
 
     const keptIds = new Set(lines.map((l) => l.id).filter((id): id is number => id !== null))
 
@@ -1410,6 +1495,7 @@ export async function saveLines(
 
     let lineNumber = 1
     for (const line of lines) {
+      const cash = moneyFor(line)
       if (line.id === null) {
         await tx.execute(
           `INSERT INTO job_card_lines
@@ -1428,10 +1514,10 @@ export async function saveLines(
             categoryFor(line),
             line.description.trim(),
             line.qty,
-            line.unitCostExcl,
-            line.unitPriceIncl,
+            cash.cost,
+            cash.price,
             line.vatRatePct,
-            line.discountPct,
+            cash.discount,
             text(line.note),
           ],
         )
@@ -1458,10 +1544,10 @@ export async function saveLines(
             categoryFor(line),
             line.description.trim(),
             line.qty,
-            line.unitCostExcl,
-            line.unitPriceIncl,
+            cash.cost,
+            cash.price,
             line.vatRatePct,
-            line.discountPct,
+            cash.discount,
             text(line.note),
             line.id,
             jobId,

@@ -133,8 +133,21 @@ export default async function JobPage({
    * technician who must see what was fitted should not thereby learn the margin.
    * The figures are not fetched-and-hidden, they are not fetched — a client
    * component receives what it is allowed to render and nothing more.
+   *
+   * Since the §26.6 split these are FOUR questions, not one. Cost, selling price
+   * and profit were previously all gated by `jobs.cost`, which meant a shop that
+   * wanted a technician to see what the customer is paying had to show them the
+   * margin as well. A counter assistant reading a price off a job to answer the
+   * phone is the ordinary case, and it should not require handing over the
+   * buying price of every part.
+   *
+   * `showMoney` is the union: whether the costs tab is worth rendering at all.
    */
   const showCost = can(capabilities, 'jobs.cost')
+  const showPrice = can(capabilities, 'jobs.price')
+  const showMargin = can(capabilities, 'jobs.margin')
+  const showProfit = can(capabilities, 'jobs.profit')
+  const showMoney = showCost || showPrice || showMargin || showProfit
 
   const [
     statuses,
@@ -622,8 +635,17 @@ export default async function JobPage({
                 assign: can(capabilities, 'jobs.assign'),
                 close: can(capabilities, 'jobs.close'),
                 invoice: can(capabilities, 'jobs.invoice'),
+                invoiceSelect: can(capabilities, 'jobs.invoice_select'),
+                quoteAmend: can(capabilities, 'jobs.quote_amend'),
                 decide: can(capabilities, 'jobs.bill_decide'),
                 cost: showCost,
+                costEdit: can(capabilities, 'jobs.cost_edit'),
+                price: showPrice,
+                priceEdit: can(capabilities, 'jobs.price_edit'),
+                discount: can(capabilities, 'jobs.discount'),
+                margin: showMargin,
+                profit: showProfit,
+                money: showMoney,
               }}
             />
           </>

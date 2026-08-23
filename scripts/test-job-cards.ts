@@ -95,6 +95,7 @@ import {
   setStatus,
   assignOwner,
   saveLines,
+  MONEY_FROM_TRUSTED_CALLER,
   reclassifyLine,
   closeJob,
   bulkUpdateJobs,
@@ -888,7 +889,7 @@ async function main() {
       supplierId: null,
       expenseCategoryId: null,
     },
-  ])
+  ], MONEY_FROM_TRUSTED_CALLER)
   ok('lines are saved', saved.ok, JSON.stringify(saved))
   ok('three lines are on the job', (await jobLineCount(jobId)) === 3)
 
@@ -903,6 +904,88 @@ async function main() {
     withLines?.totals.profit === null && withLines?.totals.invoiced === 0,
   )
   ok('two lines await a decision', withLines?.totals.pendingCount === 2)
+
+  /* ── 6b. The money rights, enforced on the SERVER (J34, §26.6) ──────────
+   *
+   * The line editor hides the cost and price inputs from somebody without the
+   * right, but the action takes a JSON payload and a payload can say anything.
+   * PRD §39.2 is explicit that hiding a field is not protection, so the check
+   * that matters is this one: hand saveLines a caller who may not touch money
+   * and a payload that tries to, and the stored figures must not move.
+   *
+   * Note what is asserted about the REST of the line: the description does
+   * change. Refusing the whole save would be the wrong answer — a technician
+   * correcting a typo on a priced line must not be turned away because the form
+   * round-tripped a figure they were never shown. */
+  const guardLine = withLines!.lines.find((l) => l.description === 'JCT capacitor')!
+  const asLineInput = (l: typeof guardLine) => ({
+    id: l.id,
+    lineKind: l.lineKind,
+    billingState: l.billingState,
+    productId: l.productId,
+    productCode: l.productCode,
+    description: l.description,
+    qty: l.qty,
+    unitCostExcl: l.unitCostExcl,
+    unitPriceIncl: l.unitPriceIncl,
+    vatRatePct: l.vatRatePct,
+    discountPct: l.discountPct,
+    note: l.note,
+    supplierId: l.supplierId,
+    expenseCategoryId: l.expenseCategoryId,
+  })
+
+  const tamper = await saveLines(
+    SITE,
+    actor,
+    jobId,
+    withLines!.lines.map((l) =>
+      l.id === guardLine.id
+        ? { ...asLineInput(l), description: 'JCT capacitor (fixed typo)', unitCostExcl: 1, unitPriceIncl: 9999, discountPct: 90 }
+        : asLineInput(l),
+    ),
+    { cost: false, price: false, discount: false },
+  )
+  ok('(J34) the save itself is allowed — only the money is refused', tamper.ok, JSON.stringify(tamper))
+
+  const afterTamper = await getJobCard(SITE, jobId)
+  const tampered = afterTamper!.lines.find((l) => l.id === guardLine.id)!
+  ok(
+    '(J34) *** a caller without jobs.cost_edit cannot rewrite the cost ***',
+    tampered.unitCostExcl === 100,
+    String(tampered.unitCostExcl),
+  )
+  ok(
+    '(J34) *** nor the selling price, without jobs.price_edit ***',
+    tampered.unitPriceIncl === 230,
+    String(tampered.unitPriceIncl),
+  )
+  ok(
+    '(J34) *** nor discount itself to 90%, without jobs.discount ***',
+    tampered.discountPct === 0,
+    String(tampered.discountPct),
+  )
+  ok(
+    '(J34) but the description they WERE allowed to change did change',
+    tampered.description === 'JCT capacitor (fixed typo)',
+    tampered.description,
+  )
+  ok(
+    '(J34) *** so the job total is untouched by the attempt ***',
+    afterTamper?.totals.cost === 2 * 100 + 3 * 150 + 4200,
+    String(afterTamper?.totals.cost),
+  )
+
+  // Put the description back, so the assertions below still find the line.
+  await saveLines(
+    SITE,
+    actor,
+    jobId,
+    afterTamper!.lines.map((l) =>
+      l.id === guardLine.id ? { ...asLineInput(l), description: 'JCT capacitor' } : asLineInput(l),
+    ),
+    MONEY_FROM_TRUSTED_CALLER,
+  )
 
   // ── 7. A closed job may not hide an undecided cost ─────────────────────
   const earlyClose = await closeJob(SITE, actor, jobId)
@@ -1308,7 +1391,7 @@ async function main() {
       supplierId: null,
       expenseCategoryId: null,
     },
-  ])
+  ], MONEY_FROM_TRUSTED_CALLER)
 
   const qLines = (await getJobCard(SITE, qJob))!.lines
   const pump = qLines.find((l) => l.description.includes('pump'))!
@@ -1423,7 +1506,7 @@ async function main() {
       supplierId: null,
       expenseCategoryId: null,
     },
-  ])
+  ], MONEY_FROM_TRUSTED_CALLER)
 
   const v2 = await quoteJob(SITE, actor, qJob, {})
   ok('a second version is raised', v2.ok, JSON.stringify(v2))
@@ -1558,7 +1641,7 @@ async function main() {
       supplierId: null,
       expenseCategoryId: null,
     },
-  ])
+  ], MONEY_FROM_TRUSTED_CALLER)
 
   const varAfter = await quoteVariance(SITE, qJob)
   ok(
@@ -2383,7 +2466,7 @@ async function main() {
   ok('search finds this suite\'s jobs', all.length >= 2, String(all.length))
 
   // ── 19. An invoiced line is protected ─────────────────────────────────
-  const stripInvoiced = await saveLines(SITE, actor, jobId, [])
+  const stripInvoiced = await saveLines(SITE, actor, jobId, [], MONEY_FROM_TRUSTED_CALLER)
   ok(
     'an invoiced line cannot be removed by saving an empty list',
     !stripInvoiced.ok,
@@ -2558,7 +2641,7 @@ async function main() {
         supplierId: null,
         expenseCategoryId: null,
       },
-    ])
+    ], MONEY_FROM_TRUSTED_CALLER)
     ok('(J13) a part line with a real product saves', pLines.ok, pLines.ok ? '' : pLines.error)
 
     const beforePart = await jobParts(SITE, pJob)
@@ -2743,7 +2826,7 @@ async function main() {
       { id: null, lineKind: 'part', billingState: 'quoted', productId: serialPart,
         productCode: `JCS${stamp}`, description: 'JCT compressor', qty: 1, unitCostExcl: 900,
         unitPriceIncl: 2070, vatRatePct: 15, discountPct: 0, note: null, supplierId: null, expenseCategoryId: null },
-    ])
+    ], MONEY_FROM_TRUSTED_CALLER)
     ok('(J13) a serial-tracked part can be ON a job', withSerial.ok, withSerial.ok ? '' : withSerial.error)
 
     const serialLine = (await jobParts(SITE, pJob)).find((p) => p.productId === serialPart)
@@ -5649,7 +5732,7 @@ async function main() {
         description: 'JCT supervision', qty: 2, unitCostExcl: 300, unitPriceIncl: 690,
         supplierId, expenseCategoryId: categoryId,
       },
-    ])
+    ], MONEY_FROM_TRUSTED_CALLER)
     ok('(J30) an expense line saves', savedExp.ok, savedExp.ok ? '' : savedExp.error)
 
     const withExp = await getJobCard(SITE, eJobId)
@@ -5686,7 +5769,7 @@ async function main() {
         description: 'JCT subcontractor invoice', unitCostExcl: 4000, unitPriceIncl: 5750,
         supplierId, expenseCategoryId: categoryId,
       },
-    ])
+    ], MONEY_FROM_TRUSTED_CALLER)
     ok('(J30) the line changes kind', switched.ok, switched.ok ? '' : switched.error)
     const afterSwitch = await getJobCard(SITE, eJobId)
     ok(
@@ -5706,7 +5789,7 @@ async function main() {
         description: 'JCT disposal fee', unitCostExcl: 250, unitPriceIncl: 0,
         supplierId: null, expenseCategoryId: null,
       },
-    ])
+    ], MONEY_FROM_TRUSTED_CALLER)
     const costed = await getJobCard(SITE, eJobId)
     ok(
       '(J30) *** an expense counts in cost — (J2) holds for the new kind ***',

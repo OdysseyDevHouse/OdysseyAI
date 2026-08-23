@@ -113,10 +113,22 @@ function toDraft(line: JobCardLine): Draft {
  *
  * ── WHAT MONEY IS SHOWN, AND TO WHOM ───────────────────────────────────────
  *
- * The cost and price columns render only with `can.cost`. This is not a hidden
- * div: the server did not send the figures. The PRD requires a technician to be
- * able to record what they used without seeing what it cost or what it sells for,
- * and the only way to honour that is to not have the numbers in the page.
+ * The cost column renders only with `can.cost`, and the price column only with
+ * `can.price`. This is not a hidden div: the server did not send the figures.
+ * The PRD requires a technician to be able to record what they used without
+ * seeing what it cost or what it sells for, and the only way to honour that is
+ * to not have the numbers in the page.
+ *
+ * Cost and price are SEPARATE rights (§26.6), because they answer to different
+ * people. A counter assistant quoting a price down the phone needs one and not
+ * the other; before the split, showing them a price meant showing them the
+ * buying price of every part on the job.
+ *
+ * Editing is a further right again — `costEdit`, `priceEdit`, `discount`. A cell
+ * the caller may see but not change renders disabled rather than absent, so the
+ * figure is still readable. The disabled input still round-trips its value in
+ * the form payload, which is exactly why saveLines re-resolves every money field
+ * from the stored row and never trusts what arrives.
  */
 export default function JobDetail({
   job,
@@ -161,8 +173,23 @@ export default function JobDetail({
     assign: boolean
     close: boolean
     invoice: boolean
+    /** Choose WHICH additional items reach the invoice (§26.4). */
+    invoiceSelect: boolean
+    /** Raise a quote, or supersede an accepted one (§5). */
+    quoteAmend: boolean
     decide: boolean
+    /* The money, split view from change (§26.6). A view right never implies its
+       change right, and a change right never implies its view right — somebody
+       may be allowed to set a selling price without being shown the margin. */
     cost: boolean
+    costEdit: boolean
+    price: boolean
+    priceEdit: boolean
+    discount: boolean
+    margin: boolean
+    profit: boolean
+    /** Any of the money rights — whether the costs tab is worth showing. */
+    money: boolean
   }
 }) {
   const router = useRouter()
@@ -533,7 +560,7 @@ export default function JobDetail({
                         heading sits over the figures rather than over the "km". */}
                     <th className={`${TABLE_TH} ${TABLE_NUMERIC} pr-10`}>Qty</th>
                     {can.cost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Cost</th>}
-                    {can.cost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Price</th>}
+                    {can.price && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Price</th>}
                     <th className={TABLE_TH}>Who pays</th>
                     <th className={TABLE_TH} />
                   </tr>
@@ -583,21 +610,27 @@ export default function JobDetail({
                             </span>
                           </div>
                         </td>
+                        {/* Seeing a figure and changing it are separate rights
+                            (§26.6), so each cell renders only under its view
+                            right and goes read-only without its change right.
+                            The server re-resolves both from the stored row
+                            regardless — see saveLines. A disabled input still
+                            round-trips its value, and that value is not trusted. */}
                         {can.cost && (
                           <td className={TABLE_TD_INPUT}>
                             <NumberInput
                               value={line.unitCostExcl}
-                              disabled={!editable || pending}
+                              disabled={!editable || !can.costEdit || pending}
                               onChange={(e) => patch(line.key, { unitCostExcl: Number(e.target.value) })}
                               className="numeric w-24 text-right"
                             />
                           </td>
                         )}
-                        {can.cost && (
+                        {can.price && (
                           <td className={TABLE_TD_INPUT}>
                             <NumberInput
                               value={line.unitPriceIncl}
-                              disabled={!editable || pending}
+                              disabled={!editable || !can.priceEdit || pending}
                               onChange={(e) => patch(line.key, { unitPriceIncl: Number(e.target.value) })}
                               className="numeric w-24 text-right"
                             />
@@ -725,8 +758,11 @@ export default function JobDetail({
       </Card>
       )}
 
-      {/* ── The money ─────────────────────────────────────────────────── */}
-      {tab === 'costs' && can.cost && (
+      {/* ── The money ───────────────────────────────────────────────────
+          Gated on the UNION, not on cost alone: this card carries cost, revenue
+          and profit, and each is now its own right. Somebody with only
+          `jobs.profit` still has a reason to open it. */}
+      {tab === 'costs' && can.money && (
         <Card>
           <CardHeader
             title="Cost and revenue"

@@ -4010,6 +4010,11 @@ const JOB_LINES_SOURCE: CatalogSource = {
       type: 'currency',
       expr: '(t.qty * t.unit_price_incl)',
       numeric: true,
+      /* Gated since the §26.6 split. A selling price is commercial information,
+         and before a key existed for it these three fields were readable by
+         anyone with reports.view — which is how a margin leaks out of a report
+         that never names one. */
+      permission: 'jobs.price',
       group: FIELD_GROUPS.MONEY,
       hint: 'What was meant to be charged. The invoice is what the customer actually owes.',
     },
@@ -4020,6 +4025,7 @@ const JOB_LINES_SOURCE: CatalogSource = {
       expr: 't.unit_price_incl',
       numeric: true,
       noTotal: true,
+      permission: 'jobs.price',
       group: FIELD_GROUPS.MONEY,
     },
     {
@@ -4031,6 +4037,7 @@ const JOB_LINES_SOURCE: CatalogSource = {
       type: 'currency',
       expr: '(t.qty * t.unit_price_incl / NULLIF(1 + t.vat_rate_pct / 100, 0))',
       numeric: true,
+      permission: 'jobs.price',
       group: FIELD_GROUPS.MONEY,
       hint: 'The ex-VAT equivalent, so it lines up against cost.',
     },
@@ -4049,7 +4056,10 @@ const JOB_LINES_SOURCE: CatalogSource = {
         '((t.qty * t.unit_price_incl / NULLIF(1 + t.vat_rate_pct / 100, 0)) ' +
         '- (t.qty * t.unit_cost_excl))',
       numeric: true,
-      permission: 'jobs.cost',
+      /* `jobs.profit`, not `jobs.cost`: this field derives from BOTH sides, so
+         gating it on cost alone would hand the margin to somebody granted only
+         the buying price — the leak the §26.6 split exists to close. */
+      permission: 'jobs.profit',
       group: FIELD_GROUPS.COST,
       hint: 'Price as intended, less cost. Zero-priced lines (internal, written off) show as a loss, which is the point.',
     },

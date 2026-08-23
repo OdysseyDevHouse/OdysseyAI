@@ -247,7 +247,48 @@ export const CAPABILITY_GROUPS = [
          does not. Split out because the PRD requires a technician to be able to
          record usage without seeing or setting any commercial value. */
       { key: 'jobs.bill_decide', label: 'Decide who pays', hint: 'Classify a cost as billable, internal or written off.' },
-      { key: 'jobs.cost', label: 'See job cost and profit', hint: 'What a job cost to do, and what was made on it.' },
+
+      /* ── The money, split view from change ───────────────────────────────
+       *
+       * PRD §26.6 asks for eight independently controlled financial rights, and
+       * the shape it asks for is not "eight more switches" — it is that SEEING a
+       * figure and CHANGING it are different questions. A workshop supervisor
+       * checking whether a job made money is not thereby the person who decides
+       * what the customer is charged for it.
+       *
+       * Before this split there were three keys and all of them were view-side
+       * or decide-side. Changing a cost or a price rode `jobs.edit`, which is
+       * the right to log work — so every technician who could record a part
+       * fitted could also rewrite what it cost and what it sells for, and no
+       * permission existed to say otherwise.
+       *
+       * Two of the pairs below are deliberately asymmetric. `jobs.profit` has
+       * no change side because profit is derived and nobody sets it; markup and
+       * margin likewise compute from cost and price, so the pair guards seeing
+       * the analysis, not editing a stored number.
+       *
+       * The rule the split exists to protect is the one already enforced in
+       * jobs/[id]/page.tsx: a figure somebody may not see is NOT FETCHED, not
+       * merely hidden. A change key never implies its view key — granting the
+       * right to set a price without the right to read the margin on it is a
+       * legitimate configuration, and the screens must hold that shape. */
+      { key: 'jobs.cost', label: 'See cost prices', hint: 'What the parts, labour and travel on a job cost the business.' },
+      { key: 'jobs.cost_edit', label: 'Change cost prices', hint: 'Correct what a part or an hour is recorded as having cost.' },
+      { key: 'jobs.price', label: 'See selling prices', hint: 'What each line on a job is being charged at.' },
+      { key: 'jobs.price_edit', label: 'Change selling prices', hint: 'Set what the customer is charged for a line.' },
+      { key: 'jobs.discount', label: 'Apply a discount', hint: 'Reduce a line below its selling price.' },
+      { key: 'jobs.margin', label: 'See markup and margin', hint: 'The percentages between cost and selling price.' },
+      { key: 'jobs.profit', label: 'See job profit', hint: 'What a job made overall, and the variance against the quote.' },
+      /* Separate from jobs.invoice, which is the right to RAISE the invoice.
+         This is the right to decide what goes ON it — which additional items are
+         billed and which are left in the job's cost. PRD §26.4 makes that a
+         review step with its own authority. */
+      { key: 'jobs.invoice_select', label: 'Choose what gets invoiced', hint: 'Pick which additional items appear on the final invoice.' },
+      /* Separate from invoice, per PRD §5: amending an accepted quote creates a
+         new version and voids the customer's acceptance. That is a commercial
+         act with a different blast radius from billing what was already agreed. */
+      { key: 'jobs.quote_amend', label: 'Raise and amend quotes', hint: 'Quote a job, and supersede an accepted quote with a new version.' },
+
       { key: 'jobs.setup', label: 'Configure the workflow', hint: 'Statuses, boards and the job settings.' },
     ],
   },

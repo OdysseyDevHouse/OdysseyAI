@@ -283,6 +283,17 @@ export async function assignOwnerAction(
   return result
 }
 
+/**
+ * Save the lines on a job.
+ *
+ * `jobs.edit` opens the action — recording what was used is the technician's job
+ * and always was. What changed with the §26.6 split is that the MONEY on those
+ * lines is now three separate rights, resolved here and passed down.
+ *
+ * They are resolved at this boundary rather than inside saveLines because this
+ * is where a session exists. saveLines defaults them all to false, so a call
+ * site that forgets writes no money rather than granting it.
+ */
 export async function saveLinesAction(
   jobId: number,
   lines: JobLineInput[],
@@ -290,7 +301,11 @@ export async function saveLinesAction(
   const ctx = await actorForModule('job_cards', 'jobs.edit')
   if ('ok' in ctx) return ctx
 
-  const result = await saveLines(ctx.siteId, ctx.actor, jobId, lines)
+  const result = await saveLines(ctx.siteId, ctx.actor, jobId, lines, {
+    cost: can(ctx.capabilities, 'jobs.cost_edit'),
+    price: can(ctx.capabilities, 'jobs.price_edit'),
+    discount: can(ctx.capabilities, 'jobs.discount'),
+  })
   if (!result.ok) return result
   revalidateJobs(jobId)
   return result
@@ -355,6 +370,16 @@ export async function reopenJobAction(jobId: number, reason: string): Promise<Jo
  * Raises a DRAFT invoice and revalidates the invoicing list too, because that is
  * where the draft now appears and where a person finalises it through the one
  * posting engine. Nothing here posts anything.
+ *
+ * TWO capabilities, since the §26.6 split. `jobs.invoice` is the right to bill
+ * the job at all; `jobs.invoice_select` is the right to decide WHAT is billed,
+ * which is a separate review step in PRD §26.4 — the person who chooses to leave
+ * a R4,000 part in the job's cost rather than on the customer's invoice is
+ * making a commercial decision, not raising paperwork.
+ *
+ * Both are checked here because `selections` arrives from the client. Without
+ * the second check, the review step would be a screen somebody could skip by
+ * posting a different payload.
  */
 export async function invoiceJobAction(
   jobId: number,
@@ -362,6 +387,10 @@ export async function invoiceJobAction(
 ): Promise<InvoiceJobResult> {
   const ctx = await actorForModule('job_cards', 'jobs.invoice')
   if ('ok' in ctx) return ctx
+
+  if (!can(ctx.capabilities, 'jobs.invoice_select')) {
+    return { ok: false, error: 'You may bill a job, but not choose which items go on the invoice.' }
+  }
 
   const result = await invoiceJob(ctx.siteId, ctx.actor, jobId, selections)
   if (!result.ok) return result
@@ -466,15 +495,20 @@ export async function deleteStatusAction(id: number): Promise<StatusSaveResult> 
 /**
  * Raise a quote from the job's chargeable lines.
  *
- * `jobs.invoice` and not `jobs.edit`: a quote is a commercial offer that goes to
- * a customer, and the person recording what was used is not necessarily the
+ * `jobs.quote_amend` and not `jobs.edit`: a quote is a commercial offer that goes
+ * to a customer, and the person recording what was used is not necessarily the
  * person allowed to put a price in front of them.
+ *
+ * Separate from `jobs.invoice` since the §26.6 split, because the two acts have
+ * different blast radius. Billing charges for work already agreed; re-quoting
+ * supersedes the version the customer accepted and sends them back to Pending
+ * Approval. A shop can now let the office bill without letting it renegotiate.
  */
 export async function quoteJobAction(
   jobId: number,
   options: { validUntil?: string | null; notes?: string | null } = {},
 ): Promise<QuoteJobResult> {
-  const ctx = await actorForModule('job_cards', 'jobs.invoice')
+  const ctx = await actorForModule('job_cards', 'jobs.quote_amend')
   if ('ok' in ctx) return ctx
 
   const result = await quoteJob(ctx.siteId, ctx.actor, jobId, options)
@@ -496,7 +530,7 @@ export async function acceptQuoteAction(
   quoteId: number,
   input: { method: AcceptMethod; acceptedBy: string; reference?: string | null },
 ): Promise<AcceptResult> {
-  const ctx = await actorForModule('job_cards', 'jobs.invoice')
+  const ctx = await actorForModule('job_cards', 'jobs.quote_amend')
   if ('ok' in ctx) return ctx
 
   const result = await acceptQuote(ctx.siteId, ctx.actor, quoteId, input)
@@ -511,7 +545,7 @@ export async function declineQuoteAction(
   quoteId: number,
   reason: string,
 ): Promise<AcceptResult> {
-  const ctx = await actorForModule('job_cards', 'jobs.invoice')
+  const ctx = await actorForModule('job_cards', 'jobs.quote_amend')
   if ('ok' in ctx) return ctx
 
   const result = await declineJobQuote(ctx.siteId, ctx.actor, quoteId, reason)
