@@ -183,6 +183,14 @@ import {
 } from '../src/lib/site/jobSerials'
 import { checkSellable } from '../src/lib/site/serials'
 import {
+  validateAnswer,
+  validateResponse as validateFormResponse,
+  isFieldVisible,
+  parseMultiSelect,
+  type FormField,
+  type FormAnswer,
+} from '../src/lib/jobFormModel'
+import {
   createLocation,
   listLocations,
   listVans,
@@ -5181,6 +5189,124 @@ async function main() {
       '(J35) *** and a zero-length window is no window at all ***',
       quiet('21:00', '21:00', at(21)) === false,
     )
+  }
+
+  /* ══ (J41) What a form counts as answered, and what it asks (§24) ═══════
+   *
+   * Pure, so it runs without a database — and it must, because this is the
+   * function the SCREEN and the ACTION both call. A form that rejected a value
+   * on screen the server would have accepted, or the reverse, is a field with
+   * two definitions of valid.
+   */
+  {
+    const field = (over: Partial<FormField>): FormField => ({
+      id: 1,
+      fieldType: 'short_text',
+      label: 'Field',
+      hint: null,
+      unit: null,
+      recordKind: null,
+      options: [],
+      isRequired: false,
+      minValue: null,
+      maxValue: null,
+      maxLength: null,
+      pattern: null,
+      showIfFieldId: null,
+      showIfValue: null,
+      sortOrder: 0,
+      ...over,
+    })
+    const answers = (list: FormAnswer[]) => new Map(list.map((a) => [a.fieldId, a]))
+
+    /*
+     * The one that catches people out. `false` IS an answer to "is the isolator
+     * locked off" — treating it as blank would make a required checkbox
+     * satisfiable only by ticking it, which is a form that cannot record a No.
+     */
+    const tick = field({ id: 10, fieldType: 'checkbox', label: 'Isolator locked off', isRequired: true })
+    ok(
+      '(J41) *** an unticked required box is ANSWERED, not blank ***',
+      validateAnswer(tick, { fieldId: 10, bool: false }) === null,
+    )
+    ok(
+      '(J41) but one nobody has touched is not',
+      validateAnswer(tick, undefined) === 'Isolator locked off is required.',
+      String(validateAnswer(tick, undefined)),
+    )
+
+    // Structure takes no answer and can never be incomplete.
+    const heading = field({ id: 11, fieldType: 'heading', label: 'Before you start', isRequired: true })
+    ok(
+      '(J41) *** a heading is never unanswered, even marked required ***',
+      validateAnswer(heading, undefined) === null,
+    )
+
+    // Range and length.
+    const reading = field({ id: 12, fieldType: 'measure', label: 'Gas pressure', minValue: 100, maxValue: 400 })
+    ok('(J41) a reading inside the range passes', validateAnswer(reading, { fieldId: 12, number: 250 }) === null)
+    ok('(J41) and outside it does not', validateAnswer(reading, { fieldId: 12, number: 900 }) !== null)
+    ok(
+      '(J41) zero is a reading, not a blank',
+      validateAnswer(field({ id: 13, fieldType: 'number', label: 'Faults found', isRequired: true }), {
+        fieldId: 13,
+        number: 0,
+      }) === null,
+    )
+
+    // A choice must be one of the choices.
+    const pick = field({ id: 14, fieldType: 'dropdown', label: 'Condition', options: ['Good', 'Fair', 'Poor'] })
+    ok('(J41) a listed choice passes', validateAnswer(pick, { fieldId: 14, text: 'Fair' }) === null)
+    ok('(J41) an invented one does not', validateAnswer(pick, { fieldId: 14, text: 'Excellent' }) !== null)
+
+    /*
+     * A pattern an administrator typed wrong must not refuse a technician's
+     * answer. They cannot fix it, and the field is still checked for required
+     * and length.
+     */
+    ok(
+      '(J41) *** an unusable pattern is ignored rather than refusing the answer ***',
+      validateAnswer(field({ id: 15, label: 'Ref', pattern: '([unclosed' }), {
+        fieldId: 15,
+        text: 'ABC',
+      }) === null,
+    )
+
+    // ── Conditions ───────────────────────────────────────────────────
+    const asked = field({ id: 20, fieldType: 'yesno', label: 'Did it pass?' })
+    const why = field({ id: 21, label: 'Why not?', isRequired: true, showIfFieldId: 20, showIfValue: 'no' })
+
+    ok(
+      '(J41) a conditional field is hidden until the answer arrives',
+      !isFieldVisible(why, answers([])),
+    )
+    ok(
+      '(J41) hidden when the condition is not met',
+      !isFieldVisible(why, answers([{ fieldId: 20, bool: true }])),
+    )
+    ok(
+      '(J41) *** and shown when it is ***',
+      isFieldVisible(why, answers([{ fieldId: 20, bool: false }])),
+    )
+
+    /*
+     * The whole point of skipping invisible fields. "Why not?" is required, and
+     * validating it while it is not being asked makes a passing job impossible
+     * to submit.
+     */
+    ok(
+      '(J41) *** a required question that was never asked does not block ***',
+      validateFormResponse([asked, why], answers([{ fieldId: 20, bool: true }])).length === 0,
+    )
+    ok(
+      '(J41) but once it is asked, it does',
+      validateFormResponse([asked, why], answers([{ fieldId: 20, bool: false }])).length === 1,
+      JSON.stringify(validateFormResponse([asked, why], answers([{ fieldId: 20, bool: false }]))),
+    )
+
+    // multi_select round-trips through the shared text column.
+    ok('(J41) several choices read back', parseMultiSelect('["A","B"]').join(',') === 'A,B')
+    ok('(J41) and rubbish in that column reads as nothing chosen', parseMultiSelect('not json').length === 0)
   }
 
   /*
