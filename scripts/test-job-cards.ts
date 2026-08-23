@@ -175,6 +175,14 @@ import {
   reconcileJobParts,
 } from '../src/lib/site/jobParts'
 import {
+  checkSerials,
+  allocateSerials,
+  serialsForLine,
+  serialsForInvoice,
+  reconcileJobSerials,
+} from '../src/lib/site/jobSerials'
+import { checkSellable } from '../src/lib/site/serials'
+import {
   createLocation,
   listLocations,
   listVans,
@@ -3249,6 +3257,172 @@ async function main() {
       '(J13) and the reason given is the serial, not the empty shelf',
       !serialIssue.ok && /serial/i.test(serialIssue.error),
     )
+
+    /* ══ (J40) Which UNIT is fitted, said at the van (§31) ════════════════
+     *
+     * The serial engine has always been sound. What was missing is WHEN
+     * somebody says which unit: the first and only moment was invoice
+     * finalisation, days later, an office clerk choosing between identical
+     * compressors none of which they have seen.
+     *
+     * The six states are the point. checkSellable answers one question with one
+     * string, which is right for a posting engine — it posts or it refuses. A
+     * person holding a box needs to know WHICH way it is wrong, because the fix
+     * differs every time: receive it, transfer it, or look at the label again.
+     */
+    {
+      const sLine = (await jobParts(SITE, pJob)).find((p) => p.productId === serialPart)!
+
+      // Two real units on file, plus a room that is not the main one.
+      const mkSerial = async (text: string, locationId: number | null, status = 'in_stock') => {
+        const r = await siteExecute(
+          SITE,
+          `INSERT INTO product_serials (product_id, serial, status, location_id) VALUES (?,?,?,?)`,
+          [serialPart, text, status, locationId],
+        )
+        return r.insertId
+      }
+      const good = await mkSerial(`SN${stamp}A`, mainId)
+      const away = await mkSerial(`SN${stamp}B`, van.id)
+      const soldOne = await mkSerial(`SN${stamp}C`, null, 'sold')
+      const otherProduct = await siteExecute(
+        SITE,
+        `INSERT INTO product_serials (product_id, serial, status, location_id) VALUES (?,?, 'in_stock', ?)`,
+        [part, `SN${stamp}D`, mainId],
+      )
+
+      const states = await checkSerials(SITE, serialPart, sLine.lineId, [
+        `SN${stamp}A`,
+        `sn ${stamp} a`, // the same one, typed by somebody reading a hot label
+        `SN${stamp}B`,
+        `SN${stamp}C`,
+        `SN${stamp}D`,
+        `SN${stamp}NOPE`,
+      ])
+
+      ok('(J40) a unit in the main room is ready', states[0]?.state === 'valid', states[0]?.state)
+      ok(
+        '(J40) *** spaces and case are ignored, so the same unit typed twice IS a duplicate ***',
+        states[1]?.state === 'duplicate',
+        states[1]?.state,
+      )
+      ok(
+        '(J40) *** a unit held elsewhere is reported as such, not as invalid ***',
+        states[2]?.state === 'elsewhere',
+        `${states[2]?.state} at ${states[2]?.locationName}`,
+      )
+      ok('(J40) a sold unit is unavailable', states[3]?.state === 'unavailable', states[3]?.state)
+      ok(
+        '(J40) a serial belonging to another product says so',
+        states[4]?.state === 'wrong_product',
+        states[4]?.state,
+      )
+      ok('(J40) and one nobody has ever received is not on file', states[5]?.state === 'unknown', states[5]?.state)
+
+      /*
+       * "At another location" is the state checkSellable specifically cannot
+       * produce — jobParts records that it does not check location, and markSold
+       * NULLs the location when it consumes a unit. It is detectable here only
+       * because an unsold serial still says where it is.
+       */
+      const engineSays = await checkSellable(SITE, serialPart, [away])
+      ok(
+        '(J40) *** and the posting engine would have called that one sellable ***',
+        engineSays.ok,
+        engineSays.ok ? 'sellable' : engineSays.error,
+      )
+
+      // ── Allocating ───────────────────────────────────────────────────
+      const badAlloc = await allocateSerials(SITE, actor, sLine.lineId, [`SN${stamp}B`])
+      ok(
+        '(J40) a unit held elsewhere cannot be allocated',
+        !badAlloc.ok,
+        badAlloc.ok ? 'ACCEPTED' : badAlloc.error,
+      )
+
+      const tooMany = await allocateSerials(SITE, actor, sLine.lineId, [
+        `SN${stamp}A`,
+        `SN${stamp}D`,
+      ])
+      ok('(J40) more serials than the line is for is refused', !tooMany.ok)
+
+      const alloc = await allocateSerials(SITE, actor, sLine.lineId, [`SN${stamp}A`])
+      ok('(J40) the right one goes on', alloc.ok, alloc.ok ? '' : alloc.error)
+      ok(
+        '(J40) and the line reads it back with who put it there',
+        (await serialsForLine(SITE, sLine.lineId))[0]?.serial === `SN${stamp}A`,
+      )
+
+      /*
+       * Allocation reserves NOTHING. The quantity is already claimed by 220, and
+       * deducting it again because a specific unit was named is the double-count
+       * that table's header exists to prevent.
+       */
+      ok(
+        '(J40) *** allocating a unit does not change what the shop may sell ***',
+        (await reservedQty(SITE, serialPart)) === 0,
+        String(await reservedQty(SITE, serialPart)),
+      )
+
+      /*
+       * A second line cannot claim the same unit.
+       *
+       * The unique key is on serial_id ALONE, not on (line, serial) — which is
+       * the whole point: keyed on the pair, two different job lines could each
+       * name the same compressor and both believe they had it.
+       */
+      const otherLine = (await jobParts(SITE, pJob)).find((p) => p.productId === part)!
+      let clash = false
+      try {
+        await siteExecute(
+          SITE,
+          `INSERT INTO job_line_serials (job_card_line_id, serial_id, serial_text) VALUES (?,?,?)`,
+          [otherLine.lineId, good, `SN${stamp}A`],
+        )
+      } catch {
+        clash = true
+      }
+      ok('(J40) *** and no other line can claim the same unit ***', clash)
+
+      // ── Invoicing ────────────────────────────────────────────────────
+      await siteExecute(SITE, `DELETE FROM job_line_serials WHERE job_card_line_id = ?`, [sLine.lineId])
+      const unallocated = await invoiceJob(SITE, actor, pJob, [{ lineId: sLine.lineId, qty: 1 }])
+      ok(
+        '(J40) *** a serial line will not invoice until the units are named ***',
+        !unallocated.ok && /serial/i.test(unallocated.ok ? '' : unallocated.error),
+        unallocated.ok ? 'ACCEPTED' : unallocated.error,
+      )
+
+      await allocateSerials(SITE, actor, sLine.lineId, [`SN${stamp}A`])
+      const withUnits = await invoiceJob(SITE, actor, pJob, [{ lineId: sLine.lineId, qty: 1 }])
+      ok('(J40) and once they are, it does', withUnits.ok, withUnits.ok ? '' : withUnits.error)
+
+      if (withUnits.ok) {
+        const carried = await serialsForInvoice(SITE, withUnits.invoiceId)
+        ok(
+          '(J40) *** the draft carries the unit the TECHNICIAN chose ***',
+          Object.values(carried).flat().includes(good),
+          JSON.stringify(carried),
+        )
+        await releaseJobLines(SITE, actor, withUnits.invoiceId)
+      }
+
+      // Drift: a line short of units is reported before invoicing refuses.
+      await siteExecute(SITE, `DELETE FROM job_line_serials WHERE job_card_line_id = ?`, [sLine.lineId])
+      const sDrift = await reconcileJobSerials(SITE)
+      ok(
+        '(J40) a line with no units named is reported as short',
+        sDrift.shortAllocated.some((d) => d.lineId === sLine.lineId),
+        `${sDrift.shortAllocated.length} reported`,
+      )
+
+      await siteExecute(SITE, `DELETE FROM job_line_serials WHERE serial_id IN (?,?,?,?)`, [
+        good, away, soldOne, otherProduct.insertId,
+      ])
+      await siteExecute(SITE, `DELETE FROM product_serials WHERE id IN (?,?,?,?)`, [
+        good, away, soldOne, otherProduct.insertId,
+      ])
+    }
 
     /*
      * Bring the van back to empty so the fixture teardown leaves no stock behind.

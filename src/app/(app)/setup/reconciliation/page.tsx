@@ -10,6 +10,7 @@ import { reconcileSupplierBalances } from '@/lib/site/supplierLedger'
 import { reconcileAging } from '@/lib/site/aging'
 import { reconcileJobParts } from '@/lib/site/jobParts'
 import { reconcileJobReservations } from '@/lib/site/jobReservations'
+import { reconcileJobSerials } from '@/lib/site/jobSerials'
 import { reconcileJobSla } from '@/lib/site/jobSla'
 import { reconcileJobCards } from '@/lib/site/jobCards'
 import { reconcileJobHeadlines } from '@/lib/site/jobHeadlines'
@@ -41,6 +42,8 @@ import {
   JobWrongPileTable,
   JobOverClaimedTable,
   JobClosedClaimTable,
+  JobShortSerialTable,
+  JobGoneUnitTable,
   JobStrandedTable,
   JobAlsoOnOrderTable,
   JobSlaStaleTable,
@@ -124,6 +127,7 @@ export default async function ReconciliationPage() {
     aging,
     jobParts,
     jobReservations,
+    jobSerials,
     jobSla,
     jobCards,
     jobItems,
@@ -157,6 +161,8 @@ export default async function ReconciliationPage() {
     reconcileJobParts(siteId).catch(() => null),
     // Tolerant for the same reason: 220 may not have run on this site yet.
     reconcileJobReservations(siteId).catch(() => null),
+    // Tolerant for the same reason: 221 may not have run on this site yet.
+    reconcileJobSerials(siteId).catch(() => null),
     // Tolerant for the same reason: 113 may not have run on this site yet.
     reconcileJobSla(siteId).catch(() => null),
     reconcileJobCards(siteId).catch(() => null),
@@ -575,6 +581,29 @@ export default async function ReconciliationPage() {
               description="These jobs are holding stock the line no longer needs — the signature of a claim that was not released when the parts were issued or billed. Every unit of the excess is stock the till will refuse to sell while nothing is waiting for it, and no stock check can see it, because nothing about the stock is wrong."
             />
             <JobOverClaimedTable rows={jobReservations.overClaimed} />
+          </Card>
+        )}
+
+        {jobSerials !== null && jobSerials.goneUnits.length > 0 && (
+          <Card>
+            <CardHeader
+              title="A job is holding a unit that has gone"
+              description="These jobs name a specific serial-numbered unit that has since been sold, written off or sent back by some other path. The job still shows it against the line, and the unit's own history says nothing about a claim that was never acted on — so nothing else can see this."
+            />
+            <JobGoneUnitTable rows={jobSerials.goneUnits} />
+          </Card>
+        )}
+
+        {/* Informational rather than drift: a technician half way through a job
+            has fitted two of three, which is an ordinary Tuesday. It becomes a
+            refusal at invoicing; this is the earlier, gentler warning. */}
+        {jobSerials !== null && jobSerials.shortAllocated.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Nobody has said which units are going on"
+              description="Serial-tracked lines on open jobs without a serial number for each unit. Not wrong yet — but the job cannot be invoiced until somebody says which ones were fitted, and the person who knows is the one holding the box."
+            />
+            <JobShortSerialTable rows={jobSerials.shortAllocated} />
           </Card>
         )}
 

@@ -173,6 +173,12 @@ import {
   type IssueLineInput,
   type IssueResult,
 } from '@/lib/site/jobParts'
+import {
+  checkSerials,
+  allocateSerials,
+  type SerialCheck,
+  type SerialResult,
+} from '@/lib/site/jobSerials'
 import { listVans } from '@/lib/site/stockLocations'
 import type { BillingState } from '@/lib/jobStatusModel'
 import { setValues } from '@/lib/site/customFields'
@@ -767,15 +773,48 @@ export async function deleteTravelAction(
  * The work is done by issueParts(), which posts an ordinary stock transfer through
  * the existing engine. Nothing here writes a movement.
  */
+/**
+ * Check serial numbers somebody has typed, without committing to anything.
+ *
+ * `jobs.edit`, not `stock.transfer`: recording which unit is being fitted is the
+ * technician's own work, and it moves no stock. This is a LOOKUP — it writes
+ * nothing, so the screen may call it as somebody types.
+ */
+export async function checkSerialsAction(
+  productId: number,
+  lineId: number,
+  entries: string[],
+): Promise<SerialCheck[]> {
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
+  if ('ok' in ctx) return []
+  return checkSerials(ctx.siteId, productId, lineId, entries)
+}
+
+/** Record which units are going on a line. Re-checks everything server-side. */
+export async function allocateSerialsAction(
+  jobId: number,
+  lineId: number,
+  entries: string[],
+): Promise<SerialResult> {
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await allocateSerials(ctx.siteId, ctx.actor, lineId, entries)
+  if (!result.ok) return result
+  revalidateJobs(jobId)
+  return result
+}
+
 export async function issuePartsAction(
   jobId: number,
   vanLocationId: number,
   lines: IssueLineInput[],
+  options: { acknowledged?: boolean } = {},
 ): Promise<IssueResult> {
   const ctx = await actorForModule('job_cards', 'stock.transfer')
   if ('ok' in ctx) return ctx
 
-  const result = await issueParts(ctx.siteId, ctx.actor, jobId, vanLocationId, lines)
+  const result = await issueParts(ctx.siteId, ctx.actor, jobId, vanLocationId, lines, options)
   if (!result.ok) return result
   revalidateJobs(jobId)
   revalidatePath('/transfers')

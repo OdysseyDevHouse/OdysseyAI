@@ -7,6 +7,7 @@ import { lineTotals } from '../documentMath'
 import { logActivityTx, type Actor } from './activityLog'
 import { BILLABLE_STATES, isBillable, type BillingState } from '../jobStatusModel'
 import { releaseLine, reserveForQuote, acceptedQuoteFor } from './jobReservations'
+import { serialCounts, linkSerialsToAssets } from './jobSerials'
 
 /**
  * Billing a job.
@@ -55,6 +56,8 @@ export type BillableLine = {
   unitPriceIncl: number
   vatRatePct: number
   discountPct: number
+  /** Serial-tracked, so it cannot be invoiced without naming units (§31). */
+  isSerial: boolean
   /** Outstanding quantity at this line's price, VAT inclusive. */
   outstandingValue: number
 }
@@ -89,13 +92,16 @@ function todayIso(): string {
 export async function billableLines(siteId: number, jobId: number): Promise<BillableLine[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT id, line_number, line_kind, billing_state, product_id, product_code, description,
-            qty, invoiced_qty, unit_cost_excl, unit_price_incl, vat_rate_pct, discount_pct
-       FROM job_card_lines
-      WHERE job_card_id = ?
-        AND billing_state IN (${BILLABLE_STATES.map(() => '?').join(',')})
-        AND invoiced_qty < qty
-      ORDER BY line_number, id`,
+    `SELECT l.id, l.line_number, l.line_kind, l.billing_state, l.product_id, l.product_code,
+            l.description, l.qty, l.invoiced_qty, l.unit_cost_excl, l.unit_price_incl,
+            l.vat_rate_pct, l.discount_pct,
+            p.product_type
+       FROM job_card_lines l
+       LEFT JOIN products p ON p.id = l.product_id
+      WHERE l.job_card_id = ?
+        AND l.billing_state IN (${BILLABLE_STATES.map(() => '?').join(',')})
+        AND l.invoiced_qty < l.qty
+      ORDER BY l.line_number, l.id`,
     [jobId, ...BILLABLE_STATES],
   )
 
@@ -122,6 +128,7 @@ export async function billableLines(siteId: number, jobId: number): Promise<Bill
       unitPriceIncl,
       vatRatePct: toNum(row.vat_rate_pct),
       discountPct,
+      isSerial: String(row.product_type ?? '') === 'serial',
       outstandingValue: round(gross - gross * (discountPct / 100), 2),
     }
   })
@@ -198,6 +205,39 @@ export async function invoiceJob(
       }
     }
     planned.push({ line, qty })
+  }
+
+  /*
+   * ── A serial-tracked line must say WHICH units (§31) ──────────────────────
+   *
+   * Checked here, before the draft exists, so a refusal leaves no paperwork.
+   *
+   * The rule §44.11 states is that a serial-controlled item is not invoiced
+   * until a valid serial is allocated. finaliseDocument has always enforced
+   * something like it — salesPosting refuses a serial line with the wrong number
+   * of units — but that fires at POSTING, on a different screen, days later, to
+   * a person who was never near the job. By then the technician has gone home
+   * and nobody remembers which compressor went in.
+   *
+   * So the block moves to where the answer is knowable. The job refuses to raise
+   * the draft until somebody has said which units are going out, and by the time
+   * finaliseDocument looks, the answer is already there and came from the person
+   * holding the box.
+   */
+  const serialLines = planned.filter((p) => p.line.isSerial)
+  if (serialLines.length > 0) {
+    const counts = await serialCounts(siteId, serialLines.map((p) => p.line.id))
+    for (const { line, qty } of serialLines) {
+      const allocated = counts.get(line.id) ?? 0
+      if (allocated < qty) {
+        return {
+          ok: false,
+          error:
+            `${line.description} needs a serial number for each of the ${qty} being invoiced` +
+            (allocated > 0 ? `, and only ${allocated} ${allocated === 1 ? 'is' : 'are'} recorded.` : '.'),
+        }
+      }
+    }
   }
 
   const documentDate = options.documentDate ?? todayIso()
@@ -336,6 +376,20 @@ export async function invoiceJob(
 
     return { invoiceId, lineCount: lineNumber, totalIncl: round(totalIncl, 2) }
   })
+
+  /*
+   * Tie each fitted serial to the customer asset it went into (§31).
+   *
+   * `customer_assets.serial_id` has existed since 115 and nothing has ever
+   * populated it. It matters two years later, when a warranty claim asks which
+   * unit is in this machine and the only thing connecting the sold serial to the
+   * customer's asset is that column.
+   *
+   * OUTSIDE the transaction and unable to fail its caller. A link that could not
+   * be made is a gap in a cross-reference, not a reason to refuse a draft the
+   * customer is waiting for — and reconcileJobSerials reports what is missing.
+   */
+  await linkSerialsToAssets(siteId, jobId)
 
   return { ok: true, ...result }
 }

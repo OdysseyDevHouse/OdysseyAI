@@ -715,6 +715,93 @@ export function JobClosedClaimTable({ rows }: { rows: ClosedClaimRow[] }) {
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
 }
 
+type ShortSerialRow = {
+  lineId: number
+  jobId: number
+  jobNumber: string | null
+  description: string
+  needed: number
+  allocated: number
+}
+
+/** Serial-tracked lines nobody has said which units are going on. */
+export function JobShortSerialTable({ rows }: { rows: ShortSerialRow[] }) {
+  const columns: Column<ShortSerialRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}?tab=costs`}>{r.jobNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'named',
+      header: 'Units named',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.allocated - r.needed,
+      cell: (r) => (
+        <Badge tone="warning">
+          {formatQty(r.allocated)} of {formatQty(r.needed)}
+        </Badge>
+      ),
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
+type GoneUnitRow = {
+  lineId: number
+  jobId: number
+  serial: string
+  description: string
+  status: string
+}
+
+/** A job claiming a unit that has since been sold, written off or returned. */
+export function JobGoneUnitTable({ rows }: { rows: GoneUnitRow[] }) {
+  const columns: Column<GoneUnitRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}?tab=costs`}>{`#${r.jobId}`}</TextLink>,
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'serial',
+      header: 'Unit',
+      sortable: true,
+      sortValue: (r) => r.serial,
+      cell: (r) => <span className="numeric">{r.serial}</span>,
+    },
+    {
+      key: 'status',
+      header: 'Now',
+      sortable: true,
+      sortValue: (r) => r.status,
+      cell: (r) => <Badge tone="danger">{r.status.replace(/_/g, ' ')}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => `${r.lineId}-${r.serial}`} />
+}
+
 type StrandedRow = {
   locationName: string
   productCode: string

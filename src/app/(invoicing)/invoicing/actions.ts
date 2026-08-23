@@ -13,6 +13,7 @@ import { finaliseDocument } from '@/lib/site/salesPosting'
 import { loadSaleRecord, type SaleRecordSnapshot } from '@/lib/site/saleRecord'
 import { terminalForDevice } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
+import { serialsForInvoice } from '@/lib/site/jobSerials'
 import {
   getTillCustomer,
   listCustomersForPicker,
@@ -308,10 +309,29 @@ export async function finaliseInvoiceAction(
     }
   }
 
+  /*
+   * ── Serials the TECHNICIAN chose, not this screen (§31) ──────────────────
+   *
+   * finaliseDocument requires one serial per unit on a serial-tracked line, and
+   * takes them as an input keyed by sales line. Nothing on this screen collects
+   * them — so before job cards recorded them, a serial-tracked job invoice could
+   * be raised and then never finalised, refused here by a person with no way to
+   * answer.
+   *
+   * For a JOB invoice the answer already exists: the technician named the units
+   * at the van, on the line they were fitting, and jobInvoicing refuses to raise
+   * the draft without them. This carries that forward.
+   *
+   * An empty map for an ordinary counter invoice, which is exactly what was
+   * passed before — undefined and {} reach the engine identically.
+   */
+  const serials = await serialsForInvoice(siteId, saved.documentId)
+
   const result = await finaliseDocument(siteId, actor, {
     documentId: saved.documentId,
     customerId: document.customerId,
     tenders: taken,
+    serials,
   })
 
   if (!result.ok) return { ok: false, error: result.error }
