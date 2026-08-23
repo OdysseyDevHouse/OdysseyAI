@@ -105,6 +105,7 @@ import {
   saveLines,
   MONEY_FROM_TRUSTED_CALLER,
   reclassifyLine,
+  jobOpsCounts,
   closeJob,
   bulkUpdateJobs,
   cancelJob,
@@ -1651,6 +1652,168 @@ async function main() {
       varAfter.unquotedLines[0].description.includes('bracket'),
     JSON.stringify(varAfter.unquotedLines),
   )
+
+  /*
+   * ── The COST side of the variance (228) ────────────────────────────────
+   *
+   * quoteVariance's price half answers "has the job grown past what the
+   * customer agreed to pay". This half answers the question nothing could
+   * answer before: the job was priced assuming a part cost X, the supplier now
+   * wants Y, and the margin has gone without anybody being told.
+   *
+   * unit_cost_excl is overwritten every time a receipt moves the weighted
+   * average, so the figure the quote was priced on stops existing the moment
+   * the next delivery lands. The snapshot at acceptance is what makes it
+   * answerable after the fact — and the load-bearing assertion is that the
+   * snapshot SURVIVES a cost change, because a snapshot that tracked the
+   * current cost would report zero variance forever while looking correct.
+   */
+  const costAtAccept = await quoteVariance(SITE, qJob)
+  ok(
+    '(J9) accepting a quote snapshots what the work was expected to cost',
+    costAtAccept.quotedCost !== null,
+    `quoted ${costAtAccept.quotedCost} / actual ${costAtAccept.actualCost}`,
+  )
+  ok(
+    '(J9) and at that moment expected and actual agree — nothing has moved yet',
+    costAtAccept.costVariance === 0,
+    String(costAtAccept.costVariance),
+  )
+  ok('(J9) so nothing is over', costAtAccept.costOverruns.length === 0)
+
+  /*
+   * The supplier puts the price up.
+   *
+   * Written straight to unit_cost_excl, which is what a receipt does to it — a
+   * real GRV would work, and would drag a whole purchase fixture in to prove a
+   * point about one column.
+   */
+  const quotedLines = await siteQuery<any>(
+    SITE,
+    `SELECT id, unit_cost_excl, quoted_cost_excl, quoted_qty, qty
+       FROM job_card_lines
+      WHERE job_card_id = ? AND quoted_cost_excl IS NOT NULL
+      ORDER BY id`,
+    [qJob],
+  )
+  ok(
+    '(J9) the snapshot landed on the quoted lines',
+    quotedLines.length > 0,
+    `${quotedLines.length} line(s)`,
+  )
+  if (quotedLines.length > 0) {
+    const target = quotedLines[0]
+    const was = Number(target.unit_cost_excl)
+    await siteExecute(
+      SITE,
+      `UPDATE job_card_lines SET unit_cost_excl = ? WHERE id = ?`,
+      [was + 160, target.id],
+    )
+
+    const dearer = await quoteVariance(SITE, qJob)
+    ok(
+      '(J9) *** the quoted cost does NOT follow the new one — that is the whole point ***',
+      dearer.quotedCost === costAtAccept.quotedCost,
+      `${costAtAccept.quotedCost} -> ${dearer.quotedCost}`,
+    )
+    ok(
+      '(J9) *** and the job is now reported as costing more than it was priced on ***',
+      dearer.costVariance !== null &&
+        Math.abs(dearer.costVariance - 160 * Number(target.qty)) < 0.01,
+      String(dearer.costVariance),
+    )
+    ok(
+      '(J9) the line responsible is named',
+      dearer.costOverruns.length === 1 && dearer.costOverruns[0].id === Number(target.id),
+      JSON.stringify(dearer.costOverruns),
+    )
+    /*
+     * And it says the SUPPLIER put the price up rather than the scope growing.
+     *
+     * Those are different problems with different fixes — one is a conversation
+     * with the customer about what was agreed, the other a conversation with
+     * the supplier. Reporting one number for both sends somebody to argue with
+     * the wrong person.
+     */
+    ok(
+      '(J9) *** as a price rise, not a scope change — different problems ***',
+      dearer.costOverruns[0]?.qtyGrew === false,
+      JSON.stringify(dearer.costOverruns[0]),
+    )
+
+    // Scope, now: the same line needs two of them.
+    await siteExecute(
+      SITE,
+      `UPDATE job_card_lines SET qty = qty + 1 WHERE id = ?`,
+      [target.id],
+    )
+    const wider = await quoteVariance(SITE, qJob)
+    ok(
+      '(J9) *** growing the quantity is reported as a scope change instead ***',
+      wider.costOverruns[0]?.qtyGrew === true,
+      JSON.stringify(wider.costOverruns[0]),
+    )
+
+    // Put both back, so the assertions further down measure what they expect.
+    await siteExecute(
+      SITE,
+      `UPDATE job_card_lines SET unit_cost_excl = ?, qty = ? WHERE id = ?`,
+      [was, Number(target.qty), target.id],
+    )
+  }
+
+  /*
+   * A line added AFTER acceptance has no snapshot, and NULL means "never
+   * quoted" rather than "cost nothing" — see 228's header. Counting it as zero
+   * would report a 100% overrun on every such line, which is the shape of
+   * figure somebody acts on and then cannot explain.
+   */
+  const unquotedCost = await siteQueryOne<any>(
+    SITE,
+    `SELECT COUNT(*) AS n FROM job_card_lines
+      WHERE job_card_id = ? AND quoted_cost_excl IS NULL`,
+    [qJob],
+  )
+  ok(
+    '(J9) the line added after acceptance carries no snapshot',
+    Number(unquotedCost?.n ?? 0) > 0,
+    String(unquotedCost?.n),
+  )
+  /*
+   * Proved by making the unquoted line EXPENSIVE.
+   *
+   * The first version of this asserted that every overrun had a quotedCost
+   * above zero — and passed against an EMPTY list, because the costs had just
+   * been put back and nothing was over. It proved nothing at all.
+   *
+   * Giving the unsnapshotted line a real cost is what makes the claim
+   * checkable: if NULL were treated as zero it would appear as a 100% overrun,
+   * and the totals would move. Both are asserted.
+   */
+  const unquotedLine = await siteQueryOne<any>(
+    SITE,
+    `SELECT id FROM job_card_lines
+      WHERE job_card_id = ? AND quoted_cost_excl IS NULL
+      ORDER BY id LIMIT 1`,
+    [qJob],
+  )
+  const before = await quoteVariance(SITE, qJob)
+  await siteExecute(SITE, `UPDATE job_card_lines SET unit_cost_excl = 900 WHERE id = ?`, [
+    Number(unquotedLine.id),
+  ])
+  const withUnquoted = await quoteVariance(SITE, qJob)
+  ok(
+    '(J9) *** an unsnapshotted line is left OUT, not counted as a 900 overrun ***',
+    !withUnquoted.costOverruns.some((o) => o.id === Number(unquotedLine.id)),
+    JSON.stringify(withUnquoted.costOverruns),
+  )
+  ok(
+    '(J9) and the totals do not move for it either',
+    withUnquoted.actualCost === before.actualCost &&
+      withUnquoted.quotedCost === before.quotedCost,
+    `${before.quotedCost}/${before.actualCost} -> ${withUnquoted.quotedCost}/${withUnquoted.actualCost}`,
+  )
+
 
   // ── The work gate, off by default ─────────────────────────────────────
   const notBlocked = await workBlockedReason(SITE, jobId)
@@ -6119,6 +6282,134 @@ async function main() {
     )
     await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [calJob.id])
   }
+
+  /*
+   * ── (J45) An undecided cost goes LOOKING for somebody ─────────────────────
+   *
+   * The classification machinery has been complete for a while: a line can be
+   * pending, the dialog offers the legal moves, the transitions are guarded.
+   * What was missing is the PUSH — nothing surfaced a pending line, so it sat
+   * on the job until somebody happened to open that job.
+   *
+   * That is not a neutral wait. By the time the job is invoiced the decision
+   * has been made by default and in the wrong direction: a pending line is not
+   * billable, so it is silently absorbed. The dashboard row and the list filter
+   * are what stop that, and both are asserted here — a count that lands on an
+   * unfiltered list makes somebody do the search again by eye.
+   */
+  {
+    const undJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} undecided job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!undJob.ok) throw new Error('undecided job fixture failed')
+
+    const opsBefore = await jobOpsCounts(SITE)
+
+    await saveLines(SITE, actor, undJob.id, [
+      {
+        id: null,
+        lineKind: 'part',
+        billingState: 'pending',
+        productId: null,
+        productCode: null,
+        description: 'JCT undecided seal',
+        qty: 2,
+        unitCostExcl: 125,
+        unitPriceIncl: 400,
+        vatRatePct: 15,
+        discountPct: 0,
+        note: null,
+        supplierId: null,
+        expenseCategoryId: null,
+      },
+    ], MONEY_FROM_TRUSTED_CALLER)
+
+    const opsAfter = await jobOpsCounts(SITE)
+    ok(
+      '(J45) *** an undecided line puts the job on the manager\'s list ***',
+      opsAfter.undecidedJobs === opsBefore.undecidedJobs + 1,
+      `${opsBefore.undecidedJobs} -> ${opsAfter.undecidedJobs}`,
+    )
+    /*
+     * And with the COST, because the count alone is unactionable: three pending
+     * lines might be worth R40 or R40 000, and only one of those is worth
+     * interrupting somebody's afternoon.
+     */
+    ok(
+      '(J45) *** carrying what it cost — 2 x 125 — not just that it exists ***',
+      Math.abs(opsAfter.undecidedCost - opsBefore.undecidedCost - 250) < 0.01,
+      `${opsBefore.undecidedCost} -> ${opsAfter.undecidedCost}`,
+    )
+
+    // ── The row has to LAND somewhere useful ────────────────────────────────
+    const filtered = await listJobCards(SITE, { state: 'open', undecided: true, limit: 200 })
+    ok(
+      '(J45) *** and the list filter finds it, so the row lands on the answer ***',
+      filtered.some((j) => j.id === undJob.id),
+      `${filtered.length} job(s)`,
+    )
+    /*
+     * One row per job, not one per line. A job with four undecided lines is one
+     * job; a join would list it four times, which on a screen meant to be
+     * worked through once reads as four separate problems.
+     */
+    ok(
+      '(J45) *** once, however many undecided lines it has ***',
+      filtered.filter((j) => j.id === undJob.id).length === 1,
+      String(filtered.filter((j) => j.id === undJob.id).length),
+    )
+
+    const unfiltered = await listJobCards(SITE, { state: 'open', limit: 200 })
+    ok(
+      '(J45) the filter is doing something — the unfiltered list is longer',
+      unfiltered.length > filtered.length,
+      `${unfiltered.length} vs ${filtered.length}`,
+    )
+
+    // ── Deciding it takes the job back off the list ─────────────────────────
+    /*
+     * The whole point of surfacing it. A row that stayed after the decision was
+     * made would be a list that only grows, which is a list people stop reading.
+     */
+    const lines = await getJobCard(SITE, undJob.id)
+    const pendingLine = lines!.lines.find((l) => l.billingState === 'pending')
+    ok('(J45) the line is there to decide', pendingLine !== undefined)
+
+    const decided = await reclassifyLine(
+      SITE,
+      actor,
+      pendingLine!.id,
+      'internal',
+      'Warranty — we absorb it',
+    )
+    ok('(J45) it can be decided', decided.ok, decided.ok ? '' : decided.error)
+
+    const opsDone = await jobOpsCounts(SITE)
+    ok(
+      '(J45) *** and deciding takes it off the list again ***',
+      opsDone.undecidedJobs === opsBefore.undecidedJobs,
+      `${opsAfter.undecidedJobs} -> ${opsDone.undecidedJobs}`,
+    )
+    ok(
+      '(J45) cost included — the money is no longer undecided, it is absorbed',
+      Math.abs(opsDone.undecidedCost - opsBefore.undecidedCost) < 0.01,
+      String(opsDone.undecidedCost),
+    )
+
+    // ── Teardown
+    await siteExecute(SITE, `DELETE FROM job_card_lines WHERE job_card_id = ?`, [undJob.id])
+    await siteExecute(
+      SITE,
+      `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`,
+      [undJob.id],
+    )
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [undJob.id])
+  }
+
 
   /*
    * ── (J23) The three time-based automations ────────────────────────────────

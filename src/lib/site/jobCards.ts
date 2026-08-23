@@ -258,6 +258,15 @@ export type JobListFilter = {
   ownerUserId?: number | null
   customerId?: number | null
   search?: string
+  /**
+   * Only jobs carrying a line nobody has decided who pays for.
+   *
+   * The dashboard's undecided-cost row links here. A row that counts something
+   * and then lands on an unfiltered list makes somebody do the search again by
+   * eye, which for a figure meant to prompt one decision is worse than not
+   * showing it.
+   */
+  undecided?: boolean
   limit?: number
   offset?: number
 }
@@ -519,6 +528,16 @@ export async function listJobCards(siteId: number, filter: JobListFilter = {}): 
     )
     params.push(term, term, term, term)
   }
+  /*
+   * EXISTS rather than a join: a job with four undecided lines is one job, and
+   * a join would list it four times — which on a screen meant to be worked
+   * through once reads as four separate problems.
+   */
+  if (filter.undecided) {
+    where.push(
+      "EXISTS (SELECT 1 FROM job_card_lines l WHERE l.job_card_id = j.id AND l.billing_state = 'pending')",
+    )
+  }
 
   const limit = Math.min(Math.max(filter.limit ?? 50, 1), 500)
   const offset = Math.max(filter.offset ?? 0, 0)
@@ -564,6 +583,16 @@ export async function countJobCards(siteId: number, filter: JobListFilter = {}):
       '(j.document_number LIKE ? OR j.title LIKE ? OR j.customer_name LIKE ? OR j.reference LIKE ?)',
     )
     params.push(term, term, term, term)
+  }
+  /*
+   * EXISTS rather than a join: a job with four undecided lines is one job, and
+   * a join would list it four times — which on a screen meant to be worked
+   * through once reads as four separate problems.
+   */
+  if (filter.undecided) {
+    where.push(
+      "EXISTS (SELECT 1 FROM job_card_lines l WHERE l.job_card_id = j.id AND l.billing_state = 'pending')",
+    )
   }
   const row = await siteQueryOne<Row>(
     siteId,
@@ -624,6 +653,27 @@ export type JobOpsCounts = {
   readyToInvoice: number
   /** Closed with billable work still unbilled. The cash-flow figure. */
   completedNotInvoiced: number
+  /**
+   * Open jobs carrying a line nobody has decided who pays for (§ classification).
+   *
+   * The PUSH half of the classification decision. A 'pending' line is a cost
+   * recorded with the question of who bears it left open — and until now nothing
+   * went looking for one. It sat on the job waiting for somebody to happen to
+   * open that job, which for a line worth a few hundred rand is never.
+   *
+   * By the time the job is invoiced the decision is made by default and in the
+   * wrong direction: the line is not billable, so it is silently absorbed.
+   */
+  undecidedJobs: number
+  /**
+   * What that undecided work COST, in total.
+   *
+   * The count alone is unactionable — three pending lines might be worth R40 or
+   * R40 000, and only one of those is worth interrupting somebody's afternoon.
+   * Cost rather than price, because a line nobody has priced yet still cost what
+   * it cost, and the cost is the part the business has already spent.
+   */
+  undecidedCost: number
 }
 
 export async function jobOpsCounts(siteId: number): Promise<JobOpsCounts> {
@@ -646,7 +696,24 @@ export async function jobOpsCounts(siteId: number): Promise<JobOpsCounts> {
                 WHERE l.job_card_id = j.id
                   AND l.billing_state IN ('quoted','variation','additional')
                   AND l.invoiced_qty < l.qty
-             ) THEN 1 ELSE 0 END) AS completed_not_invoiced
+             ) THEN 1 ELSE 0 END) AS completed_not_invoiced,
+         /*
+          * Open jobs with an undecided line, and what those lines cost.
+          *
+          * OPEN only. A closed job's pending lines are already answered by
+          * completed_not_invoiced above, and reporting both would put the same
+          * job on two rows of a list meant to be worked through once.
+          */
+         SUM(CASE WHEN j.status = 'open' AND EXISTS (
+               SELECT 1 FROM job_card_lines l
+                WHERE l.job_card_id = j.id AND l.billing_state = 'pending'
+             ) THEN 1 ELSE 0 END) AS undecided_jobs,
+         COALESCE((
+           SELECT SUM(l.qty * l.unit_cost_excl)
+             FROM job_card_lines l
+             JOIN job_cards oj ON oj.id = l.job_card_id
+            WHERE l.billing_state = 'pending' AND oj.status = 'open'
+         ), 0) AS undecided_cost
        FROM job_cards j
        JOIN job_statuses s ON s.id = j.status_id`,
     )
@@ -657,6 +724,8 @@ export async function jobOpsCounts(siteId: number): Promise<JobOpsCounts> {
       scheduledToday: Number(row?.scheduled_today ?? 0),
       readyToInvoice: Number(row?.ready_invoice ?? 0),
       completedNotInvoiced: Number(row?.completed_not_invoiced ?? 0),
+      undecidedJobs: Number(row?.undecided_jobs ?? 0),
+      undecidedCost: toNum(row?.undecided_cost ?? 0),
     }
   } catch {
     /*
@@ -672,6 +741,8 @@ export async function jobOpsCounts(siteId: number): Promise<JobOpsCounts> {
       scheduledToday: 0,
       readyToInvoice: 0,
       completedNotInvoiced: 0,
+      undecidedJobs: 0,
+      undecidedCost: 0,
     }
   }
 }

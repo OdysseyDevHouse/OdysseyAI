@@ -498,6 +498,33 @@ export async function acceptQuote(
       [quoteId, jobId] as never,
     )
 
+    /*
+     * And the COST is snapshotted at the same moment (228).
+     *
+     * unit_cost_excl is the cost NOW — overwritten every time a receipt moves
+     * the weighted average. So the figure the quote was priced on stops
+     * existing the moment the next delivery arrives, and "did we make what we
+     * expected on this job" becomes unanswerable after the fact.
+     *
+     * Stamped here rather than at quoting, because a quote that was never
+     * accepted has no expectation to hold anybody to. Same rows as the rebase
+     * above and in the same transaction: a job whose lines say 'quoted' with no
+     * quoted cost beside them would be the drift this avoids by construction.
+     *
+     * The qty goes with it so a line whose SCOPE grew is distinguishable from
+     * one whose supplier put the price up. Different problems, different fixes.
+     */
+    await tx.execute(
+      `UPDATE job_card_lines l
+         JOIN sales_document_lines s ON s.job_card_line_id = l.id
+          SET l.quoted_cost_excl = l.unit_cost_excl,
+              l.quoted_qty = l.qty
+        WHERE s.document_id = ?
+          AND l.job_card_id = ?
+          AND l.billing_state = 'quoted'`,
+      [quoteId, jobId] as never,
+    )
+
     const label = quote.document_number ? String(quote.document_number) : `Quote #${quoteId}`
     const rebased = (moved as { affectedRows: number }).affectedRows
 
@@ -621,6 +648,37 @@ export type QuoteVariance = {
   variancePct: number | null
   /** Lines added since acceptance that were never quoted. */
   unquotedLines: { id: number; description: string; state: BillingState; value: number }[]
+
+  /* ── The COST side (228) ──────────────────────────────────────────────
+     What the job was expected to cost when the quote was accepted, against
+     what it is costing now. The price side above is what the customer argues
+     about; this is where the margin quietly goes. */
+
+  /**
+   * The cost the accepted quote was priced on. Null when nothing was
+   * snapshotted — a job accepted before 228, or one never quoted.
+   */
+  quotedCost: number | null
+  /** What those same lines cost now. Null for the same reasons. */
+  actualCost: number | null
+  /** actualCost - quotedCost. Positive means the job is costing more. */
+  costVariance: number | null
+  /**
+   * Lines costing more than the quote assumed, worst first.
+   *
+   * qtyGrew separates the two causes: a line whose SCOPE grew is a
+   * conversation about what was agreed, a line whose unit cost grew is a
+   * conversation with the supplier. Reporting one number for both would send
+   * somebody to argue with the wrong person.
+   */
+  costOverruns: {
+    id: number
+    description: string
+    quotedCost: number
+    actualCost: number
+    variance: number
+    qtyGrew: boolean
+  }[]
 }
 
 /**
@@ -647,6 +705,7 @@ export async function quoteVariance(siteId: number, jobId: number): Promise<Quot
   const lines = await siteQuery<Row>(
     siteId,
     `SELECT l.id, l.description, l.billing_state, l.qty, l.unit_price_incl, l.discount_pct,
+            l.unit_cost_excl, l.quoted_cost_excl, l.quoted_qty,
             (SELECT COUNT(*) FROM sales_document_lines s
               WHERE s.job_card_line_id = l.id AND s.document_id = ?) AS on_quote
        FROM job_card_lines l
@@ -657,6 +716,20 @@ export async function quoteVariance(siteId: number, jobId: number): Promise<Quot
 
   let chargeable = 0
   const unquoted: QuoteVariance['unquotedLines'] = []
+
+  /*
+   * The cost totals count ONLY lines carrying a snapshot.
+   *
+   * A NULL quoted_cost_excl means "never quoted", never "cost nothing" — see
+   * 228's header. Counting it as zero would report a 100% overrun on every line
+   * added after acceptance, which is the shape of figure somebody acts on and
+   * then cannot explain. So both sides of the comparison are summed over the
+   * same subset, and a job with no snapshot at all reports null rather than 0.
+   */
+  let quotedCost = 0
+  let actualCost = 0
+  let haveSnapshot = false
+  const overruns: QuoteVariance['costOverruns'] = []
 
   for (const line of lines) {
     const gross = toNum(line.qty) * toNum(line.unit_price_incl)
@@ -670,7 +743,33 @@ export async function quoteVariance(siteId: number, jobId: number): Promise<Quot
         value,
       })
     }
+
+    if (line.quoted_cost_excl === null || line.quoted_cost_excl === undefined) continue
+    haveSnapshot = true
+
+    const qtyThen = toNum(line.quoted_qty)
+    const qtyNow = toNum(line.qty)
+    const wasCost = round(toNum(line.quoted_cost_excl) * qtyThen, 2)
+    const nowCost = round(toNum(line.unit_cost_excl) * qtyNow, 2)
+    quotedCost += wasCost
+    actualCost += nowCost
+
+    const variance = round(nowCost - wasCost, 2)
+    // Cents of tolerance: a rounding artefact is not an overrun worth a row.
+    if (variance > 0.004) {
+      overruns.push({
+        id: Number(line.id),
+        description: String(line.description),
+        quotedCost: wasCost,
+        actualCost: nowCost,
+        variance,
+        qtyGrew: qtyNow > qtyThen + 0.0001,
+      })
+    }
   }
+
+  // Worst first: a list nobody can rank is a list nobody reads past the top.
+  overruns.sort((a, b) => b.variance - a.variance)
 
   const quotedTotal = accepted ? toNum(accepted.total_incl) : null
   const chargeableTotal = round(chargeable, 2)
@@ -687,6 +786,10 @@ export async function quoteVariance(siteId: number, jobId: number): Promise<Quot
         ? null
         : round((variance / quotedTotal) * 100, 2),
     unquotedLines: unquoted,
+    quotedCost: haveSnapshot ? round(quotedCost, 2) : null,
+    actualCost: haveSnapshot ? round(actualCost, 2) : null,
+    costVariance: haveSnapshot ? round(actualCost - quotedCost, 2) : null,
+    costOverruns: overruns,
   }
 }
 

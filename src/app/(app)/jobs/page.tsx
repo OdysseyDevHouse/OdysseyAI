@@ -33,6 +33,8 @@ type Search = {
   status?: string
   priority?: string
   q?: string
+  /** '1' when arriving from the dashboard's undecided-cost row. */
+  undecided?: string
   page?: string
   /** Which saved view is active. Carried so the strip can highlight it. */
   view?: string
@@ -62,6 +64,14 @@ export default async function JobsPage({
   const statusId = params.status ? Number(params.status) : null
   const priority = params.priority ?? ''
   const search = params.q?.trim() ?? ''
+  /*
+   * Only '1' counts, not any truthy string.
+   *
+   * The value is typeable, and treating '0' or 'false' as on would filter a
+   * list somebody meant to see whole — quietly, since a filtered list looks
+   * exactly like a short one.
+   */
+  const undecided = params.undecided === '1'
   const page = pageFrom(params.page)
 
   const filter = {
@@ -69,6 +79,7 @@ export default async function JobsPage({
     statusId: Number.isFinite(statusId) && statusId ? statusId : null,
     priority,
     search,
+    undecided,
     limit: PAGE_SIZE,
     offset: offsetFor(page, PAGE_SIZE),
   }

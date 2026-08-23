@@ -1,0 +1,50 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- What a line was expected to COST when the quote was accepted.
+--
+-- ── THE QUESTION THIS ANSWERS ────────────────────────────────────────────
+--
+-- quoteVariance() (jobQuotes.ts) already answers "has the job grown past what
+-- the customer agreed to pay". That is the PRICE side, and it is the one the
+-- customer argues about.
+--
+-- The other side has no answer at all today: the job was quoted at R4 600
+-- assuming a R400 part, the supplier now wants R560, and the job makes R160 less
+-- than anybody planned. Nothing on the screen says so, because job_card_lines
+-- carries only unit_cost_excl — which is the cost NOW, overwritten as receipts
+-- move the weighted average.
+--
+-- Without a snapshot the margin on an accepted quote is unknowable after the
+-- fact: by the time somebody asks, the number they would have compared against
+-- has already been replaced by the number they are comparing.
+--
+-- ── WHY A COLUMN AND NOT A JOIN BACK TO THE QUOTE ────────────────────────
+--
+-- sales_document_lines does not store cost. It stores what the customer is
+-- charged, because that is what a quote is FOR — and adding cost to a document
+-- the customer can be shown would be one schema change away from printing it.
+--
+-- ── WHY NOT DERIVE IT FROM STOCK HISTORY ─────────────────────────────────
+--
+-- "What did this product cost on the 3rd of March" is answerable from
+-- stock_movements, expensively, and only for stocked products. It says nothing
+-- about a labour rate, a subcontractor's price, or a service line — which are
+-- most of what a job quotes. A snapshot is one column and is right for every
+-- line kind.
+--
+-- ── NULL MEANS "NEVER QUOTED", NOT "COST NOTHING" ────────────────────────
+--
+-- Stamped only when a quote is accepted, and only onto the lines that quote
+-- covered. A line added afterwards has NULL, and every reader must treat that
+-- as "there is no expectation to compare against" rather than as zero. A zero
+-- would report a 100% cost overrun on every unquoted line — which is exactly
+-- the shape of a figure somebody acts on and then cannot explain.
+-- ─────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE job_card_lines
+  -- Excluding VAT, matching unit_cost_excl beside it. Cost is held, valued and
+  -- journalled excluding VAT everywhere in this schema.
+  ADD COLUMN IF NOT EXISTS quoted_cost_excl DECIMAL(14,4) NULL AFTER unit_cost_excl,
+  -- The quantity the quote assumed, so a line whose qty grew is distinguishable
+  -- from one whose unit cost grew. Those are different problems with different
+  -- fixes: one is scope, the other is the supplier.
+  ADD COLUMN IF NOT EXISTS quoted_qty DECIMAL(14,4) NULL AFTER quoted_cost_excl;

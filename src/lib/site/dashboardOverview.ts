@@ -356,6 +356,39 @@ export async function getDashboardOverview(
     })
   }
 
+  /*
+   * The third job row this block's own header has promised since it was
+   * written: an undecided cost is the MANAGER's problem.
+   *
+   * It is the PUSH half of the classification decision. A 'pending' line is a
+   * cost recorded with the question of who bears it left open, and nothing went
+   * looking for one — it sat on the job until somebody happened to open that
+   * job, which for a line worth a few hundred rand is never.
+   *
+   * By the time the job is invoiced the decision has been made by default and
+   * in the wrong direction: a pending line is not billable, so it is silently
+   * absorbed. That is the failure this row exists to prevent, and why it
+   * carries the COST — three pending lines might be worth R40 or R40 000, and
+   * only one of those is worth interrupting somebody's afternoon.
+   *
+   * Warning rather than danger: nothing is broken and nobody has been let down
+   * yet. It is money about to leak, which is a different urgency from a
+   * customer who was promised a reply and has not had one.
+   */
+  if (jobOps) {
+    add({
+      key: 'jobs-undecided',
+      count: jobOps.undecidedJobs,
+      label:
+        jobOps.undecidedJobs === 1
+          ? 'job with work nobody has decided who pays for'
+          : 'jobs with work nobody has decided who pays for',
+      amount: jobOps.undecidedCost > 0 ? jobOps.undecidedCost : null,
+      tone: 'warning',
+      href: '/jobs?state=open&undecided=1',
+    })
+  }
+
   // Danger before warning, then biggest first — the order someone would work
   // the list in. Stable within a tone so the rows do not shuffle between loads.
   const TONE_RANK = { danger: 0, warning: 1 }
