@@ -815,6 +815,20 @@ export async function saveResponse(
     detail: `${form.name} v${form.liveVersion}${input.submit ? '' : ' (draft)'}`,
   })
 
+  /*
+   * The workflow rules (225), on a SUBMIT only.
+   *
+   * A draft save is somebody halfway through typing, and a rule that moved the
+   * job or notified the customer every time a technician paused would be worse
+   * than no rule. The form is only a fact once it has been submitted, which is
+   * the same line formsBlockClose draws.
+   */
+  if (input.submit) {
+    await import('./jobRules')
+      .then((m) => m.fireJobEvent(siteId, actor, { event: 'form_submitted', jobId: input.jobId }))
+      .catch(() => {})
+  }
+
   return { ok: true, id: responseId }
 }
 

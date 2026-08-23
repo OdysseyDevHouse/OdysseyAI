@@ -283,6 +283,19 @@ export async function requestPart(
   // The job is now waiting on somebody else (§28). Never fatal — see the helper.
   await moveToAwaitingParts(siteId, actor, input.jobCardId)
 
+  /*
+   * And the workflow rules (225).
+   *
+   * AFTER moveToAwaitingParts, deliberately. That helper is the built-in
+   * behaviour and it fires status_entered of its own accord; a rule watching
+   * part_requested therefore runs with the job already in the stage it is about
+   * to be asked about. Firing first would let a condition on the status read the
+   * stage the job was in before anybody asked for the part.
+   */
+  await import('./jobRules')
+    .then((m) => m.fireJobEvent(siteId, actor, { event: 'part_requested', jobId: input.jobCardId }))
+    .catch(() => {})
+
   return { ok: true, id: Number(res.insertId) }
 }
 
@@ -602,6 +615,18 @@ export async function markReceivedForDocument(
      */
     for (const jobId of new Set(candidates.map((c) => Number(c.job_card_id)))) {
       await clearAwaitingPartsIfSettled(siteId, actor, jobId)
+      /*
+       * Then the rules (225), once per job for the same reason the loop is
+       * deduplicated: one delivery settling three requests is one arrival as far
+       * as anybody waiting is concerned.
+       *
+       * After the clear, matching part_requested's ordering — a rule asking
+       * "what stage is it in now" gets the answer the built-in behaviour has
+       * already settled on.
+       */
+      await import('./jobRules')
+        .then((m) => m.fireJobEvent(siteId, actor, { event: 'part_received', jobId }))
+        .catch(() => {})
     }
   } catch {
     // A receipt that committed must not be reported as failed because the

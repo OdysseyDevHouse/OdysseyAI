@@ -90,6 +90,10 @@ export type ActivityEntity =
      for what happened on a job. The two trails answer different questions and
      neither is a good place for the other. */
   | 'job_form'
+  /* A workflow rule (225). Its own entity because the trail is about the RULE —
+     who wrote it, who switched it off — while what a rule DID to a job is
+     logged against that job, where somebody asks why it moved. */
+  | 'job_rule'
   /* A support ticket (165). Separate from job_card because it is a separate
      module: a ticket has no money on it, and the questions its trail answers
      are different ones — who picked this up, who had it while the clock ran,

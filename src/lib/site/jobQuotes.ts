@@ -523,7 +523,23 @@ export async function acceptQuote(
         (claimed > 0 ? ` ${claimed} ${claimed === 1 ? 'part is' : 'parts are'} now set aside.` : ''),
     })
 
-    return { ok: true as const }
+    return { ok: true as const, jobId }
+  }).then((result) => {
+    /*
+     * The workflow rules (225), after the commit and swallowed.
+     *
+     * Same terms as every other hook: a rule may move the job, and a writer
+     * inside this transaction would deadlock on the rows it is still holding.
+     * "When a customer accepts, move it to Ready to Schedule" is the rule §12
+     * names first, so this is the hook it depends on.
+     */
+    if (result.ok && 'jobId' in result && typeof result.jobId === 'number') {
+      const jid = result.jobId
+      void import('./jobRules')
+        .then((m) => m.fireJobEvent(siteId, actor, { event: 'quote_accepted', jobId: jid }))
+        .catch(() => {})
+    }
+    return result
   })
 }
 
@@ -579,7 +595,17 @@ export async function declineJobQuote(
       })
     }
 
-    return { ok: true as const }
+    return { ok: true as const, jobId: quote.job_card_id === null ? null : Number(quote.job_card_id) }
+  }).then((result) => {
+    /* The rules (225). Only when the quote belongs to a job — a standalone
+       sales quote has nothing for a job rule to fire on. */
+    if (result.ok && 'jobId' in result && typeof result.jobId === 'number') {
+      const jid = result.jobId
+      void import('./jobRules')
+        .then((m) => m.fireJobEvent(siteId, actor, { event: 'quote_declined', jobId: jid }))
+        .catch(() => {})
+    }
+    return result
   })
 }
 

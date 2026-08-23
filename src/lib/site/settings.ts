@@ -732,6 +732,19 @@ export const SETTING_DEFAULTS = {
    * thing off rather than clear them one at a time.
    */
   job_auto_awaiting_parts: '1',
+  /**
+   * How long before the same rule may fire again on the same job (§12).
+   *
+   * The loop guard's first half — see the header of jobRules. Five minutes is
+   * long enough that a ping-pong pair of rules bounces once and stops, and
+   * short enough that a job genuinely moved twice in an afternoon still gets
+   * both notifications.
+   *
+   * Zero switches the cooldown off entirely, which is a legitimate thing to
+   * want while testing a rule and a bad thing to leave. The DEPTH CAP is not a
+   * setting, and still applies, so the machine cannot spin regardless.
+   */
+  job_rule_cooldown_minutes: '5',
 
   /**
    * Whether a missed promise tells a named manager (164, §17.5).

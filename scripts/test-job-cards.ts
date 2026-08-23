@@ -223,6 +223,14 @@ import {
   reconcileJobHeadlines,
 } from '../src/lib/site/jobHeadlines'
 import { listUsers } from '../src/lib/site/users'
+import {
+  listRules,
+  saveRule,
+  deleteRule,
+  fireJobEvent,
+  reconcileJobRules,
+} from '../src/lib/site/jobRules'
+import { ruleProblem, describeRule } from '../src/lib/jobRuleModel'
 import { buildIcs, escapeIcsText, foldIcsLine, toIcsStamp } from '../src/lib/icsFeed'
 import { createCalendarToken, readCalendarToken } from '../src/lib/calendarToken'
 import {
@@ -5199,6 +5207,434 @@ async function main() {
     await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_form'`, [])
     await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [jobForm.id])
     await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [jobForm.id])
+  }
+
+  /*
+   * ── (J43) Workflow rules: when this, if that, then this (§12) ─────────────
+   *
+   * The load-bearing checks are the two loop guards, and they are load-bearing
+   * for different reasons.
+   *
+   * The COOLDOWN stops a pair of rules that move a job back and forth. It is
+   * per (rule, job), so a pair bounces once and stops.
+   *
+   * The DEPTH CAP stops what the cooldown cannot see: three rules chained round
+   * a triangle, where no single rule fires twice on the same job within the
+   * window and the cooldown therefore never trips. Depth reaches the nested
+   * event through module state rather than through setStatus's signature, which
+   * is exactly the sort of plumbing that compiles fine and does nothing — so it
+   * is tested by building the triangle and counting.
+   */
+  {
+    // Mail off for the whole block, restored at the end. Same reason as (J22):
+    // this box has real SMTP credentials and a rule's notify action would post
+    // to a real person.
+    const ruleNotifyWas = await getSetting(SITE, 'job_notify_enabled').catch(() => '1')
+    await setSetting(SITE, 'job_notify_enabled', '0')
+    const cooldownWas = await getSetting(SITE, 'job_rule_cooldown_minutes').catch(() => '5')
+
+    /*
+     * The three stages this block moves a job between, by ROLE.
+     *
+     * By role rather than by a name this suite created, because the triangle
+     * needs three stages that a real job can legally move between, and the
+     * six required roles are the ones a business cannot delete its way out of.
+     */
+    const sNew = await statusForRole(SITE, 'new')
+    const sAssigned = await statusForRole(SITE, 'assigned')
+    const sInProgress = await statusForRole(SITE, 'in_progress')
+    if (!sNew || !sAssigned || !sInProgress) throw new Error('rule fixtures need three roles')
+
+    const madeRules: number[] = []
+    const mkRule = async (input: Parameters<typeof saveRule>[2]) => {
+      const r = await saveRule(SITE, actor, input)
+      if (!r.ok) throw new Error(`rule fixture failed: ${r.error}`)
+      madeRules.push(r.id)
+      return r.id
+    }
+    const base = {
+      id: null as number | null,
+      isActive: true,
+      triggerStatusId: null as number | null,
+      ifBoardId: null as number | null,
+      ifPriority: null as string | null,
+      ifHeadlineId: null as number | null,
+      ifIdleHours: null as number | null,
+      doNotify: false,
+      doStatusId: null as number | null,
+      doPriority: null as string | null,
+      doFollowerUserId: null as number | null,
+      message: '',
+    }
+
+    // ── What a rule refuses to be ───────────────────────────────────────────
+    /*
+     * The mistake people actually make: pick a trigger, write a condition,
+     * press save before choosing an action. It saves happily and then never
+     * does anything — which looks configured, and is the worst kind of broken.
+     */
+    const noAction = await saveRule(SITE, actor, {
+      ...base,
+      name: `JCR${stamp} does nothing`,
+      event: 'created',
+    })
+    ok(
+      '(J43) *** a rule with no action is refused ***',
+      !noAction.ok,
+      noAction.ok ? 'it saved' : noAction.error,
+    )
+
+    const unnamed = await saveRule(SITE, actor, {
+      ...base,
+      name: '   ',
+      event: 'created',
+      doNotify: true,
+    })
+    ok('(J43) and one with no name is too', !unnamed.ok)
+
+    /*
+     * A rule that moves a job INTO the status it watches for.
+     *
+     * The cooldown would stop it spinning, so this is not about safety — it is
+     * about a rule whose only effect is to trip its own guard being a rule
+     * nobody meant to write. Refused where the failure is legible.
+     */
+    const selfTrip = await saveRule(SITE, actor, {
+      ...base,
+      name: `JCR${stamp} self`,
+      event: 'status_entered',
+      triggerStatusId: sInProgress.id,
+      doStatusId: sInProgress.id,
+    })
+    ok(
+      '(J43) *** and one that sets the very stage it watches for ***',
+      !selfTrip.ok,
+      selfTrip.ok ? 'it saved' : selfTrip.error,
+    )
+
+    // The screen runs the SAME function, so the two cannot disagree about what
+    // a usable rule is.
+    ok(
+      '(J43) the builder refuses exactly what the action does',
+      ruleProblem({
+        name: 'x',
+        event: 'created',
+        doNotify: false,
+        doStatusId: null,
+        doPriority: null,
+        doFollowerUserId: null,
+        triggerStatusId: null,
+      }) !== null,
+    )
+
+    // ── It fires, and it does what it says ──────────────────────────────────
+    const rJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} rule job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!rJob.ok) throw new Error('rule job fixture failed')
+    const rJobId = rJob.id
+
+    const escalate = await mkRule({
+      ...base,
+      name: `JCR${stamp} escalate on in-progress`,
+      event: 'status_entered',
+      triggerStatusId: sInProgress.id,
+      doPriority: 'urgent',
+    })
+
+    await setStatus(SITE, actor, rJobId, sInProgress.id)
+    /*
+     * The hook is deliberately NOT awaited inside setStatus — a rule must never
+     * be why a technician cannot move a job. So the assertion waits for it
+     * rather than reading straight after, which would race the fire-and-forget.
+     */
+    const settle = async (ms = 400) => new Promise((r) => setTimeout(r, ms))
+    await settle()
+
+    const afterFire = await siteQueryOne<any>(
+      SITE,
+      'SELECT priority FROM job_cards WHERE id = ?',
+      [rJobId],
+    )
+    ok(
+      '(J43) *** a status change fires the rule, which changes the priority ***',
+      String(afterFire?.priority) === 'urgent',
+      `priority is ${String(afterFire?.priority)}`,
+    )
+
+    /*
+     * And it SAYS which rule did it, on the job.
+     *
+     * §12 requires every automated action to name the rule responsible, and the
+     * question this answers — "why did this job move?" — is asked on the job by
+     * somebody who has never heard of the rules screen.
+     */
+    const trail = await siteQuery<any>(
+      SITE,
+      `SELECT detail FROM activity_log
+        WHERE entity = 'job_card' AND entity_id = ? AND action = 'rule_fired'`,
+      [rJobId],
+    )
+    ok(
+      '(J43) *** and the job says which rule did it ***',
+      trail.some((t: any) => String(t.detail).includes(`JCR${stamp} escalate`)),
+      JSON.stringify(trail.map((t: any) => t.detail)),
+    )
+
+    // ── A condition that is not met means nothing happens ───────────────────
+    const rJob2 = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'low', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} rule job 2`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!rJob2.ok) throw new Error('rule job 2 fixture failed')
+
+    /*
+     * The escalate rule stands down first.
+     *
+     * It watches the same stage and has NO condition, so leaving it on would
+     * set this job urgent regardless and the assertion below would be measuring
+     * the wrong rule. The first run of this block did exactly that and reported
+     * a conditions bug in working code.
+     */
+    await saveRule(SITE, actor, {
+      ...base, id: escalate, isActive: false,
+      name: `JCR${stamp} escalate on in-progress`, event: 'status_entered',
+      triggerStatusId: sInProgress.id, doPriority: 'urgent',
+    })
+
+    await mkRule({
+      ...base,
+      name: `JCR${stamp} only when high`,
+      event: 'status_entered',
+      triggerStatusId: sInProgress.id,
+      ifPriority: 'high',
+      doPriority: 'urgent',
+    })
+    await setStatus(SITE, actor, rJob2.id, sInProgress.id)
+    await settle()
+    const cond = await siteQueryOne<any>(
+      SITE,
+      'SELECT priority FROM job_cards WHERE id = ?',
+      [rJob2.id],
+    )
+    ok(
+      '(J43) *** a rule whose condition is not met does nothing ***',
+      String(cond?.priority) === 'low',
+      `priority is ${String(cond?.priority)}`,
+    )
+
+    // ── The cooldown: a ping-pong pair bounces once ─────────────────────────
+    /*
+     * Two rules that move a job between two stages. Without a guard this runs
+     * until something falls over; with one it settles, and the point of the
+     * assertion is that it settles at a SMALL number rather than merely that it
+     * stops.
+     */
+    const pingJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} ping pong`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!pingJob.ok) throw new Error('ping job fixture failed')
+
+    const ping = await mkRule({
+      ...base,
+      name: `JCR${stamp} ping`,
+      event: 'status_entered',
+      triggerStatusId: sInProgress.id,
+      doStatusId: sAssigned.id,
+    })
+    const pong = await mkRule({
+      ...base,
+      name: `JCR${stamp} pong`,
+      event: 'status_entered',
+      triggerStatusId: sAssigned.id,
+      doStatusId: sInProgress.id,
+    })
+
+    await setStatus(SITE, actor, pingJob.id, sInProgress.id)
+    await settle(1200)
+
+    const bounces = await siteQuery<any>(
+      SITE,
+      `SELECT rule_id FROM job_rule_runs WHERE job_card_id = ?`,
+      [pingJob.id],
+    )
+    ok(
+      '(J43) *** two rules that move a job back and forth settle, they do not spin ***',
+      bounces.length > 0 && bounces.length <= 4,
+      `${bounces.length} firings`,
+    )
+    ok(
+      '(J43) and the cooldown is what stopped it — each rule fired once',
+      bounces.filter((b: any) => Number(b.rule_id) === ping).length === 1 &&
+        bounces.filter((b: any) => Number(b.rule_id) === pong).length === 1,
+      JSON.stringify(bounces.map((b: any) => Number(b.rule_id))),
+    )
+
+    // ── The depth cap: what the cooldown cannot see ─────────────────────────
+    /*
+     * A TRIANGLE, with the cooldown switched off.
+     *
+     * A → B → C → A. No single rule ever fires twice on the same job inside the
+     * window, so the cooldown never trips — this is the case it is blind to, and
+     * the only thing standing between it and a spin is the depth cap.
+     *
+     * With the cap at 3, the chain is: the person's move (depth 0) fires A;
+     * A's move runs at depth 1 and fires B; B's move runs at depth 2 and fires
+     * C; C's move runs at depth 3, which is the cap, and fires nothing. Three
+     * rule firings, then silence.
+     *
+     * The number is asserted rather than "it stopped", because module-state
+     * depth threading is exactly the sort of wiring that compiles, runs, and
+     * quietly passes zero — in which case this would spin instead.
+     */
+    await setSetting(SITE, 'job_rule_cooldown_minutes', '0')
+
+    const triJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} triangle`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!triJob.ok) throw new Error('triangle job fixture failed')
+
+    // Ping and pong would join in and muddy the count, so they stand down for
+    // this part. Switched off rather than deleted: their run rows are evidence
+    // the assertion above depends on.
+    await saveRule(SITE, actor, {
+      ...base, id: ping, isActive: false,
+      name: `JCR${stamp} ping`, event: 'status_entered',
+      triggerStatusId: sInProgress.id, doStatusId: sAssigned.id,
+    })
+    await saveRule(SITE, actor, {
+      ...base, id: pong, isActive: false,
+      name: `JCR${stamp} pong`, event: 'status_entered',
+      triggerStatusId: sAssigned.id, doStatusId: sInProgress.id,
+    })
+    // (escalate is already off, from the conditions check above.)
+
+    const triA = await mkRule({
+      ...base,
+      name: `JCR${stamp} tri A`,
+      event: 'status_entered',
+      triggerStatusId: sNew.id,
+      doStatusId: sAssigned.id,
+    })
+    const triB = await mkRule({
+      ...base,
+      name: `JCR${stamp} tri B`,
+      event: 'status_entered',
+      triggerStatusId: sAssigned.id,
+      doStatusId: sInProgress.id,
+    })
+    const triC = await mkRule({
+      ...base,
+      name: `JCR${stamp} tri C`,
+      event: 'status_entered',
+      triggerStatusId: sInProgress.id,
+      doStatusId: sNew.id,
+    })
+
+    await fireJobEvent(SITE, actor, {
+      event: 'status_entered',
+      jobId: triJob.id,
+      statusId: sNew.id,
+    })
+    await settle(1500)
+
+    const chain = await siteQuery<any>(
+      SITE,
+      `SELECT rule_id FROM job_rule_runs WHERE job_card_id = ? ORDER BY id`,
+      [triJob.id],
+    )
+    ok(
+      '(J43) *** a three-rule triangle with NO cooldown stops at the depth cap ***',
+      chain.length === 3,
+      `${chain.length} firings: ${JSON.stringify(chain.map((c: any) => Number(c.rule_id)))}`,
+    )
+    ok(
+      '(J43) and it stopped because of depth, not because a rule was skipped',
+      chain.length === 3 &&
+        Number(chain[0].rule_id) === triA &&
+        Number(chain[1].rule_id) === triB &&
+        Number(chain[2].rule_id) === triC,
+      JSON.stringify(chain.map((c: any) => Number(c.rule_id))),
+    )
+
+    await setSetting(SITE, 'job_rule_cooldown_minutes', cooldownWas)
+
+    // ── The sentence the list shows ─────────────────────────────────────────
+    /*
+     * Not decoration. The list, the editor's live preview and this assertion
+     * all read the same function, because fifteen rules nobody can read back is
+     * how a rule engine actually fails.
+     */
+    const listed = await listRules(SITE)
+    const escRule = listed.find((r) => r.id === triA)
+    /*
+     * Both halves of the sentence, and the SAME lookup in the assertion and in
+     * the diagnostic.
+     *
+     * The first version passed a lookup to the check and an empty one to the
+     * message, so a rule that had resolved neither stage would still have
+     * printed a plausible sentence full of "a stage" while claiming to name
+     * them.
+     */
+    const naming = {
+      status: (id: number) =>
+        id === sNew.id ? 'New' : id === sAssigned.id ? 'Assigned' : `#${id}`,
+    }
+    const sentence = escRule ? describeRule(escRule, naming) : 'not listed'
+    ok(
+      '(J43) a rule reads back as a sentence naming BOTH its stages',
+      sentence.includes('When a job reaches New') && sentence.includes('move it to Assigned'),
+      sentence,
+    )
+
+    // ── Drift reports, never repairs ────────────────────────────────────────
+    const drift = await reconcileJobRules(SITE)
+    ok(
+      '(J43) nothing is stuck mid-rule',
+      drift.stuck.length === 0,
+      JSON.stringify(drift.stuck),
+    )
+
+    // ── Teardown ────────────────────────────────────────────────────────────
+    /*
+     * The runs CASCADE from job_rules, so deleting the rules takes them. The
+     * jobs go last, and their activity with them — a rule_fired row whose job
+     * is gone is exactly the litter that makes somebody else's suite fail.
+     */
+    for (const id of madeRules) await deleteRule(SITE, actor, id)
+    for (const id of [rJobId, rJob2.id, pingJob.id, triJob.id]) {
+      await siteExecute(SITE, `DELETE FROM job_rule_runs WHERE job_card_id = ?`, [id])
+      await siteExecute(
+        SITE,
+        `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`,
+        [id],
+      )
+      await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [id])
+    }
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_rule'`, [])
+
+    /*
+     * Restored to the DEFAULT, not to what was read at the top.
+     *
+     * A previous crashed run could have left the setting at 0, and putting back
+     * "the original" faithfully would re-write that pollution for the next run.
+     */
+    await setSetting(SITE, 'job_notify_enabled', ruleNotifyWas === '0' ? '1' : ruleNotifyWas)
   }
 
   /*

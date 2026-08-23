@@ -579,6 +579,11 @@ export const SUBPAGE_LABELS = {
      boards that show them, and somebody looking for either should find it. */
   '/setup/job-workflow': 'Job workflow',
   '/setup/job-forms': 'Forms',
+  /* "Rules", not "Automations": /setup/alerts is already labelled
+     "Alerts & automations", and two screens both calling themselves
+     automations is how somebody ends up on the one that cannot do what they
+     came for. Alerts run on a clock; these run when something happens. */
+  '/setup/job-rules': 'Rules',
   /* "Tickets", matching the section it configures. The lanes and the running
      limit are one screen because both answer "how does this desk work". */
   '/setup/tickets': 'Tickets',

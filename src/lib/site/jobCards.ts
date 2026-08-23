@@ -1026,6 +1026,20 @@ export async function saveJobCard(
     }
 
     return { ok: true as const, id: input.id, documentNumber: text(before.document_number) }
+  }).then(async (result) => {
+    /*
+     * A new job tells the rules about itself (225).
+     *
+     * Only when input.id was null — this same function also SAVES an existing
+     * job, and a rule watching 'created' must not fire every time somebody
+     * corrects a title. After the commit and swallowed, like every other
+     * post-commit hook in this module.
+     */
+    if (result.ok && input.id === null && 'id' in result) {
+      const { fireJobEvent } = await import('./jobRules')
+      void fireJobEvent(siteId, actor, { event: 'created', jobId: result.id }).catch(() => {})
+    }
+    return result
   })
 }
 
@@ -1272,6 +1286,16 @@ export async function setStatus(
       ok: true as const,
       closed: recordState === 'closed',
       statusName: String(status.name),
+      /*
+       * Both status ids, carried out of the transaction for the rule engine.
+       *
+       * A workflow rule can watch for a job REACHING a stage or LEAVING one, and
+       * only this function knows both — after the commit the old id is gone. So
+       * they ride out on the result rather than being re-read, which would race
+       * with the next move and could not see the old one at all.
+       */
+      fromStatusId: Number(job.status_id),
+      toStatusId: statusId,
     }
   }).then(async (result) => {
     /*
@@ -1308,6 +1332,50 @@ export async function setStatus(
       } else {
         void notifyStatusChanged(siteId, actor, jobId, name).catch(() => {})
       }
+    }
+
+    /*
+     * And the workflow rules (225).
+     *
+     * AFTER the commit for the same reason the notifications are: a rule may
+     * itself move the job, and a writer running inside this transaction would
+     * deadlock against the row this one is still holding.
+     *
+     * NOT awaited and never thrown from — fireJobEvent swallows everything
+     * internally, and this catch is belt and braces. A misconfigured rule must
+     * not be why a technician cannot move a job.
+     *
+     * Three events, in the order they happened: the job left a stage, then it
+     * reached one, and if that stage closes the job it also closed. A rule
+     * watching 'closed' and a rule watching status_entered on the completion
+     * stage both fire, because both are true and neither is the other.
+     */
+    if (result.ok && 'toStatusId' in result) {
+      const { fireJobEvent, ruleDepthNow } = await import('./jobRules')
+      const from = result.fromStatusId
+      const to = result.toStatusId
+      /*
+       * The depth, read HERE — on the stack that decided to fire, while a rule
+       * that asked for this move is still inside its own call.
+       *
+       * Reading it inside the callback below instead is the bug that let a
+       * three-rule triangle spin: the callback is scheduled rather than started
+       * when this function resolves, so by the time it ran the depth had
+       * already been put back to zero. See ruleDepthNow.
+       */
+      /*
+       * No +1 here: runActions has ALREADY set the module depth to its own
+       * depth + 1 before calling setStatus, so this reads the right number for
+       * the event about to fire. A person's own status change reads 0.
+       */
+      const depth = ruleDepthNow()
+      void (async () => {
+        await fireJobEvent(siteId, actor, { event: 'status_exited', jobId, statusId: from, depth })
+        await fireJobEvent(siteId, actor, { event: 'status_entered', jobId, statusId: to, depth })
+        if ('closed' in result && result.closed) {
+          await fireJobEvent(siteId, actor, { event: 'closed', jobId, depth })
+        }
+      })().catch(() => {})
     }
     return result
   })
@@ -1372,6 +1440,14 @@ export async function assignOwner(
     // commit and swallowed, like every other notification here.
     if (result.ok && ownerUserId !== null) {
       void notifyAssigned(siteId, jobId, ownerUserId).catch(() => {})
+      /*
+       * And the rules (225). Only on an ASSIGNMENT, not on an unassignment:
+       * 'assigned' reads as somebody being given the job, and a rule that also
+       * fired when the owner was cleared would notify the person who just left.
+       */
+      void import('./jobRules')
+        .then((m) => m.fireJobEvent(siteId, actor, { event: 'assigned', jobId }))
+        .catch(() => {})
     }
     return result
   })
@@ -1783,7 +1859,15 @@ export async function setPriority(
     if (String(job.status) !== 'open') {
       return { ok: false as const, error: 'This job is closed, so its priority cannot change.' }
     }
-    if (String(job.priority) === priority) return { ok: true as const }
+    /*
+     * Already this priority: a success, and NOT a change.
+     *
+     * The 'changed' flag below is what a workflow rule keys on. Without the
+     * distinction a bulk action setting fifty jobs to high would fire
+     * priority_changed on the forty that already were, and the person reading
+     * the notifications would learn nothing from any of them.
+     */
+    if (String(job.priority) === priority) return { ok: true as const, changed: false }
 
     await tx.execute(`UPDATE job_cards SET priority = ? WHERE id = ?`, [priority, jobId])
 
@@ -1800,7 +1884,15 @@ export async function setPriority(
       changes: { priority: { from: String(job.priority), to: priority } },
     })
 
-    return { ok: true as const }
+    return { ok: true as const, changed: true }
+  }).then((result) => {
+    /* The rules (225), after the commit and swallowed. See setStatus. */
+    if (result.ok && 'changed' in result && result.changed) {
+      void import('./jobRules')
+        .then((m) => m.fireJobEvent(siteId, actor, { event: 'priority_changed', jobId }))
+        .catch(() => {})
+    }
+    return result
   })
 }
 

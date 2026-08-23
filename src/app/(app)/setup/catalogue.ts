@@ -348,6 +348,23 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         module: 'job_cards',
       },
       {
+        /* Its own tile for the same reason forms got one, and one more: the
+           rules screen is where somebody goes when a job moved on its own and
+           nobody can say why. Buried in a panel it would be found by the
+           people who wrote the rules and by nobody else. */
+        href: '/setup/job-rules',
+        description: 'When something happens on a job, do something about it without being asked.',
+        /* "alert" and "notification" deliberately present: somebody looking for
+           "notify me when a job is assigned" reaches for those words, and the
+           alerts screen cannot do it — alerts are scheduled, these are not. */
+        keywords:
+          'rule rules automation workflow trigger when then automatic escalate notify alert notification event',
+        icon: 'Zap',
+        tone: 'amber',
+        capability: 'jobs.setup',
+        module: 'job_cards',
+      },
+      {
         /* Beside job workflow, because the two are the same kind of decision
            for two different teams. Its own tile rather than a panel there:
            `tickets.setup` is a separate capability, so somebody who configures

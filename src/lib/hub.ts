@@ -68,6 +68,9 @@ export type HubIconName =
   | 'Gem'
   | 'Stamp'
   | 'History'
+  /* Job rules (225). A bolt rather than Repeat, which already means a
+     recurring document: a rule does not repeat, it reacts. */
+  | 'Zap'
   /* Training mode's tile — a mortarboard, beside the integrity tools it sits
      with in Setup. */
   | 'GraduationCap'

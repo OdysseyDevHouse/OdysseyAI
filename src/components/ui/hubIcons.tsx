@@ -19,6 +19,8 @@ import type { LucideIcon } from './icons'
  */
 export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
   Wrench: Icons.Wrench,
+  // Job rules (225), beside job workflow's wrench for the same reason.
+  Zap: Icons.Zap,
   // The ticket board's setup tile (165), beside job workflow's wrench.
   Ticket: Icons.Ticket,
   Users: Icons.Users,
