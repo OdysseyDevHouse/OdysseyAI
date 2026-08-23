@@ -155,41 +155,109 @@ export function renderBill(data: BillData, opts: SlipOptions = {}): Uint8Array {
   return job.feed(3).cut().build()
 }
 
+export type KitchenTicketLine = {
+  qty: number
+  description: string
+  /** Instruction answers marked prints_on_kitchen. */
+  notes: string[]
+  /** The free-text line note — "allergy: nuts" MUST reach the kitchen. */
+  note: string
+}
+
 export type KitchenTicketData = {
   /** The table code, or whatever the waiter typed. */
   tableLabel: string
+  /**
+   * Which logical printer this copy is for — "Bar", "Grill".
+   *
+   * Printed because one order can produce several tickets, and a docket that
+   * cannot say which station it belongs to is a docket somebody has to guess
+   * about when two of them come off the same machine during a queue.
+   */
+  printerName: string
   /** WHO SENT it — the runner delivers to whoever pressed the key. */
   waiter: string
   at: string
   covers: number | null
-  lines: {
-    qty: number
-    description: string
-    /** Instruction answers marked prints_on_kitchen. */
-    notes: string[]
-    /** The free-text line note — "allergy: nuts" MUST reach the kitchen. */
-    note: string
-  }[]
+  /**
+   * A STOP-COOKING notice rather than an order.
+   *
+   * Printed with a banner, rules above and below, and every quantity marked so
+   * it cannot be mistaken for a new order at a glance across a hot pass. That
+   * is the whole design constraint: a chef reads these at arm's length while
+   * doing something else, and a cancellation that looks like an order is worse
+   * than no cancellation at all — it ADDS a plate instead of removing one.
+   */
+  cancelled?: boolean
+  /** Why it was cancelled, when the till was told. Blank when it was not. */
+  reason?: string
+  /**
+   * The courses, in the order they should be worked.
+   *
+   * A group with an empty title prints under no heading — see
+   * groupKitchenLines, which always puts that one last.
+   */
+  groups: { title: string; lines: KitchenTicketLine[] }[]
 }
 
 export function renderKitchenTicket(data: KitchenTicketData, opts: SlipOptions = {}): Uint8Array {
   const columns = opts.columns ?? 48
   const job = new EscPos().init()
 
+  /* The banner leads, ABOVE the table. A chef reads the top line of a docket
+     and nothing else until they know what kind of docket it is, so "what is
+     this" has to come before "whose is it". Rules top and bottom so it reads as
+     a block rather than a heading somebody's eye can slide past. */
+  if (data.cancelled) {
+    job.align('center')
+    job.line('*'.repeat(columns))
+    job.size(2, 2).bold(true).line('** CANCELLED **').bold(false).size(1, 1)
+    job.line('DO NOT MAKE — take these off')
+    job.line('*'.repeat(columns))
+  }
+
   job.align('center').size(2, 2).line(data.tableLabel).size(1, 1)
+  if (data.printerName) job.bold(true).line(data.printerName).bold(false)
   job.line([data.at, data.waiter, data.covers ? `${data.covers} pax` : ''].filter(Boolean).join(' · '))
+  /* The reason, when the till was given one. A chef who can see WHY reads a
+     cancellation as information rather than as somebody messing them about —
+     "wrong table" and "customer left" call for different responses to the food
+     already on the pass. */
+  if (data.cancelled && data.reason) {
+    for (const piece of wrapText(data.reason, columns)) job.line(piece)
+  }
   job.align('left').line('-'.repeat(columns))
 
-  for (const line of data.lines) {
-    job.size(2, 2).line(`${formatQty(line.qty)} x ${line.description}`).size(1, 1)
-    for (const note of line.notes) {
-      for (const piece of wrapText(`  ${note}`, columns)) job.line(piece)
+  /* Only worth a heading when there is something to tell APART. A single
+     course would otherwise print "STARTERS" over a ticket whose every line is
+     a starter, which is noise on an 80mm roll. */
+  const showHeadings = data.groups.filter((g) => g.title).length > 0 && data.groups.length > 1
+
+  for (const group of data.groups) {
+    if (showHeadings && group.title) {
+      job.bold(true).line(group.title.toUpperCase()).bold(false)
     }
-    if (line.note) {
-      job.bold(true)
-      for (const piece of wrapText(`  ${line.note}`, columns)) job.line(piece)
-      job.bold(false)
+    for (const line of group.lines) {
+      /* Every quantity carries the word on a cancellation, not just the header.
+         A docket can be torn, or read from halfway down while it is still
+         coming off the roll, and a bare "2 x Steak" in that state is an ORDER. */
+      const qty = `${formatQty(line.qty)} x ${line.description}`
+      job.size(2, 2).line(data.cancelled ? `CANCEL ${qty}` : qty).size(1, 1)
+      for (const note of line.notes) {
+        for (const piece of wrapText(`  ${note}`, columns)) job.line(piece)
+      }
+      if (line.note) {
+        job.bold(true)
+        for (const piece of wrapText(`  ${line.note}`, columns)) job.line(piece)
+        job.bold(false)
+      }
     }
+  }
+
+  /* Closed as well as opened. The paper is torn from the top, so the LAST thing
+     under a chef's thumb as they pull it off should still say what it is. */
+  if (data.cancelled) {
+    job.align('center').line('*'.repeat(columns)).line('** CANCELLED **')
   }
 
   return job.feed(3).cut().build()

@@ -18,7 +18,7 @@ export function ReceiptModal({
   open,
   documentNumber,
   change,
-  canVoid,
+  tip,
   posted,
   canPrint,
   onClose,
@@ -26,26 +26,27 @@ export function ReceiptModal({
   onOpen,
   onGiftReceipt,
   onEmail,
-  onVoid,
 }: {
   open: boolean
   documentNumber: string
+  /**
+   * What to hand back. Always shown, zero included — see the panel below.
+   */
   change: number
   /**
-   * Whether to offer Void at all.
+   * What was kept as a tip out of the same over-tender, if any.
    *
-   * This is the honest place for it: the sale is same-day by definition, the
-   * cashier is looking at it, and `voidDocument` refuses anything older anyway.
-   * A cashier without `sales.void` simply does not see it — and the action
-   * re-checks, because a hidden button is not a boundary.
+   * Undefined on every path where a tip cannot arise (a refund, an exchange),
+   * which is not the same claim as 0 — but both render nothing, because a
+   * "Tip R0.00" line on a retail sale is noise on a screen that has three
+   * seconds of a cashier's attention.
    */
-  canVoid: boolean
+  tip?: number
   /**
    * Whether the sale is ON THE SERVER.
    *
    * False for one rung up offline: the number is real and the customer may leave
-   * with the slip, but no document exists yet, so Open and Void have nothing to
-   * act on.
+   * with the slip, but no document exists yet, so Open has nothing to act on.
    */
   posted: boolean
   /**
@@ -56,15 +57,18 @@ export function ReceiptModal({
    */
   canPrint: boolean
   onClose: () => void
-  /** Prints the 80mm slip. */
+  /** Prints this till's paper — the 80mm slip, or A4 on a trade counter. */
   onPrint: () => void
   /** Opens the document in the back office — the void/credit surface. */
   onOpen: () => void
-  /** The price-suppressed variant, for a present. */
-  onGiftReceipt: () => void
+  /**
+   * The price-suppressed variant, for a present. Undefined on a trade counter:
+   * a gift receipt is an 80mm slip with the prices struck out and has no A4
+   * counterpart, and nobody gift-wraps an account invoice.
+   */
+  onGiftReceipt?: () => void
   /** Emails the invoice. Undefined offline — there is no document to attach. */
   onEmail?: () => void
-  onVoid: () => void
 }) {
   return (
     <Modal
@@ -108,10 +112,12 @@ export function ReceiptModal({
                   Email
                 </Button>
               )}
-              <Button variant="ghost" size="touch" onClick={onGiftReceipt}>
-                <Icons.Gift size={18} />
-                Gift
-              </Button>
+              {onGiftReceipt && (
+                <Button variant="ghost" size="touch" onClick={onGiftReceipt}>
+                  <Icons.Gift size={18} />
+                  Gift
+                </Button>
+              )}
             </>
           )}
           {canPrint && (
@@ -136,29 +142,83 @@ export function ReceiptModal({
       }
     >
       <div className="flex flex-col gap-4">
-        {change > 0 && (
-          /* The one thing on this screen with a job to do RIGHT NOW. It gets the
-             size, the colour and the only decoration in the dialog, because the
-             cashier is reading it with a customer's hand already out. */
-          <div className="relative overflow-hidden rounded-card border border-success/30 bg-success-soft px-4 py-7 text-center">
-            {/* Confetti — purely decorative, so it is hidden from screen readers
-                and sits behind the figure it celebrates. Tokened opacities of
-                `success`, never a raw colour. */}
-            <Sparkle className="left-[12%] top-[42%] size-2.5 opacity-70" />
-            <Sparkle className="left-[18%] top-[26%] size-4 opacity-50" />
-            <Sparkle className="left-[8%] top-[62%] size-2 opacity-40" />
-            <Sparkle className="right-[13%] top-[30%] size-2 opacity-50" />
-            <Sparkle className="right-[9%] top-[46%] size-3.5 opacity-70" />
-            <Sparkle className="right-[16%] top-[64%] size-2 opacity-40" />
+        {/*
+          ── ALWAYS SHOWN, EVEN AT ZERO ────────────────────────────────────
+          This used to render only when `change > 0`, which meant the panel a
+          cashier reads for the answer was ABSENT in the commonest case — a
+          card payment or exact cash. In a queue that is indistinguishable from
+          a slow render, so the honest answer is a stated zero: "nothing to hand
+          back" is information, and its absence is not.
 
-            <span className="relative block text-sm font-bold uppercase tracking-[0.12em] text-success-ink">
-              Change
-            </span>
-            <span className="numeric relative block text-7xl font-extrabold leading-tight text-success-ink">
-              {formatMoney(change)}
-            </span>
-          </div>
-        )}
+          Zero is drawn quieter than a real amount — same size and position, so
+          the eye lands in one place either way, but in the neutral tokens
+          rather than the celebratory ones. A till that shouts at every sale
+          stops being read. */}
+        {(() => {
+          const owing = change > 0
+          return (
+            <div
+              className={`relative overflow-hidden rounded-card border px-4 py-7 text-center ${
+                owing ? 'border-success/30 bg-success-soft' : 'border-border bg-surface-2'
+              }`}
+            >
+              {/* Confetti — purely decorative, so it is hidden from screen readers
+                  and sits behind the figure it celebrates. Tokened opacities of
+                  `success`, never a raw colour. Only for money actually going
+                  back: nothing is being celebrated at zero. */}
+              {owing && (
+                <>
+                  <Sparkle className="left-[12%] top-[42%] size-2.5 opacity-70" />
+                  <Sparkle className="left-[18%] top-[26%] size-4 opacity-50" />
+                  <Sparkle className="left-[8%] top-[62%] size-2 opacity-40" />
+                  <Sparkle className="right-[13%] top-[30%] size-2 opacity-50" />
+                  <Sparkle className="right-[9%] top-[46%] size-3.5 opacity-70" />
+                  <Sparkle className="right-[16%] top-[64%] size-2 opacity-40" />
+                </>
+              )}
+
+              <span
+                className={`relative block text-sm font-bold uppercase tracking-[0.12em] ${
+                  owing ? 'text-success-ink' : 'text-muted'
+                }`}
+              >
+                Change
+              </span>
+              <span
+                className={`numeric relative block text-7xl font-extrabold leading-tight ${
+                  owing ? 'text-success-ink' : 'text-ink'
+                }`}
+              >
+                {formatMoney(change)}
+              </span>
+
+              {/*
+                ── THE TIP, BESIDE THE CHANGE THAT IT SPLIT ──────────────────
+                A tip and change divide ONE over-tender. Without this line a
+                cashier handed R500 on a R430 bill with R20 left as a tip sees
+                only "R50" and has no way to tell it from the R70 they would
+                owe if there were no tip — so the figure they are checking
+                against the drawer cannot be checked at all.
+
+                Inside the same panel rather than below it: it is an explanation
+                OF this number, not a second fact competing with it. */}
+              {tip !== undefined && tip > 0 && (
+                /* `text-lg` — two steps up the scale from the `text-sm` this
+                   started at. The padding and the glyph go up with it: a pill
+                   whose text grows while its box does not stops reading as a
+                   pill, and at till distance the shape is what is recognised
+                   before the words are. */
+                <span className="relative mt-3 inline-flex items-center gap-2 rounded-pill border border-border bg-surface px-4 py-1.5 text-lg font-medium text-muted">
+                  <Icons.HandCoins size={18} />
+                  <span>
+                    Tip <span className="numeric font-bold text-ink">{formatMoney(tip)}</span> kept
+                    back
+                  </span>
+                </span>
+              )}
+            </div>
+          )
+        })()}
 
         {/* A row rather than a centred block: this is a reference someone reads
             off or copies later, not a number anybody acts on now. Left-aligned
@@ -198,27 +258,19 @@ export function ReceiptModal({
           </div>
         )}
 
-        {/* Void sits here, in the body and well away from "Next sale".
-            It reverses real money, so it must be findable without being anywhere
-            near the key a cashier taps a hundred times a day.
+        {/* ── NO VOID HERE, DELIBERATELY ───────────────────────────────────
+            Voiding a finalised sale reverses real money, puts stock back and
+            can reverse a debtor's ledger entry. It belongs to the back office,
+            where a manager is already looking at the sale in its register —
+            not to a clerk standing at the till with a queue behind them.
 
-            Offline it is hidden: voidDocument needs the document, which does not
-            exist yet. Cancelling an unsynced sale is the outbox screen's job and has
-            different rules — the number is BURNT rather than reused. */}
-        {canVoid && posted && (
-          /* Outlined rather than bare text: at till distance a text-only control
-             on a white panel is easy to miss entirely, and this is the one
-             escape hatch from a sale that just took money. Still `danger-ghost`
-             — findable, never as loud as the key beside it in the footer. */
-          <Button
-            variant="danger-ghost"
-            className="self-center border-danger/40"
-            onClick={onVoid}
-          >
-            <Icons.Trash size={16} />
-            Something wrong? Void this sale
-          </Button>
-        )}
+            The capability still exists and the action still enforces it; what
+            changed is that the till no longer OFFERS it. A mistake taken at the
+            counter is escalated, which is the point: someone other than the
+            person who rang it up decides to reverse it.
+
+            Open (above) still reaches the document in the back office, so the
+            route to a void is a walk to a workstation rather than a dead end. */}
       </div>
     </Modal>
   )

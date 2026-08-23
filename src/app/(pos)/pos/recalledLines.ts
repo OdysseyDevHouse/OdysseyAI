@@ -2,6 +2,7 @@ import 'server-only'
 
 import { getTillProduct } from '@/lib/site/tillSearch'
 import { terminalStockLocationId } from '@/lib/site/terminals'
+import { sentQtyByLineAndPrinter } from '@/lib/site/kitchenPrinters'
 import type { getDocument } from '@/lib/site/salesDocuments'
 import type { BasketLine } from '@/lib/basket'
 
@@ -62,14 +63,16 @@ export type RecalledLine = {
    */
   orderedAt: number
   /**
-   * How much of this line the kitchen already has (142).
+   * Whether any printer has already been told about this line (229).
    *
-   * Carried onto the basket so the CARD can say so. Until now this lived only on
-   * the server, which was enough to compute a ticket but left the waiter's screen
-   * unable to distinguish a line the kitchen is already cooking from one it has
-   * never heard of — the exact confusion the SENT badge exists to remove.
+   * Carried onto the basket so the CARD can say so. Without it the waiter's
+   * screen cannot distinguish a line the kitchen is already cooking from one it
+   * has never heard of — the exact confusion the SENT badge exists to remove.
+   *
+   * A boolean rather than a quantity: since routing became per-printer there is
+   * no single "how much has gone", only "has anything". See BasketLine.
    */
-  kitchenSentQty: number
+  kitchenSent: boolean
 }
 
 /**
@@ -117,6 +120,18 @@ export async function basketLinesForDocument(
   const products = await Promise.all(
     productIds.map((id) => getTillProduct(siteId, id, priceStructureId, locationId)),
   )
+  /* Which lines any printer has already had. Keyed `lineId:printerId`, so a
+     line appears here once per destination it has reached — the badge only
+     asks whether it appears at all. Failure reads as "nothing sent", which
+     under-claims rather than over-claims: a missing badge invites a waiter to
+     look, where a wrong one invites them not to. */
+  const sentKeys = await sentQtyByLineAndPrinter(siteId, doc.id).catch(
+    () => new Map<string, number>(),
+  )
+  const sentLineIds = new Set<number>()
+  for (const [key, qty] of sentKeys) {
+    if (qty > 0) sentLineIds.add(Number(key.split(':')[0]))
+  }
   const byId = new Map(
     products.filter((p): p is NonNullable<typeof p> => p !== null).map((p) => [p.id, p]),
   )
@@ -159,7 +174,7 @@ export async function basketLinesForDocument(
       // A line stored before 167 has no recorded order time. Recall is the
       // earliest moment we can honestly claim, so the age counts from here.
       orderedAt: line.orderedAt ?? Date.now(),
-      kitchenSentQty: line.kitchenSentQty,
+      kitchenSent: sentLineIds.has(line.id),
     }
   })
 }

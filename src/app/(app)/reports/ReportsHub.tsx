@@ -60,6 +60,22 @@ type ViewMode = 'grid' | 'list'
 const ALL = '__all'
 
 /**
+ * The "popular" tab — the handful of reports a shop actually opens.
+ *
+ * Underscored for the same reason ALL is: it is a VIEW over the catalogue
+ * rather than a category, so it can never collide with a real category name.
+ *
+ * It DUPLICATES rather than moves, deliberately. Invoice history is a Sales
+ * report whether or not it is also popular, and somebody browsing Sales for it
+ * must still find it there. So this tab owns no items: it filters the same
+ * catalogue by id, and every tile is the same tile — same star, same route.
+ * That is also why the ids live on the SERVER (see `POPULAR_REPORTS` in
+ * `page.tsx`) and arrive as a prop: an id naming a report this role may not run
+ * is simply not in the catalogue, so it lists nothing rather than a dead tile.
+ */
+const POPULAR = '__popular'
+
+/**
  * The order the category tabs sit in.
  *
  * Fixed rather than alphabetical, and it deliberately matches the sidebar's own
@@ -85,6 +101,13 @@ function categoryRank(category: string) {
   return i === -1 ? CATEGORY_ORDER.length : i
 }
 
+/** What to CALL a tab in prose — the sentinels are not words. */
+function tabLabel(tab: string) {
+  if (tab === POPULAR) return 'Popular'
+  if (tab === ALL) return 'All'
+  return tab
+}
+
 /**
  * The catalogue.
  *
@@ -106,6 +129,7 @@ export default function ReportsHub({
   templates,
   saved,
   favorites,
+  popular = [],
   canBuild,
   canSchedule,
   canUseAi,
@@ -114,6 +138,14 @@ export default function ReportsHub({
   templates: HubItem[]
   saved: HubItem[]
   favorites: string[]
+  /**
+   * Report ids to also list under a Popular tab, in the order they should show.
+   *
+   * Optional, and empty means no tab at all — the Job cards screen renders this
+   * same component over fifteen reports, where singling out five of them says
+   * nothing.
+   */
+  popular?: string[]
   canBuild: boolean
   canSchedule: boolean
   canUseAi: boolean
@@ -147,6 +179,19 @@ export default function ReportsHub({
   const favouriteItems = useMemo(() => all.filter((i) => favs.has(i.id)), [all, favs])
 
   /**
+   * The popular reports, in the order they were named rather than the
+   * catalogue's — the list IS an editorial running order, so it is walked
+   * outwards from `popular` and not filtered inwards from `all`.
+   *
+   * An id naming a report this role cannot run finds nothing and drops out,
+   * which is why nothing here needs a permission check of its own.
+   */
+  const popularItems = useMemo(() => {
+    const byId = new Map(all.map((i) => [i.id, i]))
+    return popular.map((id) => byId.get(id)).filter((i): i is HubItem => i !== undefined)
+  }, [all, popular])
+
+  /**
    * The categories present, in CATEGORY_ORDER.
    *
    * Taken from the FULL catalogue, deliberately — not from the search results.
@@ -170,8 +215,16 @@ export default function ReportsHub({
   }, [all])
 
   /* A stored tab naming a category this role cannot see falls back to All
-     rather than to a blank screen. Computed, so nothing has to chase state. */
-  const activeTab = tab !== ALL && categories.includes(tab) ? tab : ALL
+     rather than to a blank screen — and so does Popular on a screen that was
+     given no popular ids. Computed, so nothing has to chase state. */
+  const activeTab =
+    tab === POPULAR
+      ? popularItems.length > 0
+        ? POPULAR
+        : ALL
+      : tab !== ALL && categories.includes(tab)
+        ? tab
+        : ALL
 
   /*
    * Tab first, then search — and a search that finds nothing in the selected
@@ -183,15 +236,30 @@ export default function ReportsHub({
    * browsing. `searchedWider` tells the reader that is what happened, so the
    * results never look like they came from the tab they can see selected.
    */
-  const inTab = useMemo(
-    () => (activeTab === ALL ? matches : matches.filter((i) => i.category === activeTab)),
-    [matches, activeTab],
-  )
+  const inTab = useMemo(() => {
+    if (activeTab === ALL) return matches
+    /* Popular selects by id, not category — and keeps the editorial order,
+       which is why it walks `popularItems` and tests membership of the search
+       results rather than the other way round. */
+    if (activeTab === POPULAR) {
+      const found = new Set(matches.map((i) => i.id))
+      return popularItems.filter((i) => found.has(i.id))
+    }
+    return matches.filter((i) => i.category === activeTab)
+  }, [matches, activeTab, popularItems])
   const searchedWider = Boolean(query) && activeTab !== ALL && inTab.length === 0 && matches.length > 0
   const visible = searchedWider ? matches : inTab
 
-  /** Grouped by category, preserving the catalogue's own ordering. */
+  /**
+   * Grouped by category, preserving the catalogue's own ordering.
+   *
+   * Except on Popular, which is ONE section under its own heading. Grouping
+   * there would break five hand-picked reports into three headed sections of
+   * one or two — which is the catalogue the reader just chose to step out of,
+   * and it would throw away the running order they were given in.
+   */
   const groups = useMemo(() => {
+    if (activeTab === POPULAR && !searchedWider) return [[POPULAR, visible] as const]
     const out = new Map<string, HubItem[]>()
     for (const item of visible) {
       const list = out.get(item.category) ?? []
@@ -199,14 +267,22 @@ export default function ReportsHub({
       out.set(item.category, list)
     }
     return [...out.entries()]
-  }, [visible])
+  }, [visible, activeTab, searchedWider])
 
-  /* One tab per category, then All at the end as asked. Name and glyph only —
-     no counts: the bar is for choosing where to look, and eight numbers across
-     it compete with the eight words that actually say what is there. Each
-     category's own heading still carries its count on the All tab. */
+  /* Popular first, then one tab per category, then All at the end as asked.
+     Name and glyph only — no counts: the bar is for choosing where to look, and
+     eight numbers across it compete with the eight words that actually say what
+     is there. Each category's own heading still carries its count on the All
+     tab.
+
+     Popular leads because it is the shortest path to the thing most people came
+     for; putting it after the subjects would mean scanning past everything it
+     exists to save you from. */
   const tabItems = useMemo(
     () => [
+      ...(popularItems.length > 0
+        ? [{ value: POPULAR, label: 'Popular', icon: categoryIcon(POPULAR, 15) }]
+        : []),
       ...categories.map((name) => ({
         value: name,
         label: name,
@@ -214,7 +290,7 @@ export default function ReportsHub({
       })),
       { value: ALL, label: 'All', icon: <Icons.LayoutGrid size={15} strokeWidth={1.7} /> },
     ],
-    [categories],
+    [categories, popularItems],
   )
 
   function onToggleFavorite(id: string) {
@@ -336,7 +412,7 @@ export default function ReportsHub({
         single category, where a one-tab bar plus All is furniture that
         filters nothing.
       */}
-      {categories.length > 1 && (
+      {(categories.length > 1 || popularItems.length > 0) && (
         <Tabs
           items={tabItems}
           value={activeTab}
@@ -346,10 +422,11 @@ export default function ReportsHub({
       )}
 
       {/* Said plainly, because otherwise results from other categories appear
-          under a tab the reader can see is still selected. */}
+          under a tab the reader can see is still selected. Named through
+          `tabLabel` so the Popular tab does not report itself as `__popular`. */}
       {searchedWider && (
         <p className="text-xs text-muted">
-          Nothing in {activeTab} matches “{search.trim()}” — showing every category.
+          Nothing in {tabLabel(activeTab)} matches “{search.trim()}” — showing every category.
         </p>
       )}
 
@@ -433,7 +510,7 @@ function CategoryGrid({
         <div className="flex items-center gap-3">
           <CategoryTile icon={categoryIcon(category, 16)} tone={categoryTone(category)} size="sm" />
           <div className="min-w-0">
-            <h2 className="truncate text-[15px] font-semibold text-ink">{category}</h2>
+            <h2 className="truncate text-[15px] font-semibold text-ink">{tabLabel(category)}</h2>
             {description && <p className="truncate text-xs text-muted">{description}</p>}
           </div>
           <Badge tone="neutral">{items.length}</Badge>
@@ -520,7 +597,9 @@ function CategoryList({
     <Card>
       <div className="flex items-center gap-3 border-b border-border px-4 py-3.5">
         <CategoryTile icon={categoryIcon(category)} tone={categoryTone(category)} />
-        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">{category}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">
+          {tabLabel(category)}
+        </h2>
         <Badge tone="neutral">{items.length}</Badge>
       </div>
 

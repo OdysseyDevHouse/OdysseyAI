@@ -61,6 +61,7 @@ import {
   ReasonPicker,
   type PickableReason,
   SectionTitle,
+  SectionBody,
   SelectableCard,
   Select,
   RowTile,
@@ -93,6 +94,7 @@ import {
   Tabs,
   Textarea,
   TextLink,
+  TextLinkButton,
   TILE_SWATCHES,
   TileGrid,
   toneForId,
@@ -995,11 +997,37 @@ function SectionTitleSection() {
             card, where a second rule would compete with the outer one.
           </div>
         </Card>
+        <FoldingSectionDemo />
       </CardBody>
     </Card>
   )
 }
 
+
+function FoldingSectionDemo() {
+  const [open, setOpen] = useState(true)
+  return (
+    <Card>
+      <SectionTitle
+        icon={<Icons.Warehouse size={16} />}
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+      >
+        Inventory
+      </SectionTitle>
+      <SectionBody open={open}>
+        <div className="px-5 py-4 text-sm text-muted">
+          &lt;SectionTitle open onToggle&gt; + &lt;SectionBody open&gt; — the whole heading bar
+          becomes the fold control. The body is <strong className="text-ink">hidden, not
+          unmounted</strong>: these sections sit inside forms whose save reads the DOM, so a
+          shut section that unmounted would post nothing for its fields. `hidden` still takes
+          them out of the tab order. Reach for &lt;Accordion&gt; instead when the panels are a
+          stack of settings in their own right rather than sections of one card.
+        </div>
+      </SectionBody>
+    </Card>
+  )
+}
 
 function DeepPanelSection() {
   return (
@@ -1253,7 +1281,7 @@ function IdentitySection() {
     <Card>
       <CardHeader
         title="Row identity"
-        description="<RowTile> — the leading initials tile that makes a row findable by shape. <TextLink> — the inline brand link for record references."
+        description="<RowTile> — the leading initials tile that makes a row findable by shape. <TextLink> — the inline brand link for record references. <TextLinkButton> — the same look for a reference that OPENS something in place rather than navigating."
       />
       <CardBody className="flex flex-col gap-3 text-sm text-ink-2">
         {PRODUCTS.map((p) => (
@@ -1263,6 +1291,17 @@ function IdentitySection() {
             <span>{p.name}</span>
           </div>
         ))}
+        {/* The button twin, shown beside the anchor deliberately: they are meant
+            to be indistinguishable to a reader, and the only way to keep that
+            true is to look at them together. The report grid uses this one for
+            a document number that opens the sale behind it. */}
+        <div className="flex items-center gap-3 border-t border-border pt-3">
+          <RowTile label="Invoice" />
+          <TextLinkButton onClick={() => alert('Opens a dialog in place.')}>
+            INV001311
+          </TextLinkButton>
+          <span>opens where it stands — no navigation</span>
+        </div>
       </CardBody>
     </Card>
   )
@@ -2578,7 +2617,7 @@ function SaleLineSection() {
       note: 'On the tab when it was reopened, untouched since. Already with the kitchen.',
       line: line({
         key: 'unmodified',
-        kitchenSentQty: 1,
+        kitchenSent: true,
         instructions: [modifier('Compound Butter')],
       }),
       total: 125,
@@ -2590,7 +2629,7 @@ function SaleLineSection() {
       line: line({
         key: 'modified',
         qty: 2,
-        kitchenSentQty: 1,
+        kitchenSent: true,
         instructions: [modifier('Mushroom Sauce')],
       }),
       total: 250,
@@ -2841,18 +2880,18 @@ function InstructionsSection() {
  * that breaks — five touch keys is the widest this row ever gets.
  */
 function ReceiptSection() {
-  const [showing, setShowing] = useState<'full' | 'offline' | 'big' | null>(null)
+  const [showing, setShowing] = useState<'full' | 'offline' | 'big' | 'none' | 'tip' | null>(null)
 
   return (
     <Card>
       <CardHeader
         title="Sale complete"
-        description="<ReceiptModal /> — change first and biggest, because it is the only thing on screen with a job to do while the customer waits. The invoice number reads as filing rather than as a figure. Void is in the body, deliberately far from the key tapped a hundred times a day."
+        description="<ReceiptModal /> — change first and biggest, because it is the only thing on screen with a job to do while the customer waits. Always shown, zero included: in a queue a missing panel is indistinguishable from a slow one, so nothing-to-hand-back is stated rather than implied. A tip rides inside the same panel, since it and the change split one over-tender. No void: reversing a finalised sale is the back office's job, not a clerk's."
       />
       <Row>
         <Spec
           name="<ReceiptModal />"
-          note="Posted, with change and void rights — the widest the footer gets: five touch keys, which is why the panel is md and the footer wraps."
+          note="Posted, with change — the widest the footer gets: five touch keys, which is why the panel is md and the footer wraps."
         />
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setShowing('full')}>
@@ -2866,22 +2905,29 @@ function ReceiptSection() {
           <Button variant="ghost" onClick={() => setShowing('big')}>
             Biggest change
           </Button>
+          {/* The COMMONEST sale of all — a card, or exact cash. Shown because
+              the zero state is the one this panel exists to make legible. */}
+          <Button variant="ghost" onClick={() => setShowing('none')}>
+            No change
+          </Button>
+          <Button variant="ghost" onClick={() => setShowing('tip')}>
+            Change and a tip
+          </Button>
         </div>
       </Row>
 
       <ReceiptModal
         open={showing !== null}
         documentNumber="INV_01_01_000001"
-        change={showing === 'big' ? 1987.65 : 15}
+        change={showing === 'big' ? 1987.65 : showing === 'none' ? 0 : showing === 'tip' ? 50 : 15}
+        tip={showing === 'tip' ? 20 : undefined}
         posted={showing !== 'offline'}
-        canVoid={showing !== 'offline'}
         canPrint
         onClose={() => setShowing(null)}
         onPrint={() => {}}
         onOpen={() => {}}
         onGiftReceipt={() => {}}
         onEmail={() => {}}
-        onVoid={() => setShowing(null)}
       />
     </Card>
   )

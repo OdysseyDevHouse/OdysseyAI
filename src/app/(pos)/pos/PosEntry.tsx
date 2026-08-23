@@ -311,6 +311,10 @@ export default function PosEntry({
       hospitality={posMode === 'hospitality'}
       modeName={POS_MODE_WORDMARKS[posMode]}
       invoicing={posMode === 'invoicing'}
+      /* The mode itself, for the paper a finished sale prints on — the one
+         question that is about all three modes rather than this screen's
+         shape. See lib/salePaper. */
+      posMode={posMode}
       startAs={startAs}
       initialTables={initialTables}
       floorRooms={floorRooms}

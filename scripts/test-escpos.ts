@@ -9,7 +9,7 @@
 
 import { EscPos, encodeCp858, twoCol, wrapText } from '../src/lib/escpos/encoder'
 import { renderReceipt, renderKitchenTicket, renderTestSlip } from '../src/lib/escpos/slips'
-import { kitchenDelta } from '../src/lib/kitchenTicket'
+import { kitchenDelta, groupKitchenLines } from '../src/lib/kitchenTicket'
 import type { ReceiptData } from '../src/lib/receiptData'
 
 let fails = 0
@@ -160,33 +160,118 @@ console.log('\n── The kitchen ticket ─────────────
 
 const ticket = renderKitchenTicket({
   tableLabel: 'T5',
+  printerName: 'Grill',
   waiter: 'Sam',
   at: '19:42',
   covers: 4,
-  lines: [
-    { qty: 2, description: 'Burger', notes: ['extra bacon'], note: 'allergy: nuts' },
-    { qty: 1, description: 'Salad', notes: [], note: '' },
+  groups: [
+    {
+      title: 'Mains',
+      lines: [{ qty: 2, description: 'Burger', notes: ['extra bacon'], note: 'allergy: nuts' }],
+    },
+    { title: '', lines: [{ qty: 1, description: 'Salad', notes: [], note: '' }] },
   ],
 })
 const ticketText = new TextDecoder('latin1').decode(ticket)
 ok('the table leads', ticketText.includes('T5'))
+ok('*** the ticket says which printer it is for ***', ticketText.includes('Grill'))
 ok('the items print', ticketText.includes('Burger') && ticketText.includes('Salad'))
 ok('the kitchen answer prints', ticketText.includes('extra bacon'))
 ok('*** the allergy note reaches the kitchen ***', ticketText.includes('allergy: nuts'))
+ok('the course heading prints', ticketText.includes('MAINS'))
 ok('*** no money anywhere on a kitchen ticket ***', !/R\d/.test(ticketText))
+
+// One course only — a heading over a ticket whose every line is a main is
+// noise on an 80mm roll, so it is suppressed.
+const oneCourse = new TextDecoder('latin1').decode(
+  renderKitchenTicket({
+    tableLabel: 'T6',
+    printerName: 'Bar',
+    waiter: 'Sam',
+    at: '19:45',
+    covers: 2,
+    groups: [{ title: 'Drinks', lines: [{ qty: 1, description: 'Coke', notes: [], note: '' }] }],
+  }),
+)
+ok('*** a single course prints no heading ***', !oneCourse.includes('DRINKS'))
+
+console.log('\n── The cancellation ticket ─────────────────────────────────\n')
+
+/* A chef reads these at arm's length across a hot pass. Everything here is
+   about one failure mode: a cancellation mistaken for an order ADDS a plate
+   instead of removing one, which is worse than never printing it. */
+const cancel = new TextDecoder('latin1').decode(
+  renderKitchenTicket({
+    tableLabel: 'T5',
+    printerName: 'Grill',
+    waiter: 'Sam',
+    at: '19:58',
+    covers: 4,
+    cancelled: true,
+    reason: 'Customer left',
+    groups: [
+      { title: 'Mains', lines: [{ qty: 2, description: 'Burger', notes: [], note: '' }] },
+    ],
+  }),
+)
+ok('*** the banner leads, before the table ***',
+   cancel.indexOf('CANCELLED') < cancel.indexOf('T5'))
+ok('*** it says what to DO, not just what happened ***', cancel.includes('DO NOT MAKE'))
+ok('*** every line carries the word, not just the header ***',
+   /CANCEL 2 x Burger/.test(cancel))
+ok('the reason reaches the chef', cancel.includes('Customer left'))
+/* Twice: once at the top, once at the bottom. Measured on the last PRINTED
+   line rather than the last bytes — feed and cut are control codes and always
+   trail the text. */
+/* The feed-and-cut tail is dropped before looking at the last line. Matching on
+   "a line containing a letter" is not enough: ESC d 3 and GS V B 0 are control
+   bytes that happen to include letters, so the naive version finds the cut
+   sequence rather than the banner. Everything printable-and-not-control is what
+   a chef can actually read. */
+const cancelLines = cancel
+  .split('\n')
+  .map((l) => l.replace(/[\x00-\x1f]/g, ''))
+  // A WORD, not just a letter. What survives stripping the cut sequence is
+  // "dVB" — letters with no spaces, which no line a chef reads ever is.
+  .filter((l) => /[A-Za-z]{2,}\s|\*{4,}/.test(l))
+ok('*** it says CANCELLED at the end too — paper tears from the top ***',
+   (cancel.match(/CANCELLED/g) ?? []).length === 2 &&
+     (cancelLines[cancelLines.length - 1] ?? '').includes('CANCELLED'))
+ok('no money on a cancellation either', !/R\d/.test(cancel))
+
+// An ordinary ticket must gain none of it — the banner is the whole signal.
+ok('*** an ordinary ticket is never marked cancelled ***',
+   !ticketText.includes('CANCELLED') && !ticketText.includes('CANCEL '))
 
 console.log('\n── The delta rule ──────────────────────────────────────────\n')
 
 const delta = kitchenDelta([
-  { lineId: 1, qty: 3, kitchenSentQty: 0 }, // new
-  { lineId: 2, qty: 3, kitchenSentQty: 1 }, // bumped
-  { lineId: 3, qty: 2, kitchenSentQty: 2 }, // already sent
-  { lineId: 4, qty: 1, kitchenSentQty: 3 }, // reduced — clamps, no void notice v1
+  { lineId: 1, qty: 3, sentQty: 0 }, // new
+  { lineId: 2, qty: 3, sentQty: 1 }, // bumped
+  { lineId: 3, qty: 2, sentQty: 2 }, // already sent
+  { lineId: 4, qty: 1, sentQty: 3 }, // reduced — clamps, no void notice v1
 ])
 ok('a new line owes everything', delta.find((d) => d.lineId === 1)?.qty === 3)
 ok('a bumped line owes the bump', delta.find((d) => d.lineId === 2)?.qty === 2)
 ok('an already-sent line owes nothing', !delta.some((d) => d.lineId === 3))
 ok('*** a reduced line clamps at zero — nothing un-sends ***', !delta.some((d) => d.lineId === 4))
+
+// The case the user described: 3 Cokes already sent, 2 more added, only 2 print.
+const bumped = kitchenDelta([{ lineId: 9, qty: 5, sentQty: 3 }])
+ok('*** 3 sent + 2 added prints exactly 2 ***', bumped[0]?.qty === 2)
+
+console.log('\n── Grouping ────────────────────────────────────────────────\n')
+
+const grouped = groupKitchenLines([
+  { qty: 1, description: 'Calamari', notes: [], note: '', kitchenGroup: 'Starters' },
+  { qty: 1, description: 'Steak', notes: [], note: '', kitchenGroup: 'Mains' },
+  { qty: 1, description: 'Prawns', notes: [], note: '', kitchenGroup: 'starters ' },
+  { qty: 1, description: 'Bread', notes: [], note: '', kitchenGroup: '' },
+])
+ok('groups appear in the order first rung', grouped[0]?.title === 'Starters')
+ok('*** case and spacing do not split a course ***', grouped[0]?.lines.length === 2)
+ok('the first spelling wins the heading', grouped.every((g) => g.title !== 'starters '))
+ok('*** ungrouped lines print last, under no heading ***', grouped.at(-1)?.title === '')
 
 console.log('\n── The test slip ───────────────────────────────────────────\n')
 

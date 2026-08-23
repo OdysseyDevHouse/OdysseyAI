@@ -1,19 +1,18 @@
 import type { TabItem } from '@/components/ui'
 
-export type LoyaltyTab = 'members' | 'programme' | 'tiers' | 'cards'
+export type LoyaltyTab = 'programme' | 'tiers' | 'cards'
 
 /**
- * The loyalty sections, in the order an owner thinks about them.
+ * The loyalty SETUP screens, in the order somebody sets them up.
  *
- * People first: the screen someone opens thinking "loyalty" is the one showing
- * who is on the programme and what they are holding. The rates and the ladder
- * are set up once and then rarely touched, so they come after.
+ * Members is deliberately NOT a tab any more. The three below are reached
+ * through Loyalty › Setup and decide how the programme works; the members list
+ * is its own menu row and is opened daily. Keeping them in one strip made the
+ * hub tile for 'Setup' land on a screen whose first tab left it again.
  *
- * Shared by every page under /loyalty so the tab strip cannot drift between
- * them.
+ * Shared by every screen under /loyalty/setup so the strip cannot drift.
  */
 export const LOYALTY_TABS: readonly (TabItem<LoyaltyTab> & { href: string })[] = [
-  { value: 'members', label: 'Members', href: '/loyalty' },
   { value: 'programme', label: 'Programme', href: '/loyalty/programme' },
   { value: 'tiers', label: 'Tiers', href: '/loyalty/tiers' },
   { value: 'cards', label: 'Punch cards', href: '/loyalty/cards' },

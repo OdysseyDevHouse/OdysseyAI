@@ -463,7 +463,7 @@ export async function saveBoardAction(input: {
   const result = await saveJobBoard(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
   revalidatePath('/jobs/board')
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   return result
 }
 
@@ -474,7 +474,7 @@ export async function deleteBoardAction(id: number): Promise<BoardActionResult> 
   const result = await deleteJobBoard(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
   revalidatePath('/jobs/board')
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   return result
 }
 
@@ -484,7 +484,7 @@ export async function saveStatusAction(input: JobStatusInput): Promise<StatusSav
 
   const result = await saveJobStatus(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs')
   return result
 }
@@ -495,7 +495,7 @@ export async function deleteStatusAction(id: number): Promise<StatusSaveResult> 
 
   const result = await deleteJobStatus(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs')
   return result
 }
@@ -980,7 +980,7 @@ export async function saveAssetTypeAction(input: AssetTypeInput): Promise<AssetR
 
   const result = await saveAssetType(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidateAssets()
   return result
 }
@@ -991,7 +991,7 @@ export async function deleteAssetTypeAction(id: number): Promise<AssetActionResu
 
   const result = await deleteAssetType(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   return result
 }
 
@@ -1100,7 +1100,7 @@ export async function saveHeadlineAction(input: HeadlineInput): Promise<Headline
 
   const result = await saveHeadline(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs')
   return result
 }
@@ -1111,7 +1111,7 @@ export async function deleteHeadlineAction(id: number): Promise<ItemResult> {
 
   const result = await deleteHeadline(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   return result
 }
 
@@ -1337,7 +1337,7 @@ export async function saveJobTeamAction(input: {
 
   const result = await saveJobTeam(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs')
   return result
 }
@@ -1348,7 +1348,7 @@ export async function deleteJobTeamAction(id: number): Promise<TeamActionResult>
 
   const result = await deleteJobTeam(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   return result
 }
 
@@ -1494,7 +1494,7 @@ export async function savePolicyAction(
 
   const result = await savePolicy(ctx.siteId, ctx.actor, id, input)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs/sla')
   return result
 }
@@ -1511,7 +1511,7 @@ export async function createPolicyAction(input: PolicyInput): Promise<SlaActionR
 
   const result = await createPolicy(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs/sla')
   return result
 }
@@ -1522,7 +1522,7 @@ export async function deletePolicyAction(id: number): Promise<SlaActionResult> {
 
   const result = await deletePolicy(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs/sla')
   return result
 }
@@ -1576,7 +1576,7 @@ export async function saveTradingHoursAction(input: {
     if (!saved.ok) return saved
   }
 
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs/sla')
   revalidatePath('/jobs')
   return { ok: true, message: 'Trading hours saved. New jobs will use them from now on.' }
@@ -1710,7 +1710,7 @@ export async function saveJobSettingsAction(input: {
     if (!saved.ok) return saved
   }
 
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs')
   return { ok: true, message: 'Saved.' }
 }
@@ -1721,7 +1721,7 @@ export async function reorderStatusesAction(ids: number[]): Promise<StatusSaveRe
 
   const result = await reorderJobStatuses(ctx.siteId, ctx.actor, ids)
   if (!result.ok) return result
-  revalidatePath('/setup/job-workflow')
+  revalidatePath('/jobs/setup/workflow')
   revalidatePath('/jobs')
   return result
 }

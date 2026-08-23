@@ -18,6 +18,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   Gift,
+  Gem,
   FileText,
   Users,
   Undo2 as Reverse,
@@ -209,13 +210,58 @@ export const NAV: NavSection[] = [
       { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view', module: 'customers', description: 'Chase overdue accounts and record the outcome' },
       { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view', module: 'customers', description: 'What a customer undertook to pay, and by when' },
       { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view', module: 'customers', description: 'Send account statements out to customers' },
-      /* Loyalty is NOT a row here any more — the members list is listed in the
-         Online Store hub, which is where a shop goes to run what it offers
-         shoppers. The programme, its tiers and the punch cards decide how it
-         WORKS and are set once, so those stay in the setup hub. */
+      /* Loyalty is NOT a row here — it is a section of its own, below. It was
+         briefly a tile in the Online Store hub, which stranded any shop that
+         had bought loyalty without a storefront. The programme, its tiers and
+         the punch cards decide how it WORKS and stay in the setup hub. */
       /* Stored value, not a points programme — a shop that wants gift cards
          rarely wants loyalty, so this stays in the base package. */
       { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', description: 'Sell, check and manage stored-value cards' },
+    ],
+  },
+  /*
+   * A section of its own, not a row under Customers and not a tile in the
+   * online store's hub.
+   *
+   * The members list was moved into that hub on the reasoning that loyalty is
+   * something a shop OFFERS shoppers. That holds for a shop with a storefront;
+   * it strands every shop without one, because the hub carries its own
+   * `online_store` module and a till-only shop that has bought loyalty then has
+   * no front door to it at all.
+   *
+   * One link rather than a group, because the three screens that decide how the
+   * programme WORKS — its rules, its tiers and the punch cards — are set once
+   * and stay in the setup hub. What is left is a single operational screen, and
+   * a heading that opens onto one row is worse than the row.
+   */
+  {
+    label: 'Loyalty',
+    icon: Gem,
+    module: 'loyalty',
+    keywords: 'members points balance rewards earned loyalty programme',
+    items: [
+      {
+        label: 'Members',
+        href: '/loyalty',
+        icon: Gem,
+        built: true,
+        capability: 'loyalty.view',
+        keywords: 'member balance points held who joined enrolled',
+        description: 'Members, their points and what they have earned',
+      },
+      {
+        /* The programme, its tiers and the punch cards, which used to be three
+           tiles in the setup hub. They are set once, so they come after the
+           list somebody opens daily — but they belong to LOYALTY, not to a
+           general settings screen a shop without the module never opens. */
+        label: 'Setup',
+        href: '/loyalty/setup',
+        icon: Settings,
+        built: true,
+        capability: 'loyalty.view',
+        keywords: 'programme rules earn rate redemption tiers levels vip punch card stamps settings configure',
+        description: 'How the programme rewards people, and what a point is worth',
+      },
     ],
   },
   /*
@@ -287,23 +333,42 @@ export const NAV: NavSection[] = [
     ],
   },
   /*
-   * One link, not a group of eleven.
+   * Two rows, not eleven and not one.
    *
-   * The hub at /online-store lists every screen grouped by the job it does,
-   * with a line on each saying what it decides — which a menu could never do.
-   * Eleven rows mixing three operational screens with eight settings, in a
-   * section most shops never switch on, cost every one of them a permanent
-   * group. `SUBPAGE_LABELS` below is now the only list of them.
+   * The hub at /online-store still lists the operational screens grouped by
+   * the job they do — a menu could never say what each decides. But the five
+   * screens that configure the shop are a different question, asked once, and
+   * they were mixed in among the daily ones AND cross-referenced from the
+   * general Setup hub. They have their own row now, and one front door.
    */
   {
     label: 'Online Store',
     icon: ShoppingBag,
-    href: '/online-store',
-    built: true,
-    capability: 'online.view',
     module: 'online_store',
-    keywords: 'web shop ecommerce storefront online orders discounts pages checkout',
-    description: 'The public shop — orders, pages and what it sells',
+    keywords: 'web shop ecommerce storefront online orders pages checkout',
+    items: [
+      {
+        label: 'The shop',
+        href: '/online-store',
+        icon: ShoppingBag,
+        built: true,
+        capability: 'online.view',
+        keywords: 'orders products listings menu collections reviews pages builder funnel',
+        description: 'The public shop — orders, pages and what it sells',
+      },
+      {
+        /* The route is /online-store/settings, NOT /setup: the latter is
+           already one of the screens this hub lists — the shop's own name,
+           domain and delivery rules — and two things cannot share a URL. */
+        label: 'Setup',
+        href: '/online-store/settings',
+        icon: Settings,
+        built: true,
+        capability: 'online.edit',
+        keywords: 'domain delivery trading hours open closed payments gateway order statuses discount codes settings configure',
+        description: 'Whether the shop is open, how it takes money, and what happens after an order',
+      },
+    ],
   },
   /*
    * One link, not a group of fourteen.
@@ -451,6 +516,18 @@ export const NAV: NavSection[] = [
         keywords: 'report reports analysis technician write off absorbed billable invoiced travel visits sla breaches overdue stage productivity',
         description: 'What the work earned, and where it is going wrong',
       },
+      {
+        /* AFTER the reports, and last: everything above is read daily, this is
+           set once. Its own capability — somebody who runs the board is not
+           necessarily somebody who decides what the board IS. */
+        label: 'Setup',
+        href: '/jobs/setup',
+        icon: Settings,
+        built: true,
+        capability: 'jobs.setup',
+        keywords: 'workflow stages statuses board columns forms checklist rules automation calendar google outlook sync settings configure',
+        description: 'How work moves, what gets recorded, and where a visit shows up',
+      },
     ],
   },
   /*
@@ -488,6 +565,19 @@ export const NAV: NavSection[] = [
         capability: 'tickets.view',
         keywords: 'list search history closed resolved find',
         description: 'Every ticket, open and closed, with what each one took',
+      },
+      {
+        /* Straight to the screen, not to a hub: the desk has exactly ONE
+           settings screen, and a hub holding a single tile is a click that
+           asks a question with one answer. If a second is ever added, this
+           becomes /tickets/setup and grows a catalogue like the others. */
+        label: 'Setup',
+        href: '/tickets/setup/desk',
+        icon: Settings,
+        built: true,
+        capability: 'tickets.setup',
+        keywords: 'lanes columns kanban clock timer running limit settings configure desk',
+        description: 'The lanes on the ticket board, and what each one does to the clock',
       },
     ],
   },
@@ -556,9 +646,8 @@ export const SUBPAGE_LABELS = {
   '/setup/roles': 'Roles & permissions',
   '/setup/linked-stores': 'Linked stores',
   '/setup/locations': 'Stock locations',
-  '/setup/adjustment-reasons': 'Adjustment reasons',
+  '/setup/reasons': 'Reasons',
   '/setup/stock-takes': 'Stock take approvals',
-  '/setup/sales-reasons': 'Void & return reasons',
   '/setup/pricing': 'Price types & VAT',
   '/setup/customer-groups': 'Customer groups',
   '/setup/purchasing': 'Purchasing & cost',
@@ -577,19 +666,20 @@ export const SUBPAGE_LABELS = {
   '/setup/reservations': 'Reservations',
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
      boards that show them, and somebody looking for either should find it. */
-  '/setup/job-workflow': 'Job workflow',
-  '/setup/job-forms': 'Forms',
+  '/jobs/setup': 'Job card setup',
+  '/jobs/setup/workflow': 'Workflow',
+  '/jobs/setup/forms': 'Forms',
   /* "Rules", not "Automations": /setup/alerts is already labelled
      "Alerts & automations", and two screens both calling themselves
      automations is how somebody ends up on the one that cannot do what they
      came for. Alerts run on a clock; these run when something happens. */
-  '/setup/job-rules': 'Rules',
+  '/jobs/setup/rules': 'Rules',
   /* "Calendars", plural: the screen is about the linked ACCOUNTS. The
      singular would read as the shop's own diary, which is /jobs/schedule. */
-  '/setup/job-calendar': 'Calendars',
+  '/jobs/setup/calendars': 'Calendars',
   /* "Tickets", matching the section it configures. The lanes and the running
      limit are one screen because both answer "how does this desk work". */
-  '/setup/tickets': 'Tickets',
+  '/tickets/setup/desk': 'Desk setup',
   '/setup/custom-fields': 'Custom fields',
   '/setup/reconciliation': 'Reconciliation',
   '/setup/opening-balances': 'Opening balances',
@@ -613,12 +703,16 @@ export const SUBPAGE_LABELS = {
   '/staff/leave-types': 'Leave types',
   '/staff/cost': 'Cost per employee',
   '/credit/levels': 'Credit levels',
-  /* The members list. It was a menu row under Customers and is now a tile in
-     the Online Store hub — what the shop offers its shoppers — so this is where
-     it is named. Its three setup screens below still belong to /setup. */
+  /* The members list has its own menu SECTION, so — unlike every neighbour
+     here — this entry is not what names the screen: the sidebar, the
+     breadcrumb and the search all read the section. It stays only because
+     `SubpageHref` is derived from these keys and SUBPAGE_KEYWORDS below is
+     keyed by it, so deleting this line fails the build. The three screens
+     under it are owned by /setup and read "Setup › …", not "Loyalty › …". */
   '/loyalty': 'Loyalty',
-  '/loyalty/programme': 'Loyalty programme',
-  '/loyalty/tiers': 'Loyalty tiers',
+  '/loyalty/setup': 'Loyalty setup',
+  '/loyalty/programme': 'Programme',
+  '/loyalty/tiers': 'Tiers',
   '/loyalty/cards': 'Punch cards',
   /* Commission rules had no entry here at all — no tile, no breadcrumb, no
      search — reachable only by somebody already standing on /commission who
@@ -671,6 +765,7 @@ export const SUBPAGE_LABELS = {
   '/online-store/pages': 'Pages',
   '/online-store/payments': 'Payments',
   '/online-store/setup': 'Store setup',
+  '/online-store/settings': 'Online store setup',
 
   // ── Reports ───────────────────────────────────────────────────────────
   /* The reports hub renders its own catalogue and does not read this map, so
@@ -729,17 +824,27 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
      the prefix would otherwise send the trail to the hub that no longer lists
      it, leaving no way back to the screen it was reached from. */
   '/setup/audit': '/reports',
-  /* The members list is listed in the online store's hub, but its route is its
-     own — /loyalty matches no hub prefix, so without this the screen renders
-     with no trail at all. Its three setup screens below still read "Setup ›". */
-  '/loyalty': '/online-store',
+  /* /loyalty is NOT owned by a hub: it is a menu section in its own right, so
+     `breadcrumbFor`'s section scan names it. An entry here would win over that
+     scan — `hubFor` is consulted first — and put the screen back under a hub a
+     till-only shop cannot see. Its three setup screens below still read
+     "Setup ›", because those stay listed in the setup hub. */
   '/staff/pay-rules': '/setup',
   '/staff/leave-types': '/setup',
   '/staff/cost': '/setup',
   '/credit/levels': '/setup',
-  '/loyalty/programme': '/setup',
-  '/loyalty/tiers': '/setup',
-  '/loyalty/cards': '/setup',
+  /* The loyalty settings belong to LOYALTY's own setup hub, not the general
+     one — a shop without the module never opens /setup looking for them. */
+  '/loyalty/programme': '/loyalty/setup',
+  '/loyalty/tiers': '/loyalty/setup',
+  '/loyalty/cards': '/loyalty/setup',
+  /* The online store's five switches, likewise. They were cross-references
+     from the general setup hub; now they have one front door. */
+  '/online-store/setup': '/online-store/settings',
+  '/online-store/trading': '/online-store/settings',
+  '/online-store/payments': '/online-store/settings',
+  '/online-store/statuses': '/online-store/settings',
+  '/online-store/discounts': '/online-store/settings',
   /* Beside pay rules, for the same reason: it is set once and decides what
      every figure on /commission comes to. It had no owner at all before, so
      its breadcrumb fell through to a prefix that is not a hub and the screen
@@ -768,11 +873,9 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
  * listing it.
  */
 export const SETUP_ELSEWHERE = [
-  '/online-store/setup',
-  '/online-store/statuses',
-  '/online-store/trading',
-  '/online-store/payments',
-  '/online-store/discounts',
+  /* The online store's own switches USED to be here. They are not any more:
+     that section carries a Setup row of its own now, so a cross-reference
+     would be the second front door rather than the only other one. */
   '/accounting/accounts',
   '/accounting/periods',
   '/expenses/recurring',
@@ -784,8 +887,18 @@ export function hubFor(pathname: string): string | null {
   const declared = SUBPAGE_OWNER[pathname as SubpageHref]
   if (declared) return declared
   if (!(pathname in SUBPAGE_LABELS)) return null
-  const section = NAV.find((s) => s.href && pathname.startsWith(`${s.href}/`))
-  return section?.href ?? null
+  /* Menu ITEMS as well as whole sections, because a hub is no longer always a
+     top-level link: Loyalty, Job cards and the Online Store each hold their
+     own Setup hub as a row inside the section. Longest match wins, so
+     /online-store/settings claims its screens ahead of /online-store. */
+  const candidates = NAV.flatMap((s) => [
+    ...(s.href ? [s.href] : []),
+    ...(s.items ?? []).map((i) => i.href),
+  ])
+  const owner = candidates
+    .filter((href) => pathname.startsWith(`${href}/`))
+    .sort((a, b) => b.length - a.length)[0]
+  return owner ?? null
 }
 
 /**
@@ -804,10 +917,12 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/roles': 'security capabilities rights access control permissions',
   '/setup/linked-stores': 'multi store group branches sharing',
   '/setup/locations': 'warehouse storeroom bins branches',
-  '/setup/adjustment-reasons': 'write off shrinkage damage breakage wastage codes',
+  /* Both former tiles' synonyms, so "shrinkage" and "void" each still find the
+     one screen that now holds them. */
+  '/setup/reasons':
+    'write off shrinkage damage breakage wastage adjustment void cancel refund return credit note faulty codes exception',
   '/setup/stock-takes':
     'stock take count variance threshold approval sign off signoff shrinkage tolerance blind count second signature manager',
-  '/setup/sales-reasons': 'void cancel reasons refund return credit note faulty codes exception',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/customer-groups':
     'customer groups categories wholesale retail staff trade terms price structure defaults segment',
@@ -964,10 +1079,24 @@ export function breadcrumbFor(pathname: string): { icon: LucideIcon; crumbs: Cru
      another section entirely — /sales/offline is listed by the accounting hub,
      and a prefix scan would file it under Sales and never reach the hub that
      actually sent somebody there. */
-  const owner = hubFor(pathname)
+  /* A path the MENU itself names is resolved by the section scan below, never
+     as a hub screen. /jobs/setup is the case: it sits under /jobs, so `hubFor`
+     reports the Job cards section owns it and the middle-crumb lookup then
+     picks the first row whose href is a prefix — the job LIST — giving
+     "Job cards › Job list › Job card setup". It is a menu row in its own
+     right, and the scan below names it correctly. */
+  const named = NAV.some(
+    (s) => s.href === pathname || (s.items ?? []).some((i) => i.href === pathname),
+  )
+  const owner = named ? null : hubFor(pathname)
   if (owner) {
+    /* The hub may be a whole section (Setup, Accounting) or a ROW inside one
+       (Loyalty › Setup). When it is a row, the trail needs both: the section
+       names where somebody is, the row names the hub that listed the screen. */
     const section = NAV.find((s) => s.href === owner)
-    if (section) {
+    const parentSection = section ? null : NAV.find((s) => (s.items ?? []).some((i) => i.href === owner))
+    const ownerItem = parentSection?.items?.find((i) => i.href === owner) ?? null
+    if (section || (parentSection && ownerItem)) {
       const named = SUBPAGE_LABELS as Record<string, string>
 
       /* A hub screen can itself have a screen below it — /accounting/assets and
@@ -979,10 +1108,39 @@ export function breadcrumbFor(pathname: string): { icon: LucideIcon; crumbs: Cru
         .filter((p) => pathname.startsWith(`${p}/`) && hubFor(p) === owner)
         .sort((a, b) => b.length - a.length)[0]
 
+      /* A hub that IS the section contributes one crumb; a hub that is a row
+         inside a section contributes two, so 'Loyalty › Setup › Tiers' says
+         both which section and which hub.
+
+         The exception is a row that is the section's OWN landing page — the
+         Online Store's 'The shop' sits at /online-store, the same place the
+         section points. Naming it would read 'Online Store › The shop ›
+         Orders', repeating the section in different words. */
+      /* A hub that IS a whole section contributes one crumb. A hub that is a
+         ROW contributes two — 'Loyalty › Setup › Tiers' names both the section
+         and the hub that listed the screen.
+
+         The exception is a row that IS the section's landing page: the Online
+         Store's 'The shop' row sits at /online-store, and every other row in
+         that section is a path below it. Naming it would read 'Online Store ›
+         The shop › Orders', saying the section twice in different words. */
+      const isSectionLanding =
+        !!ownerItem &&
+        !!parentSection &&
+        (parentSection.items ?? []).every((i) => i.href.startsWith(ownerItem.href))
+      const head: Crumb[] = section
+        ? [{ label: section.label, href: section.href }]
+        : isSectionLanding
+          ? [{ label: parentSection!.label, href: ownerItem!.href }]
+          : [
+              { label: parentSection!.label },
+              { label: ownerItem!.label, href: ownerItem!.href },
+            ]
+
       return {
-        icon: section.icon,
+        icon: section?.icon ?? ownerItem!.icon,
         crumbs: [
-          { label: section.label, href: section.href },
+          ...head,
           ...(parent ? [{ label: named[parent], href: parent }] : []),
           { label: named[pathname] },
         ],
@@ -1052,7 +1210,13 @@ export function filterNav(term: string, sections: NavSection[] = NAV): NavSectio
       return [section]
     }
 
-    const items = (section.items ?? []).filter((i) => hit(i.label, i.keywords))
+    /* A ROW can be a hub as well, now that four sections carry their own Setup
+       and the Online Store's landing page is a row rather than the section.
+       Without this, "page builder" — a screen that hub lists and the menu
+       never names — stopped matching the moment the section grew children. */
+    const items = (section.items ?? []).filter(
+      (i) => hit(i.label, i.keywords) || subpageMatches(i.href, needle),
+    )
     return items.length ? [{ ...section, items }] : []
   })
 }

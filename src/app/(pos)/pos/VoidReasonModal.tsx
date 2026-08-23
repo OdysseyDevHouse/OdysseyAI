@@ -70,7 +70,11 @@ export function VoidReasonModal({
   reasons: PickableReason[]
   busy?: boolean
   onClose: () => void
-  onConfirm: (reason: { reasonId: number; note: string | null }) => void
+  /* `reasonName` rides along for the KITCHEN cancellation docket — a chef reads
+     "Customer left", not a reason code. Resolved here from the list already on
+     screen rather than re-fetched, and optional so a caller that does not print
+     dockets can ignore it. */
+  onConfirm: (reason: { reasonId: number; note: string | null; reasonName?: string }) => void
 }) {
   const [reasonId, setReasonId] = useState<number | null>(null)
   const [note, setNote] = useState('')
@@ -119,7 +123,14 @@ export function VoidReasonModal({
             size="touch-lg"
             className="flex-1 justify-center"
             disabled={!ready || busy}
-            onClick={() => reasonId !== null && onConfirm({ reasonId, note: note.trim() || null })}
+            onClick={() =>
+              reasonId !== null &&
+              onConfirm({
+                reasonId,
+                note: note.trim() || null,
+                reasonName: reasons.find((r) => r.id === reasonId)?.name,
+              })
+            }
           >
             <Icons.Trash size={20} />
             {copy.verb}

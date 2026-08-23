@@ -69,8 +69,9 @@ const ART_BY_SLUG: Readonly<Record<string, QuickKeyArt>> = {
   'split-tender': { file: 'split-tender.svg', tone: 'indigo' },
   'eft-transfer': { file: 'eft-transfer.svg', tone: 'violet' },
 
-  /* Loyalty */
-  'redeem-voucher': { file: 'loyalty.svg', tone: 'sky' },
+  /* Loyalty. `loyalty.svg` is no longer named by a slug here — `redeem-voucher` was
+     the only one and it is off the catalogue — but the file stays: the `Ticket` entry
+     in the icon fallback below still draws it for any key wearing that icon. */
   'loyalty-payment': { file: 'loyalty-payment.svg', tone: 'violet' },
 
   /* Paper */

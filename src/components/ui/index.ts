@@ -70,7 +70,7 @@ export { Card, CardHeader, CardBody, CardFooter } from './Card'
 export { DeepPanel, QuoteCard } from './DeepPanel'
 export { SettingRow, SettingGroup } from './SettingRow'
 export { SelectableCard } from './SelectableCard'
-export { SectionTitle } from './SectionTitle'
+export { SectionTitle, SectionBody } from './SectionTitle'
 export {
   TILE_SWATCHES,
   TILE_GRADIENTS,
@@ -116,7 +116,7 @@ export {
   FormSkeleton,
   SettingRowsSkeleton,
 } from './Skeleton'
-export { TextLink } from './TextLink'
+export { TextLink, TextLinkButton } from './TextLink'
 export { FieldGroup } from './FieldGroup'
 
 export { DataTable, type Column, type SortState, type SortDirection } from './DataTable'

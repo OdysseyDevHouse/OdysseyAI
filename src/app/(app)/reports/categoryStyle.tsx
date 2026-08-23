@@ -15,7 +15,23 @@ import type { ReactNode } from 'react'
  * broken — it just carries no identity yet.
  */
 
+/**
+ * The Popular shelf's key.
+ *
+ * A VIEW over the catalogue rather than a category — the hub's own `POPULAR`
+ * sentinel, repeated here because the grid and list sections take a category
+ * string and would otherwise fall through to the slate "no identity" default
+ * with a database glyph. Underscored so it can never collide with a real
+ * category name.
+ */
+const POPULAR = '__popular'
+
 export const CATEGORY_TONE: Record<string, CategoryTone> = {
+  /* Amber, the same hue the favourites shelf wears — both are shortcuts past
+     the catalogue rather than subjects within it, and reading as one family is
+     the point. Operations also claims amber; they are never adjacent, since
+     Popular sits alone on its own tab. */
+  [POPULAR]: 'amber',
   Sales: 'indigo',
   Stock: 'teal',
   Customers: 'sky',
@@ -46,6 +62,9 @@ export function categoryTone(category: string): CategoryTone {
  * no entry simply renders without a line, rather than with a made-up one.
  */
 const CATEGORY_DESCRIPTION: Record<string, string> = {
+  /* Says outright that these are duplicates, so nobody wonders why invoice
+     history is missing from Sales — it is not, and this is the same tile. */
+  [POPULAR]: 'The ones most shops run. Each is also filed under its own subject.',
   Sales: 'What was sold, by whom, and what it came to.',
   Stock: 'What is on hand, what moved, and what is running out.',
   Customers: 'Who buys, who owes, and how long they take to pay.',
@@ -63,6 +82,8 @@ export function categoryDescription(category: string): string {
 
 export function categoryIcon(category: string, size = 18): ReactNode {
   switch (category) {
+    case POPULAR:
+      return <Icons.Flame size={size} strokeWidth={1.7} />
     case 'Sales':
       return <Icons.BarChart size={size} strokeWidth={1.7} />
     case 'Stock':

@@ -9,6 +9,7 @@ import { linkedStores } from '@/lib/storeGroups'
 import { setShareSettings } from '@/lib/site/shareSettings'
 import { fanoutProduct } from '@/lib/site/productFanout'
 import { setGroupsForProduct } from '@/lib/site/instructions'
+import { setPrintersForProduct } from '@/lib/site/kitchenPrinters'
 import { saveLocationLevels } from '@/lib/site/stockLocations'
 import { listPriceStructures, listVatRates } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
@@ -254,6 +255,12 @@ function readInput(form: FormData): ProductInput {
     description: String(form.get('description') ?? ''),
     // Sanitised server-side in lib/site/products.ts — never trusted from here.
     extraDescription: String(form.get('extraDescription') ?? '') || null,
+    /* `undefined` when the field was never rendered, so the update COALESCEs
+       and keeps the column — the same distinction optionalNum() draws above.
+       An empty STRING is a real answer meaning "no heading"; a missing field is
+       not an answer at all, and reading the two as one would wipe a
+       restaurant's courses on any save posted from a form without the tab. */
+    kitchenGroup: form.get('kitchenGroup') === null ? undefined : String(form.get('kitchenGroup')),
     // Narrowed rather than trusted: an unknown value falls back to 'normal'.
     productType: toProductType(form.get('productType')),
     // Only read for a recipe; products.ts stores 0 for every other type.
@@ -362,6 +369,30 @@ export async function saveProductAction(
       .map((v) => Number(v))
       .filter((n) => Number.isFinite(n) && n > 0),
   ).catch(() => {})
+
+  /*
+   * Which kitchen printers this product goes to. Same shape as the instruction
+   * groups above and the same rule: the submitted ids are the complete intended
+   * set, so an unticked station really unroutes.
+   *
+   * Guarded on the field having been RENDERED, unlike the instructions. An empty
+   * list is a meaningful save ("this stops going to the kitchen"), so it cannot
+   * be told apart from a post that never had the tab — and wiping a
+   * restaurant's routing because a bulk edit posted a partial form is exactly
+   * the silent data loss the suppliers block below guards against. The panel
+   * submits `kitchenGroup` unconditionally, so its presence is what says the
+   * tab was there.
+   */
+  if (form.get('kitchenGroup') !== null) {
+    await setPrintersForProduct(
+      siteId,
+      result.id,
+      form
+        .getAll('kitchenPrinter')
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n) && n > 0),
+    ).catch(() => {})
+  }
 
   // Who this product is bought from. Replaces the whole set, so a supplier the
   // user removed on screen really goes.

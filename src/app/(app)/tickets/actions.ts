@@ -141,7 +141,7 @@ export async function saveLaneAction(input: LaneInput): Promise<LaneResult> {
   const result = await saveLane(ctx.siteId, ctx.actor, input)
   if (result.ok) {
     revalidateTickets()
-    revalidatePath('/setup/tickets')
+    revalidatePath('/tickets/setup/desk')
   }
   return result
 }
@@ -159,7 +159,7 @@ export async function saveTicketSettingsAction(input: {
   if (n > 50) return { ok: false, error: 'That limit is higher than anybody could work at once.' }
 
   await setSetting(ctx.siteId, 'ticket_max_running_per_user', String(n))
-  revalidatePath('/setup/tickets')
+  revalidatePath('/tickets/setup/desk')
   revalidateTickets()
   return { ok: true }
 }
@@ -171,7 +171,7 @@ export async function deleteLaneAction(id: number): Promise<TicketActionResult> 
   const result = await deleteLane(ctx.siteId, ctx.actor, id)
   if (result.ok) {
     revalidateTickets()
-    revalidatePath('/setup/tickets')
+    revalidatePath('/tickets/setup/desk')
   }
   return result
 }

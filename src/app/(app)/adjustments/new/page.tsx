@@ -38,7 +38,7 @@ export default async function NewAdjustmentPage() {
               hint="An adjustment records why stock moved, so there has to be a reason to choose. Add one in Setup, then come back."
               icon={<Icons.SlidersHorizontal size={22} />}
               action={
-                <PrimaryLink href="/setup/adjustment-reasons">
+                <PrimaryLink href="/setup/reasons">
                   <Icons.Plus size={15} />
                   Add a reason
                 </PrimaryLink>

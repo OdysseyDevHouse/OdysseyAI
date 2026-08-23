@@ -23,7 +23,9 @@ import {
   type PrintBridgeConfig,
 } from '@/lib/printBridge'
 import { renderTestSlip } from '@/lib/escpos/slips'
+import type { KitchenPrinter, TerminalPrinterMap } from '@/lib/site/kitchenPrinters'
 import { savePrintingSettingsAction } from './actions'
+import KitchenPrintersPanel from './KitchenPrintersPanel'
 
 /**
  * Printing setup.
@@ -35,9 +37,17 @@ import { savePrintingSettingsAction } from './actions'
 export default function PrintingClient({
   siteName,
   footerText: initialFooter,
+  kitchenPrinters,
+  terminals,
+  terminalMaps,
+  autoPrintKitchen,
 }: {
   siteName: string
   footerText: string
+  kitchenPrinters: KitchenPrinter[]
+  terminals: { id: number; code: string; name: string }[]
+  terminalMaps: Record<number, TerminalPrinterMap[]>
+  autoPrintKitchen: boolean
 }) {
   const toast = useToast()
   const [pending, startTransition] = useTransition()
@@ -48,7 +58,6 @@ export default function PrintingClient({
   const [config, setConfig] = useState<PrintBridgeConfig>({
     url: 'http://127.0.0.1:9723',
     receiptPrinter: '',
-    kitchenPrinter: '',
     columns: 48,
     drawerKick: true,
   })
@@ -182,23 +191,11 @@ export default function PrintingClient({
           </div>
         </SettingRow>
 
-        <SettingRow
-          icon={<Icons.Printer size={16} />}
-          label="Kitchen printer"
-          description="For send-to-kitchen tickets. Empty on a retail till."
-          htmlFor="kitchen-printer"
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              id="kitchen-printer"
-              className="w-48"
-              value={config.kitchenPrinter}
-              onChange={(e) => setConfig((c) => ({ ...c, kitchenPrinter: e.target.value }))}
-              placeholder="kitchen"
-            />
-            {known?.includes(config.kitchenPrinter) && <Badge tone="success">Found</Badge>}
-          </div>
-        </SettingRow>
+        {/* No kitchen printer row here any more. One machine-local slot could
+            not describe a shop with a bar and a grill, and it hid a till's
+            routing from the back office — so kitchen stations are named per
+            SITE and mapped per TILL, both on the server. See the Kitchen
+            printers card below and sql/site/229. */}
 
         <SettingRow
           icon={<Icons.SlidersHorizontal size={16} />}
@@ -240,6 +237,18 @@ export default function PrintingClient({
           </Button>
         </div>
       </SettingGroup>
+
+      {/* Rendered here rather than as its own sibling on the page so it can share
+          `known` — the spool names this machine's bridge reported. Test
+          connection above is what fills it, and the mapping rows below use it to
+          confirm a typed name actually exists on this till. */}
+      <KitchenPrintersPanel
+        printers={kitchenPrinters}
+        terminals={terminals}
+        terminalMaps={terminalMaps}
+        autoPrint={autoPrintKitchen}
+        knownBridgePrinters={known}
+      />
     </div>
   )
 }

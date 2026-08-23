@@ -1,0 +1,37 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- How a kitchen ticket is ORGANISED once it reaches the printer.
+--
+-- A docket that lists "2 Calamari, 1 Steak, 1 Creme Brulee, 1 Prawns" in
+-- basket order is a docket the kitchen has to sort by hand while the food is
+-- going cold. Grouping it under STARTERS / MAINS / DESSERT is how the pass
+-- reads it — and, more importantly, is what a waiter fires a course by:
+-- "send the starters" is a real instruction that needs a real handle.
+--
+-- ── WHY FREE TEXT AND NOT A LOOKUP TABLE ─────────────────────────────────
+--
+-- This is a HEADING ON A PIECE OF PAPER. Nothing joins to it, nothing reports
+-- on it, and no rule branches on its value — the only code that reads it
+-- sorts by it and prints it. A lookup table would add a screen, a foreign
+-- key and a migration to every shop that wanted to call its section "Pizza
+-- Oven" instead of "Mains".
+--
+-- Free text also lets one shop group by COURSE and another by STATION
+-- ("Fryer", "Salads", "Pass") without either of them being wrong. The cost is
+-- that "Mains" and "mains " are two groups; the send screen normalises
+-- whitespace and matches case-insensitively so that a typo shows up as an
+-- oddly-named section rather than as a course that cannot be fired.
+--
+-- ── EMPTY IS NOT A GROUP ─────────────────────────────────────────────────
+--
+-- Blank means "no section", not a section called "". Those lines print last,
+-- under no heading at all — which is exactly right for a shop that routes
+-- food to the kitchen but has never thought in courses. Grouping is an
+-- upgrade to the ticket, never a requirement of it.
+--
+-- Independent of the printer routing in 229: the group says WHERE ON THE
+-- PAPER, the printer says WHICH PAPER. A product with a group and no printer
+-- still prints nothing at all.
+-- ─────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS kitchen_group VARCHAR(60) NOT NULL DEFAULT '';

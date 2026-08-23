@@ -13,15 +13,8 @@ import type { SubpageHref } from '@/lib/nav'
  * listed, change how the site looks, see whether it is working.
  */
 
-/**
- * An online store route, narrowed so a tile cannot point outside this hub.
- *
- * `/loyalty` is the one exception, and it is named rather than left to a
- * pattern: the members list is what the shop offers its shoppers, so it is
- * listed here, but it is its own module with its own route and is not becoming
- * an /online-store screen.
- */
-export type OnlineStoreHref = Extract<SubpageHref, `/online-store/${string}`> | '/loyalty'
+/** An online store route, narrowed so a tile cannot point outside this hub. */
+export type OnlineStoreHref = Extract<SubpageHref, `/online-store/${string}`>
 
 const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
   {
@@ -38,52 +31,10 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
         tone: 'emerald',
         capability: 'online.view',
       },
-      {
-        href: '/online-store/trading',
-        description: 'When the shop is open, and whether it is taking orders right now.',
-        keywords: 'hours open closed holidays busy pause sold out collection times',
-        icon: 'Clock',
-        tone: 'amber',
-        capability: 'online.edit',
-      },
-      {
-        href: '/online-store/statuses',
-        description: 'The steps an order moves through, from paid to collected.',
-        keywords: 'workflow stages pipeline packing shipped fulfilment',
-        icon: 'ListOrdered',
-        tone: 'sky',
-        capability: 'online.edit',
-      },
-      {
-        href: '/online-store/payments',
-        description: 'How shoppers may pay, and the gateway that takes the money.',
-        keywords: 'payfast yoco ozow gateway card eft checkout',
-        icon: 'CreditCard',
-        tone: 'indigo',
-        capability: 'online.edit',
-      },
-      {
-        href: '/online-store/discounts',
-        description: 'Codes a shopper can type at checkout, and what each takes off.',
-        keywords: 'promo coupon voucher promotion sale code',
-        icon: 'Tag',
-        tone: 'rose',
-        capability: 'online.edit',
-      },
-      /* The members list, moved out of the Customers menu. It sits after the
-         discount codes because both answer the same question — what a shopper
-         gets back for buying here — and its own module gate means a shop that
-         has not bought loyalty never sees the tile. The programme, its tiers
-         and the punch cards decide how it WORKS and stay in the setup hub. */
-      {
-        href: '/loyalty',
-        description: 'Members, their points and what they have earned.',
-        keywords: 'loyalty members points balance rewards earned customers programme',
-        icon: 'Gem',
-        tone: 'violet',
-        capability: 'loyalty.view',
-        module: 'loyalty',
-      },
+      /* The members list is NOT a tile here. It is a menu section of its own,
+         because a shop can buy loyalty without buying a storefront — and this
+         hub carries the `online_store` module, so listing it here was the only
+         front door for a till-only shop that had none. */
     ],
   },
   {
@@ -179,23 +130,6 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
         icon: 'BarChart',
         tone: 'indigo',
         capability: 'online.view',
-      },
-    ],
-  },
-  {
-    label: 'Settings',
-    description: 'The shop’s own details — its address, its delivery rules, whether it is open.',
-    tone: 'slate',
-    icon: 'Settings',
-    items: [
-      {
-        href: '/online-store/setup',
-        description: 'The name, the domain, delivery charges, and whether the shop is live. A chain also sets up one shop for the whole group here.',
-        keywords:
-          'domain url delivery fees shipping open closed launch go live group branches one shop nearest branch pins map coordinates',
-        icon: 'Settings',
-        tone: 'slate',
-        capability: 'online.edit',
       },
     ],
   },

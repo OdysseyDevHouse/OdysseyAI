@@ -119,8 +119,20 @@ export type SalesLine = {
    * anything, which is most of them.
    */
   instructions: SalesLineInstruction[]
-  /** How much of this line the kitchen has been told about (142). */
-  kitchenSentQty: number
+  /**
+   * The heading this line prints under on a kitchen ticket — "Starters" (230).
+   *
+   * Read from the PRODUCT at read time rather than copied onto the line: a
+   * shop re-organising its menu mid-service should have the next docket follow
+   * the new arrangement, and nothing historical depends on where a line was
+   * once printed. Empty on every line whose product has no group, which is
+   * most of them.
+   *
+   * How much of the line the kitchen has ALREADY had is deliberately not here:
+   * since 229 that answer is per line PER PRINTER, and it is read by the send
+   * path from kitchen_sends rather than carried on the document.
+   */
+  kitchenGroup: string
   /** The free-text note on this line. Empty string when there is none. */
   note: string
   /**
@@ -292,9 +304,9 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
       r.gift_card_code === null || r.gift_card_code === undefined ? null : String(r.gift_card_code),
     instructions,
     note: String(r.line_note ?? ''),
-    // Tolerant of a site that has not run 142 — toNum(undefined) reads 0,
-    // which is also the truthful answer: nothing was ever sent.
-    kitchenSentQty: toNum(r.kitchen_sent_qty),
+    // Joined from the product; absent on a line whose product is gone, which
+    // reads as "no heading" rather than as a missing value.
+    kitchenGroup: String(r.kitchen_group ?? ''),
     // Likewise tolerant of a site that has not run 167: absent reads null,
     // meaning "no recorded order time", NOT the epoch.
     orderedAt: orderedAtMillis(r.ordered_at),
@@ -427,10 +439,27 @@ export async function getDocument(
       // The rep's name is joined rather than snapshotted: unlike a product
       // description, it is not part of what the customer agreed to, and a rep
       // who marries should not leave last year's invoices under the old name.
-      `SELECT l.*, r.name AS sales_rep_name
-         FROM sales_document_lines l
-         LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
-        WHERE l.document_id = ? ORDER BY l.line_number ASC, l.id ASC`,
+      /* `kitchen_group` is joined from the product for the same reason the rep's
+         name is: it decides how the NEXT docket is laid out, so it should follow
+         the menu as it stands rather than as it stood when the tab was opened.
+         A line whose product has been deleted reads as no heading.
+         ── ONLY ON THE SHOP'S OWN DATABASE ────────────────────────────────
+         The hybrid box holds open tabs and an outbox, NOT the catalogue —
+         `products` does not exist there at all (see sql/box/001_spool.sql), so
+         joining it unconditionally made every table read on an in-store box
+         fail with ER_NO_SUCH_TABLE. The box's lines simply carry no group,
+         which the mapper already reads as "no heading": a docket printed from
+         a box is ungrouped rather than absent. */
+      purpose === MASTER
+        ? `SELECT l.*, r.name AS sales_rep_name, p.kitchen_group
+             FROM sales_document_lines l
+             LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
+             LEFT JOIN products p ON p.id = l.product_id
+            WHERE l.document_id = ? ORDER BY l.line_number ASC, l.id ASC`
+        : `SELECT l.*, r.name AS sales_rep_name
+             FROM sales_document_lines l
+             LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
+            WHERE l.document_id = ? ORDER BY l.line_number ASC, l.id ASC`,
       [id],
       purpose,
     ),

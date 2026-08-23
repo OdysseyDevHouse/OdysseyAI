@@ -13,16 +13,29 @@ import { getBooleanSetting } from './settings'
  * the code in at the action would leave the other two still demanding one,
  * which is the bug this feature exists to remove.
  *
- * ── WHY A BLANK CODE IS THE TRIGGER ──────────────────────────────────────
+ * ── WHAT TRIGGERS A CLAIM ────────────────────────────────────────────────
  *
- * The setting decides whether a code is OFFERED; the blank decides whether one
- * is TAKEN. That split is what makes the code overridable — the new-customer
- * form pre-fills the preview, and a user who types over it submits a non-blank
- * code that this function leaves untouched.
+ * The setting decides whether a code is OFFERED; what arrives here decides
+ * whether one is TAKEN. Two things ask for the next code:
  *
- * It also means the sequence is not consumed by a form the user overrode. The
- * preview shown on the form claims nothing (see previewMasterCode); only a
- * genuinely blank code reaching this point advances the counter.
+ *   - a blank code, which is a caller with no opinion — the till's quick-add,
+ *     an import row with an empty column, a user who cleared the field; and
+ *   - a code equal to the preview the form pre-filled, which is a user who
+ *     looked at the suggestion and accepted it.
+ *
+ * The second case is the common one and used to be missed. previewMasterCode
+ * claims nothing, so the form's pre-filled PRD00001 arrived here as an
+ * ordinary typed code, was left untouched, and the counter never moved. Every
+ * new product was offered PRD00001, and the second one saved collided with the
+ * first. Accepting the suggestion has to advance the sequence, or the
+ * suggestion is a trap.
+ *
+ * Anything else is a code the user genuinely chose, and is left alone.
+ *
+ * The preview is re-read here at save time rather than carried from the form
+ * in a hidden field. A hidden field is a claim the client makes about what it
+ * was shown, and a client that got it wrong would burn a number on every save
+ * of a hand-typed code.
  *
  * ── WHY VALIDATION MUST RUN AFTER, NOT BEFORE ────────────────────────────
  *
@@ -58,11 +71,22 @@ export async function resolveMasterCode(
   typed: string | undefined | null,
 ): Promise<string> {
   const code = (typed ?? '').trim()
-  if (code) return code
 
-  if (!(await getBooleanSetting(siteId, SETTING_FOR[docType]))) return ''
+  // Auto-numbering off: whatever arrived is the code, blank included — the
+  // caller's own validation then produces "a code is required".
+  if (!(await getBooleanSetting(siteId, SETTING_FOR[docType]))) return code
 
-  return (await nextMasterCode(siteId, docType)) ?? ''
+  if (code) {
+    const preview = await previewMasterCode(siteId, docType)
+    // Compared case-insensitively because the codes are: a user who retyped
+    // the suggestion in lower case accepted it, they did not invent one.
+    if (!preview || preview.toLowerCase() !== code.toLowerCase()) return code
+  }
+
+  // Blank, or the suggestion accepted. Either way claim a real one — falling
+  // back to whatever arrived if the sequence cannot produce one, so a setup
+  // gap reads as the ordinary "a code is required" rather than a lost save.
+  return (await nextMasterCode(siteId, docType)) ?? code
 }
 
 /**

@@ -1,7 +1,8 @@
 import 'server-only'
 import type { RowDataPacket, PoolConnection } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
-import { toNum } from '../decimals'
+import { round, toNum } from '../decimals'
+import { supplierQuery } from './customerDb'
 import { sanitiseHtml } from '../html'
 import { costLine, priceLine, type CostBasis, type CostLine, type PriceLine } from '../pricing'
 import { toProductType, type ProductTypeId } from '../productTypes'
@@ -21,6 +22,8 @@ export type Product = {
   barcode: string | null
   description: string
   extraDescription: string | null
+  /** The heading this prints under on a kitchen docket (230). Empty for none. */
+  kitchenGroup: string
   productType: ProductTypeId
   /**
    * Made in batches, rather than exploded at the till.
@@ -240,7 +243,7 @@ const PRODUCT_LEVELS_JOIN = `
 `
 
 const SELECT_PRODUCT = `
-  SELECT p.id, p.code, p.barcode, p.description, p.extra_description, p.product_type,
+  SELECT p.id, p.code, p.barcode, p.description, p.extra_description, p.kitchen_group, p.product_type,
          p.is_manufactured,
          p.has_variants, p.parent_id,
          ${VARIANT_COUNT_SQL} AS variant_count,
@@ -283,6 +286,7 @@ function mapProduct(
     barcode: (r.barcode as string | null) ?? null,
     description: String(r.description),
     extraDescription: (r.extra_description as string | null) ?? null,
+    kitchenGroup: String(r.kitchen_group ?? ''),
     productType: toProductType(r.product_type),
     isManufactured: Number(r.is_manufactured ?? 0) === 1,
 
@@ -697,6 +701,14 @@ export type ProductInput = {
   barcode?: string | null
   description: string
   extraDescription?: string | null
+  /**
+   * The heading this prints under on a kitchen docket — "Starters" (230).
+   *
+   * Free text; empty means no heading, which is the ordinary case. Independent
+   * of the printers the product routes to: this says WHERE ON THE PAPER, they
+   * say WHICH PAPER, and a group with no printer still prints nothing.
+   */
+  kitchenGroup?: string | null
   productType?: ProductTypeId
   /** Only meaningful on a recipe product — see Product.isManufactured. */
   isManufactured?: boolean
@@ -936,17 +948,20 @@ export async function insertProductTx(
   {
     const [res] = await tx.execute(
       `INSERT INTO products
-         (code, barcode, description, extra_description, product_type, is_manufactured,
+         (code, barcode, description, extra_description, kitchen_group, product_type, is_manufactured,
           department_id, brand_id, image_path, image_icon, image_color,
           purchase_vat_rate_id, selling_vat_rate_id,
           last_cost, average_cost, stock_on_hand,
           is_archived, ${PROPERTY_COLUMNS.join(', ')}, last_edit_date)
-       VALUES (?,?,?,?, ?,?, ?,?,?,?,?, ?,?, ?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
+       VALUES (?,?,?,?,?, ?,?, ?,?,?,?,?, ?,?, ?,?,?, ?, ${PROPERTY_COLUMNS.map(() => '?').join(',')}, NOW())`,
       [
         input.code,
         input.barcode?.trim() || null,
         input.description.trim(),
         sanitiseHtml(input.extraDescription) || null,
+        // A new product has nothing to keep, so "no opinion" and "no heading"
+        // are the same thing here — both are the column's own default.
+        (input.kitchenGroup ?? '').trim().slice(0, 60),
         toProductType(input.productType),
         // Only a recipe carries this. Storing it on any other type would leave
         // a flag that means nothing and reads as though it might.
@@ -1097,6 +1112,10 @@ export async function updateProduct(
     const [res] = await tx.execute(
       `UPDATE products SET
          code = ?, barcode = ?, description = ?, extra_description = ?,
+         /* COALESCE, so an absent field keeps the column. Passing NULL is how
+            a form without the Kitchen tab says "I have no opinion"; an empty
+            STRING is a real answer meaning "no heading" and does overwrite. */
+         kitchen_group = COALESCE(?, kitchen_group),
          product_type = ?, is_manufactured = ?, department_id = ?, brand_id = ?,
          ${imageAssignments.length ? `${imageAssignments.join(', ')},` : ''}
          image_color = ?,
@@ -1111,6 +1130,10 @@ export async function updateProduct(
         input.barcode?.trim() || null,
         input.description.trim(),
         sanitiseHtml(input.extraDescription) || null,
+        // null when the caller had no opinion — the COALESCE above keeps it.
+        input.kitchenGroup === undefined || input.kitchenGroup === null
+          ? null
+          : input.kitchenGroup.trim().slice(0, 60),
         toProductType(input.productType),
         wanted,
         input.departmentId ?? null,
@@ -1277,6 +1300,19 @@ export type ProductBulkChange =
   | { kind: 'department'; departmentId: number | null }
   | { kind: 'brand'; brandId: number | null }
   | { kind: 'instructionGroup'; groupId: number; mode: 'add' | 'remove' }
+  | {
+      kind: 'supplier'
+      supplierId: number
+      mode: 'add' | 'remove'
+      /**
+       * Only meaningful when adding. Their own stock code is deliberately NOT
+       * offered: it differs per product, so one value across a selection would
+       * be wrong for every product but at most one.
+       */
+      packSize?: number
+      /** Make this the preferred supplier, unseating whatever held it. */
+      preferred?: boolean
+    }
   | { kind: 'color'; imageColor: string | null }
   | { kind: 'sellingVat'; vatRateId: number | null }
   | { kind: 'purchaseVat'; vatRateId: number | null }
@@ -1371,12 +1407,16 @@ export async function bulkUpdateProducts(
 
   const idList = permitted.map((r) => Number(r.id))
 
-  // Three kinds do not write a products column, so they never reach the SET
-  // clause: delete has its own archive-instead rule, instruction groups are a
-  // join table, and reorder levels live on product_location_stock.
+  // Four kinds do not write a products column, so they never reach the SET
+  // clause: delete has its own archive-instead rule, instruction groups and
+  // suppliers are join tables, and reorder levels live on
+  // product_location_stock.
   if (change.kind === 'delete') return bulkDeleteProducts(siteId, permitted, skipped)
   if (change.kind === 'instructionGroup') {
     return bulkInstructionGroup(siteId, idList, change, skipped)
+  }
+  if (change.kind === 'supplier') {
+    return bulkSupplier(siteId, permitted, change, skipped)
   }
   if (change.kind === 'minLevel' || change.kind === 'maxLevel') {
     return bulkStockLevel(siteId, idList, change, skipped)
@@ -1413,6 +1453,11 @@ function refuseProductBulk(row: BulkRow, change: ProductBulkChange): string | nu
       'packWeight',
     ]
     if (perUnit.includes(change.kind)) return 'It is a variant parent and holds no stock.'
+    // A parent is a catalogue heading — the variants beneath it are what an
+    // order is actually placed for, so a supplier link on it buys nothing.
+    if (change.kind === 'supplier' && change.mode === 'add') {
+      return 'It is a variant parent — link its variants instead.'
+    }
     if (change.kind === 'delete') return 'It has variants — delete those first.'
   }
 
@@ -1450,6 +1495,17 @@ function validateProductBulk(change: ProductBulkChange): string | null {
     case 'instructionGroup':
       if (!Number.isFinite(change.groupId) || change.groupId <= 0) {
         return 'Choose an instruction group.'
+      }
+      return null
+    case 'supplier':
+      if (!Number.isFinite(change.supplierId) || change.supplierId <= 0) {
+        return 'Choose a supplier.'
+      }
+      // Zero would make an order line for a whole case deduct nothing — the
+      // same refusal saveProductSuppliers makes, rather than dividing by it
+      // later.
+      if (change.packSize != null && (!Number.isFinite(change.packSize) || change.packSize <= 0)) {
+        return 'Pack size must be more than zero.'
       }
       return null
     default:
@@ -1543,6 +1599,107 @@ async function bulkInstructionGroup(
         WHERE p.id IN (${placeholders})`,
       [change.groupId, ...ids] as never,
     )
+  })
+
+  return { updated: ids.length, skipped }
+}
+
+/**
+ * Links one supplier to the selection, or unlinks it.
+ *
+ * A join table like instruction groups, so this is INSERT / DELETE rather than
+ * an UPDATE — and adding is a MERGE, not a replace: `saveProductSuppliers` on
+ * the product form owns the whole set because the form shows the whole set,
+ * but a bulk action sees one supplier and must leave the others alone.
+ *
+ * ── WHAT IS NOT OFFERED, AND WHY ─────────────────────────────────────────
+ *
+ * `supplier_code` — their stock code for it — differs per product by
+ * definition, so one value across a selection would be wrong for every product
+ * but at most one. `last_cost` is the same: it is what we actually paid, per
+ * product. Both are left for the product form and for receiving to write.
+ *
+ * ── RE-ADDING KEEPS WHAT IS THERE ────────────────────────────────────────
+ *
+ * A product already linked to this supplier keeps its supplier code and last
+ * cost. That is the whole reason this is not a DELETE-then-INSERT: running
+ * "link Acme" over a selection that half already had would otherwise erase the
+ * codes purchasing depends on from the half that was already right.
+ */
+async function bulkSupplier(
+  siteId: number,
+  rows: BulkRow[],
+  change: Extract<ProductBulkChange, { kind: 'supplier' }>,
+  skipped: ProductBulkResult['skipped'],
+): Promise<ProductBulkResult> {
+  const ids = rows.map((r) => Number(r.id))
+  const placeholders = ids.map(() => '?').join(',')
+
+  if (change.mode === 'remove') {
+    await siteTransaction(siteId, async (tx) => {
+      await tx.execute(
+        `DELETE FROM product_suppliers
+          WHERE supplier_id = ? AND product_id IN (${placeholders})`,
+        [change.supplierId, ...ids] as never,
+      )
+    })
+    return { updated: ids.length, skipped }
+  }
+
+  /*
+   * Against the file that actually holds suppliers, which under a shared
+   * supplier file is the group's rather than ours (206). The FK that used to
+   * catch a missing supplier is gone with it, so this check IS the integrity —
+   * and it is one query for the whole batch rather than one per product.
+   */
+  const found = await supplierQuery<RowDataPacket & { id: number }>(
+    siteId,
+    'SELECT id FROM suppliers WHERE id = ?',
+    [change.supplierId],
+  )
+  if (found.length === 0) {
+    return {
+      updated: 0,
+      skipped: [
+        ...skipped,
+        ...rows.map((r) => ({
+          id: Number(r.id),
+          code: r.code,
+          name: r.description,
+          reason: 'That supplier no longer exists.',
+        })),
+      ],
+    }
+  }
+
+  const packSize = round(change.packSize && change.packSize > 0 ? change.packSize : 1, 3).toFixed(3)
+
+  await siteTransaction(siteId, async (tx) => {
+    // INSERT IGNORE, not REPLACE: a product already on this supplier keeps the
+    // code and cost it was bought at. `pack_size` therefore applies to the new
+    // links only, which is the honest reading of "link these to Acme".
+    await tx.execute(
+      `INSERT IGNORE INTO product_suppliers (product_id, supplier_id, pack_size)
+       VALUES ${ids.map(() => '(?,?,?)').join(',')}`,
+      ids.flatMap((id) => [id, change.supplierId, packSize]) as never,
+    )
+
+    if (change.preferred) {
+      // One preferred supplier per product, enforced here rather than by a
+      // unique key — "no preferred supplier" is legitimate, and a unique index
+      // on (product_id, is_preferred) would forbid two non-preferred rows.
+      // Clearing first means the flag MOVES rather than being held twice.
+      await tx.execute(
+        `UPDATE product_suppliers SET is_preferred = 0
+          WHERE product_id IN (${placeholders})`,
+        ids as never,
+      )
+      await tx.execute(
+        `UPDATE product_suppliers SET is_preferred = 1
+          WHERE supplier_id = ? AND product_id IN (${placeholders})`,
+        [change.supplierId, ...ids] as never,
+      )
+    }
   })
 
   return { updated: ids.length, skipped }

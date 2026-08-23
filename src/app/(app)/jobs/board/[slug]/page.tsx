@@ -98,7 +98,7 @@ export default async function BoardPage({
           <Callout tone="warning" title="Some jobs are on no board">
             {stranded.map((s) => `${s.jobCount} in ${s.name}`).join(', ')}. Those statuses
             appear on no board, so this screen cannot show them.{' '}
-            <TextLink href="/setup/job-workflow">Fix the columns</TextLink> or find them in
+            <TextLink href="/jobs/setup/workflow">Fix the columns</TextLink> or find them in
             the <TextLink href="/jobs?state=all">job list</TextLink>.
           </Callout>
         )}

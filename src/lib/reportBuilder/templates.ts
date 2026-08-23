@@ -76,7 +76,7 @@ export interface ReportTemplate {
 }
 
 export interface ReportVariant {
-  /** URL value: /reports/sales-by?cut=product. Stable — it is a bookmark. */
+  /** URL value: /reports/performance?cut=product. Stable — it is a bookmark. */
   key: string;
   /** The switch's label. Terse: it sits in a row of six. */
   label: string;
@@ -126,7 +126,7 @@ export const TEMPLATES: ReportTemplate[] = [
    * opened one, seeing the same period at the other grain meant going back to
    * the catalogue. They are one tile with the grain switched on the report.
    *
-   * Each grain keeps its own spec, as `sales-by`'s cuts do and for the same
+   * Each grain keeps its own spec, as `turnover-by`'s cuts do and for the same
    * reason: the document grain runs on `sales`, where one row IS one document,
    * and the line grain on `saleLines`, which carries cost and so can show
    * margin. Sharing a source would make one of the two lie about what it is
@@ -253,6 +253,10 @@ export const TEMPLATES: ReportTemplate[] = [
     spec: spec({
       source: "shifts",
       columns: [
+        /* First, and the reason this report is worth opening rather than just
+           reading: every row leads to the signed count behind it, which is
+           where a variance is actually explained. */
+        { field: "cashupRef" },
         { field: "openedAt" },
         { field: "terminalCode" },
         { field: "userName" },
@@ -492,114 +496,58 @@ export const TEMPLATES: ReportTemplate[] = [
       },
     ],
   },
-  /*
-   * ── Sales by … ───────────────────────────────────────────────────────────
-   *
-   * The two TIME cuts, kept as their own tile. Product, department, cashier and
-   * till left to become cuts of `performance` above; day and month stayed here
-   * because neither is a "performance" question — nothing is being ranked
-   * against anything — and they genuinely are one question at two grains: "how
-   * did trade move over time, and at what margin".
-   *
-   * Both run on `saleLines`, so both carry gross profit. That is what separates
-   * them from `turnover-by`, which answers the same shape of question on the
-   * basket grain (basket count, average basket) and cannot show margin at all.
-   *
-   * The first variant is the default cut and MUST match `spec` below — the
-   * report has to render before anyone has chosen anything.
-   */
-  {
-    id: "sales-by",
-    name: "Sales by day or month",
-    description:
-      "What was sold over the period and what it made, by trading day or by month.",
-    category: "Sales",
-    permission: "reports.view",
-    spec: spec({
-      source: "saleLines",
-      groupFields: ["day"],
-      columns: [
-        { field: "lineTotalIncl", agg: "sum" },
-        { field: "lineTotalExcl", agg: "sum" },
-        { field: "lineVat", agg: "sum" },
-        { field: "grossProfit", agg: "sum" },
-        { field: "grossProfitPct", agg: "avg" },
-      ],
-      filters: [{ field: "status", op: "eq", value: "finalised" }],
-      sort: { key: "day", dir: "asc" },
-      chartType: "line",
-    }),
-    variants: [
-      {
-        key: "day",
-        label: "Day",
-        name: "Sales by day",
-        description:
-          "Turnover, VAT and profit for each trading day in the period.",
-        legacyId: "sales-summary-by-day",
-        spec: spec({
-          source: "saleLines",
-          groupFields: ["day"],
-          columns: [
-            { field: "lineTotalIncl", agg: "sum" },
-            { field: "lineTotalExcl", agg: "sum" },
-            { field: "lineVat", agg: "sum" },
-            { field: "grossProfit", agg: "sum" },
-            { field: "grossProfitPct", agg: "avg" },
-          ],
-          filters: [{ field: "status", op: "eq", value: "finalised" }],
-          sort: { key: "day", dir: "asc" },
-          chartType: "line",
-        }),
-      },
-      {
-        key: "month",
-        label: "Month",
-        name: "Sales by month",
-        description:
-          "Turnover and profit month by month — the shape of the year rather than of the week.",
-        legacyId: "sales-by-month",
-        /* The one cut that overrides the period: a month-by-month report over
-           "this month" is a single row, which is not a report. Choosing this cut
-           therefore also moves the period to the year — and because the period
-           picker stays live beside it, a reader who wants a narrower span can
-           still say so. */
-        spec: spec({
-          source: "saleLines",
-          period: { key: "thisYear" },
-          groupFields: ["month"],
-          columns: [
-            { field: "lineTotalIncl", agg: "sum" },
-            { field: "lineTotalExcl", agg: "sum" },
-            { field: "lineVat", agg: "sum" },
-            { field: "grossProfit", agg: "sum" },
-            { field: "grossProfitPct", agg: "avg" },
-          ],
-          filters: [{ field: "status", op: "eq", value: "finalised" }],
-          sort: { key: "month", dir: "asc" },
-          chartType: "line",
-        }),
-      },
-    ],
-  },
   {
     /*
      * ── Turnover by … ──────────────────────────────────────────────────────
      *
      * One question — "what did we take, over what stretch of time" — asked at
-     * four zoom levels. Hour answers "when in the day is the shop busy"; day,
-     * month and year answer "is the business growing", at three grains.
+     * several zoom levels. Hour answers "when in the day is the shop busy";
+     * day, month and year answer "is the business growing", at three grains.
      *
-     * All four share ONE spec shape, unlike `sales-by`: every cut runs on
-     * `sales`, so `__rows` is a basket count and `totalIncl avg` a real average
-     * basket throughout. Only the group field, the sort, the period and the
-     * chart change. They still get a spec each rather than a swapped
-     * groupFields, because the PERIOD has to move with the grain — see below.
+     * ── THE MARGIN CUTS ────────────────────────────────────────────────────
+     *
+     * `sales-by` ("Sales by day or month") used to sit beside this as its own
+     * tile, asking the same shape of question at the same two grains. It was
+     * folded in here, because two tiles both called "sales/turnover by day" is
+     * a choice nobody can make from the names alone.
+     *
+     * But it is folded in as its OWN CUTS, not by moving the existing ones onto
+     * its source — and that distinction is the whole point:
+     *
+     *   • Hour, Day, Month, Year run on `sales`, where one row IS one basket.
+     *     `__rows` is therefore a basket count and `totalIncl avg` a real
+     *     average basket. That source carries no cost, so these can never show
+     *     margin.
+     *   • Day (margin) and Month (margin) run on `saleLines`, which carries
+     *     cost and so can show VAT and gross profit. One row there is a LINE,
+     *     so these deliberately drop the count and the average — on saleLines
+     *     both would silently become line figures, which is the wrong answer to
+     *     the question the basket cuts ask.
+     *
+     * Moving the basket cuts onto `saleLines` to share one spec would have made
+     * every existing basket count and average silently wrong; `performance`
+     * above splits its cuts across the same two sources for exactly this
+     * reason. `saleLines` also has no `hour` bucket at all — it takes
+     * `timeBuckets('document_date')` with no hour column, because a document is
+     * dated by trading day rather than by a timestamp — so the hour cut could
+     * not have moved even if the counts had been acceptable.
+     *
+     * The old ids stay resolvable through `legacyId` on the two margin cuts, so
+     * a shop's starred report, saved columns and 06:00 schedule all carry over.
+     * 'sales-by' ITSELF does not resolve any more — `legacyId` is one id per
+     * cut, and the two that predate the consolidation are the ones with stored
+     * rows behind them. A bare /reports/sales-by bookmark now 404s; acceptable
+     * only because that id never reached a live site. If one ever needs to be
+     * kept alive, `legacyId` widens to a list rather than gaining a special
+     * case here.
+     *
+     * Each cut still gets its own spec rather than a swapped groupFields,
+     * because the PERIOD has to move with the grain — see below.
      */
     id: "turnover-by",
     name: "Turnover by hour, day, month or year",
     description:
-      "Takings, basket count and average basket over time — by hour of day to see when the shop is busy, or by day, month and year to see which way the business is going.",
+      "Takings, basket count and average basket over time — by hour of day to see when the shop is busy, or by day, month and year to see which way the business is going. The margin cuts trade the basket count for VAT and gross profit.",
     category: "Sales",
     permission: "reports.view",
     spec: spec({
@@ -702,6 +650,62 @@ export const TEMPLATES: ReportTemplate[] = [
           filters: [{ field: "status", op: "eq", value: "finalised" }],
           sort: { key: "year", dir: "asc" },
           chartType: "bar",
+        }),
+      },
+      /*
+       * The two margin cuts, absorbed from `sales-by`. On `saleLines` rather
+       * than `sales` — see the note at the top of this template for why they
+       * are separate cuts instead of extra columns on the two above.
+       */
+      {
+        key: "day-margin",
+        label: "Day (margin)",
+        name: "Sales by day",
+        description:
+          "Turnover, VAT and profit for each trading day in the period.",
+        legacyId: "sales-summary-by-day",
+        spec: spec({
+          source: "saleLines",
+          groupFields: ["day"],
+          /* No `__rows` and no average, unlike the basket cuts: one row here is
+             a line, so both would answer a question nobody asked. What this cut
+             is FOR is the three columns the basket grain cannot produce. */
+          columns: [
+            { field: "lineTotalIncl", agg: "sum" },
+            { field: "lineTotalExcl", agg: "sum" },
+            { field: "lineVat", agg: "sum" },
+            { field: "grossProfit", agg: "sum" },
+            { field: "grossProfitPct", agg: "avg" },
+          ],
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "day", dir: "asc" },
+          chartType: "line",
+        }),
+      },
+      {
+        key: "month-margin",
+        label: "Month (margin)",
+        name: "Sales by month",
+        description:
+          "Turnover and profit month by month — the shape of the year rather than of the week.",
+        legacyId: "sales-by-month",
+        /* The period moves with the grain here for the same reason it does on
+           the month and year cuts above: a month-by-month report over "this
+           month" is a single row, which is not a report. */
+        spec: spec({
+          source: "saleLines",
+          period: { key: "thisYear" },
+          groupFields: ["month"],
+          columns: [
+            { field: "lineTotalIncl", agg: "sum" },
+            { field: "lineTotalExcl", agg: "sum" },
+            { field: "lineVat", agg: "sum" },
+            { field: "grossProfit", agg: "sum" },
+            { field: "grossProfitPct", agg: "avg" },
+          ],
+          filters: [{ field: "status", op: "eq", value: "finalised" }],
+          sort: { key: "month", dir: "asc" },
+          chartType: "line",
         }),
       },
     ],

@@ -213,6 +213,22 @@ export const SETTING_DEFAULTS = {
    */
   tips_tables_only: '1',
   /**
+   * Whether saving a tab automatically sends the new items to the kitchen.
+   *
+   * ON by default, and unusually for a flag here, that IS the careful choice.
+   * The feature only ever does anything for products a shop has deliberately
+   * routed to a printer — with no routing set up, which is every retail site,
+   * this switch changes nothing at all. So the default is read by exactly the
+   * shops that went to the trouble of configuring it, and for them "I saved
+   * the table and nothing printed" is the surprising outcome.
+   *
+   * Turning it OFF leaves the send-to-kitchen key as the only way food is
+   * fired. That is a real way to run a restaurant — a waiter who wants to hold
+   * a course until the table is ready does not want the till second-guessing
+   * them — which is why it is a setting rather than an assumption.
+   */
+  pos_auto_print_kitchen: '1',
+  /**
    * Warn at the tender pad when the basket holds more than the shop has.
    *
    * ── WHY THIS IS A SETTING AND NOT A RULE ──────────────────────────────────
@@ -1279,6 +1295,7 @@ export function validateSetting(key: SettingKey, value: string): string | null {
     case 'tips_tables_only':
     case 'pos_warn_out_of_stock':
     case 'pos_offline_account_sales':
+    case 'pos_auto_print_kitchen':
       return value === '1' || value === '0' ? null : 'That setting must be 1 or 0.'
 
     case 'cashup_mode':

@@ -38,16 +38,24 @@ export const dynamic = 'force-dynamic'
  * A CREDIT NOTE is not here. It reverses a sale rather than asking for one,
  * and printing it under any of these four headings would misdescribe it, so it
  * 404s until it has an instrument of its own.
+ *
+ * `?auto=1` prints once on mount — the trade counter's Print button opened this
+ * tab to put paper in a customer's hand, not to be read. The same flag the slip
+ * route carries, for the same reason and with the same default: without it the
+ * page waits, because a pro forma is usually opened to CHECK it first.
  */
 export default async function SalesDocumentPrintPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ auto?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { capabilities } = await requireCapability('sales.view')
   const site = await requireSite()
   const { id: raw } = await params
+  const { auto } = await searchParams
 
   const id = Number(raw)
   if (!Number.isFinite(id) || id <= 0) notFound()
@@ -190,7 +198,7 @@ export default async function SalesDocumentPrintPage({
 
   return (
     <div className="px-6 py-6">
-      <DocumentPrintButton doc={{ id: doc.id, docType: doc.docType }} />
+      <DocumentPrintButton doc={{ id: doc.id, docType: doc.docType }} auto={auto === '1'} />
       {/* Sanitised at save and re-validated at resolve; the values inside it are
           escaped by the renderer. See lib/stationery/sanitise.ts. */}
       <div dangerouslySetInnerHTML={{ __html: html }} />

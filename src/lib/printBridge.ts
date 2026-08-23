@@ -18,13 +18,26 @@ export type PrintBridgeConfig = {
   url: string
   /** The bridge's name for the slip printer. Empty = no slip printing. */
   receiptPrinter: string
-  /** The bridge's name for the kitchen printer. Empty = no kitchen tickets. */
-  kitchenPrinter: string
   /** 48 for 80mm Font A; 42 for the narrower heads. */
   columns: 42 | 48
   /** Whether this till sends the drawer-kick pulse at all. */
   drawerKick: boolean
 }
+
+/*
+ * ── WHERE THE KITCHEN PRINTER WENT ─────────────────────────────────────────
+ *
+ * This used to carry a `kitchenPrinter` string beside `receiptPrinter`. One
+ * literal slot cannot describe a shop with a Bar and a Grill, and localStorage
+ * meant nobody in the back office could see — let alone fix — a till whose
+ * food had stopped printing.
+ *
+ * Kitchen routing now lives in the database, on the terminal's own row
+ * (terminal_kitchen_printers, sql/site/229). What stays here is only what is
+ * genuinely true of THIS MACHINE and nothing else: which bridge to talk to,
+ * how wide its paper is, and whether it kicks a drawer. The kitchen's spool
+ * name arrives from the server with the ticket, and is passed to `printRaw`.
+ */
 
 export function bridgeConfig(): PrintBridgeConfig | null {
   try {
@@ -35,7 +48,6 @@ export function bridgeConfig(): PrintBridgeConfig | null {
     return {
       url: String(parsed.url).replace(/\/$/, ''),
       receiptPrinter: String(parsed.receiptPrinter ?? ''),
-      kitchenPrinter: String(parsed.kitchenPrinter ?? ''),
       columns: parsed.columns === 42 ? 42 : 48,
       drawerKick: parsed.drawerKick !== false,
     }
@@ -81,18 +93,24 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
+/**
+ * Sends bytes to one of the bridge's spool queues, BY NAME.
+ *
+ * The name is the bridge's own string, as reported by its /health endpoint —
+ * never a role like 'kitchen'. Roles were what made this function unable to
+ * describe a second kitchen printer; the caller now resolves the role (from
+ * the machine's own config for a receipt, from the terminal's mapping for a
+ * kitchen ticket) and passes the answer.
+ */
 export async function printRaw(
-  printer: 'receipt' | 'kitchen',
+  printerName: string,
   bytes: Uint8Array,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const config = bridgeConfig()
   if (!config) return { ok: false, error: 'No print bridge is set up on this machine.' }
-  const name = printer === 'receipt' ? config.receiptPrinter : config.kitchenPrinter
+  const name = printerName.trim()
   if (!name) {
-    return {
-      ok: false,
-      error: `No ${printer} printer is set on this machine — Setup → Printing.`,
-    }
+    return { ok: false, error: 'No printer was named for this job — Setup → Printing.' }
   }
 
   try {

@@ -16,8 +16,9 @@ import {
   rowCountKeyFor,
   type ReportSection,
 } from '@/lib/reportBuilder/shape'
-import type { ReportColumn } from '@/lib/reportBuilder/spec'
+import { linkKeyFor, type ReportColumn } from '@/lib/reportBuilder/spec'
 import { GroupTile, groupStyleFor } from './groupStyle'
+import { DocumentCell } from './DocumentCell'
 
 /**
  * The report grid.
@@ -241,6 +242,32 @@ const TOTALS_TD = 'px-4 py-2 text-ink'
  * first place. Expanded, those figures live on the subtotal row instead, so the
  * same numbers are never on screen twice.
  */
+/**
+ * One data cell.
+ *
+ * Almost always just the formatted value. The exception is a document number
+ * whose column declares what it opens AND whose row carries the record's id —
+ * both are required, so a column that is linkable in principle still renders as
+ * plain text on a row that has no id to open (an outer join with nothing on the
+ * far side, most obviously).
+ *
+ * Only DATA rows come through here. Totals and subtotals keep calling
+ * formatCell directly, and must: an aggregate is many documents at once, so
+ * there is no single record for it to lead to.
+ */
+function Cell({ col, row }: { col: ReportColumn; row: Record<string, unknown> }) {
+  const formatted = formatCell(row[col.key], col.type)
+
+  if (col.link) {
+    const id = Number(row[linkKeyFor(col.key)])
+    if (Number.isFinite(id) && id > 0 && formatted !== '') {
+      return <DocumentCell kind={col.link.kind} id={id} label={formatted} />
+    }
+  }
+
+  return <>{formatted}</>
+}
+
 function GroupBlock({
   section,
   columns,
@@ -347,7 +374,7 @@ function GroupBlock({
                   col.numeric && Number(row[col.key]) < 0 ? 'text-danger' : ''
                 }`}
               >
-                {formatCell(row[col.key], col.type)}
+                <Cell col={col} row={row} />
               </td>
             ))}
           </tr>

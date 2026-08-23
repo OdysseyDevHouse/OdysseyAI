@@ -28,7 +28,7 @@ export default async function BoardIndexPage() {
           those statuses appears on it.
         </Callout>
         <div>
-          <ButtonLink href="/setup/job-workflow" variant="primary">
+          <ButtonLink href="/jobs/setup/workflow" variant="primary">
             Set up the workflow
           </ButtonLink>
         </div>

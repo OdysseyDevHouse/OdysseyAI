@@ -33,6 +33,7 @@ import {
   valueCount,
   MAX_ROWS,
   ROW_COUNT_FIELD,
+  linkKeyFor,
   type AggFn,
   type CustomReportSpec,
   type FilterOp,
@@ -415,6 +416,27 @@ function buildSelect(spec: CustomReportSpec, source: CatalogSource): SelectItem[
         sql: `${f.expr} AS \`${f.key}\``,
         numeric: f.numeric === true,
       })
+      /*
+       * A linkable document number also brings its record's id along.
+       *
+       * Under a sidecar key rather than as a column: the id is not something
+       * anybody wants to read, it is what the cell needs in order to OPEN
+       * something. It never reaches `specColumns`, so the grid, the totals row,
+       * the CSV export and the column picker are all unchanged — only the row
+       * object gains a key the cell renderer knows to look for.
+       *
+       * Unsummarised only, and that is not an oversight: a summarised row is
+       * MANY documents rolled together ("March: 412 invoices"), and there is no
+       * single record for it to open. Linking one would open whichever id
+       * happened to survive the GROUP BY.
+       */
+      if (f.link) {
+        items.push({
+          key: linkKeyFor(f.key),
+          sql: `${f.link.idExpr} AS \`${linkKeyFor(f.key)}\``,
+          numeric: false,
+        })
+      }
       continue
     }
 

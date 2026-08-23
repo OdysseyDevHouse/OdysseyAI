@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireCapability } from '@/lib/auth'
 import { toggleFavorite } from '@/lib/site/reportFavorites'
 import { deleteSavedReport } from '@/lib/site/savedReports'
+import { loadSaleRecord, type SaleRecordSnapshot } from '@/lib/site/saleRecord'
 
 /**
  * Hub actions.
@@ -46,4 +47,36 @@ export async function deleteSavedReportAction(id: number): Promise<DeleteResult>
   } catch {
     return { ok: false, error: 'Could not delete that report. Try again.' }
   }
+}
+
+/**
+ * The sale behind a document number in a report.
+ *
+ * Reports are a READING surface, so a clicked invoice number opens the record
+ * rather than navigating to it — the reader keeps their period, their filters
+ * and their scroll position, which is the whole reason the number is a cell and
+ * not a link out.
+ *
+ * ── WHY ITS OWN ACTION ────────────────────────────────────────────────────
+ *
+ * `saleRecordAction` in (invoicing) does the same read, but it is that route's
+ * own action and asks the invoicing capability chain for its actor. This one
+ * belongs to the reports surface and states its own gate.
+ *
+ * ── THE GATE IS sales.view, NOT reports.view ──────────────────────────────
+ *
+ * Deliberately the STRICTER of the two, and not the one that got the reader
+ * here. Somebody who may read a turnover figure has not thereby been given the
+ * right to read every customer name, line and tender on an individual sale;
+ * those are two different disclosures. A reader without it sees the number as
+ * plain text — the cell simply does not become a button, and the action refuses
+ * regardless of what the cell rendered, because a hidden control is not a
+ * boundary.
+ */
+export async function reportSaleRecordAction(
+  documentId: number,
+): Promise<SaleRecordSnapshot | null> {
+  const { siteId } = await requireCapability('sales.view')
+  if (!Number.isInteger(documentId) || documentId <= 0) return null
+  return loadSaleRecord(siteId, documentId)
 }

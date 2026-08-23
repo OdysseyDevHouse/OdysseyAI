@@ -77,6 +77,50 @@ export function Combobox<T>({
     return () => document.removeEventListener('mousedown', onPointerDown)
   }, [open])
 
+  /*
+   * How tall the results may be before something clips them.
+   *
+   * The list is positioned inside the field, so a Combobox in a scrolling pane
+   * — a Modal body, which stops at 60vh — has its results cut off at the pane's
+   * edge rather than at their own max-height. The rows below the fold are then
+   * unreachable: the pane scrolls the whole form, not the dropdown.
+   *
+   * So the cap is whatever room is actually left below the input inside the
+   * nearest scrolling ancestor, falling back to the viewport when there is
+   * none. Measured on open, and on resize while open, because a modal's height
+   * is a viewport fraction.
+   */
+  const [roomBelow, setRoomBelow] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!open) {
+      setRoomBelow(null)
+      return
+    }
+
+    function measure() {
+      const input = inputRef.current
+      if (!input) return
+
+      let bound = window.innerHeight
+      for (let el = input.parentElement; el; el = el.parentElement) {
+        const { overflowY } = getComputedStyle(el)
+        if (overflowY === 'auto' || overflowY === 'scroll') {
+          bound = Math.min(bound, el.getBoundingClientRect().bottom)
+          break
+        }
+      }
+
+      // Leave a hair of breathing room so the list never sits flush against
+      // the edge it is being kept inside.
+      setRoomBelow(Math.max(bound - input.getBoundingClientRect().bottom - 12, 0))
+    }
+
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [open])
+
   function choose(option: ComboboxOption<T>) {
     if (option.disabled) return
     onSelect(option)
@@ -153,6 +197,14 @@ export function Combobox<T>({
         <ul
           id={listId}
           role="listbox"
+          /* max-h-72 is the ceiling; the inline cap only ever brings it DOWN,
+             and never below two rows — a list squeezed to a sliver is worse to
+             use than one that overflows a little. */
+          style={
+            roomBelow === null
+              ? undefined
+              : { maxHeight: Math.min(Math.max(roomBelow, 96), 288) }
+          }
           className="absolute z-20 mt-1.5 max-h-72 w-full overflow-y-auto rounded-control border border-border bg-surface p-1 shadow-pop"
         >
           {options.length === 0 && !loading && (

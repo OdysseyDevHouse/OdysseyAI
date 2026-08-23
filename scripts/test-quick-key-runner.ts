@@ -23,6 +23,10 @@
  *
  * So this file checks the two things a compiler cannot: that no message names a screen
  * that no longer exists, and that every slug the catalogue offers is answered at all.
+ *
+ * `redeem-voucher` above is HISTORY — the key was retired outright once it was clear its
+ * whole behaviour was pointing at the tender pad. It survives here as the retired slug
+ * section 4a presses, because a board built before the removal still carries it.
  */
 import { QUICK_KEY_ACTIONS } from '../src/lib/quickKeys'
 import { runQuickKey, type RunContext, type QuickKeyHandlers } from '../src/app/(pos)/pos/quickKeyRunner'
@@ -175,15 +179,15 @@ function main() {
     [...new Set(offenders)].slice(0, 4).join(' | '),
   )
 
-  /* ── 3. Vouchers and points point at the tender pad ──────────────────────
-     They are reachable — through Pay — so the message must say where, not "not yet". */
+  /* ── 3. Points point at the tender pad ───────────────────────────────────
+     Reachable — through Pay — so the message must say where, not "not yet". */
 
-  const voucher = press('redeem-voucher')
-  ok(
-    'the voucher key points at the payment screen',
-    voucher.some((c) => c.name === 'say' && /pay/i.test(String((c.arg as any).message))),
-    JSON.stringify(voucher),
-  )
+  /* `redeem-voucher` used to be checked here beside points, saying the same thing about
+     where codes are typed. The key is off the catalogue: its whole behaviour was telling
+     a cashier to press Pay instead, which is a press that could never do anything. What
+     is worth checking now is the RETIREMENT — a till that still carries the old key on a
+     saved board must say it does not recognise it, not fall silent. That is the generic
+     unknown-slug path, and section 4a below is where it is asserted. */
 
   const pointsWithCustomer = press('loyalty-payment', { hasCustomer: true })
   ok(
@@ -204,18 +208,34 @@ function main() {
     JSON.stringify(pointsNoCustomer),
   )
 
-  /* ── 4. Offline, neither pretends to work ────────────────────────────────
-     Both need the server: a voucher is validated against it and points are a live
-     balance. Saying so beats offering a tender that will be refused at the pad. */
+  /* ── 4. Offline, points do not pretend to work ───────────────────────────
+     A points balance is live on the server. Saying so beats offering a tender that will
+     be refused at the pad. */
 
-  for (const slug of ['redeem-voucher', 'loyalty-payment']) {
-    const offline = press(slug, { online: false })
-    ok(
-      `${slug} says it needs the connection when offline`,
-      offline.some((c) => c.name === 'say' && /connection/i.test(String((c.arg as any).message))),
-      JSON.stringify(offline),
-    )
-  }
+  const offlinePoints = press('loyalty-payment', { online: false })
+  ok(
+    'loyalty-payment says it needs the connection when offline',
+    offlinePoints.some(
+      (c) => c.name === 'say' && /connection/i.test(String((c.arg as any).message)),
+    ),
+    JSON.stringify(offlinePoints),
+  )
+
+  /* ── 4a. A RETIRED slug is refused out loud ───────────────────────────────
+     Boards are stored rows, so removing an action from the catalogue does NOT remove it
+     from the tills that already have it — `redeem-voucher` is on any board a shop built
+     with it before it went. The runner has no branch for it any more, and the failure to
+     guard against is SILENCE: a cashier pressing a key that does nothing presses it
+     again, and blames the till rather than the board. `actionForSlug` returning null has
+     to reach `say`, which is what this checks — with the real retired slug rather than a
+     made-up one, so it stays true to what tills actually carry. */
+
+  const retired = press('redeem-voucher')
+  ok(
+    'a key left on a board for a retired action says so instead of going quiet',
+    retired.some((c) => c.name === 'say' && /recognise/i.test(String((c.arg as any).message))),
+    JSON.stringify(retired),
+  )
 
   /* ── 4b. CREDIT SALE opens the receipt finder ──────────────────────────────
      The `refund` key used to do this, under that name. Crediting a sale that EXISTS is

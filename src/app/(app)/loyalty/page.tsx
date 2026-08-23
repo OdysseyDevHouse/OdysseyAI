@@ -1,10 +1,9 @@
 import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { getLoyaltySettings, listMembers, listTiers, getLiability } from '@/lib/site/loyalty'
-import { PageHeader, PageBody, StatStrip, StatTile, Callout, LinkTabs } from '@/components/ui'
+import { PageHeader, PageBody, StatStrip, StatTile, Callout, TextLink } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { MembersClient, type MemberRowView } from './MembersClient'
-import { LOYALTY_TABS } from './tabs'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,15 +47,14 @@ export default async function LoyaltyPage() {
     <>
       <PageHeader
         title="Loyalty"
-        subtitle="Points, tiers, punch cards and what the programme owes."
+        subtitle="Who is on the programme, and what each member is holding."
       />
       <PageBody>
-        <LinkTabs items={LOYALTY_TABS} value="members" />
-
         {!settings.enabled && (
           <Callout tone="warning">
-            The programme is switched off, so nothing is earning at the till. Turn it on under
-            Programme once the rates are right.
+            The programme is switched off, so nothing is earning at the till. Turn it on under{' '}
+            <TextLink href="/loyalty/programme">Setup › Programme</TextLink> once the rates are
+            right.
           </Callout>
         )}
 

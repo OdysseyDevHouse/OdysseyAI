@@ -9,6 +9,11 @@ import { ownershipOf } from '@/lib/site/productOwnership'
 import { shareSettingsFor } from '@/lib/site/shareSettings'
 import { readLinkedProducts } from '@/lib/site/productFanout'
 import { listGroups as listInstructionGroups, groupsForProduct } from '@/lib/site/instructions'
+import {
+  listKitchenPrinters,
+  printersForProduct,
+  distinctKitchenGroups,
+} from '@/lib/site/kitchenPrinters'
 import { listRecipe } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
@@ -93,6 +98,11 @@ export default async function EditProductPage({
   const attachedInstructions = await groupsForProduct(siteId, product.id)
     .then((gs) => gs.map((g) => g.id))
     .catch(() => [])
+  /* Active printers only, but the product's OWN routing regardless: a station
+     switched off keeps its links so switching it back on restores the menu. */
+  const kitchenPrinters = await listKitchenPrinters(siteId).catch(() => [])
+  const attachedKitchenPrinters = await printersForProduct(siteId, product.id).catch(() => [])
+  const knownKitchenGroups = await distinctKitchenGroups(siteId).catch(() => [])
 
   // The setup each product type needs. Only fetched for the type that uses it —
   // a normal product has no ingredient list to read — and each is tolerant of
@@ -238,6 +248,9 @@ export default async function EditProductPage({
           sharesSelling={sharing.sharesSelling}
           instructionGroups={instructionGroups}
           attachedInstructions={attachedInstructions}
+          kitchenPrinters={kitchenPrinters}
+          attachedKitchenPrinters={attachedKitchenPrinters}
+          knownKitchenGroups={knownKitchenGroups}
           recipeLines={recipeLines}
           referChain={referChainRows}
           autoCode={autoCode}

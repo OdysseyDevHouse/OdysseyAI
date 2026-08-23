@@ -13,6 +13,7 @@ import {
   TABLE_TD_INPUT,
   TABLE_TH,
   SectionTitle,
+  SectionBody,
 } from '@/components/ui'
 import { Coins, Banknote } from '@/components/ui/icons'
 import {
@@ -150,6 +151,12 @@ export default function PricingPanel({
   const [prices, setPrices] = useState<Record<number, number>>(defaultPrices)
   const [lines, setLines] = useState<StoreLine[]>(linkedLines)
 
+  // Both open to start with. These tables are the reason somebody opened the
+  // product screen, so the fold is there to get a finished section out of the
+  // way — not to hide the figures until they are asked for.
+  const [costOpen, setCostOpen] = useState(true)
+  const [sellingOpen, setSellingOpen] = useState(true)
+
   const purchaseVat = purchaseRates.find((v) => v.id === purchaseVatId)?.rate ?? 0
   const sellingVat = salesRates.find((v) => v.id === sellingVatId)?.rate ?? 0
 
@@ -185,7 +192,14 @@ export default function PricingPanel({
     <div className="flex flex-col gap-4">
       {/* ── Cost price & taxes ───────────────────────────────────────── */}
       <Card>
-        <SectionTitle icon={<Coins size={16} />}>Cost price &amp; TAXES</SectionTitle>
+        <SectionTitle
+          icon={<Coins size={16} />}
+          open={costOpen}
+          onToggle={() => setCostOpen((v) => !v)}
+        >
+          Cost price &amp; TAXES
+        </SectionTitle>
+        <SectionBody open={costOpen}>
         <section className="flex flex-col gap-3 p-6">
           <div className="overflow-x-auto">
               <table className={`${TABLE} table-fixed`}>
@@ -449,11 +463,19 @@ export default function PricingPanel({
             )}
           </p>
         </section>
+        </SectionBody>
       </Card>
 
       {/* ── Selling price ────────────────────────────────────────────── */}
       <Card>
-        <SectionTitle icon={<Banknote size={16} />}>Selling price</SectionTitle>
+        <SectionTitle
+          icon={<Banknote size={16} />}
+          open={sellingOpen}
+          onToggle={() => setSellingOpen((v) => !v)}
+        >
+          Selling price
+        </SectionTitle>
+        <SectionBody open={sellingOpen}>
         <section className="flex flex-col gap-4 p-6">
           {/* Headed for the GROUP when selling is shared — one table, one set of
               prices, which is what the figures actually are. */}
@@ -508,6 +530,7 @@ export default function PricingPanel({
             </p>
           )}
         </section>
+        </SectionBody>
       </Card>
     </div>
   )

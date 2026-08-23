@@ -57,7 +57,6 @@ import {
   listProductDepartmentsAction,
   voidSaleAction,
   creditWholeSaleAction,
-  recordPrintAction,
 } from '@/app/(app)/sales/actions'
 import { EmailInvoiceDialog } from '@/app/(app)/sales/EmailInvoiceDialog'
 import {
@@ -1613,15 +1612,26 @@ export default function InvoiceEditor({
                 </Button>
 
                 {/* Print leads: on a posted invoice it is what most of these
-                    dialogs are for. Opened as the slip route in its own tab so
-                    the printed page is the DOCUMENT — window.print() here would
-                    print the capture screen behind the dialog. */}
+                    dialogs are for. Opened in its own tab so the printed page
+                    is the DOCUMENT — window.print() here would print the
+                    capture screen behind the dialog.
+
+                    The A4 route, not the slip, and for the same reason the
+                    toolbar's Print above uses it: this screen writes invoices
+                    for account customers, and what they file needs the banking
+                    block, VAT number and terms that only the A4 document
+                    carries. The 80mm slip belongs to a retail or hospitality
+                    till, where the customer is standing at the counter.
+
+                    No recordPrintAction: that route counts a finalised
+                    invoice's print server-side, so calling it here as well
+                    would count one print twice and make the COPY banner on the
+                    next one wrong. */}
                 <Button
                   variant="secondary"
                   onClick={() => {
                     if (!receipt) return
-                    void recordPrintAction(receipt.documentId)
-                    window.open(`/sales/${receipt.documentId}/slip?auto=1`, '_blank')
+                    window.open(`/sales/${receipt.documentId}/document?auto=1`, '_blank')
                   }}
                 >
                   <Icons.Printer size={15} />

@@ -31,6 +31,8 @@ import {
 } from '@/lib/posOffline/parkOffline'
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
 import { stockShortfalls, stockWarning } from '@/lib/stockWarning'
+import { type PosMode } from '@/lib/posMode'
+import { salePaperRoute } from '@/lib/salePaper'
 import TradeEntryPane from './TradeEntryPane'
 import ModuleMenu, {
   MODULE_DOC_TYPES,
@@ -73,7 +75,6 @@ import {
   saveAsOrderAction,
   saveForLaterAction,
   discardSaleAction,
-  voidSaleAction,
   recordPrintAction,
 } from '@/app/(app)/sales/actions'
 import {
@@ -128,7 +129,6 @@ import {
 } from './laybyActions'
 import InstructionsModal from './InstructionsModal'
 import { ReceiptModal } from './ReceiptModal'
-import { VoidModal } from './VoidModal'
 import { VoidReasonModal } from './VoidReasonModal'
 import type { VoidType } from '@/lib/site/posVoids'
 import { useSaleState } from './useSaleState'
@@ -150,10 +150,19 @@ import {
   printSlipViaBridge,
   printBillViaBridge,
   hasBridgeSlipPrinter,
-  hasBridgeKitchenPrinter,
   printKitchenViaBridge,
 } from './printing'
-import { kitchenTicketAction, markKitchenSentAction } from './kitchenActions'
+import {
+  kitchenTicketAction,
+  markKitchenSentAction,
+  kitchenSendOptionsAction,
+  kitchenAutoPrintEnabledAction,
+  kitchenCancelTicketAction,
+  markKitchenCancelledAction,
+  type KitchenScope,
+  type KitchenSendOption,
+} from './kitchenActions'
+import SendToKitchenModal from './SendToKitchenModal'
 import { tillCreditNoteAction, tillExchangeAction } from './returnActions'
 import { validateTillCodeAction } from './discountCodeActions'
 import { formatMoney, round } from '@/lib/decimals'
@@ -273,6 +282,7 @@ export default function PosShell({
   hospitality,
   modeName,
   invoicing,
+  posMode,
   startAs,
   initialTables,
   floorRooms,
@@ -321,7 +331,15 @@ export default function PosShell({
   depositAllowWalkin: boolean
   canOverrideDiscount: boolean
   canOverridePrice: boolean
-  /** Whether the OPERATOR may void. Re-checked by voidSaleAction regardless. */
+  /**
+   * Whether the OPERATOR holds `sales.void`.
+   *
+   * NOT about reversing a finalised sale — the till no longer offers that at
+   * all, and it is the back office's job. What this still gates is the two
+   * places the right applies before the money is banked: voiding an item, a
+   * line or the whole basket in progress, and cancelling an unsynced sale from
+   * the outbox. Both re-check server-side.
+   */
   canVoid: boolean
   specials: Special[]
   /**
@@ -354,6 +372,18 @@ export default function PosShell({
    * See lib/posMode for why this picks a layout rather than adding branches.
    */
   invoicing: boolean
+  /**
+   * The mode itself, for the one question that is genuinely about all three
+   * rather than about this screen's shape: which paper a finished sale prints
+   * on. See lib/salePaper.
+   *
+   * Not a licence to branch on it — `hospitality` and `invoicing` above stay
+   * the way this component asks about its own layout, for the reason the
+   * docblock at the top gives. This is handed straight to salePaperRoute and
+   * read nowhere else, so a fourth mode answers that question once, in one
+   * file, instead of falling through a chain of booleans here.
+   */
+  posMode: PosMode
   /**
    * What this till should OPEN as, when somebody arrived meaning to make one.
    *
@@ -603,6 +633,18 @@ export default function PosShell({
   const [armedForTransfer, setArmedForTransfer] = useState(false)
   /** The table whose whole tab is moving. Null when the picker is closed. */
   const [transferring, setTransferring] = useState<PosTable | null>(null)
+  /**
+   * The course picker for send-to-kitchen. Null when closed.
+   *
+   * Carries the document id with it rather than reading `state.documentId` at
+   * send time: the waiter may have moved on by the time they choose, and firing
+   * a course at whatever tab happens to be open would send one table's starters
+   * against another's bill.
+   */
+  const [kitchenPicker, setKitchenPicker] = useState<{
+    documentId: number
+    options: KitchenSendOption[]
+  } | null>(null)
   /** True while the hospitality autosave is writing this tab to the server. */
   const [tableSaving, setTableSaving] = useState(false)
   /**
@@ -822,6 +864,16 @@ export default function PosShell({
     documentId: number
     /** Kept so the void dialog can show what is being reversed. */
     total: number
+    /**
+     * What was kept as a tip, declared plus service charge.
+     *
+     * Shown beside the change because the two DIVIDE one over-tender: a
+     * customer who hands over R500 on a R430 bill and leaves R20 is owed R50,
+     * and a cashier looking only at "R50" has no way to tell that from a R70
+     * change they short-changed. Absent (or 0) on every path that cannot carry
+     * a tip — refunds, exchanges — where the row simply does not render.
+     */
+    tip?: number
     /** The attached account's address at finalise, for the Email button. */
     email?: string | null
   } | null>(null)
@@ -885,8 +937,6 @@ export default function PosShell({
       slipRef.current = null
     }
   }
-  const [voiding, setVoiding] = useState(false)
-
   /* The last POSTED sale on this machine, surviving a reload — what the
      reprint-last-slip quick key reprints. Offline sales (documentId 0) are
      not recorded: their slip lives only in the moment, until the bridge can
@@ -1697,6 +1747,11 @@ export default function PosShell({
     setReceipt({
       number: result.documentNumber,
       change: result.change,
+      /* Off the SAME plan the change came from, so the two figures on the
+         receipt always add up to the excess the customer handed over. Reading
+         `tipInfo.declared` instead would miss the service charge and would
+         report a tip the plan had refused. */
+      tip: plan.ok ? round(plan.tips.reduce((sum, t) => sum + t.amount, 0), 2) : 0,
       /* No document id — nothing has posted, so there is nothing to open or void
          through the back office. The receipt hides both buttons on a zero id, and
          cancelling an unsynced sale is the outbox screen's job. */
@@ -1714,6 +1769,47 @@ export default function PosShell({
     // and the cashier has to be able to see that it is waiting.
     await till.recount()
     toast.success(`${result.documentNumber} saved on this till — it will send itself.`)
+  }
+
+  /**
+   * What this payment keeps as a tip — for the RECEIPT, not for posting.
+   *
+   * The server plans its own tips from the same inputs with the same `planTips`,
+   * and its result reports only `change` back. Rather than widen the action's
+   * return to carry a figure the client can already derive, this re-runs the
+   * shared arithmetic — the same call `finaliseLocally` makes for the offline
+   * slip, so both paths show one number computed one way.
+   *
+   * A refused plan reports 0: the server refuses the sale outright in that case,
+   * so no receipt is shown, and guessing a tip here would be inventing one.
+   */
+  function tipTotalFor(
+    paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
+    tipInfo: { declared: Record<number, number>; serviceChargeWaived: boolean },
+  ) {
+    const tendered = paid.reduce((sum, p) => sum + p.amount, 0)
+    const charge = tipInfo.serviceChargeWaived ? 0 : serviceCharge
+    const plan = planTips({
+      totalExcess: Math.max(0, tendered - totals.doc.totalIncl),
+      tenders: paid.flatMap((p) => {
+        const type = tenders.find((t) => t.id === p.tenderTypeId)
+        return type
+          ? [
+              {
+                tenderTypeId: type.id,
+                amount: p.amount,
+                allowsChange: type.allowsChange,
+                tipOnOverTender: type.tipOnOverTender,
+                tenderName: type.name,
+              },
+            ]
+          : []
+      }),
+      declared: tipInfo.declared,
+      serviceCharge:
+        charge > 0.005 && paid[0] ? { tenderTypeId: paid[0].tenderTypeId, amount: charge } : null,
+    })
+    return plan.ok ? round(plan.tips.reduce((sum, t) => sum + t.amount, 0), 2) : 0
   }
 
   function finalise(
@@ -1903,6 +1999,9 @@ export default function PosShell({
       setReceipt({
         number: result.documentNumber,
         change: result.change,
+        /* Same arithmetic the server just ran, off the same inputs — see
+           `tipTotalFor`. Computed BEFORE the CLEAR, like `total` below. */
+        tip: tipTotalFor(paid, tipInfo),
         documentId: result.documentId,
         /* Read from `totals` here, BEFORE the CLEAR below empties the basket.
            Reading it in the void dialog instead would show R0.00, because by then
@@ -1919,6 +2018,15 @@ export default function PosShell({
       if (paid.some((p) => tenders.find((t) => t.id === p.tenderTypeId)?.opensCashDrawer)) {
         void kickDrawer()
       }
+      /* Anything the kitchen has not seen, fired as the sale FINALISES — the
+         third of the three commit points, beside saving and closing a tab. A
+         quick counter sale is the case this catches: rung and paid in one
+         gesture, with no save in between that could have sent it.
+
+         Read `result.documentId` rather than `state.documentId`, and read it
+         before the CLEAR below: a walk-in sale had no document until this call
+         returned one. */
+      void autoSendToKitchen(result.documentId)
       dispatch({ type: 'CLEAR' })
 
       /*
@@ -2319,6 +2427,11 @@ export default function PosShell({
         return
       }
       toast.success(reference ? `${reference} saved.` : 'Sale saved.')
+      /* The second of the three commit points. `saved.documentId` rather than
+         `state.documentId`: a basket saved for the first time only acquired an
+         id on the call above, and that is exactly the case with the most to
+         send. */
+      void autoSendToKitchen(saved.documentId)
       /*
        * HAND THE CLAIM BACK.
        *
@@ -2598,12 +2711,37 @@ export default function PosShell({
    * of the line at all. `recordVoidEvents` swallows its own errors; this catch
    * is for the transport.
    */
-  function confirmVoid(reason: { reasonId: number; note: string | null }) {
+  function confirmVoid(reason: { reasonId: number; note: string | null; reasonName?: string }) {
     const intent = pendingVoid
     if (!intent) return
 
     setPendingVoid(null)
+
+    /*
+     * READ BEFORE `apply()`. The document id and the voided products are both
+     * destroyed by the removal — a `sale` void dispatches CLEAR, which wipes
+     * `state.documentId` — so a version of this that read them afterwards would
+     * cancel nothing. The same ordering trap `releaseHeldBill` documents.
+     *
+     * The `sale` ROLLUP row is skipped: it carries no product and exists to
+     * count baskets, while the `line` rows written beside it are the actual
+     * goods. Including it would try to cancel a product id of null.
+     */
+    const cancelDocumentId = state.documentId
+    const cancelItems = intent.events
+      .filter((e) => e.voidType !== 'sale' && e.productId)
+      .map((e) => ({
+        productId: e.productId as number,
+        description: e.description,
+        qty: e.qty,
+      }))
+
     intent.apply()
+
+    // Told to the kitchen, so the shop's own word beats a code: a chef reads
+    // "Customer left", not "CUSTLEFT".
+    const cancelReason = [reason.reasonName, reason.note].filter(Boolean).join(' — ')
+    void cancelAtKitchen(cancelDocumentId, cancelItems, cancelReason)
 
     const groupId = intent.voidType === 'sale' ? crypto.randomUUID() : null
 
@@ -3033,13 +3171,42 @@ export default function PosShell({
     /* A seated table is already named by its own code, and its bill is already on
        the server via the debounce — so Close is just "go back to the floor". */
     if (table) {
+      const documentId = state.documentId
+      const closingTable = table
+      const lines = salePayloadLines(state.lines, lineSpecials, docShares)
       releaseHeldBill()
       clearTabIdentity()
       dispatch({ type: 'CLEAR' })
       setTable(null)
       setChoosingTable(true)
       refreshTables()
-      toast.success(`${table.code} saved.`)
+      toast.success(`${closingTable.code} saved.`)
+
+      /*
+       * The first of the three commit points — closing a table IS saving it.
+       *
+       * The bill is PUSHED first rather than trusted to the debounce. That
+       * autosave runs on a 900ms timer, so a waiter who adds a round and
+       * immediately taps Close would otherwise fire a docket missing the last
+       * thing they rang up — which is precisely the order that gets forgotten.
+       *
+       * Everything above has already run, so the waiter is back on the floor
+       * while this finishes. That is the right order: the send must never hold
+       * the screen, and a docket that prints half a second after somebody walks
+       * away is still on time.
+       */
+      if (documentId) {
+        startTransition(async () => {
+          const pushed = await updateTableBillAction(documentId, {
+            customerName: closingTable.code,
+            terminalId: terminal?.id ?? null,
+            terminalCode: terminal?.code ?? null,
+            priceStructureId,
+            lines,
+          }).catch(() => null)
+          if (pushed?.ok) await autoSendToKitchen(documentId)
+        })
+      }
       return
     }
 
@@ -3609,32 +3776,6 @@ export default function PosShell({
     })
   }
 
-  /**
-   * Reversing the sale just taken.
-   *
-   * Stock goes back, the payment is reversed, and the document keeps its number as
-   * `cancelled` — which is what makes the gap in the invoice run explainable
-   * rather than missing. All of that is `voidDocument`'s work; this only asks.
-   */
-  function voidSale(reason: { reasonId: number; note: string | null }) {
-    if (!receipt) return
-    startTransition(async () => {
-      const result = await voidSaleAction(receipt.documentId, reason, spendOverrideToken())
-      if (!result.ok) {
-        // Left open with the reason still chosen: the likely refusals are a locked
-        // VAT period or a payment already allocated against the sale, and both
-        // need somebody to read the message rather than start again.
-        toast.error(result.error)
-        return
-      }
-      toast.success(`${receipt.number} voided.`)
-      setVoiding(false)
-      setReceipt(null)
-      // Stock and the saved-sale count have both moved.
-      router.refresh()
-    })
-  }
-
   /* Which customer is attached RIGHT NOW, readable from inside a promise that
      started before the latest change. A ref rather than state because nothing
      renders from it — it exists only so a late membership lookup can tell
@@ -3949,6 +4090,23 @@ export default function PosShell({
   }
 
   /**
+   * The paper THIS till hands a customer for a posted sale, opened to print.
+   *
+   * WHICH paper is `salePaperRoute`'s call — see lib/salePaper for why a trade
+   * counter owes A4 where a retail or hospitality till owes the slip.
+   *
+   * Every place that puts a finished sale on paper goes through here — Print on
+   * the sale-complete dialog, the reprint-last quick key, and the reprint list —
+   * so a counter cannot get an invoice from one and a slip from the next.
+   *
+   * Both routes count their own print server-side for a finalised invoice, so
+   * no caller adds `recordPrintAction` on top of this.
+   */
+  function openSalePaper(documentId: number) {
+    window.open(`/sales/${documentId}/${salePaperRoute(posMode)}?auto=1`, '_blank')
+  }
+
+  /**
    * Puts the bill on paper.
    *
    * The bridge first, and the print route as the fallback — never
@@ -4144,11 +4302,159 @@ export default function PosShell({
    * only a duplicate ticket. The tab is saved first so line ids exist and the
    * ticket matches the screen.
    */
-  function sendToKitchen() {
-    if (!hasBridgeKitchenPrinter()) {
-      toast.info('Set up the kitchen printer on this till first — Setup → Printing.')
+  /**
+   * Fires a tab's outstanding items at their printers — the one path every
+   * caller uses.
+   *
+   * Three things reach it: the automatic send when a tab is committed, the
+   * send-to-kitchen key, and that key's course picker. They differ only in
+   * SCOPE and in how loudly they report, which is what the two options are for.
+   * Anything else would be a second copy of the print-then-mark rule, and two
+   * copies is how one of them ends up marking food that never printed.
+   *
+   * Each printer is its own ticket, printed and marked independently: a bar
+   * printer out of paper leaves the bar's lines unmarked and the kitchen's
+   * sent, so the retry re-fires the drinks and not the food.
+   */
+  async function fireKitchenTickets(
+    documentId: number,
+    options: { scope?: KitchenScope; source: 'auto' | 'manual'; quiet?: boolean },
+  ): Promise<void> {
+    const result = await kitchenTicketAction(documentId, terminal?.id ?? null, options.scope)
+    if (!result.ok) {
+      /* The automatic send is silent about having nothing to do — a waiter
+         saving a table of drinks nobody routed does not need to be told so on
+         every save. A deliberate press always gets an answer. */
+      if (!options.quiet) toast.info(result.error)
       return
     }
+
+    let sent = 0
+    const failures: string[] = []
+
+    for (const job of result.jobs) {
+      const printed = await printKitchenViaBridge(job.bridgePrinter, job.ticket)
+      if (!printed.ok) {
+        failures.push(printed.error)
+        continue
+      }
+      /* PRINT THEN MARK. A failed mark risks a duplicate docket, which a
+         kitchen shrugs at; marking first would risk a lost one, which is a
+         lost meal. */
+      await markKitchenSentAction(
+        documentId,
+        job.printerId,
+        job.lines,
+        terminal?.id ?? null,
+        options.source,
+      ).catch(() => {})
+      sent += job.lines.reduce((sum, l) => sum + l.qty, 0)
+    }
+
+    /* Failures are always spoken, even on the automatic send. "Nothing to
+       send" is noise; "the grill did not print" is the one thing a waiter must
+       hear before the food does not arrive. */
+    if (failures.length > 0) toast.error(failures[0])
+    if (sent > 0 && !(options.quiet && failures.length > 0)) {
+      toast.success(`Sent ${sent} item${sent === 1 ? '' : 's'} to the kitchen.`)
+    }
+  }
+
+  /**
+   * Tells the kitchen to STOP, after a void.
+   *
+   * ── ONLY WHAT THEY ACTUALLY HAVE ─────────────────────────────────────────
+   *
+   * The server clamps every cancellation to what that printer was really sent,
+   * so voiding a line the kitchen never saw prints nothing at all. That silence
+   * is the correct outcome, not a failure: a docket reading "CANCEL: steak" for
+   * food nobody is cooking sends a chef hunting an order that never existed.
+   *
+   * ── AND IT NEVER BLOCKS THE VOID ─────────────────────────────────────────
+   *
+   * The line has already left the cashier's screen by the time this runs. Every
+   * failure is swallowed for the same reason `recordVoidAction` swallows its
+   * own: holding a customer at the counter over a docket is worse than a docket
+   * that did not print. A FAILED PRINT IS SPOKEN, though — unlike the audit
+   * trail, somebody has to walk to the pass, and only the toast can tell them.
+   */
+  async function cancelAtKitchen(
+    documentId: number | null,
+    items: { productId: number; description: string; qty: number }[],
+    reason: string,
+  ): Promise<void> {
+    /* No document means the kitchen was never told: a retail basket lives in
+       this component until it is paid, so nothing was ever sent to cancel. */
+    if (!documentId || items.length === 0) return
+    try {
+      const result = await kitchenCancelTicketAction(
+        documentId,
+        terminal?.id ?? null,
+        items,
+        reason,
+      )
+      if (!result.ok || result.jobs.length === 0) return
+
+      for (const job of result.jobs) {
+        const printed = await printKitchenViaBridge(job.bridgePrinter, job.ticket)
+        if (!printed.ok) {
+          /* Loud, and named. "The Grill did not print the cancellation" is a
+             sentence somebody can act on by walking through the door; a silent
+             failure leaves food being cooked that everyone believes is stopped. */
+          toast.error(
+            `${job.ticket.printerName || 'The kitchen'} did not print the cancellation — tell them.`,
+          )
+          continue
+        }
+        /* PRINT THEN MARK, inverted but for the same reason: marking without
+           printing would leave the kitchen cooking food the system believes it
+           has stopped. */
+        await markKitchenCancelledAction(
+          documentId,
+          job.printerId,
+          job.lines,
+          terminal?.id ?? null,
+        ).catch(() => {})
+      }
+      toast.info('The kitchen has been told to stop.')
+    } catch {
+      /* Offline, or the transport failed. The void itself stands — it is local
+         and the cashier watched it happen. Same known gap as the void trail: a
+         cancellation taken while the line is down is lost rather than queued. */
+    }
+  }
+
+  /**
+   * The automatic send, fired when a tab is SAVED, CLOSED or FINALISED.
+   *
+   * Quiet by design: it reports failures and successes but never "nothing to
+   * send", because most saves in a retail shop have nothing routed anywhere
+   * and a toast on each one would train people to ignore all of them.
+   *
+   * The setting is re-read per send rather than cached, so a shop switching it
+   * off mid-service stops firing on the next save rather than at the next page
+   * reload — a till holds a page open for a whole shift.
+   */
+  async function autoSendToKitchen(documentId: number | null): Promise<void> {
+    if (!documentId) return
+    try {
+      if (!(await kitchenAutoPrintEnabledAction())) return
+      await fireKitchenTickets(documentId, { source: 'auto', quiet: true })
+    } catch {
+      /* Never let the kitchen cost the sale. The tab is already saved by the
+         time this runs; a failed docket is a walk to the pass, where a failed
+         save is money. */
+    }
+  }
+
+  /**
+   * The send-to-kitchen key.
+   *
+   * Opens the course picker when the tab has more than one thing to fire, and
+   * sends everything when it does not. A restaurant running three courses
+   * chooses; a bar with one round should not have to tap twice to send it.
+   */
+  function sendToKitchen() {
     const documentId = state.documentId
     if (!documentId) {
       toast.info('Save the table first — the kitchen ticket comes off the parked tab.')
@@ -4169,19 +4475,24 @@ export default function PosShell({
           return
         }
       }
-      const result = await kitchenTicketAction(documentId)
-      if (!result.ok) {
-        toast.info(result.error)
+
+      const options = await kitchenSendOptionsAction(documentId)
+      if (!options.ok) {
+        toast.info(options.error)
         return
       }
-      const printed = await printKitchenViaBridge(result.ticket)
-      if (!printed.ok) {
-        toast.error(printed.error)
+      if (options.options.length === 0) {
+        toast.info('Nothing new to send — the kitchen has it all.')
         return
       }
-      await markKitchenSentAction(documentId, result.lines).catch(() => {})
-      const count = result.lines.reduce((sum, l) => sum + l.qty, 0)
-      toast.success(`Sent ${count} item${count === 1 ? '' : 's'} to the kitchen.`)
+      /* One course with one item is not a choice worth making somebody make. */
+      const single =
+        options.options.length === 1 && options.options[0].lines.length === 1
+      if (single) {
+        await fireKitchenTickets(documentId, { source: 'manual' })
+        return
+      }
+      setKitchenPicker({ documentId, options: options.options })
     })
   }
 
@@ -4381,6 +4692,35 @@ export default function PosShell({
        not wanted. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId])
+
+  /*
+   * ── AN OFFER THE WAITER HAS ALREADY OVERTAKEN ─────────────────────────────
+   *
+   * The read above answers on mount, but on a hospitality till the question
+   * cannot be ASKED on mount: the floor gate is up, and the modal below rightly
+   * waits for it. So the offer sits pending — and the thing that lifts the gate
+   * is the waiter opening a table, a tab or a saved sale, which puts a real bill
+   * on screen. The pending question then surfaced on top of that bill, and
+   * answering "Restore it" LOADed the draft over it: lines and document id both
+   * replaced, the table's order gone with no record that it had been.
+   *
+   * A basket arriving by any other route is that answer, given by doing. The
+   * draft is dropped from the machine as well as from state, for the same reason
+   * "Start fresh" clears it — otherwise the next load asks again about a basket
+   * the till has visibly moved on from, and asks it at the end of the sale, when
+   * the lines empty and the gate is long gone.
+   *
+   * Keyed on having lines rather than on the count, so this fires once when the
+   * bill lands and not again per scan. It cannot race the mount read: that one
+   * stands down entirely when lines are already present, and if it resolves
+   * after a bill has loaded, this runs again and takes the offer straight back.
+   */
+  const basketHasLines = state.lines.length > 0
+  useEffect(() => {
+    if (recoverable === null || !basketHasLines) return
+    setRecoverable(null)
+    void clearLocalDraft(siteId)
+  }, [siteId, recoverable, basketHasLines])
 
   /*
    * The till was opened to make something specific — start it as that.
@@ -4838,7 +5178,7 @@ export default function PosShell({
             const raw = window.localStorage.getItem(`pos-last-sale-${siteId}`)
             const last = raw ? (JSON.parse(raw) as { documentId: number; number: string }) : null
             if (last?.documentId) {
-              window.open(`/sales/${last.documentId}/slip?auto=1`, '_blank')
+              openSalePaper(last.documentId)
             } else {
               toast.info('Nothing has been sold on this till yet.')
             }
@@ -5603,8 +5943,23 @@ export default function PosShell({
          * table with a question about something else entirely, and worse, the
          * answer restores a basket onto a screen that is not showing. It waits
          * until there is a sale to restore it INTO.
+         *
+         * NOR over a basket that is already there. The gates lift by the waiter
+         * OPENING something — a table, a tab, a saved sale — so the frame after
+         * `choosingTable` goes false is the frame a real bill lands in. Asking
+         * then is asking over somebody's order, and "Restore it" answers by
+         * LOADing the draft, which replaces the lines AND the document id: the
+         * table's bill is silently swapped for yesterday's counter basket. The
+         * empty check is what keeps the offer to the screen it belongs on. The
+         * effect below is the other half — this alone would only hide it.
          */
-        open={recoverable !== null && !closedGate && !clockGate && !choosingTable}
+        open={
+          recoverable !== null &&
+          !closedGate &&
+          !clockGate &&
+          !choosingTable &&
+          state.lines.length === 0
+        }
         title="Pick up where the till left off?"
         confirmLabel="Restore it"
         cancelLabel="Start fresh"
@@ -5869,6 +6224,24 @@ export default function PosShell({
         busy={pending}
         onPick={confirmTransfer}
       />
+
+      {/* Mounted only while open, unlike the modals above. A closed dialog's
+          children never unmount, and this one holds a tab's worth of state that
+          must not survive into the next table's send. */}
+      {kitchenPicker && (
+        <SendToKitchenModal
+          options={kitchenPicker.options}
+          pending={pending}
+          onClose={() => setKitchenPicker(null)}
+          onSend={(scope) => {
+            const target = kitchenPicker.documentId
+            setKitchenPicker(null)
+            startTransition(async () => {
+              await fireKitchenTickets(target, { scope, source: 'manual' })
+            })
+          }}
+        />
+      )}
 
       {/* Paying a customer back. Its own pad rather than the tender pad with a flag —
           a refund has no change, no vouchers, no loyalty and no cash rounding, which is
@@ -6139,7 +6512,7 @@ export default function PosShell({
         onClose={() => setShowingReprints(false)}
         onPrint={(sale) => {
           /*
-           * Through the slip ROUTE rather than the bridge, and that is deliberate.
+           * Through the print ROUTE rather than the bridge, and that is deliberate.
            *
            * The bridge path prints from a snapshot built out of the live basket —
            * `slipRef` — and a past sale has no such snapshot on this machine; it may
@@ -6148,8 +6521,11 @@ export default function PosShell({
            * recordPrint so the copy number moves. Rebuilding a snapshot here would
            * be a second renderer for a document that already has one, and the two
            * would disagree the first time a slip's layout changed.
+           *
+           * Which paper — slip or A4 — is openSalePaper's call, so a reprint
+           * matches what the counter handed over the first time.
            */
-          window.open(`/sales/${sale.id}/slip?auto=1`, '_blank')
+          openSalePaper(sale.id)
           setShowingReprints(false)
         }}
       />
@@ -6343,40 +6719,30 @@ export default function PosShell({
       )}
 
       <ReceiptModal
-        open={receipt !== null && !voiding}
+        open={receipt !== null}
         documentNumber={receipt?.number ?? ''}
         change={receipt?.change ?? 0}
-        /* Always offered on a POSTED sale: a cashier without the right gets the
-           supervisor pad instead of a missing button they cannot explain. */
-        canVoid={true}
+        tip={receipt?.tip}
         posted={(receipt?.documentId ?? 0) > 0}
-        onVoid={() => {
-          if (canVoid) {
-            setVoiding(true)
-            return
-          }
-          setOverride({
-            capability: 'sales.void',
-            actionLabel: `Void ${receipt?.number ?? 'this sale'}`,
-            amount: receipt?.total,
-            documentId: receipt?.documentId ?? null,
-            onAuthorised: (auth) => {
-              // Online only — an unposted offline sale hides the button anyway.
-              overrideTokenRef.current = auth.token || null
-              setVoiding(true)
-            },
-          })
-        }}
         onClose={() => setReceipt(null)}
         canPrint={
-          (receipt?.documentId ?? 0) > 0 || (slipRef.current !== null && hasBridgeSlipPrinter())
+          (receipt?.documentId ?? 0) > 0 ||
+          /* A basket snapshot only becomes paper on a THERMAL till. The trade
+             counter's paper is the stored A4 document, so an unposted offline
+             sale has nothing for it to print yet. */
+          (!invoicing && slipRef.current !== null && hasBridgeSlipPrinter())
         }
-        /* Bridge first — silent thermal paper, no tab. Falls back to the 80mm
-           slip route in its own bare tab, which is also the only path for a
-           machine with no bridge. */
+        /* What the paper IS, per till, is openSalePaper's decision — see there.
+           The bridge stays here because it is a thermal shortcut around that
+           route rather than a third kind of paper: it is an ESC/POS path, and
+           there is no such thing as an A4 page rendered through it, so a trade
+           counter never takes it. Retail and hospitality keep exactly what they
+           had — bridge first for silent thermal paper with no tab, falling back
+           to the slip route, which is also the only path for a bridgeless
+           machine. */
         onPrint={() => {
           const snapshot = slipRef.current
-          if (snapshot && hasBridgeSlipPrinter()) {
+          if (!invoicing && snapshot && hasBridgeSlipPrinter()) {
             void printSlipViaBridge(snapshot).then((result) => {
               if (result.ok) {
                 if (receipt && receipt.documentId > 0) {
@@ -6386,19 +6752,27 @@ export default function PosShell({
               } else {
                 toast.error(result.error)
                 if (receipt && receipt.documentId > 0) {
-                  window.open(`/sales/${receipt.documentId}/slip?auto=1`, '_blank')
+                  openSalePaper(receipt.documentId)
                 }
               }
             })
             return
           }
           if (receipt && receipt.documentId > 0) {
-            window.open(`/sales/${receipt.documentId}/slip?auto=1`, '_blank')
+            openSalePaper(receipt.documentId)
           }
         }}
-        onGiftReceipt={() => {
-          if (receipt) window.open(`/sales/${receipt.documentId}/slip?gift=1`, '_blank')
-        }}
+        /* A present, and therefore a till-slip idea: it is the 80mm slip with
+           the prices struck out, and there is no A4 counterpart. A trade
+           counter invoicing an account customer is not wrapping a gift, so it
+           is not offered one — see ReceiptModal's `onGiftReceipt`. */
+        onGiftReceipt={
+          invoicing
+            ? undefined
+            : () => {
+                if (receipt) window.open(`/sales/${receipt.documentId}/slip?gift=1`, '_blank')
+              }
+        }
         /* The back-office document — still the void/credit surface. */
         onOpen={() => {
           if (receipt) window.open(`/sales/${receipt.documentId}`, '_blank')
@@ -6418,19 +6792,6 @@ export default function PosShell({
           lastEmailedNote={null}
         />
       )}
-
-      {/* Replaces the receipt rather than stacking on it — two dialogs deep, on a
-          screen where the one underneath holds the change figure, is how a cashier
-          loses track of which sale they are reversing. */}
-      <VoidModal
-        open={voiding && receipt !== null}
-        documentNumber={receipt?.number ?? ''}
-        total={receipt?.total ?? 0}
-        reasons={voidReasons}
-        busy={pending}
-        onClose={() => setVoiding(false)}
-        onVoid={voidSale}
-      />
 
       {/*
         ── THE SHOP'S OWN KEYS, ON THE FLOOR ─────────────────────────────────

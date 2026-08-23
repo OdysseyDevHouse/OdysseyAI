@@ -1453,7 +1453,7 @@ export function GoneCrewMemberTable({ rows }: { rows: GoneCrewMemberRow[] }) {
       // The crew is edited on the workflow screen, so that is where the link
       // goes. There is no per-crew route, and inventing one for a drift table
       // would be a screen nobody else ever opens.
-      cell: (r) => <TextLink href="/setup/job-workflow">{r.teamName}</TextLink>,
+      cell: (r) => <TextLink href="/jobs/setup/workflow">{r.teamName}</TextLink>,
     },
     {
       key: 'who',
@@ -1482,7 +1482,7 @@ export function EmptyCrewTable({ rows }: { rows: EmptyCrewRow[] }) {
       header: 'Crew',
       sortable: true,
       sortValue: (r) => r.teamName,
-      cell: (r) => <TextLink href="/setup/job-workflow">{r.teamName}</TextLink>,
+      cell: (r) => <TextLink href="/jobs/setup/workflow">{r.teamName}</TextLink>,
     },
     {
       key: 'reason',

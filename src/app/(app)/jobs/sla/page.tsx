@@ -126,7 +126,7 @@ export default async function SlaPage({
             {untargeted === 1 ? 'One open job carries' : `${untargeted} open jobs carry`} no target,
             because they were logged before the promises were set up — nothing was promised for them,
             so they are absent from the list below.{' '}
-            <TextLink href="/setup/job-workflow">Review the targets</TextLink>.
+            <TextLink href="/jobs/setup/workflow">Review the targets</TextLink>.
           </Callout>
         )}
 

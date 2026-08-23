@@ -2,11 +2,13 @@
 
 import { useEffect, useState, useTransition } from 'react'
 import {
+  ActionTile,
   Badge,
   Button,
   Callout,
   CurrencyInput,
   Field,
+  Icons,
   Input,
   Modal,
   NumPad,
@@ -321,20 +323,53 @@ export default function ShiftModal({
 
               What is left is what this dialog is actually for: starting a
               shift and ending one. */}
-          <div className="flex flex-col gap-2">
-            <Button variant="danger" disabled={pending} onClick={onDeclare}>
-              Cash up this shift
-            </Button>
+          {/*
+            ── TWO TILES, NOT TWO BUTTONS ────────────────────────────────────
+
+            These are the till's own surface, so they wear the till's own tile.
+            A pair of kit buttons is the right control on a form, where the
+            labels are short and the reader already knows what both of them do.
+            This is a choice between two acts that differ in a way the captions
+            alone cannot carry — one ENDS the shift, the other leaves it open —
+            and a cashier meeting the pair for the first time is reading the
+            hint, not the caption. `ActionTile` is the kit's shape for exactly
+            that: a glyph to find it by, a caption, and a line underneath
+            saying what pressing it will do.
+
+            It also puts this dialog in the same visual language as the board
+            behind it, where Cash up is already a tile wearing the same Coins
+            disc — the key on the counter and the choice inside the dialog it
+            opens should not look like two unrelated kinds of control.
+          */}
+          <div className="flex flex-col gap-2.5">
+            <ActionTile
+              title="Cash up this shift"
+              hint="Count the drawer pile by pile, sign it off, and close the shift."
+              icon={<Icons.Coins size={22} />}
+              /* Rose, and the same Coins glyph the `cashup` quick key wears —
+                 see QUICK_KEY_ACTIONS. Warm rather than the flat danger red a
+                 Button painted across the whole width: this is the ordinary
+                 end of a day's trading, not something to be talked out of, but
+                 it is still the one act on this face that cannot be undone. */
+              tone="rose"
+              disabled={pending}
+              onClick={onDeclare}
+            />
             {/* The old flat count, kept and demoted. A shop that only wants to
                 know whether the drawer balances should not be made to count
-                every denomination — but it should not be the default either. */}
-            <Button
-              variant="ghost"
+                every denomination — but it should not be the default either.
+                Demoted by its TONE now rather than by being a ghost button:
+                slate beside rose still reads as the quieter of the two, and a
+                tile keeps room for the sentence that is the whole difference
+                between them. */}
+            <ActionTile
+              title="Quick count instead"
+              hint="One figure per tender, just to check the drawer balances. The shift stays open."
+              icon={<Icons.Clock size={22} />}
+              tone="slate"
               disabled={pending}
               onClick={() => setFace({ kind: 'count' })}
-            >
-              Quick count instead
-            </Button>
+            />
           </div>
         </div>
       )}

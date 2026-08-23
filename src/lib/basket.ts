@@ -80,18 +80,23 @@ export type BasketLine = {
    */
   orderedAt?: number
   /**
-   * How much of this line the kitchen has already been told about (142).
+   * Whether any printer has already been told about this line (229).
    *
    * A SNAPSHOT taken at recall, and read for one purpose: to show the waiter
    * that a line is already being cooked. It is deliberately NOT what decides
-   * what prints — `kitchenDelta` runs server-side against the live column, so
-   * that a second till adding a course cannot be blinded by this till's stale
-   * copy. Wrong here costs a misleading badge; wrong there costs a duplicate
-   * plate, which is why the two are kept apart.
+   * what prints — `kitchenDelta` runs server-side against the live send
+   * history, so that a second till adding a course cannot be blinded by this
+   * till's stale copy. Wrong here costs a misleading badge; wrong there costs a
+   * duplicate plate, which is why the two are kept apart.
+   *
+   * A BOOLEAN rather than the old quantity, because since 229 there is no
+   * single number to show: a line can be fully sent to the Bar and not at all
+   * to the Grill. "Something has gone" is the honest summary at this
+   * resolution, and the exact state per printer is a server question.
    *
    * Absent on a freshly rung line, which the kitchen has by definition not seen.
    */
-  kitchenSentQty?: number
+  kitchenSent?: boolean
   /** The card a gift-card line sells (147). Absent on ordinary lines. */
   giftCardCode?: string
   /**

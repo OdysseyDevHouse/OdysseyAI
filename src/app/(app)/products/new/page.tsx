@@ -3,6 +3,7 @@ import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/l
 import { listDepartments } from '@/lib/site/departments'
 import { linkedStores } from '@/lib/storeGroups'
 import { listGroups as listInstructionGroups } from '@/lib/site/instructions'
+import { listKitchenPrinters, distinctKitchenGroups } from '@/lib/site/kitchenPrinters'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
 import { PageHeader } from '@/components/ui'
 import ProductForm, { SaveProductButton } from '../ProductForm'
@@ -32,6 +33,10 @@ export default async function NewProductPage() {
   // Tolerant of the table not existing yet, so an unmigrated store still gets a
   // working product form rather than a crash.
   const instructionGroups = await listInstructionGroups(siteId).catch(() => [])
+  /* Active only — a switched-off station is not somewhere a new product should
+     be pointed. An empty list hides the Kitchen tab entirely. */
+  const kitchenPrinters = await listKitchenPrinters(siteId).catch(() => [])
+  const knownKitchenGroups = await distinctKitchenGroups(siteId).catch(() => [])
 
   return (
     <>
@@ -64,6 +69,9 @@ export default async function NewProductPage() {
           // the insert has given the product an id.
           instructionGroups={instructionGroups}
           attachedInstructions={[]}
+          kitchenPrinters={kitchenPrinters}
+          attachedKitchenPrinters={[]}
+          knownKitchenGroups={knownKitchenGroups}
           // Nothing to load: the product has no id yet, so it can have no
           // ingredients, no refer target, no serials and no supplier links.
           // Recipe, refer and supplier rows are captured now and written once

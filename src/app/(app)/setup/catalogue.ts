@@ -44,7 +44,7 @@ export type SetupHref =
 
 const DECLARED: DeclaredGroup<SetupHref>[] = [
   {
-    label: 'People & access',
+    label: 'Users & access',
     description: 'Who may sign in, what they are allowed to do, and what they are paid.',
     tone: 'sky',
     icon: 'ShieldCheck',
@@ -246,18 +246,25 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
         module: 'inventory_advanced',
       },
+      /* One tile for all three lists — stock adjustments, voids and returns.
+         They were two tiles a row apart, which meant somebody looking for
+         "reasons" had to know which of the two they wanted before they could
+         find either. No `module`: the void and return lists belong to every
+         shop, and the screen shows the adjustments tab only where the inventory
+         module is actually held. */
       {
-        href: '/setup/adjustment-reasons',
-        description: 'Why stock was written on or off. What a loss report groups by.',
-        keywords: 'write off shrinkage damage breakage wastage expired codes',
+        href: '/setup/reasons',
+        description:
+          'Why stock was written on or off, why a sale was cancelled, and why goods came back.',
+        keywords:
+          'write off shrinkage damage breakage wastage expired void cancel refund return credit note faulty codes exception',
         icon: 'SlidersHorizontal',
         tone: 'teal',
         capability: 'setup.edit',
-        module: 'inventory_advanced',
       },
-      /* Beside Adjustment reasons because they are two halves of one sentence:
-         that tile is the vocabulary a variance is explained IN, this one is when
-         an explanation becomes compulsory. */
+      /* Beside Reasons because they are two halves of one sentence: that tile is
+         the vocabulary a variance is explained IN, this one is when an
+         explanation becomes compulsory. */
       {
         href: '/setup/stock-takes',
         description: 'How large a counted difference may be before somebody else has to sign it off.',
@@ -270,14 +277,6 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'teal',
         capability: 'setup.edit',
         module: 'inventory_advanced',
-      },
-      {
-        href: '/setup/sales-reasons',
-        description: 'Why a sale was cancelled, and why goods came back.',
-        keywords: 'void cancel reasons refund return credit note faulty codes exception',
-        icon: 'SlidersHorizontal',
-        tone: 'rose',
-        capability: 'setup.edit',
       },
       {
         href: '/setup/terminals',
@@ -323,76 +322,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'amber',
         capability: 'setup.edit',
       },
-      {
-        href: '/setup/job-workflow',
-        description: 'The stages a job moves through, and the boards that show them.',
-        keywords: 'job card workflow statuses stages board kanban columns service repair technician',
-        icon: 'Wrench',
-        tone: 'amber',
-        capability: 'jobs.setup',
-        module: 'job_cards',
-      },
-      {
-        /* Its own tile rather than a sixth panel on job workflow, which already
-           stacks five and says in its own header why they belong together. A
-           form builder is not one of those cards: it is a list, an editor, a
-           field editor inside that, and a version history — a screen with
-           screens in it, opened once a quarter, which would bury the five
-           settings somebody changes weekly. */
-        href: '/setup/job-forms',
-        description: 'What a technician records on site — readings, checks, a commissioning report.',
-        keywords: 'form forms custom builder checklist questions fields survey report capture',
-        icon: 'FileText',
-        tone: 'amber',
-        capability: 'jobs.setup',
-        module: 'job_cards',
-      },
-      {
-        /* Beside rules and forms, and its own tile for the same reason: the
-           screen is a queue as much as a setting. A visit somebody dragged in
-           their own calendar waits here to be decided, and a queue buried in a
-           panel is a queue nobody reads. */
-        href: '/setup/job-calendar',
-        description: 'Job visits in Google or Outlook, and what those calendars say back.',
-        /* "sync", "google" and "outlook" are the words somebody reaches for;
-           none of them is in the label. */
-        keywords:
-          'calendar calendars google outlook microsoft sync ical subscribe availability busy free',
-        icon: 'Clock',
-        tone: 'amber',
-        capability: 'jobs.setup',
-        module: 'job_cards',
-      },
 
-      {
-        /* Its own tile for the same reason forms got one, and one more: the
-           rules screen is where somebody goes when a job moved on its own and
-           nobody can say why. Buried in a panel it would be found by the
-           people who wrote the rules and by nobody else. */
-        href: '/setup/job-rules',
-        description: 'When something happens on a job, do something about it without being asked.',
-        /* "alert" and "notification" deliberately present: somebody looking for
-           "notify me when a job is assigned" reaches for those words, and the
-           alerts screen cannot do it — alerts are scheduled, these are not. */
-        keywords:
-          'rule rules automation workflow trigger when then automatic escalate notify alert notification event',
-        icon: 'Zap',
-        tone: 'amber',
-        capability: 'jobs.setup',
-        module: 'job_cards',
-      },
-      {
-        /* Beside job workflow, because the two are the same kind of decision
-           for two different teams. Its own tile rather than a panel there:
-           `tickets.setup` is a separate capability, so somebody who configures
-           the support desk may well not configure the field one. */
-        href: '/setup/tickets',
-        description: 'The lanes on the ticket board, and what each one does to the clock.',
-        keywords: 'ticket support helpdesk lanes columns kanban clock timer running limit',
-        icon: 'Ticket',
-        tone: 'amber',
-        capability: 'tickets.setup',
-      },
       {
         href: '/setup/linked-stores',
         description: 'Branches that share products, customers or loyalty with this one.',
@@ -407,97 +337,22 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
       },
     ],
   },
-  {
-    /* Loyalty's own settings, which used to be three of the four rows in a
-       top-level Loyalty menu section. The members list stays in the menu under
-       Customers, because that is the screen somebody actually opens; these three
-       decide how the programme works and are set once. */
-    label: 'Loyalty',
-    description: 'How the programme rewards people, and what a point is worth.',
-    tone: 'violet',
-    icon: 'Gem',
-    items: [
-      {
-        href: '/loyalty/programme',
-        description: 'Whether points are earned, at what rate, and what they redeem for.',
-        keywords: 'points rewards earn rate redemption programme rules',
-        icon: 'Settings',
-        tone: 'violet',
-        capability: 'loyalty.view',
-        module: 'loyalty',
-      },
-      {
-        href: '/loyalty/tiers',
-        description: 'Bronze, silver, gold — what it takes to get there and what it gives.',
-        keywords: 'tiers levels vip bronze silver gold status benefits',
-        icon: 'Gem',
-        tone: 'amber',
-        capability: 'loyalty.view',
-        module: 'loyalty',
-      },
-      {
-        href: '/loyalty/cards',
-        description: 'Buy nine, get the tenth free — punch cards and what fills them.',
-        keywords: 'punch card stamps buy x get y free coffee',
-        icon: 'Stamp',
-        tone: 'orange',
-        capability: 'loyalty.view',
-        module: 'loyalty',
-      },
-    ],
-  },
   /*
-   * The two groups below are CROSS-REFERENCES — every tile in them opens a
-   * screen this hub does not own, listed here because this is where somebody
-   * looks for a setting. Their breadcrumbs still read "Online Store › …" and
-   * "Accounting › …", which is why they are not in `SUBPAGE_OWNER`. See
-   * `SETUP_ELSEWHERE` in src/lib/nav.ts for why being in two hubs is safe.
+   * The group below is a CROSS-REFERENCE — every tile in it opens a screen
+   * this hub does not own, listed here because this is where somebody looks
+   * for a setting. Its breadcrumbs still read "Accounting › …", which is why
+   * those screens are not in `SUBPAGE_OWNER`. See `SETUP_ELSEWHERE` in
+   * src/lib/nav.ts for why being in two hubs is safe.
+   *
+   * The online store's own switches are NOT here any more: that section now
+   * carries a Setup row of its own, so listing them here as well would be the
+   * second front door this file exists to avoid.
    *
    * Each `capability` mirrors the guard on the page itself — checked against
    * the real `requireCapability` call, not guessed, because a tile gated on a
    * capability the page does not use hides a screen from somebody who can
    * open it.
    */
-  {
-    label: 'Selling online',
-    description: 'The web shop’s own switches — kept with the store, listed here too.',
-    tone: 'sky',
-    icon: 'ShoppingBag',
-    items: [
-      {
-        href: '/online-store/setup',
-        description: 'The name, the domain, delivery charges, and whether the shop is live.',
-        keywords: 'domain url delivery fees shipping open closed launch go live web shop',
-        icon: 'Settings',
-        tone: 'sky',
-        capability: 'online.edit',
-      },
-      {
-        href: '/online-store/payments',
-        description: 'How shoppers may pay, and the gateway that takes the money.',
-        keywords: 'payfast yoco ozow gateway card eft checkout',
-        icon: 'CreditCard',
-        tone: 'indigo',
-        capability: 'online.edit',
-      },
-      {
-        href: '/online-store/statuses',
-        description: 'The steps an order moves through, from paid to collected.',
-        keywords: 'workflow stages pipeline packing shipped fulfilment',
-        icon: 'ListOrdered',
-        tone: 'teal',
-        capability: 'online.edit',
-      },
-      {
-        href: '/online-store/discounts',
-        description: 'Codes a shopper can type at checkout, and what each takes off.',
-        keywords: 'promo coupon voucher promotion sale code',
-        icon: 'Tag',
-        tone: 'rose',
-        capability: 'online.edit',
-      },
-    ],
-  },
   {
     label: 'Accounting & posting',
     description: 'Where figures land in the ledger, and when the books are closed.',

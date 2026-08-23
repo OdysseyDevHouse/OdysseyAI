@@ -9,6 +9,9 @@ import {
 import { SETUP_GROUPS } from '@/app/(app)/setup/catalogue'
 import { ACCOUNTING_GROUPS } from '@/app/(app)/accounting/catalogue'
 import { ONLINE_STORE_GROUPS } from '@/app/(app)/online-store/catalogue'
+import { ONLINE_STORE_SETUP_GROUPS } from '@/app/(app)/online-store/settings/catalogue'
+import { LOYALTY_SETUP_GROUPS } from '@/app/(app)/loyalty/setup/catalogue'
+import { JOBS_SETUP_GROUPS } from '@/app/(app)/jobs/setup/catalogue'
 import type { HubIconName } from './hub'
 import type { LucideIcon } from 'lucide-react'
 
@@ -62,13 +65,24 @@ export type PageHit = {
 /**
  * What every hub screen decides, and the glyph it wears, keyed by route.
  *
- * Flattened from the three catalogues at module load. They are plain data with
+ * Flattened from every catalogue at module load. They are plain data with
  * no server-only imports — HubView is itself a client component that reads the
  * same shapes — so this costs the browser the descriptions and nothing else.
  */
 const CATALOGUE: Record<string, { description: string; icon: HubIconName; keywords?: string }> =
   Object.fromEntries(
-    [...SETUP_GROUPS, ...ACCOUNTING_GROUPS, ...ONLINE_STORE_GROUPS]
+    [
+      ...SETUP_GROUPS,
+      ...ACCOUNTING_GROUPS,
+      ...ONLINE_STORE_GROUPS,
+      /* The per-section Setup hubs. Their screens left the general setup
+         catalogue when each section grew a Setup row of its own, and the
+         palette has to keep reaching them — this is the file that decides
+         whether typing "punch card" finds anything at all. */
+      ...ONLINE_STORE_SETUP_GROUPS,
+      ...LOYALTY_SETUP_GROUPS,
+      ...JOBS_SETUP_GROUPS,
+    ]
       .flatMap((group) => group.items)
       .map((item) => [
         item.href,
@@ -169,6 +183,11 @@ export function buildPageIndex(visible: NavSection[]): PageHit[] {
     }
 
     for (const item of section.items ?? []) {
+      /* A ROW can be a hub too, since Loyalty, Job cards, Tickets and the
+         Online Store each carry their own Setup. Registered under the item's
+         own label so a screen below it reads "Setup › …" rather than naming
+         the section twice. */
+      hubs.set(item.href, { ...section, label: item.label, icon: item.icon })
       hits.push({
         href: item.href,
         label: item.label,
@@ -184,7 +203,14 @@ export function buildPageIndex(visible: NavSection[]): PageHit[] {
   /* The screens a hub lists, which the menu itself never names. Without these the
      search finds "Setup" and nothing inside it — fourteen settings screens
      unreachable by name, which is the whole reason this file exists. */
+  /* Every menu destination, so a hub that is ALSO a menu row is not indexed
+     twice — it was already pushed above, with the section as its group. */
+  const menuHrefs = new Set(
+    visible.flatMap((s) => [...(s.href ? [s.href] : []), ...(s.items ?? []).map((i) => i.href)]),
+  )
+
   for (const [path, label] of Object.entries(SUBPAGE_LABELS)) {
+    if (menuHrefs.has(path)) continue
     const owner = hubFor(path)
     const hub = owner ? hubs.get(owner) : null
     if (!hub) continue

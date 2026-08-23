@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
   const back = (message: string) =>
     NextResponse.redirect(
-      new URL(`/setup/job-calendar?message=${encodeURIComponent(message)}`, request.nextUrl.origin),
+      new URL(`/jobs/setup/calendars?message=${encodeURIComponent(message)}`, request.nextUrl.origin),
     )
 
   /*

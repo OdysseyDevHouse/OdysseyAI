@@ -10,6 +10,32 @@ import ReportsHub, { type HubItem } from './ReportsHub'
 export const dynamic = 'force-dynamic'
 
 /**
+ * The reports most shops actually open, listed together under a Popular tab.
+ *
+ * A DUPLICATE listing, not a move: every one of these is still filed under its
+ * own subject, and the tab holds the same tile with the same star and the same
+ * route. A catalogue of ninety reports has a long tail nobody runs and a head
+ * of five that get run every morning, and making somebody remember which
+ * subject the morning five are filed under is the tax this removes.
+ *
+ * By ID rather than by a flag on the template, deliberately. "Popular" is an
+ * editorial claim about this hub — the order below is the running order — and
+ * not a property of the report itself; the Job cards screen runs the same
+ * templates and singles none of them out. Keeping it here also means an id that
+ * names a report the person's role cannot run simply finds nothing and drops
+ * out, rather than needing a permission check of its own.
+ */
+const POPULAR_REPORTS = [
+  'invoice-history',
+  'cashup-history',
+  'performance',
+  /* "Sales by day or month" was listed here too, until it was folded into
+     `turnover-by` as its two margin cuts — the same question at the same
+     grains, and two tiles nobody could choose between by name. */
+  'turnover-by',
+]
+
+/**
  * The report centre.
  *
  * Everything runnable in one place — the built-in catalogue, whatever the shop
@@ -234,6 +260,7 @@ export default async function ReportsPage() {
             broken: s.spec === null,
           }))}
           favorites={[...favorites]}
+          popular={POPULAR_REPORTS}
           canBuild={allow('reports.build')}
           canSchedule={allow('reports.schedule')}
           canUseAi={allow('reports.ai')}

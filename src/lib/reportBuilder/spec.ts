@@ -3,6 +3,7 @@ import {
   getSource,
   type CatalogField,
   type CatalogSource,
+  type DocumentLinkKind,
 } from './catalog'
 
 /**
@@ -219,6 +220,24 @@ export const AGG_LABELS: Record<AggFn, string> = {
  * COUNT(*), which is what someone means by "number of invoices per cashier".
  */
 export const ROW_COUNT_FIELD = '__rows'
+
+/**
+ * Prefix for the sidecar key carrying a linkable document's record id.
+ *
+ * A row that has a clickable document number gains `__link_<fieldKey>` holding
+ * the id to open. It is deliberately NOT a column: it never appears in
+ * `specColumns`, so the grid, the footer totals, the CSV export and the column
+ * picker never see it — only the cell renderer, which knows to look.
+ *
+ * Underscored like ROW_COUNT_FIELD and for the same reason: catalog keys are
+ * plain identifiers, so this cannot collide with one.
+ */
+export const LINK_KEY_PREFIX = '__link_'
+
+/** The sidecar key a linkable field's id travels under. */
+export function linkKeyFor(fieldKey: string): string {
+  return `${LINK_KEY_PREFIX}${fieldKey}`
+}
 
 /** One chosen column: a catalog field key, optionally aggregated. */
 export interface SpecColumn {
@@ -602,6 +621,14 @@ export interface ReportColumn {
   /** Re-derive the footer figure from summed parts instead of adding the column. */
   ratio?: { num: string; den: string; scale: number }
   hint?: string
+  /**
+   * What this column's cells open, for a `document` column whose catalog field
+   * declares a `link`. Absent means the number renders as plain text.
+   *
+   * Only the KIND travels — the id per row rides on the row itself under
+   * `linkKeyFor(key)`. A column carries one kind; a row carries one id.
+   */
+  link?: { kind: DocumentLinkKind }
 }
 
 export type ColumnType =
@@ -690,6 +717,9 @@ export function specColumns(spec: CustomReportSpec, source: CatalogSource): Repo
         numeric: f.numeric === true,
         total: f.numeric === true && !f.noTotal,
         ...(f.hint ? { hint: f.hint } : {}),
+        /* Unsummarised only, matching buildSelect: a grouped row is many
+           documents at once and has no single record to open. */
+        ...(f.link ? { link: { kind: f.link.kind } } : {}),
       })
       continue
     }

@@ -17,7 +17,9 @@ import ReferPanel from '@/components/ReferPanel'
 import ReferWizard from '@/components/ReferWizard'
 import SerialsPanel from '@/components/SerialsPanel'
 import ProductSuppliersPanel from '@/components/ProductSuppliersPanel'
+import ProductKitchenPanel from '@/components/ProductKitchenPanel'
 import type { InstructionGroup } from '@/lib/site/instructions'
+import type { KitchenPrinter } from '@/lib/site/kitchenPrinters'
 import type { RecipeLine } from '@/lib/site/productComposition'
 import type { ChainRung } from '@/lib/site/referRange'
 import type { Serial } from '@/lib/site/serials'
@@ -30,6 +32,7 @@ import {
   Field,
   Input,
   SectionTitle,
+  SectionBody,
   Select,
   Tabs,
   TILE_SWATCHES,
@@ -45,6 +48,7 @@ import {
   Truck,
   Barcode,
   ArrowLeftRight,
+  Printer,
 } from '@/components/ui/icons'
 import { DEFAULT_PRODUCT_TYPE, type ProductTypeId } from '@/lib/productTypes'
 import { saveProductAction, type ProductFormState } from './actions'
@@ -57,6 +61,7 @@ type TabValue =
   | 'general'
   | 'properties'
   | 'instructions'
+  | 'kitchen'
   | 'suppliers'
   | 'recipe'
   | 'refer'
@@ -116,6 +121,9 @@ export default function ProductForm({
   ownership = { canEdit: true, ownerName: null },
   instructionGroups,
   attachedInstructions,
+  kitchenPrinters,
+  attachedKitchenPrinters,
+  knownKitchenGroups,
   recipeLines,
   referChain,
   serials,
@@ -181,6 +189,12 @@ export default function ProductForm({
   instructionGroups: InstructionGroup[]
   /** Ids of the instructions this product currently asks. */
   attachedInstructions: number[]
+  /** Every active kitchen printer, for the Kitchen tab. Empty hides the tab. */
+  kitchenPrinters: KitchenPrinter[]
+  /** Printer ids this product already routes to. */
+  attachedKitchenPrinters: number[]
+  /** Groups already in use elsewhere, offered as suggestions. */
+  knownKitchenGroups: string[]
   /** The ingredient list, for a recipe product. Empty otherwise. */
   recipeLines: RecipeLine[]
   /** What a refer product draws its stock from, or null. */
@@ -206,6 +220,10 @@ export default function ProductForm({
   // card owns the controls. One source of truth, read by both.
   const [sharesCost, setSharesCost] = useState(defaultSharesCost)
   const [sharesSelling, setSharesSelling] = useState(defaultSharesSelling)
+
+  // Open to start with: the fold exists to put a section you are done with out
+  // of the way, not to hide stock levels until somebody thinks to look.
+  const [inventoryOpen, setInventoryOpen] = useState(true)
 
   // Which stores carry this product. Seeded from what each store recorded, so
   // an untouched save writes back exactly what was already true.
@@ -329,6 +347,19 @@ export default function ProductForm({
               icon: <Truck size={16} />,
               count: productSuppliers.length || undefined,
             },
+            /* Only where the shop has somewhere to send food. A restaurant sees
+               it; a hardware shop that has never set up a printer is not asked
+               a question it has no answer to. */
+            ...(kitchenPrinters.length > 0
+              ? [
+                  {
+                    value: 'kitchen',
+                    label: 'Kitchen',
+                    icon: <Printer size={16} />,
+                    count: attachedKitchenPrinters.length || undefined,
+                  },
+                ]
+              : []),
             // The composition tabs follow the product's type: an ingredient
             // list on a normal product is a question nobody asked.
             ...(productType === 'recipe'
@@ -530,7 +561,14 @@ export default function ProductForm({
               is exactly the figure that hides 57 units sitting in a back
               warehouse. Stock lives in rooms; a store is the outer grouping. */}
           <Card>
-            <SectionTitle icon={<Warehouse size={16} />}>Inventory</SectionTitle>
+            <SectionTitle
+              icon={<Warehouse size={16} />}
+              open={inventoryOpen}
+              onToggle={() => setInventoryOpen((v) => !v)}
+            >
+              Inventory
+            </SectionTitle>
+            <SectionBody open={inventoryOpen}>
             <LocationStockPanel
               isNew={isNew}
               stores={[
@@ -564,6 +602,7 @@ export default function ProductForm({
                   })),
               ]}
             />
+            </SectionBody>
           </Card>
 
           {/* ── Product type ─────────────────────────────────────────────── */}
@@ -631,6 +670,24 @@ export default function ProductForm({
             />
           </Card>
         </div>
+
+        {/* ── Kitchen ──────────────────────────────────────────────────── */}
+        {/* Hidden with CSS, never unmounted — the ticked printer ids and the
+            group submit as form fields, and dropping them would unroute this
+            product on every save made from another tab. */}
+        {kitchenPrinters.length > 0 && (
+          <div className={tab === 'kitchen' ? 'flex flex-col gap-4' : 'hidden'}>
+            <Card>
+              <SectionTitle icon={<Printer size={16} />}>Kitchen printing</SectionTitle>
+              <ProductKitchenPanel
+                printers={kitchenPrinters}
+                attached={attachedKitchenPrinters}
+                group={product?.kitchenGroup ?? ''}
+                knownGroups={knownKitchenGroups}
+              />
+            </Card>
+          </div>
+        )}
 
         {/* ── Suppliers ────────────────────────────────────────────────── */}
         {/* Hidden with CSS, never unmounted — the rows submit as hidden inputs

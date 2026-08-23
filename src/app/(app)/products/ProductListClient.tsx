@@ -3,9 +3,11 @@
 import { useState, useTransition, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  Badge,
   BulkActionBar,
   BulkOptionsDialog,
   Button,
+  Combobox,
   Field,
   Icons,
   Input,
@@ -18,6 +20,7 @@ import {
 } from '@/components/ui'
 import type { ProductBulkChange } from '@/lib/site/products'
 import { bulkUpdateProductsAction } from './actions'
+import { searchSuppliersAction, type SupplierPick } from './pickerActions'
 import { useProductColumns } from './ProductColumnsButton'
 import ProductsTable from './ProductsTable'
 
@@ -189,6 +192,12 @@ function optionGroups(canDelete: boolean): BulkOptionGroup<BulkKind>[] {
         icon: <Icons.ClipboardList size={15} />,
         keywords: 'modifier options unlink remove',
       },
+      {
+        key: 'supplier',
+        label: 'Link supplier',
+        icon: <Icons.Truck size={15} />,
+        keywords: 'buy from purchase order vendor unlink remove preferred',
+      },
       { key: 'color', label: 'Change product colour', icon: <Icons.Palette size={15} />, keywords: 'tile color swatch' },
       { key: 'sellingVat', label: 'Change selling tax', icon: <Icons.Percent size={15} />, keywords: 'vat rate' },
       { key: 'purchaseVat', label: 'Change purchase tax', icon: <Icons.Percent size={15} />, keywords: 'vat rate' },
@@ -321,15 +330,35 @@ function BulkForms({
   const [priceCalc, setPriceCalc] = useState<'selling' | 'markup'>('selling')
   const [archived, setArchived] = useState(true)
 
+  /* The supplier picker. A search rather than a <Select> because a shop's
+     supplier file runs to hundreds and the form is opened knowing the name —
+     the same reason the product form's supplier tab searches. */
+  const [supplier, setSupplier] = useState<SupplierPick | null>(null)
+  const [supplierQuery, setSupplierQuery] = useState('')
+  const [supplierResults, setSupplierResults] = useState<SupplierPick[]>([])
+  const [searching, startSearch] = useTransition()
+  const [preferred, setPreferred] = useState(false)
+
   const noun = `${count} product${count === 1 ? '' : 's'}`
 
-  /** Footer shared by every form: cancel goes back, apply names the scope. */
-  const footer = (change: () => ProductBulkChange, tone: 'primary' | 'danger' = 'primary') => (
+  /**
+   * Footer shared by every form: cancel goes back, apply names the scope.
+   *
+   * `incomplete` disables Apply on a form whose choice has not been made yet.
+   * A picker left empty would otherwise send an id of zero and come back as a
+   * toast saying nothing was updated, which reads as a broken action rather
+   * than an unfinished form.
+   */
+  const footer = (
+    change: () => ProductBulkChange,
+    tone: 'primary' | 'danger' = 'primary',
+    incomplete = false,
+  ) => (
     <>
       <Button variant="ghost" onClick={onClose} disabled={pending}>
         Back
       </Button>
-      <Button variant={tone} onClick={() => onApply(change())} disabled={pending}>
+      <Button variant={tone} onClick={() => onApply(change())} disabled={pending || incomplete}>
         {pending ? 'Applying…' : `Apply to ${noun}`}
       </Button>
     </>
@@ -340,6 +369,7 @@ function BulkForms({
     body: ReactNode,
     change: () => ProductBulkChange,
     tone: 'primary' | 'danger' = 'primary',
+    incomplete = false,
   ) => (
     <Modal
       open
@@ -347,7 +377,7 @@ function BulkForms({
       title={title}
       description={`Applies to ${noun}.`}
       size="sm"
-      footer={footer(change, tone)}
+      footer={footer(change, tone, incomplete)}
     >
       {body}
     </Modal>
@@ -477,6 +507,109 @@ function BulkForms({
           </Field>
         </div>,
         () => ({ kind: 'instructionGroup', groupId: Number(id), mode }),
+        'primary',
+        !id,
+      )
+
+    case 'supplier':
+      return shell(
+        'Link supplier',
+        <div className="flex flex-col gap-4">
+          <Field
+            label="Supplier"
+            /* Once one is picked the hint stops explaining the control and
+               names the choice instead — a modal about to change fifty
+               products should say which supplier, not how to search. */
+            hint={
+              supplier
+                ? `${supplier.name} — ${supplier.code}`
+                : 'Search by name or account code.'
+            }
+          >
+            <Combobox<SupplierPick>
+              query={supplierQuery}
+              onQueryChange={(next) => {
+                setSupplierQuery(next)
+                // Clearing the box clears the pick: leaving a stale supplier
+                // selected behind an empty field is how the wrong one gets
+                // applied to fifty products.
+                if (!next.trim()) setSupplier(null)
+                startSearch(async () => setSupplierResults(await searchSuppliersAction(next)))
+              }}
+              options={supplierResults.map((s) => ({
+                value: String(s.id),
+                label: s.name,
+                hint: s.code,
+                trailing: s.canOrder ? undefined : <Badge tone="warning">on hold</Badge>,
+                data: s,
+              }))}
+              onSelect={(option) => {
+                if (option.data) setSupplier(option.data)
+                setSupplierQuery(option.label)
+              }}
+              loading={searching}
+              placeholder="Search suppliers…"
+              emptyText="No suppliers match"
+            />
+          </Field>
+
+          <Field
+            label="Action"
+            hint={
+              mode === 'add'
+                ? "Each product keeps its other suppliers, and keeps this one's stock code and cost if it is already linked."
+                : 'Removes this supplier only. Each product keeps its others.'
+            }
+          >
+            <Select value={mode} onChange={(e) => setMode(e.target.value as 'add' | 'remove')}>
+              <option value="add">Link this supplier</option>
+              <option value="remove">Unlink this supplier</option>
+            </Select>
+          </Field>
+
+          {/* Pack size and preferred only mean something when linking — on an
+              unlink there is nothing left to describe. */}
+          {mode === 'add' && (
+            <>
+              <Field
+                label="Pack size"
+                /* The one per-supplier figure that CAN be set in bulk. Their
+                   stock code and last cost differ per product, so they are
+                   left to the product's Suppliers tab and to receiving. */
+                hint="How many of our units come in one of theirs. Applies to new links only — their stock code and cost stay per product."
+              >
+                <NumberInput
+                  value={number || 1}
+                  step="0.001"
+                  onChange={(e) => setNumber(Number(e.target.value) || 0)}
+                />
+              </Field>
+              <Field
+                label="Preferred supplier"
+                hint="Makes this the default on reorder. Unseats whichever supplier held it."
+              >
+                <Select
+                  value={preferred ? 'yes' : 'no'}
+                  onChange={(e) => setPreferred(e.target.value === 'yes')}
+                >
+                  <option value="no">Leave the preferred supplier alone</option>
+                  <option value="yes">Make this the preferred supplier</option>
+                </Select>
+              </Field>
+            </>
+          )}
+        </div>,
+        () => ({
+          kind: 'supplier',
+          supplierId: supplier?.id ?? 0,
+          mode,
+          packSize: number || 1,
+          preferred,
+        }),
+        /* Unlinking is destructive to purchasing's reference data, so it wears
+           the danger tone the delete form does. */
+        mode === 'remove' ? 'danger' : 'primary',
+        !supplier,
       )
 
     case 'color':

@@ -118,6 +118,9 @@ export {
   SlidersHorizontal,
   // Fast, no ceremony — the till's quick sale, a walk-in that needs no table.
   Zap,
+  // What everybody runs — the reports hub's Popular shelf. Distinct from Star
+  // (what THIS person chose) and Zap (fast): this one is about other people.
+  Flame,
   Palette,
   ChartColumn as BarChart,
   ChartLine as LineChart,

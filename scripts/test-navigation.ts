@@ -62,6 +62,14 @@ const { buildPageIndex, searchPages, scorePage } = nodeRequire(
   '../src/lib/pageSearch',
 ) as typeof import('../src/lib/pageSearch')
 
+/* Every hub catalogue, to assert no menu row is also one of their TILES. */
+const { SETUP_GROUPS } = nodeRequire('../src/app/(app)/setup/catalogue') as typeof import('../src/app/(app)/setup/catalogue')
+const { ACCOUNTING_GROUPS } = nodeRequire('../src/app/(app)/accounting/catalogue') as typeof import('../src/app/(app)/accounting/catalogue')
+const { ONLINE_STORE_GROUPS } = nodeRequire('../src/app/(app)/online-store/catalogue') as typeof import('../src/app/(app)/online-store/catalogue')
+const { ONLINE_STORE_SETUP_GROUPS } = nodeRequire('../src/app/(app)/online-store/settings/catalogue') as typeof import('../src/app/(app)/online-store/settings/catalogue')
+const { LOYALTY_SETUP_GROUPS } = nodeRequire('../src/app/(app)/loyalty/setup/catalogue') as typeof import('../src/app/(app)/loyalty/setup/catalogue')
+const { JOBS_SETUP_GROUPS } = nodeRequire('../src/app/(app)/jobs/setup/catalogue') as typeof import('../src/app/(app)/jobs/setup/catalogue')
+
 let failures = 0
 
 function check(what: string, got: unknown, want: unknown) {
@@ -102,14 +110,54 @@ check('/accounting/assets/depreciation', crumbs('/accounting/assets/depreciation
   'Depreciation',
 ])
 
+/* A key the MENU itself names, rather than a screen only a hub lists.
+
+   Four sections now carry their own Setup hub as a row — Loyalty, Job cards,
+   Tickets and the Online Store — so a key can be both a menu destination and
+   a SUBPAGE_LABELS entry. That is not the "two front doors" problem the
+   invariants below guard against: the label is what the hub tile and the
+   breadcrumb read, and the menu row points at the same screen. The entries
+   also have to stay because SubpageHref is derived from these keys.
+
+   What the hub invariants below DO apply to is everything else: a screen the
+   menu does not name has to resolve to a hub, or it renders with no trail. */
+const menuHrefs = new Set(
+  NAV.flatMap((s) => [...(s.href ? [s.href] : []), ...(s.items ?? []).map((i) => i.href)]),
+)
+const hubScreens = Object.keys(SUBPAGE_LABELS).filter((h) => !menuHrefs.has(h))
+check(
+  'the menu-named keys are the four Setup hubs and Loyalty',
+  Object.keys(SUBPAGE_LABELS).filter((h) => menuHrefs.has(h)).sort(),
+  ['/jobs/setup', '/loyalty', '/loyalty/setup', '/online-store/settings', '/tickets/setup/desk'],
+)
+/* ...and each must still lead somewhere sensible. */
+check('/loyalty', crumbs('/loyalty'), ['Loyalty', 'Members'])
+check('/loyalty/tiers', crumbs('/loyalty/tiers'), ['Loyalty', 'Setup', 'Tiers'])
+check('/jobs/setup/workflow', crumbs('/jobs/setup/workflow'), ['Job cards', 'Setup', 'Workflow'])
+check('/online-store/trading', crumbs('/online-store/trading'), ['Online Store', 'Setup', 'Trading hours'])
+check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', 'Orders'])
+/* The hub LANDING pages themselves. Each sits under its section's route, so
+   hubFor reports the section owns it and the middle-crumb lookup would pick
+   the first row that is a prefix — reading "Job cards › Job list › Job card
+   setup". A menu-named path must use the section scan instead. */
+check('/jobs/setup', crumbs('/jobs/setup'), ['Job cards', 'Setup'])
+check('/tickets/setup/desk', crumbs('/tickets/setup/desk'), ['Tickets', 'Setup'])
+check('/loyalty/setup', crumbs('/loyalty/setup'), ['Loyalty', 'Setup'])
+check('/online-store/settings', crumbs('/online-store/settings'), ['Online Store', 'Setup'])
+
 // Every screen a hub can link to must resolve, or it renders with no trail.
-const unnamed = Object.keys(SUBPAGE_LABELS).filter((href) => (crumbs(href) ?? []).length < 2)
+const unnamed = hubScreens.filter((href) => (crumbs(href) ?? []).length < 2)
 check('every hub screen resolves a trail', unnamed, [])
 
-/* The first crumb must link back to the hub, or somebody who arrived from a
-   tile has no way back to the others but the browser's own button. */
-const noWayBack = Object.keys(SUBPAGE_LABELS).filter(
-  (href) => breadcrumbFor(href)?.crumbs[0].href !== hubFor(href),
+/* SOME crumb must link back to the hub, or somebody who arrived from a tile
+   has no way back to the others but the browser's own button.
+
+   Not "the first crumb" any more: a hub that is a row inside a section puts
+   the section first and the hub second — 'Loyalty › Setup › Tiers' — so
+   testing crumbs[0] would demand the section BE the hub, which is the shape
+   this split exists to get away from. */
+const noWayBack = hubScreens.filter(
+  (href) => !breadcrumbFor(href)?.crumbs.some((c) => c.href === hubFor(href)),
 )
 check('every hub screen links back to its hub', noWayBack, [])
 
@@ -129,7 +177,11 @@ check('"cashbook" finds Accounting', found('cashbook'), ['Accounting'])
 check('"journals" finds Accounting', found('journals'), ['Accounting'])
 check('"discount" finds Online Store', found('discount'), ['Online Store'])
 check('"page builder" finds Online Store', found('page builder'), ['Online Store'])
-check('"punch" finds Setup', found('punch'), ['Setup'])
+/* Loyalty, not Setup: the punch cards screen moved into Loyalty’s own Setup
+   hub when each section took its settings back. Still asserted, because the
+   point of the check is that a screen the MENU does not name is reachable by
+   typing what it is called — only the section that owns it has changed. */
+check('"punch" finds Loyalty', found('punch'), ['Loyalty'])
 check('"pay rules" finds Setup', found('pay rules'), ['Setup'])
 // Reports keeps its shortcuts findable by name without listing them as rows.
 check('"build a report" finds Reports', found('build a report'), ['Reports'])
@@ -308,7 +360,9 @@ check('an unrelated capability is not', shows(['sales.view']), false)
 // or its children moved, and these still say whether the result is coherent.
 
 const allItems = NAV.flatMap((s) => s.items ?? [])
-const sectionHrefs = NAV.filter((s) => s.href).map((s) => s.href!)
+/* Every menu destination, sections AND rows: a hub is no longer always a
+   top-level link, so "resolves to a real hub" has to accept a row too. */
+const sectionHrefs = [...menuHrefs]
 
 console.log('\nThe tree is structurally sound')
 
@@ -321,17 +375,23 @@ const duplicates = allItems
 check('every item href is unique', [...new Set(duplicates)], [])
 
 /* The mechanical form of "two front doors that could disagree": a screen named
-   in the menu AND listed by a hub has two entries that can drift apart. */
-const bothPlaces = Object.keys(SUBPAGE_LABELS).filter((href) =>
-  allItems.some((i) => i.href === href),
+   in the menu AND listed as a TILE by a hub has two entries that can drift.
+
+   Being a menu row and a hub LANDING page is a different thing and is fine —
+   that is what the four Setup rows are. What must never happen is a menu row
+   that some hub also lists as one of its tiles. */
+const hubTiles = new Set<string>(
+  [...SETUP_GROUPS, ...ACCOUNTING_GROUPS, ...ONLINE_STORE_GROUPS, ...ONLINE_STORE_SETUP_GROUPS,
+   ...LOYALTY_SETUP_GROUPS, ...JOBS_SETUP_GROUPS].flatMap((g) => g.items).map((i) => i.href),
 )
-check('no screen is both a menu item and a hub subpage', bothPlaces, [])
+const bothPlaces = allItems.map((i) => i.href).filter((href) => hubTiles.has(href))
+check('no screen is both a menu item and a hub tile', bothPlaces, [])
 
 /* Every hub subpage must resolve to a hub that exists, or its breadcrumb comes
    out empty and the screen has no way back to the hub that sent them there.
    Uses hubFor rather than a prefix test, because a hub groups by the question
    somebody arrives with and not by URL: /cashbook is an accounting screen. */
-const orphanedSubpages = Object.keys(SUBPAGE_LABELS).filter((href) => {
+const orphanedSubpages = hubScreens.filter((href) => {
   const owner = hubFor(href)
   return !owner || !sectionHrefs.includes(owner)
 })
@@ -368,8 +428,10 @@ check('the menu and the trail agree on every hub screen', disagreements, [])
 
 /* And the positive form: every screen whose route sits under another section
    must declare its owner, or the highlight falls back to the prefix. */
+/* A menu row is exempt: the sidebar names it, so there is no hub to declare
+   and no highlight to fall back on. /loyalty is one. */
 const undeclared = Object.keys(SUBPAGE_LABELS).filter(
-  (href) => sectionOwning(href) && hubFor(href) === null,
+  (href) => !menuHrefs.has(href) && sectionOwning(href) && hubFor(href) === null,
 )
 check('every hub screen under a menu item declares its hub', undeclared, [])
 

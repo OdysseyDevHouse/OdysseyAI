@@ -194,10 +194,14 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
   },
   {
     slug: 'price-change',
-    label: 'Change price',
+    /* "Change price TYPE", not "Change price". The key runs `pickPriceType`: it swaps
+       the sale onto another of the shop's price lists — trade, staff, wholesale — and
+       re-prices the lines off it. It never types a figure in against one line, which
+       is what the old caption promised and what `global-discount` above actually does. */
+    label: 'Change price type',
     icon: 'Tag',
     capability: 'sales.price_override',
-    hint: 'Overrides the price on the selected line.',
+    hint: 'Puts the sale on another price list.',
   },
   {
     slug: 'price-enquiry',
@@ -343,13 +347,6 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     icon: 'Reverse',
     capability: 'sales.credit_note',
     hint: 'Arms the next item as a refund on this slip.',
-  },
-  {
-    slug: 'redeem-voucher',
-    label: 'Voucher',
-    icon: 'Ticket',
-    capability: 'loyalty.view',
-    hint: 'Takes a loyalty voucher against the sale.',
   },
   {
     slug: 'loyalty-payment',

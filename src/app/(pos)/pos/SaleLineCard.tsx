@@ -108,8 +108,8 @@ export function SaleLineCard({
   /* Any of it, not all of it. A line of 3 with 1 sent is a line the kitchen has
      partly heard about, and telling the waiter it is unsent would invite a
      re-send of all three. The delta that actually prints is computed
-     server-side against the live column — see BasketLine.kitchenSentQty. */
-  const sent = (line.kitchenSentQty ?? 0) > 0
+     server-side against the live send history — see BasketLine.kitchenSent. */
+  const sent = line.kitchenSent === true
 
   return (
     <li>

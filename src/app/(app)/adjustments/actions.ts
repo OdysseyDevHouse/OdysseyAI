@@ -149,7 +149,7 @@ export async function saveReasonAction(
   if (!result.ok) return result
 
   revalidatePath('/adjustments')
-  revalidatePath('/setup/adjustment-reasons')
+  revalidatePath('/setup/reasons')
   return result
 }
 
@@ -163,6 +163,6 @@ export async function deleteReasonAction(
   if (!result.ok) return result
 
   revalidatePath('/adjustments')
-  revalidatePath('/setup/adjustment-reasons')
+  revalidatePath('/setup/reasons')
   return result
 }

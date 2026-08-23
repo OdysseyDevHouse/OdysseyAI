@@ -43,7 +43,7 @@ const doc = {
       vatRatePct: 15, lineTotalIncl: 115, lineTotalExcl: 100, lineVat: 15,
       unitCostExcl: 20, specialId: null,
       instructions: [instruction('extra bacon', true), instruction('well done', false)],
-      kitchenSentQty: 0, note: '',
+      kitchenGroup: '', note: '',
     },
   ],
 } as unknown as SalesDocument
@@ -214,7 +214,7 @@ const rewardDoc = {
       qty: 1, qtyDelivered: 0, unitPriceIncl: 0, discountPct: 0, discountIncl: 0,
       vatRatePct: 15, lineTotalIncl: 0, lineTotalExcl: 0, lineVat: 0,
       unitCostExcl: 8, specialId: 42,
-      instructions: [], kitchenSentQty: 0, note: '',
+      instructions: [], kitchenGroup: '', note: '',
     },
   ],
 } as unknown as SalesDocument

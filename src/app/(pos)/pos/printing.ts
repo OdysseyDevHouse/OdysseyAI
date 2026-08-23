@@ -22,10 +22,15 @@ export function hasBridgeSlipPrinter(): boolean {
   return !!config && !!config.receiptPrinter
 }
 
-export function hasBridgeKitchenPrinter(): boolean {
-  const config = bridgeConfig()
-  return !!config && !!config.kitchenPrinter
-}
+/*
+ * `hasBridgeKitchenPrinter` went with the bridge's `kitchenPrinter` slot.
+ *
+ * Whether a kitchen ticket can print is no longer a property of this machine's
+ * localStorage: it depends on which printers the PRODUCTS route to and whether
+ * THIS TILL has each of those mapped — both of which live on the server. The
+ * send path answers it per ticket and names the printer it cannot reach, which
+ * is the thing somebody can actually act on.
+ */
 
 /**
  * Kicks the drawer, alone — the payoff of `tender_types.opens_cash_drawer`.
@@ -36,7 +41,7 @@ export async function kickDrawer(): Promise<void> {
   const config = bridgeConfig()
   if (!config || !config.drawerKick || !config.receiptPrinter) return
   const job = new EscPos().init().drawerKick().build()
-  await printRaw('receipt', job).catch(() => {})
+  await printRaw(config.receiptPrinter, job).catch(() => {})
 }
 
 /**
@@ -81,11 +86,11 @@ export async function printSlipViaBridge(
   if (design) {
     const spec = parseSlip(design)
     if (spec && validateSlip(spec).ok) {
-      return printRaw('receipt', renderSlipSpec(spec, receipt, { columns: config.columns }))
+      return printRaw(config.receiptPrinter, renderSlipSpec(spec, receipt, { columns: config.columns }))
     }
   }
 
-  return printRaw('receipt', renderReceipt(receipt, { columns: config.columns }))
+  return printRaw(config.receiptPrinter, renderReceipt(receipt, { columns: config.columns }))
 }
 
 /**
@@ -104,16 +109,34 @@ export async function printBillViaBridge(
   if (!config || !config.receiptPrinter) {
     return { ok: false, error: 'No print bridge is set up on this machine.' }
   }
-  return printRaw('receipt', renderBill(bill, { columns: config.columns }))
+  return printRaw(config.receiptPrinter, renderBill(bill, { columns: config.columns }))
 }
 
-/** Prints a kitchen ticket. The caller already checked a printer exists. */
+/**
+ * Prints ONE kitchen ticket to ONE named spool queue.
+ *
+ * `bridgePrinter` arrives from the SERVER — this terminal's mapping of a
+ * logical printer ("Bar") onto whatever this machine calls that queue. The
+ * till does not choose it, and that is what lets a manager fix a mis-routed
+ * printer from the back office instead of walking to the counter.
+ *
+ * An unmapped printer names itself in the error. "This till has no printer
+ * mapped for Grill" is a sentence somebody can act on; "kitchen printing
+ * failed" is not.
+ */
 export async function printKitchenViaBridge(
+  bridgePrinter: string,
   ticket: KitchenTicketData,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const config = bridgeConfig()
-  if (!config || !config.kitchenPrinter) {
-    return { ok: false, error: 'Set up the kitchen printer on this till first — Setup → Printing.' }
+  if (!config) {
+    return { ok: false, error: 'No print bridge is set up on this machine — Setup → Printing.' }
   }
-  return printRaw('kitchen', renderKitchenTicket(ticket, { columns: config.columns }))
+  if (!bridgePrinter.trim()) {
+    return {
+      ok: false,
+      error: `This till has no printer mapped for ${ticket.printerName || 'the kitchen'} — Setup → Printing.`,
+    }
+  }
+  return printRaw(bridgePrinter, renderKitchenTicket(ticket, { columns: config.columns }))
 }

@@ -23,6 +23,12 @@ export const dynamic = 'force-dynamic'
  *
  * `?q=` seeds the search: the sidebar's own box hands its term over when a
  * setting matches it, so that search carries on here instead of starting again.
+ *
+ * Tabbed, unlike the other two hubs. This catalogue is eight groups and fifty
+ * settings, so somebody who came to change a loyalty tier scrolled past every
+ * decision about pay, pricing and stock to reach it. The tabs cut that to one
+ * group at a time; "All" stays first and is what the screen still opens on, so
+ * the person who does not know which group holds their setting is unaffected.
  */
 export default async function SetupPage({
   searchParams,
@@ -47,6 +53,7 @@ export default async function SetupPage({
       <PageBody>
         <HubView
           groups={groups}
+          tabs
           noun="settings"
           emptyHint="Your role does not include access to any setup screen. An owner can grant this under Roles & permissions."
           initialSearch={q ?? ''}

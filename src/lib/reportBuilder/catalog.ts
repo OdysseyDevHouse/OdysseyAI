@@ -122,7 +122,39 @@ export interface CatalogField {
   permission?: Capability
   /** Closed value list — turns the filter value box into a picker. */
   options?: { value: string; label: string }[]
+  /**
+   * For a `document` field: what the number identifies, and where its id is.
+   *
+   * `type: 'document'` alone only says "this reads as a reference". It does NOT
+   * say which record — the sales file, the purchase file, a job card and a stock
+   * take all carry a `document_number`, and opening the wrong one is worse than
+   * opening nothing. A field that wants to be CLICKABLE says so here.
+   *
+   * `idExpr` is a SQL expression on this source's own aliases, exactly like
+   * `expr`, and is subject to the same rule: authored here, never user input.
+   * It is selected alongside the number under a sidecar key (see LINK_KEY_PREFIX
+   * in run.ts) so the id reaches the browser without becoming a column anybody
+   * has to look at.
+   *
+   * Omitted means the number renders as plain text, which is the correct
+   * outcome for a reference whose record has no screen to open.
+   */
+  link?: {
+    /** Which viewer opens it. The grid maps this to a dialog. */
+    kind: DocumentLinkKind
+    /** SQL for the record's primary key, on this source's aliases. */
+    idExpr: string
+  }
 }
+
+/**
+ * The record kinds a `document` column can open.
+ *
+ * Deliberately a closed union rather than a route string: the grid decides what
+ * to open, and a catalogue entry that could name any URL would be a way to send
+ * somebody anywhere from a report cell.
+ */
+export type DocumentLinkKind = 'sale' | 'cashup'
 
 export type SourceShape = 'snapshot' | 'timeline'
 
@@ -668,6 +700,8 @@ const SALES_SOURCE: CatalogSource = {
       label: 'Document number',
       type: 'document',
       expr: 't.document_number',
+      /* The sale itself — one row IS one document here, so its own key. */
+      link: { kind: 'sale', idExpr: 't.id' },
       starter: true,
       group: FIELD_GROUPS.IDENTITY,
     },
@@ -880,6 +914,11 @@ const SALES_SOURCE: CatalogSource = {
       label: 'Reverses document',
       type: 'document',
       expr: 'rev.document_number',
+      /* Opens the ORIGINAL, which is the whole point of carrying this column:
+         reading a credit note and wanting to see what it undid. `t.reverses_id`
+         rather than `rev.id` so the id needs no join of its own — the number
+         still does, hence `needs` stays. */
+      link: { kind: 'sale', idExpr: 't.reverses_id' },
       needs: ['reverses'],
       group: FIELD_GROUPS.IDENTITY,
     },
@@ -1170,6 +1209,9 @@ const SALE_LINES_SOURCE: CatalogSource = {
       label: 'Document number',
       type: 'document',
       expr: 'd.document_number',
+      /* The parent sale. `t.document_id` is the line's own FK, so the id costs
+         no join even though the NUMBER is read across one. */
+      link: { kind: 'sale', idExpr: 't.document_id' },
       group: FIELD_GROUPS.IDENTITY,
     },
     {
@@ -1307,6 +1349,8 @@ const TENDERS_SOURCE: CatalogSource = {
       label: 'Document number',
       type: 'document',
       expr: 'd.document_number',
+      /* The sale the payment was taken against — see the note on saleLines. */
+      link: { kind: 'sale', idExpr: 't.document_id' },
       starter: true,
       group: FIELD_GROUPS.IDENTITY,
     },
@@ -1822,7 +1866,23 @@ const CUSTOMER_TXN_SOURCE: CatalogSource = {
     CUSTOMER_GROUP_JOIN,
   ],
   fields: [
-    { key: 'docNumber', label: 'Document number', type: 'document', expr: 't.doc_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    {
+      key: 'docNumber',
+      label: 'Document number',
+      type: 'document',
+      expr: 't.doc_number',
+      /*
+       * The ledger holds MIXED kinds — invoices and credit notes come from a
+       * sales document, while payments, journals, opening balances and interest
+       * do not. `source_doc_id` is the sale for the first group and NULL for the
+       * second, which is exactly the right shape: the grid renders a link only
+       * where there is an id, so a payment row stays plain text rather than
+       * leading somewhere wrong.
+       */
+      link: { kind: 'sale', idExpr: 't.source_doc_id' },
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
     { key: 'docDate', label: 'Date', type: 'date', expr: 't.doc_date', starter: true, group: FIELD_GROUPS.DATES },
     enumField('docType', 'Type', 't.doc_type', ['invoice', 'credit_note', 'payment', 'journal', 'opening', 'interest'], {
       starter: true,
@@ -2097,6 +2157,25 @@ const SHIFTS_SOURCE: CatalogSource = {
   table: 'shifts',
   dateColumn: 'opened_at',
   fields: [
+    /*
+     * The cash-up itself, as something you can OPEN.
+     *
+     * A shift carries no document number — it is identified by its id, and the
+     * cash-up screen names it by till and date. So this column shows the id and
+     * links to the signed declaration, which is the record a reader chasing a
+     * variance actually wants. Kept out of `starter` because the id is a poor
+     * thing to READ; it earns its place by being clickable, and somebody who
+     * wants it can tick it.
+     */
+    {
+      key: 'cashupRef',
+      label: 'Cash-up',
+      type: 'document',
+      expr: 't.id',
+      link: { kind: 'cashup', idExpr: 't.id' },
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'Opens the signed count for this shift.',
+    },
     { key: 'terminalCode', label: 'Till', type: 'text', expr: 't.terminal_code', starter: true, group: FIELD_GROUPS.IDENTITY },
     { key: 'userName', label: 'Opened by', type: 'text', expr: 't.user_name', starter: true, group: FIELD_GROUPS.PEOPLE },
     { key: 'closedByName', label: 'Closed by', type: 'text', expr: 't.closed_by_name', group: FIELD_GROUPS.PEOPLE },

@@ -76,7 +76,7 @@ export default function JobHeadlinesCard({
       <CardBody>
         {headlines.length === 0 ? (
           <p className="text-sm text-muted">
-            No kinds of work are set up yet. Add them under Setup → Job workflow.
+            No kinds of work are set up yet. Add them under Job cards → Setup → Workflow.
           </p>
         ) : (
           <div className="flex flex-col gap-2">

@@ -151,7 +151,7 @@ export default function TicketBoard({
     return (
       <EmptyState
         title="No lanes yet"
-        hint="A board needs lanes before it can hold anything. Set them up under Setup → Tickets."
+        hint="A board needs lanes before it can hold anything. Set them up under Tickets → Setup."
         icon={<Icons.LayoutGrid size={22} />}
       />
     )
