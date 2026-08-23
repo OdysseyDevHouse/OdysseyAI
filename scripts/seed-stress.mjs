@@ -102,10 +102,23 @@ async function connect() {
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
   })
+  /*
+   * The site's OWN database — its master. Same rule as site-migrate.mjs, and
+   * for the reason its header spells out:
+   *
+   * `ORDER BY purpose LIMIT 1` is harmless while a site has one record. A
+   * HYBRID site has two, and 'hybrid' sorts before 'master' — so this seeder
+   * aimed at the in-store spool box, which holds open tabs and an outbox rather
+   * than a shop, and does not carry the site schema at all. The failure is at
+   * least loud ("Table 'ody10000_hybrid.vat_rates' doesn't exist") rather than
+   * silently filling the wrong database, but it is the same bug.
+   */
   const [rows] = await control.query(
     `SELECT server_host, server_port, database_name, db_username, db_password_enc
        FROM cp2_site_databases
-      WHERE site_id = ? AND status = 'active' ORDER BY purpose LIMIT 1`,
+      WHERE site_id = ? AND status = 'active' AND purpose <> 'hybrid'
+      ORDER BY purpose = 'master' DESC, purpose ASC
+      LIMIT 1`,
     [siteId],
   )
   await control.end()

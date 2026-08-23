@@ -200,12 +200,25 @@ SELECT r.id,
     -- Every column in the schema with a foreign key onto products(id). A
     -- referenced id missing from products is by definition an orphan, so this
     -- returns nothing at all on a site whose keys are intact.
+    --
+    -- NO loyalty table appears below, and this note is here because their
+    -- absence looks like an oversight.
+    --
+    -- All three name a product by CODE, never by id: loyalty_cards and
+    -- loyalty_vouchers carry `reward_product_code`, loyalty_card_items carries
+    -- `product_code`. That is deliberate in 052 — a voucher "carries the reward
+    -- by code rather than looking it back up". A code is not a foreign key onto
+    -- products(id), so none of them can produce an orphaned ID to restore, and
+    -- none of them belongs in a query about orphaned ids.
+    --
+    -- They were listed here as `reward_product_id` and `product_id`, columns
+    -- that have never existed on those tables. On a database that grew one
+    -- migration at a time this procedure body is never re-parsed, so it sat
+    -- unnoticed; building from an empty schema fails here with "Unknown column",
+    -- which made this file the point where a fresh install could not proceed.
     SELECT product_id AS id FROM commission_rules
     UNION SELECT product_id        FROM contract_lines
     UNION SELECT product_id        FROM instruction_options
-    UNION SELECT reward_product_id FROM loyalty_cards
-    UNION SELECT product_id        FROM loyalty_card_items
-    UNION SELECT reward_product_id FROM loyalty_vouchers
     UNION SELECT product_id        FROM manufacturing_orders
     UNION SELECT product_id        FROM manufacturing_order_lines
     UNION SELECT product_id        FROM online_order_lines
