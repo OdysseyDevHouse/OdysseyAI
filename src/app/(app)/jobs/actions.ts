@@ -179,6 +179,14 @@ import {
   type SerialCheck,
   type SerialResult,
 } from '@/lib/site/jobSerials'
+import {
+  formsForJob,
+  loadResponse,
+  getVersion,
+  saveResponse,
+  type FormResult,
+} from '@/lib/site/jobForms'
+import type { FormField, FormAnswer } from '@/lib/jobFormModel'
 import { listVans } from '@/lib/site/stockLocations'
 import type { BillingState } from '@/lib/jobStatusModel'
 import { setValues } from '@/lib/site/customFields'
@@ -1910,5 +1918,68 @@ export async function reopenRequestAction(requestId: number): Promise<RequestAct
 
   const result = await reopenRequest(ctx.siteId, ctx.actor, requestId)
   if (result.ok) revalidatePath('/jobs/requests')
+  return result
+}
+
+/* ── Forms on a job (§24) ──────────────────────────────────────────────────── */
+
+/**
+ * Open one form: its shape, and whatever has been answered so far.
+ *
+ * `jobs.edit` rather than `jobs.setup` — filling a form in is the work, and
+ * deciding what it asks is configuring the business. A technician who may
+ * record what they did may open the form that records it.
+ */
+export async function loadJobFormAction(
+  jobId: number,
+  formId: number,
+): Promise<{
+  formId: number
+  responseId: number | null
+  fields: FormField[]
+  answers: FormAnswer[]
+} | null> {
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
+  if ('ok' in ctx) return null
+
+  /*
+   * Resolved through the JOB rather than taking a responseId from the client.
+   * A response id is a number somebody could change, and it names a row that
+   * carries answers about a customer — so the job is the boundary, and this
+   * only ever returns a response belonging to the job being viewed.
+   */
+  const entry = (await formsForJob(ctx.siteId, jobId)).find((f) => f.formId === formId)
+  if (!entry || entry.versionId === null) return null
+
+  if (entry.responseId !== null) {
+    const loaded = await loadResponse(ctx.siteId, entry.responseId)
+    if (loaded && loaded.jobId === jobId) {
+      return {
+        formId,
+        responseId: loaded.id,
+        fields: loaded.fields,
+        answers: loaded.answers,
+      }
+    }
+  }
+
+  // Nothing started yet: the live version's fields and no answers.
+  const version = await getVersion(ctx.siteId, entry.versionId)
+  return version ? { formId, responseId: null, fields: version.fields, answers: [] } : null
+}
+
+/** Save what is filled in, or submit it. See saveResponse for why one function. */
+export async function saveFormAction(input: {
+  jobId: number
+  formId: number
+  responseId: number | null
+  answers: FormAnswer[]
+  submit: boolean
+}): Promise<FormResult> {
+  const ctx = await actorForModule('job_cards', 'jobs.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await saveResponse(ctx.siteId, ctx.actor, input)
+  if (result.ok) revalidateJobs(input.jobId)
   return result
 }

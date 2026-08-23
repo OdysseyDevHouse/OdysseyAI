@@ -16,6 +16,7 @@ import { jobItems, jobHeadlineIds, listHeadlines } from '@/lib/site/jobHeadlines
 import { jobAssetFor, otherJobAssets } from '@/lib/site/jobAssets'
 import { requestsForJob } from '@/lib/site/jobPartRequests'
 import { serialsForLine } from '@/lib/site/jobSerials'
+import { formsForJob } from '@/lib/site/jobForms'
 import { jobSeriesFor } from '@/lib/site/jobSeries'
 import { getServiceAddress, formatAddress, mapsHref } from '@/lib/site/serviceAddresses'
 import { formatMoney } from '@/lib/decimals'
@@ -45,12 +46,13 @@ import JobVisits from './JobVisits'
 import JobPartsPanel from './JobPartsPanel'
 import JobPartRequests from './JobPartRequests'
 import JobSerialsPanel from './JobSerialsPanel'
+import JobFormsPanel from './JobFormsPanel'
 import JobSlaCard from './JobSlaCard'
 import JobChecks from './JobChecks'
 import JobSignoffCard from './JobSignoffCard'
 import JobPeoplePanel from './JobPeoplePanel'
 import CustomFieldsPanel from '@/components/CustomFieldsPanel'
-import { setCustomValuesAction } from '../actions'
+import { setCustomValuesAction, loadJobFormAction } from '../actions'
 import JobFeedbackCard from './JobFeedbackCard'
 import { feedbackFor } from '@/lib/site/jobFeedback'
 import { jobSignoff, signoffRule } from '@/lib/site/jobSignoff'
@@ -188,6 +190,7 @@ export default async function JobPage({
     expenseCategories,
     otherAssets,
     partRequests,
+    jobForms,
   ] = await Promise.all([
       listJobStatuses(siteId, false),
       can(capabilities, 'jobs.invoice') ? billableLines(siteId, jobId) : Promise.resolve([]),
@@ -294,6 +297,9 @@ export default async function JobPage({
       // Parts this job is waiting on (162). Also appended at the END, and also
       // tolerant — a site without the table shows no card rather than failing.
       requestsForJob(siteId, jobId).catch(() => []),
+      // Forms this job is asked for (222). Appended at the END like every
+      // addition before it, and tolerant for the same reason.
+      formsForJob(siteId, jobId).catch(() => []),
     ])
 
   /*
@@ -570,6 +576,29 @@ export default async function JobPage({
                 signatureStatement?.trim() || SETTING_DEFAULTS.job_signature_statement
               }
             />
+            {/* Directly under the checklist, because the two answer the same
+                question — what has to be recorded before this job is done — and
+                the close gate reads them as one list. Forms on their own tab
+                would mean a technician checking they are finished has two
+                places to look. */}
+            {jobForms.length > 0 && (
+              <JobFormsPanel
+                jobId={job.id}
+                jobClosed={job.isClosed}
+                canEdit={can(capabilities, 'jobs.edit')}
+                forms={jobForms.map((f) => ({
+                  formId: f.formId,
+                  formName: f.formName,
+                  isRequired: f.isRequired,
+                  version: f.version,
+                  versionId: f.versionId,
+                  responseId: f.responseId,
+                  submittedAt: f.submittedAt === null ? null : String(f.submittedAt),
+                  respondentName: f.respondentName,
+                }))}
+                loadForm={loadJobFormAction.bind(null, job.id)}
+              />
+            )}
           </div>
         ) : tab === 'visits' ? (
           <JobVisits
