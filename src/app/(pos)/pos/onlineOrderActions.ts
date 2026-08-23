@@ -159,7 +159,12 @@ export async function collectOnlineOrderAction(
        name and a phone number and nothing else, and a basket labelled "Walk-in"
        when the person is standing there holding an order number is unhelpful. */
     customerName: doc.customerName ?? order.contactName.trim() ?? null,
-    lines: await basketLinesForDocument(siteId, doc, priceStructureId),
+    /* The structure the STORE priced the order on — acceptOrder has already
+       re-priced against it. Reading the shelf price through the collecting
+       till's structure instead made every line of a trade order look overridden.
+       See recallSaleForTillAction. */
+    priceStructureId: doc.priceStructureId,
+    lines: await basketLinesForDocument(siteId, doc, doc.priceStructureId ?? priceStructureId),
     orderNumber: order.orderNumber,
   }
 }

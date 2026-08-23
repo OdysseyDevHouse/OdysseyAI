@@ -169,14 +169,19 @@ export async function expectedTipsInDrawer(siteId: number, shiftId: number): Pro
 export async function listServiceTiers(siteId: number): Promise<(ServiceTier & { id: number })[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT id, min_total, max_total, percent, is_active
+    `SELECT id, min_total, max_total, charge_kind, percent, charge_amount, is_active
        FROM service_charge_tiers ORDER BY min_total`,
   )
   return rows.map((r) => ({
     id: Number(r.id),
     minTotal: toNum(r.min_total),
     maxTotal: r.max_total === null ? null : toNum(r.max_total),
+    /* Anything unrecognised reads as a percentage, which is what every band was
+       before 216 added the column — a band whose kind cannot be read must not
+       silently start charging its (zero) flat amount. */
+    chargeKind: String(r.charge_kind) === 'amount' ? 'amount' : 'percent',
     percent: toNum(r.percent),
+    amount: toNum(r.charge_amount),
     isActive: !!r.is_active,
   }))
 }

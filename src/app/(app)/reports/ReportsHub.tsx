@@ -36,6 +36,22 @@ export type HubItem = {
   createdByName: string
   /** A saved spec that no longer validates — listed so it can be removed. */
   broken: boolean
+  /**
+   * Where the tile goes, for the handful of entries that are a PAGE rather than
+   * a spec the engine runs — the audit trail is one. Omitted means the engine
+   * route, which is what every catalogue and saved report uses.
+   */
+  href?: string
+  /**
+   * A page that cannot be starred, because favourites are keyed on report ids
+   * and a page has no spec behind that id.
+   */
+  unstarrable?: boolean
+}
+
+/** The tile's destination: a page's own route, or the engine's. */
+function itemHref(item: HubItem) {
+  return item.href ?? `/reports/${encodeURIComponent(item.id)}`
 }
 
 type ViewMode = 'grid' | 'list'
@@ -460,7 +476,7 @@ function ReportTile({
     <div className="group relative flex items-start gap-3 rounded-card border border-border bg-surface px-4 py-3.5 transition-colors hover:border-border-strong hover:bg-surface-2">
       <CategoryTile icon={sourceIcon(item.source)} tone={sourceTone(item.source)} />
       <Link
-        href={`/reports/${encodeURIComponent(item.id)}`}
+        href={itemHref(item)}
         className="min-w-0 flex-1 outline-none after:absolute after:inset-0 after:rounded-card after:content-['']"
       >
         <span className="flex items-center gap-1.5">
@@ -477,9 +493,11 @@ function ReportTile({
             so the description can simply be readable again. */}
         <span className="mt-0.5 block text-xs leading-relaxed text-muted">{item.description}</span>
       </Link>
-      <span className="relative z-10">
-        <FavoriteToggle starred={starred} onToggle={() => onToggle(item.id)} label={item.name} />
-      </span>
+      {!item.unstarrable && (
+        <span className="relative z-10">
+          <FavoriteToggle starred={starred} onToggle={() => onToggle(item.id)} label={item.name} />
+        </span>
+      )}
     </div>
   )
 }
@@ -518,7 +536,7 @@ function CategoryList({
               size="sm"
             />
             <Link
-              href={`/reports/${encodeURIComponent(item.id)}`}
+              href={itemHref(item)}
               className="min-w-0 flex-1 flex-col outline-none sm:flex sm:flex-row sm:items-center sm:gap-4"
             >
               <span className="min-w-0 truncate text-sm font-medium text-ink-2 group-hover:text-ink sm:w-56">
@@ -537,11 +555,13 @@ function CategoryList({
               </Badge>
             )}
             {item.broken && <Badge tone="warning">Needs attention</Badge>}
-            <FavoriteToggle
-              starred={favs.has(item.id)}
-              onToggle={() => onToggle(item.id)}
-              label={item.name}
-            />
+            {!item.unstarrable && (
+              <FavoriteToggle
+                starred={favs.has(item.id)}
+                onToggle={() => onToggle(item.id)}
+                label={item.name}
+              />
+            )}
           </div>
         ))}
       </div>

@@ -43,10 +43,20 @@
 -- ─────────────────────────────────────────────────────────────────────────
 
 -- ── 1. Add the column, defaulting everyone to today's behaviour ──────────
+-- The column default is 'balance_fwd' to match DEFAULT_ACCOUNT_TYPE in
+-- src/lib/accountTypes.ts, so the schema and the code cannot disagree about
+-- what an unstated account type means. In practice nothing relies on it —
+-- every insert names the column — but a default that contradicts the app is
+-- the kind of thing somebody later reads as the intended answer.
+-- Step 2 below still puts EXISTING rows on open_item, which is what they were.
 ALTER TABLE customers
   ADD COLUMN IF NOT EXISTS account_type
-    ENUM('open_item','balance_fwd','cash','lay_by') NOT NULL DEFAULT 'open_item'
+    ENUM('open_item','balance_fwd','cash','lay_by') NOT NULL DEFAULT 'balance_fwd'
     AFTER status_reason;
+
+-- Everyone the column was just created for was an open-item account, whatever
+-- the default now says — set them so, before the cash-only carry-across below.
+UPDATE customers SET account_type = 'open_item' WHERE account_type = 'balance_fwd';
 
 -- ── 2. Carry the old boolean across ──────────────────────────────────────
 -- Everyone else stays open_item, which is what they were: a customer with

@@ -8,6 +8,7 @@ import { stockedReferSql } from './productComposition'
 import { guardPosting } from './periodLocks'
 import { offlineExceptionCounts } from './offlineExceptions'
 import { countSerialsTx } from './serials'
+import { getNumericSetting } from './settings'
 import { mirrorStockTake } from './glPosting'
 import type { Actor } from './activityLog'
 
@@ -108,6 +109,19 @@ export type StockTakeLine = {
   note: string | null
   movementId: number | null
 
+  /* ── Sign-off, for a line whose variance crosses a threshold (218) ───── */
+  /**
+   * Who agreed this variance is real, and when.
+   *
+   * NULL on the overwhelming majority of lines and always NULL when the
+   * thresholds are off. A line is only ever flagged, and therefore only ever
+   * approved, by crossing a line the owner drew deliberately.
+   */
+  approvedBy: string | null
+  approvedAt: Date | null
+  approvalReasonId: number | null
+  approvalNote: string | null
+
   /* ── Variant grouping, for the sheet's benefit only ─────────────────── */
   /**
    * The parent this line's product belongs to, when it is a variant.
@@ -134,6 +148,14 @@ export type StockTake = {
   status: StockTakeStatus
   scope: StockTakeScope
   scopeRefId: number | null
+  /**
+   * Whether the counter is shown what the system believes (218).
+   *
+   * Read by the GRID, and only while the sheet is still being counted. A
+   * posted sheet always shows both figures — blindness protects the count, and
+   * once the count is committed there is nothing left to bias.
+   */
+  isBlind: boolean
   /** The cycle-count programme that generated this sheet, if any (145). */
   programmeId: number | null
   reference: string | null
@@ -191,6 +213,14 @@ function mapLine(r: Row): StockTakeLine {
     note: (r.note as string | null) ?? null,
     movementId: r.movement_id === null || r.movement_id === undefined ? null : Number(r.movement_id),
 
+    approvedBy: (r.approved_by as string | null) ?? null,
+    approvedAt: (r.approved_at as Date | null) ?? null,
+    approvalReasonId:
+      r.approval_reason_id === null || r.approval_reason_id === undefined
+        ? null
+        : Number(r.approval_reason_id),
+    approvalNote: (r.approval_note as string | null) ?? null,
+
     parentId: r.parent_id === null || r.parent_id === undefined ? null : Number(r.parent_id),
     parentDescription: (r.parent_description as string | null) ?? null,
     axis1: String(r.axis_1_value ?? ''),
@@ -209,6 +239,7 @@ function mapTake(r: Row, lines: StockTakeLine[] = []): StockTake {
     status: String(r.status) as StockTakeStatus,
     scope: String(r.scope) as StockTakeScope,
     scopeRefId: r.scope_ref_id === null || r.scope_ref_id === undefined ? null : Number(r.scope_ref_id),
+    isBlind: Number(r.is_blind ?? 0) === 1,
     programmeId:
       r.programme_id === null || r.programme_id === undefined ? null : Number(r.programme_id),
     reference: (r.reference as string | null) ?? null,
@@ -228,7 +259,7 @@ function mapTake(r: Row, lines: StockTakeLine[] = []): StockTake {
 
 const SELECT_TAKE = `
   SELECT t.id, t.document_number, t.document_date, t.location_id, t.status,
-         t.scope, t.scope_ref_id, t.programme_id, t.reference, t.note, t.frozen_at,
+         t.scope, t.scope_ref_id, t.is_blind, t.programme_id, t.reference, t.note, t.frozen_at,
          t.posted_at, t.cancelled_at,
          t.cancel_reason, t.variance_qty, t.variance_value, t.user_name,
          l.code AS location_code, l.name AS location_name,
@@ -290,7 +321,9 @@ export async function getStockTake(siteId: number, id: number): Promise<StockTak
     `SELECT s.id, s.product_id, s.product_code, s.description, s.line_mode,
             s.snapshot_qty, s.counted_qty, s.entered_qty, s.posted_qty_before,
             s.variance_qty, s.unit_cost_excl, s.serial_ids, s.counted_at,
-            s.counted_by, s.note, s.movement_id, p.product_type,
+            s.counted_by, s.note, s.movement_id,
+            s.approved_by, s.approved_at, s.approval_reason_id, s.approval_note,
+            p.product_type,
             p.parent_id, p.axis_1_value, p.axis_2_value,
             parent.description AS parent_description
        FROM stock_take_lines s
@@ -317,6 +350,14 @@ export type StockTakeInput = {
   productIds?: readonly number[]
   /** The cycle-count programme that generated this sheet (145). */
   programmeId?: number | null
+  /**
+   * Hide what the system believes while this sheet is counted (218).
+   *
+   * Off by default, so nothing about an existing workflow changes until
+   * somebody asks for it. Chosen per sheet because a shrinkage count and a
+   * stockroom reconciliation are different jobs — see the header of 218.
+   */
+  isBlind?: boolean
   /** Include products whose pile is zero. Off by default; see buildSheetLines. */
   includeZeroStock?: boolean
   /**
@@ -499,13 +540,14 @@ export async function createStockTake(
       // deleted does not burn a number out of the sequence.
       const [res] = await tx.execute(
         `INSERT INTO stock_takes
-           (document_date, location_id, status, scope, scope_ref_id, programme_id, reference, note, user_id, user_name)
-         VALUES (?,?, 'draft', ?,?,?,?,?,?,?)`,
+           (document_date, location_id, status, scope, scope_ref_id, is_blind, programme_id, reference, note, user_id, user_name)
+         VALUES (?,?, 'draft', ?,?,?,?,?,?,?,?)`,
         [
           docDate,
           input.locationId,
           input.scope,
           input.scopeRefId ?? null,
+          input.isBlind ? 1 : 0,
           input.programmeId ?? null,
           input.reference?.trim()?.slice(0, 60) || null,
           input.note?.trim()?.slice(0, 400) || null,
@@ -599,6 +641,16 @@ export async function recountStockTake(
     productIds: varied.map((l) => l.productId),
     reference: take.reference,
     lineMode: 'recount',
+    /*
+     * A re-count inherits blindness, and would deserve it even if the first
+     * sheet had not been blind.
+     *
+     * This is the pass where seeing the expected figure does the most damage:
+     * the whole purpose of a second count is an independent answer, and a
+     * counter shown the number that is already in dispute will confirm it.
+     * Every count methodology calls for the recount specifically to be blind.
+     */
+    isBlind: take.isBlind,
     note: `Re-count of ${take.documentNumber ?? `#${takeId}`} — ${varied.length} line${varied.length === 1 ? '' : 's'} that differed.`,
     // No includeZeroStock needed: a manual sheet never applies the zero-pile
     // filter, which matters here because a line that varied may well now sit at
@@ -666,6 +718,20 @@ export async function saveCounts(
       // grid would show an empty quantity attributed to someone.
       const touched = counted !== null || entered !== null
 
+      /*
+       * Re-typing a count REVOKES its sign-off.
+       *
+       * A signature is against a specific figure. Somebody who approves "40
+       * where the books said 400", then types 4, has approved a number that no
+       * longer exists — and leaving the approval attached would post a variance
+       * ten times larger than the one anybody agreed to. That is the exact
+       * shape of a control that reads as enforced and is not.
+       *
+       * Cleared unconditionally rather than only when the figure changes.
+       * Re-saving the same value costs one wasted signature; working out
+       * whether a rounded decimal "really" changed is the kind of comparison
+       * that is wrong once and then wrong silently for years.
+       */
       await tx.execute(
         `UPDATE stock_take_lines
             SET counted_qty = ?,
@@ -674,7 +740,12 @@ export async function saveCounts(
                 serial_ids  = ?,
                 note        = COALESCE(?, note),
                 counted_at  = ${touched ? 'NOW()' : 'NULL'},
-                counted_by  = ?
+                counted_by  = ?,
+                approved_by_id     = NULL,
+                approved_by        = NULL,
+                approved_at        = NULL,
+                approval_reason_id = NULL,
+                approval_note      = NULL
           WHERE id = ? AND stock_take_id = ?`,
         [
           counted === null ? null : round(counted, 3).toFixed(3),
@@ -716,13 +787,25 @@ export async function freezeStockTake(
   }
 
   await siteTransaction(siteId, async (tx) => {
+    /*
+     * Re-snapshotting also clears any sign-off, for the same reason saveCounts
+     * does: a threshold is measured against the snapshot, so moving the
+     * snapshot moves the line somebody signed. In practice a sheet is rarely
+     * approved before it is frozen — but "rarely" is not "never", and the
+     * failure is silent when it happens.
+     */
     await tx.execute(
       `UPDATE stock_take_lines s
          JOIN products p ON p.id = s.product_id
          LEFT JOIN product_location_stock pls
                 ON pls.product_id = s.product_id AND pls.location_id = ?
           SET s.snapshot_qty   = COALESCE(pls.stock_on_hand, 0),
-              s.unit_cost_excl = COALESCE(NULLIF(p.average_cost, 0), p.last_cost, 0)
+              s.unit_cost_excl = COALESCE(NULLIF(p.average_cost, 0), p.last_cost, 0),
+              s.approved_by_id     = NULL,
+              s.approved_by        = NULL,
+              s.approved_at        = NULL,
+              s.approval_reason_id = NULL,
+              s.approval_note      = NULL
         WHERE s.stock_take_id = ?`,
       [take.locationId, takeId] as never,
     )
@@ -734,6 +817,236 @@ export async function freezeStockTake(
 
   void actor
   return { ok: true }
+}
+
+/* ── Sign-off on a large variance ────────────────────────────────────────── */
+
+/**
+ * The two thresholds, as the site has them set.
+ *
+ * Both default to zero, and zero means OFF for that half independently — a
+ * shop can gate on value alone, on percentage alone, or on both.
+ *
+ * FAILS OPEN, matching approvalGate() in purchaseDocuments.ts. If settings
+ * cannot be read, counting still works: the failure mode of a shop that can
+ * still correct its books is far better than a shop that cannot post a count
+ * because a settings row would not load.
+ */
+export type VarianceThresholds = { qtyPct: number; value: number }
+
+export async function varianceThresholds(siteId: number): Promise<VarianceThresholds> {
+  try {
+    const [qtyPct, value] = await Promise.all([
+      getNumericSetting(siteId, 'stock_take_variance_qty_pct'),
+      getNumericSetting(siteId, 'stock_take_variance_value'),
+    ])
+    return {
+      qtyPct: Number.isFinite(qtyPct) && qtyPct > 0 ? qtyPct : 0,
+      value: Number.isFinite(value) && value > 0 ? value : 0,
+    }
+  } catch {
+    return { qtyPct: 0, value: 0 }
+  }
+}
+
+/** Why a line needs signing off, in the words the screen will use. */
+export type FlaggedLine = {
+  line: StockTakeLine
+  /** counted − snapshot. The counter's claim, not the posted movement. */
+  varianceQty: number
+  varianceValue: number
+  reason: string
+}
+
+/**
+ * Which counted lines cross a threshold and therefore need a second signature.
+ *
+ * ── MEASURED AGAINST THE SNAPSHOT, NOT THE PILE AT POST TIME ───────────────
+ *
+ * This is the one place in the module that deliberately uses the FIRST of the
+ * two differences 081 describes, and the reason is that the two figures answer
+ * different questions. The movement must be counted−current, or mid-count
+ * trading posts as shrinkage. But what is being checked here is the COUNTER'S
+ * CLAIM — "I looked at this shelf and saw 40 where the sheet said 400" — and
+ * that claim was made against the snapshot. Flagging on counted−current would
+ * let a large miscount slip through unsigned whenever a sale happened to move
+ * the pile toward the counted figure.
+ *
+ * ── ABSOLUTE VALUES, BOTH DIRECTIONS ──────────────────────────────────────
+ *
+ * Stock found is checked as carefully as stock lost. A count that only
+ * questions losses teaches people that writing stock ON is the unexamined
+ * direction, and a large unexplained write-on is usually a receipt that was
+ * posted twice.
+ *
+ * ── A SNAPSHOT OF ZERO CANNOT BE A PERCENTAGE ─────────────────────────────
+ *
+ * Finding 10 units the books had at 0 is an infinite percentage, so the
+ * percentage half simply does not apply — it is the VALUE half that catches
+ * that case, which is the right instrument for it anyway. Guarded explicitly
+ * rather than left to produce Infinity, because Infinity > threshold is true
+ * and would flag every zero-snapshot line the moment a percentage was set.
+ */
+export function flagLines(
+  lines: readonly StockTakeLine[],
+  thresholds: VarianceThresholds,
+): FlaggedLine[] {
+  if (thresholds.qtyPct <= 0 && thresholds.value <= 0) return []
+
+  const flagged: FlaggedLine[] = []
+
+  for (const line of lines) {
+    // A serial line's count is the length of its scanned list; a topup line's
+    // claim is what was typed as the addition. Same derivation postStockTake
+    // uses, so the two can never disagree about what was claimed.
+    const counted =
+      line.productType === 'serial'
+        ? (line.serials?.length ?? null)
+        : line.lineMode === 'topup'
+          ? line.enteredQty === null
+            ? null
+            : round(line.snapshotQty + line.enteredQty, 3)
+          : line.countedQty
+
+    if (counted === null) continue
+
+    const varianceQty = round(counted - line.snapshotQty, 3)
+    if (Math.abs(varianceQty) < 0.0005) continue
+
+    const varianceValue = round(varianceQty * line.unitCostExcl, 4)
+
+    const reasons: string[] = []
+
+    if (thresholds.qtyPct > 0 && Math.abs(line.snapshotQty) > 0.0005) {
+      const pct = Math.abs(varianceQty / line.snapshotQty) * 100
+      if (pct > thresholds.qtyPct + 0.0005) {
+        reasons.push(`${pct.toFixed(1)}% off the expected ${formatPlain(line.snapshotQty)}`)
+      }
+    }
+
+    if (thresholds.value > 0 && Math.abs(varianceValue) > thresholds.value + 0.005) {
+      reasons.push(`R ${Math.abs(varianceValue).toFixed(2)} ${varianceValue < 0 ? 'written off' : 'written on'}`)
+    }
+
+    if (reasons.length > 0) {
+      flagged.push({ line, varianceQty, varianceValue, reason: reasons.join(' · ') })
+    }
+  }
+
+  return flagged
+}
+
+/** Quantities inside a sentence, without the thousands separators. */
+function formatPlain(qty: number): string {
+  return String(round(qty, 3))
+}
+
+/**
+ * Everything a screen needs to show the sign-off state of a sheet.
+ *
+ * One call rather than making each caller pair flagLines() with a threshold
+ * read — the two are only ever correct together, and a caller that reads the
+ * thresholds and forgets to apply them silently shows a sheet as clear.
+ */
+export type ApprovalState = {
+  thresholds: VarianceThresholds
+  /** Every flagged line, approved or not. */
+  flagged: FlaggedLine[]
+  /** The subset still waiting for a signature — what blocks posting. */
+  outstanding: FlaggedLine[]
+}
+
+export async function approvalState(
+  siteId: number,
+  take: StockTake,
+): Promise<ApprovalState> {
+  const thresholds = await varianceThresholds(siteId)
+  const flagged = flagLines(take.lines, thresholds)
+  return {
+    thresholds,
+    flagged,
+    outstanding: flagged.filter((f) => f.line.approvedAt === null),
+  }
+}
+
+export type ApproveResult = { ok: true; approved: number } | { ok: false; error: string }
+
+/**
+ * Signs off one or more flagged lines.
+ *
+ * ── THE APPROVER IS RECORDED, NOT ASSUMED ─────────────────────────────────
+ *
+ * The name is snapshotted beside the id for the same reason every other actor
+ * column in this schema is: the user may be renamed or removed, and an
+ * approval that stops naming anybody is not an approval.
+ *
+ * ── THE CAPABILITY CHECK IS NOT HERE ──────────────────────────────────────
+ *
+ * It is in the server action, which is the real boundary — the same place
+ * every other capability in this application is enforced. Putting a second
+ * copy here would drift from it.
+ *
+ * ── APPROVAL IS REVOCABLE UNTIL THE SHEET POSTS ───────────────────────────
+ *
+ * Passing an empty reasonId clears the approval instead of setting it. Somebody
+ * who signs off the wrong line has to be able to take it back, and once the
+ * sheet is posted nothing here can be touched at all.
+ */
+export async function approveVarianceLines(
+  siteId: number,
+  actor: Actor,
+  takeId: number,
+  lineIds: readonly number[],
+  input: { reasonId: number | null; note?: string | null },
+): Promise<ApproveResult> {
+  if (lineIds.length === 0) return { ok: true, approved: 0 }
+
+  const take = await siteQueryOne<Row>(siteId, 'SELECT status FROM stock_takes WHERE id = ?', [
+    takeId,
+  ])
+  if (!take) return { ok: false, error: 'That stock take no longer exists.' }
+  const status = String(take.status)
+  if (status !== 'draft' && status !== 'counting') {
+    return { ok: false, error: `A ${status} stock take can no longer be signed off.` }
+  }
+
+  const clearing = input.reasonId === null
+
+  // A reason is what makes the approval worth having. "Approved" on its own
+  // records that somebody clicked, which is not the same as somebody deciding.
+  if (!clearing) {
+    const reason = await siteQueryOne<Row>(
+      siteId,
+      'SELECT id, is_active FROM stock_adjustment_reasons WHERE id = ?',
+      [input.reasonId],
+    )
+    if (!reason) return { ok: false, error: 'That reason no longer exists.' }
+    if (!Number(reason.is_active)) {
+      return { ok: false, error: 'That reason has been retired. Choose another one.' }
+    }
+  }
+
+  const placeholders = lineIds.map(() => '?').join(',')
+  await siteExecute(
+    siteId,
+    `UPDATE stock_take_lines
+        SET approved_by_id     = ?,
+            approved_by        = ?,
+            approved_at        = ${clearing ? 'NULL' : 'NOW()'},
+            approval_reason_id = ?,
+            approval_note      = ?
+      WHERE stock_take_id = ? AND id IN (${placeholders})`,
+    [
+      clearing ? null : actor.userId,
+      clearing ? null : actor.userName.slice(0, 120),
+      input.reasonId,
+      clearing ? null : (input.note?.trim().slice(0, 190) || null),
+      takeId,
+      ...lineIds,
+    ],
+  )
+
+  return { ok: true, approved: lineIds.length }
 }
 
 /* ── Posting ─────────────────────────────────────────────────────────────── */
@@ -808,6 +1121,35 @@ export async function postStockTake(
         `${unposted} offline sale${unposted === 1 ? ' has' : 's have'} not reached the books yet. ` +
         'Those goods have left the shop but still count as stock, so a variance posted now would ' +
         'write off stock that was sold. Clear them on Sales > Offline sales first.',
+    }
+  }
+
+  /*
+   * Lines whose variance crosses a threshold the owner set, still unsigned.
+   *
+   * Refused HERE rather than in the screen, for the same reason approvalGate is
+   * enforced in issueOrder rather than by hiding a button: posting is what
+   * commits the write-off to the books, and a control that lives in the UI is a
+   * suggestion. This action is reachable from the API and from a second tab.
+   *
+   * Named lines rather than a count. "3 lines need signing off" sends somebody
+   * hunting through five thousand rows; naming the first few and saying how
+   * many more there are gets them to the right shelf.
+   */
+  const { outstanding } = await approvalState(siteId, take)
+  if (outstanding.length > 0) {
+    const named = outstanding
+      .slice(0, 3)
+      .map((f) => `${f.line.productCode ?? f.line.description} (${f.reason})`)
+      .join(', ')
+    const more = outstanding.length > 3 ? `, and ${outstanding.length - 3} more` : ''
+    return {
+      ok: false,
+      error:
+        `${outstanding.length} line${outstanding.length === 1 ? '' : 's'} ` +
+        `${outstanding.length === 1 ? 'has a variance' : 'have variances'} large enough to need signing off ` +
+        `before this count can post: ${named}${more}. Someone with permission to approve a large ` +
+        'variance must give each one a reason on the count sheet.',
     }
   }
 

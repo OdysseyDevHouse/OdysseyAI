@@ -563,7 +563,26 @@ export type OpenTabRow = {
   updatedAt: Date
 }
 
-export async function listOpenTabs(siteId: number): Promise<OpenTabRow[]> {
+/*
+ * Takes a purpose, like getDocument above, and for the same reason: THIS LIST IS
+ * TABS. It is the floor screen's own read, and on a hybrid site every row it
+ * returns lives on the shop's box.
+ *
+ * It defaulted to the cloud, which split the floor in half. `listTables` routes
+ * (posTables passes tabPurpose on every call), so the gate read its tables from
+ * the box and its tabs from the cloud — two databases describing one floor. The
+ * tabs came back, so the screen looked populated and nothing appeared broken;
+ * but `tableByDoc` is built from the TABLES, so no tab could ever be matched to
+ * one. Arming Move or Split counted zero armable bills and refused with "no open
+ * bill is on a table", over a floor showing ten of them.
+ *
+ * The default stays MASTER, as the note on getDocument explains: a caller that
+ * forgets reads something real rather than reaching a box that may not exist.
+ */
+export async function listOpenTabs(
+  siteId: number,
+  purpose: SitePurpose = MASTER,
+): Promise<OpenTabRow[]> {
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT d.id, d.reference, d.customer_name, d.user_name, d.total_incl,
@@ -576,6 +595,7 @@ export async function listOpenTabs(siteId: number): Promise<OpenTabRow[]> {
       ORDER BY d.updated_at DESC
       LIMIT 200`,
     [],
+    purpose,
   )
   return rows.map((r) => ({
     id: Number(r.id),
@@ -792,12 +812,37 @@ export function validateDocument(input: DocumentInput): string | null {
     if ((line.discountPct ?? 0) < 0 || (line.discountPct ?? 0) > 100) {
       return `${where}: discount must be between 0 and 100 percent.`
     }
-    // A credit note is negative throughout; an invoice never is. Mixing the two
-    // on one document produces totals nobody can explain.
+    /*
+     * ── A CREDIT NOTE IS NEGATIVE THROUGHOUT. AN INVOICE NEED NOT BE. ───────
+     *
+     * The first half is unchanged and still absolute: a credit note carrying a
+     * positive line would sell something in the middle of a return, and the
+     * document's whole meaning is that goods are going back.
+     *
+     * The second half USED TO BE its mirror — no negative line on anything that
+     * was not a credit note — on the reasoning that mixing the two produces
+     * totals nobody can explain. That reasoning was about the TOTALS, and the
+     * totals turned out to be the part that was never in danger: documentMath
+     * signs every figure through `splitIncl`, which was written for exactly this
+     * and says so.
+     *
+     * What the rule actually cost was the counter swap. A customer handing back
+     * a shirt and buying two others is ONE conversation at ONE till, and forcing
+     * it into two documents made the cashier ring the sale, tender it, start
+     * again, find the return, tender that, and hand over two slips — with the
+     * customer paying full price in between. So an invoice may now carry a
+     * negative line: it is an item coming back, and the slip nets to what is
+     * actually owed. See `refundArmed` in the till's sale state.
+     *
+     * Quotes and orders are still refused, and that is not an oversight. Both
+     * are PROMISES about a future sale — an offer and a commitment to supply —
+     * and neither can promise to take something back that has not gone out yet.
+     * A negative line on one is a mistake every time.
+     */
     if (input.docType === 'credit_sale' && line.qty > 0) {
       return `${where}: credit note quantities must be negative.`
     }
-    if (input.docType !== 'credit_sale' && line.qty < 0) {
+    if (line.qty < 0 && input.docType !== 'credit_sale' && input.docType !== 'invoice') {
       return `${where}: use a credit note for a negative quantity.`
     }
   }

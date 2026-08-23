@@ -118,6 +118,25 @@ export type ActivityEntity =
      one. The product, the quantity, the line's value and how many undos this
      basket had already used live in `changes`. */
   | 'pos_undo'
+  /* Items moving between two open bills at the till — a split, or a whole tab
+     transferred to another table.
+
+     Nobody authorised this either, and like an undo it moves no money: the same
+     food is still owed for, on a different bill. It is logged because the SOURCE
+     bill is rewritten in place and keeps no history of its own. Once three
+     beers have walked from table 4 to table 9, nothing on either document says
+     they were ever on table 4 — so "who moved this, and off what" has no other
+     answer, and a bill emptied out entirely is cancelled outright.
+
+     That is also the shape of a bill being quietly hollowed out onto a tab that
+     then walks, which is the reason every move is recorded and not just the
+     large ones.
+
+     entityId is the SOURCE document: the bill something left is the one whose
+     story has a hole in it, and it is the id a manager has in hand when they
+     ask. Where the items went, which tables were involved, and what was moved
+     live in `changes`. */
+  | 'pos_split'
   /* A gift card event outside a sale — generation, adjustment, void, the
      expiry sweep. Sales-side traffic already lives on the document's own
      audit; this covers the management actions where a balance moves with no

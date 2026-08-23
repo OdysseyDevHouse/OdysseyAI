@@ -13,8 +13,15 @@ import type { SubpageHref } from '@/lib/nav'
  * listed, change how the site looks, see whether it is working.
  */
 
-/** An online store route, narrowed so a tile cannot point outside this hub. */
-export type OnlineStoreHref = Extract<SubpageHref, `/online-store/${string}`>
+/**
+ * An online store route, narrowed so a tile cannot point outside this hub.
+ *
+ * `/loyalty` is the one exception, and it is named rather than left to a
+ * pattern: the members list is what the shop offers its shoppers, so it is
+ * listed here, but it is its own module with its own route and is not becoming
+ * an /online-store screen.
+ */
+export type OnlineStoreHref = Extract<SubpageHref, `/online-store/${string}`> | '/loyalty'
 
 const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
   {
@@ -62,6 +69,20 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
         icon: 'Tag',
         tone: 'rose',
         capability: 'online.edit',
+      },
+      /* The members list, moved out of the Customers menu. It sits after the
+         discount codes because both answer the same question — what a shopper
+         gets back for buying here — and its own module gate means a shop that
+         has not bought loyalty never sees the tile. The programme, its tiers
+         and the punch cards decide how it WORKS and stay in the setup hub. */
+      {
+        href: '/loyalty',
+        description: 'Members, their points and what they have earned.',
+        keywords: 'loyalty members points balance rewards earned customers programme',
+        icon: 'Gem',
+        tone: 'violet',
+        capability: 'loyalty.view',
+        module: 'loyalty',
       },
     ],
   },
@@ -182,7 +203,18 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
 
 export const ONLINE_STORE_GROUPS: HubGroup[] = resolveGroups(DECLARED)
 
-/** The catalogue as one user sees it — empty groups dropped. */
-export function onlineStoreGroupsFor(granted: (capability: string) => boolean): HubGroup[] {
-  return groupsFor(ONLINE_STORE_GROUPS, granted)
+/**
+ * The catalogue as one user sees it — empty groups dropped.
+ *
+ * `holds` is asked as well as `granted` because one tile is a separate
+ * PURCHASE: loyalty is its own module, and a shop that has not bought it must
+ * not be shown the members list. The rest of the hub carries no module of its
+ * own — the whole section is already behind `online_store`, checked once on the
+ * page — so `holds` is permissive by default and only that tile consults it.
+ */
+export function onlineStoreGroupsFor(
+  granted: (capability: string) => boolean,
+  holds?: (module: string) => boolean,
+): HubGroup[] {
+  return groupsFor(ONLINE_STORE_GROUPS, granted, holds)
 }

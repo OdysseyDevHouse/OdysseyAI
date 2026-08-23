@@ -523,6 +523,32 @@ export async function finaliseDocument(
    * that is where the rows are written. Planning twice is cheap and pure; the alternative is
    * carrying a value across the transaction boundary for no gain.
    */
+  /*
+   * ── AN INVOICE MAY NOT OWE THE CUSTOMER MONEY ──────────────────────────────
+   *
+   * An invoice can carry refund lines now (see `refundArmed` in the till's sale
+   * state), so a basket CAN net below zero — goods handed back worth more than
+   * the goods bought. This document cannot express that outcome: it has no
+   * refund tender, no return reason and no supervisor against it, all of which a
+   * payout needs and a credit note carries.
+   *
+   * Refused explicitly rather than left to the clamp below. `Math.max(0, …)`
+   * would make `netPayable` zero, and a cash tender against nothing owed is then
+   * recorded as CHANGE — money out of the drawer, on a slip that says the
+   * customer paid nothing, with no record that a refund happened at all. That is
+   * the worst available failure: it balances, and it is wrong.
+   *
+   * The till refuses first, with the way through (see `openTender`). This is the
+   * boundary that counts — the action is a public endpoint.
+   */
+  if (payable < 0) {
+    return {
+      ok: false,
+      error:
+        'This sale pays money back. Take the returned goods on a credit note, which records the refund and the reason for it.',
+    }
+  }
+
   const netPayable = round(Math.max(0, payable - voucherCredit), 2)
   const tenderedTotal = tenders.reduce((sum, t) => round(sum + t.input.amount, 2), 0)
   const preCheckTips = planTips({
@@ -660,6 +686,29 @@ export async function finaliseDocument(
   // so a sale is refused before any stock moves rather than halfway through.
   for (const line of document.lines) {
     if (!line.productId || line.productType !== 'serial') continue
+
+    /*
+     * A serial line coming BACK inside an ordinary sale is refused here.
+     *
+     * An invoice may now carry a refund line (see `refundArmed` in the till's
+     * sale state), and for most products that is simply stock going the other
+     * way. A serial-tracked unit is not: taking one back has to say WHICH unit
+     * returned, put that one back on the shelf and reopen its warranty — and
+     * `markSold` below is the only serial writer on this path, so a negative
+     * line here would mark the returned unit SOLD a second time.
+     *
+     * Refused rather than built out, because the receipted path already does it
+     * properly: a credit note off the original sale knows the serials that left
+     * on it. The message names that path instead of leaving a cashier guessing
+     * why a laptop will not scan back. `Math.abs` below then only ever sees a
+     * positive, which is what it was always written for.
+     */
+    if (line.qty < 0 && document.docType !== 'credit_sale') {
+      return {
+        ok: false,
+        error: `${line.description}: a serial-tracked item comes back on a credit note against the sale it went out on, so the right unit is returned.`,
+      }
+    }
 
     const picked = input.serials?.[line.id] ?? []
     const needed = Math.abs(round(line.qty, 0))

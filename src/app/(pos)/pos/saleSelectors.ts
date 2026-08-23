@@ -45,7 +45,13 @@ function engineLines(lines: BasketLine[]) {
     priceIncl: line.unitPriceIncl,
     /* A refund goes in at zero for the same reason — goods coming back neither
        qualify for a deal nor earn one; a three-for-two must not be completed
-       by a return. */
+       by a return.
+
+       `Math.max(qty, 0)` is what does it, and it is load-bearing now rather than
+       defensive: a refund line on an ordinary slip carries a NEGATIVE quantity
+       (see `refundArmed` in useSaleState), so without the clamp a returned item
+       would count DOWNWARDS against a "buy 3" threshold and a customer handing
+       one back could undo a deal they had already earned on the same slip. */
     qty: line.rewardSpecialId !== undefined ? 0 : Math.max(line.qty, 0),
     /*
      * What the margin guards need, and the till already has.

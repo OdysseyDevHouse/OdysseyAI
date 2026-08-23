@@ -5,7 +5,7 @@ import { templatesFor, type ReportTemplate } from '@/lib/reportBuilder/templates
 import { listSavedReports } from '@/lib/site/savedReports'
 import { listFavorites } from '@/lib/site/reportFavorites'
 import { PageHeader, PageBody } from '@/components/ui'
-import ReportsHub from './ReportsHub'
+import ReportsHub, { type HubItem } from './ReportsHub'
 
 export const dynamic = 'force-dynamic'
 
@@ -168,6 +168,37 @@ export default async function ReportsPage() {
   }
 
   /*
+   * The audit trail, which is a PAGE rather than a spec.
+   *
+   * It belongs in this catalogue: "who changed this price" and "who signed in
+   * on Tuesday" are questions somebody arrives at the reports screen holding,
+   * and it was filed under Setup — beside the settings that DECIDE things —
+   * where nobody looking for an answer would think to open it.
+   *
+   * The ROUTE stays at /setup/audit — the screen reads two logs across records
+   * with its own filters and tabs, which the engine's one-spec-one-source shape
+   * cannot express, so there is nothing to port. Only the listing moved: the
+   * setup catalogue no longer names it, and SUBPAGE_OWNER points its breadcrumb
+   * here so the trail reads "Reports › Audit trail" and leads back to this
+   * screen. It cannot be starred — a favourite is keyed on a report id and
+   * there is no spec behind this one.
+   */
+  if (allow('setup.audit')) {
+    templates.push({
+      id: 'audit-trail',
+      name: 'Audit trail',
+      description: 'Every change anyone made, and who signed in when.',
+      category: 'Operations',
+      source: 'activity',
+      kind: 'builtin' as const,
+      createdByName: '',
+      broken: false,
+      href: '/setup/audit',
+      unstarrable: true,
+    })
+  }
+
+  /*
    * Job card reports are NOT listed here.
    *
    * They have their own screen, under the Job cards section that owns them —
@@ -212,7 +243,9 @@ export default async function ReportsPage() {
   )
 }
 
-function toHubItem(t: ReportTemplate) {
+/* Annotated rather than inferred, so the pushes below may carry the optional
+   fields a PAGE tile needs — an inferred literal type has neither. */
+function toHubItem(t: ReportTemplate): HubItem {
   return {
     id: t.id,
     name: t.name,

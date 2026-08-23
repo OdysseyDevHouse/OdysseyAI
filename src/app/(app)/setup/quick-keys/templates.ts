@@ -88,7 +88,6 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
          wants to put on a till is their own best-selling product. */
       { action: 'price-enquiry', section: 'main' },
       { action: 'save-sale', section: 'main' },
-      { action: 'view-saved-sales', section: 'main' },
       { action: 'undo', section: 'main' },
       { action: 'reprint-last-slip', section: 'main' },
       { action: 'customer-payment', section: 'main', colourToken: MONEY },
@@ -117,11 +116,13 @@ export const STARTER_TEMPLATES: readonly StarterTemplate[] = [
     hospitalityOnly: true,
     groups: [SUPERVISOR],
     keys: [
-      /* The tables bar is what a waiter sees with a bill open, so it holds the four
+      /* The tables bar is what a waiter sees with a bill open, so it holds the
          acts that only make sense there. `cashup` and `clock-in-out` are deliberately
-         NOT here — see the noTables flag, which the server enforces too. */
+         NOT here — see the noTables flag, which the server enforces too.
+
+         No tip key: tips are declared on the tender pad, where the excess a tip
+         is taken from actually exists. */
       { action: 'bill-print', section: 'tables' },
-      { action: 'add-tip', section: 'tables', colourToken: MONEY },
       { action: 'table-transfer', section: 'tables' },
       { action: 'split-table', section: 'tables' },
       { action: 'send-to-kitchen', section: 'tables' },

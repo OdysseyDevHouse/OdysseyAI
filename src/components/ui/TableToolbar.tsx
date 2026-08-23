@@ -91,16 +91,29 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   className = '',
+  size = 'default',
   'aria-label': ariaLabel,
 }: {
   options: readonly SegmentedOption<T>[]
   value: T
   onChange: (next: T) => void
   className?: string
+  /**
+   * `touch` is the till's step: the bar spans the width it is given, its
+   * segments divide that width equally, and each one is a finger target rather
+   * than a 28px toolbar chip.
+   *
+   * It is a size rather than a call-site override because the default bar is an
+   * `inline-flex` sized to its labels — a modal passing `w-full` widened the
+   * BAR while leaving three small chips huddled at its left edge, which reads
+   * as a broken control rather than a bigger one.
+   */
+  size?: 'default' | 'touch'
   'aria-label'?: string
 }) {
+  const touch = size === 'touch'
   return (
-    <SegmentedBar className={className} ariaLabel={ariaLabel}>
+    <SegmentedBar className={className} ariaLabel={ariaLabel} touch={touch}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -108,7 +121,7 @@ export function SegmentedControl<T extends string>({
           role="tab"
           aria-selected={option.value === value}
           onClick={() => onChange(option.value)}
-          className={segmentClass(option.value === value)}
+          className={segmentClass(option.value === value, touch)}
         >
           <SegmentLabel option={option} active={option.value === value} />
         </button>
@@ -213,25 +226,43 @@ function SegmentedBar({
   children,
   className,
   ariaLabel,
+  touch = false,
 }: {
   children: ReactNode
   className: string
   ariaLabel?: string
+  touch?: boolean
 }) {
   return (
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={`inline-flex items-center gap-1 rounded-control border border-border bg-surface p-1 ${className}`}
+      className={`items-center gap-1 rounded-control border border-border bg-surface p-1 ${
+        /* `flex w-full` rather than `inline-flex`, so the segments below have a
+           width to divide. `surface-2` because at this size the bar is a band
+           across the dialog rather than a control tucked in a toolbar, and on
+           `surface` it would be an outline around nothing. */
+        touch ? 'flex w-full bg-surface-2' : 'inline-flex'
+      } ${className}`}
     >
       {children}
     </div>
   )
 }
 
-function segmentClass(active: boolean) {
-  return `inline-flex items-center gap-2 rounded-[6px] px-3 py-1.5 text-sm font-medium whitespace-nowrap transition ${
-    active ? 'bg-brand text-white' : 'text-muted hover:bg-surface-2 hover:text-ink'
+function segmentClass(active: boolean, touch = false) {
+  const base = touch
+    ? /* `flex-1 basis-0` — equal thirds regardless of label length, so the bar
+         does not shuffle when "Rand" sits beside "Percent". `h-touch` is the
+         same finger target every other till control uses. */
+      'flex flex-1 basis-0 h-touch justify-center rounded-control px-2 text-base font-semibold'
+    : 'inline-flex rounded-[6px] px-3 py-1.5 text-sm font-medium'
+  return `items-center gap-2 whitespace-nowrap transition ${base} ${
+    active
+      ? `bg-brand text-white${touch ? ' shadow-card' : ''}`
+      : /* On a `surface-2` bar the default hover fill is the bar's own colour,
+           so the segment would light up into nothing. Lift to `surface`. */
+        `text-muted hover:text-ink ${touch ? 'hover:bg-surface' : 'hover:bg-surface-2'}`
   }`
 }
 

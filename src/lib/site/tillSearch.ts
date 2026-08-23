@@ -446,3 +446,65 @@ export async function getTillProduct(
   const scheduled = due.get(productId)
   return scheduled === undefined ? product : { ...product, priceIncl: scheduled }
 }
+
+/**
+ * One product, priced on EVERY price type the shop keeps.
+ *
+ * ── WHY THE TILL NEEDS THIS AND `getTillProduct` WILL NOT DO ──────────────
+ *
+ * Every other read on this screen answers "what does THIS customer pay", so it
+ * takes one structure and returns one figure. A price check asks the opposite
+ * question — "what are all the prices for this?" — and it is asked by a cashier
+ * with a customer in front of them wanting to know whether they qualify for
+ * trade, or by a phone call asking what something costs on account. One figure
+ * is the wrong answer to that no matter which structure it is read on.
+ *
+ * ── WHY N QUERIES RATHER THAN ONE PIVOT ──────────────────────────────────
+ *
+ * `getTillProduct` per structure, in parallel. It looks wasteful and it is the
+ * cheap option: a shop has two or three price types, so this is three indexed
+ * primary-key reads on a screen a cashier opens by hand. Writing a pivot would
+ * mean a second copy of a 60-line SELECT — including the location subquery, the
+ * reserved-quantity arithmetic and the VAT join — kept in step with the first by
+ * hand, and it would still have to loop for the scheduled prices, because
+ * `duePricesFor` is per structure.
+ *
+ * The scheduled price is the reason this cannot be a plain `product_prices`
+ * read. A price rise due at six is what the till is already charging at five
+ * past; a price check that quoted the old figure would have the cashier promise
+ * one price and the slip print another, which is the exact complaint the whole
+ * schedule mechanism exists to avoid.
+ *
+ * Structures the product has no row for come back at 0 — that is what
+ * `COALESCE(pp.selling_price_incl, 0)` gives — and the caller says "not priced"
+ * rather than "free". A zero here is an absence, and printing R0.00 beside a
+ * price type is how somebody sells a fridge for nothing.
+ */
+export async function priceCheckForTill(
+  siteId: number,
+  productId: number,
+  structureIds: number[],
+  /** The room this till sells from, so the stock figure is the one it can hand over. */
+  locationId: number | null = null,
+): Promise<{ product: TillProduct; prices: { structureId: number; priceIncl: number }[] } | null> {
+  if (structureIds.length === 0) return null
+
+  const priced = await Promise.all(
+    structureIds.map((id) => getTillProduct(siteId, productId, id, locationId)),
+  )
+
+  /* The first structure that answered carries the product's own facts — the
+     description, the stock, the VAT rate. They are identical across the reads by
+     construction; only the price differs. A product that answered on NONE of
+     them does not exist, which is a null rather than an empty price list. */
+  const product = priced.find((p): p is TillProduct => p !== null)
+  if (!product) return null
+
+  return {
+    product,
+    prices: structureIds.map((structureId, i) => ({
+      structureId,
+      priceIncl: priced[i]?.priceIncl ?? 0,
+    })),
+  }
+}

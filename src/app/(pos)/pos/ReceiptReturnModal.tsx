@@ -1,23 +1,47 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Badge,
   Button,
   Callout,
+  EmptyState,
   Field,
   Icons,
   Input,
   Modal,
+  SegmentedControl,
   Select,
+  Skeleton,
+  TouchRow,
   useToast,
 } from '@/components/ui'
 import { formatMoney, formatQty, round } from '@/lib/decimals'
-import type { PickableReason } from '@/components/ui'
+import type { PickableReason, SegmentedOption } from '@/components/ui'
 import type { TenderType } from '@/lib/site/tenderTypes'
-import { findReceiptAction, type ReceiptLookup } from './returnActions'
+import {
+  findReceiptAction,
+  recentReceiptsAction,
+  type ReceiptLookup,
+  type ReceiptRange,
+  type ReceiptSummary,
+} from './returnActions'
 
 type FoundInvoice = Extract<ReceiptLookup, { ok: true }>['invoice']
+
+/**
+ * The quick windows across the top of the list.
+ *
+ * Three, not a date picker: a return is a recent-sale act — same day, or the
+ * week if it is a gift — and a till has neither the screen nor the patience for
+ * a calendar. Anything older is a back-office credit, where the customer's
+ * account is the better way in anyway.
+ */
+const RANGES: readonly SegmentedOption<ReceiptRange>[] = [
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'week', label: 'Last 7 days' },
+]
 
 export type ReceiptReturnPick = {
   invoiceId: number
@@ -50,6 +74,8 @@ export default function ReceiptReturnModal({
   onClose,
   onRefund,
   onExchange,
+  listReceipts = recentReceiptsAction,
+  findReceipt = findReceiptAction,
 }: {
   open: boolean
   online: boolean
@@ -61,6 +87,15 @@ export default function ReceiptReturnModal({
   onRefund: (pick: ReceiptReturnPick, refundTenderTypeId: number) => void
   /** Hold the credit — the till goes into exchange mode for the replacement. */
   onExchange: (pick: ReceiptReturnPick) => void
+  /*
+   * The two reads, injectable — defaulted to the real actions so the till passes
+   * neither. They exist for the Style Guide: /pos is behind a clerk PIN, so the
+   * only way to LOOK at this screen is to render it with fixtures, and a
+   * component that reaches for a server action directly cannot be. Same reason
+   * SplitBillModal takes `loadDestinationLines` as a prop.
+   */
+  listReceipts?: typeof recentReceiptsAction
+  findReceipt?: typeof findReceiptAction
 }) {
   const toast = useToast()
   const [scan, setScan] = useState('')
@@ -71,6 +106,14 @@ export default function ReceiptReturnModal({
   const [note, setNote] = useState('')
   const [refundTender, setRefundTender] = useState<number | null>(null)
 
+  /* The browse list. `range` is the tapped window; `scan` doubles as its search
+     box, because a cashier who HAS the number and one who is hunting for the
+     sale are doing the same thing with one field. */
+  const [range, setRange] = useState<ReceiptRange>('today')
+  const [receipts, setReceipts] = useState<ReceiptSummary[]>([])
+  const [listing, setListing] = useState(false)
+  const [truncated, setTruncated] = useState(false)
+
   useEffect(() => {
     if (!open) return
     setScan('')
@@ -79,31 +122,76 @@ export default function ReceiptReturnModal({
     setReasonId(reasons[0]?.id ?? null)
     setNote('')
     setRefundTender(null)
+    setRange('today')
   }, [open, reasons])
 
   const refundable = useMemo(() => tenders.filter((t) => t.allowsRefund), [tenders])
 
-  async function lookUp() {
-    if (!scan.trim()) return
-    setLooking(true)
-    try {
-      const result = await findReceiptAction(scan)
-      if (!result.ok) {
-        toast.error(result.error)
-        return
+  /**
+   * Loads the list for the current window and search.
+   *
+   * Debounced on the search text rather than fired per keystroke: a scanner
+   * delivers a whole number as a burst of keydowns, and a request per character
+   * would put a dozen queries on the wire and race their answers back in an
+   * order nobody controls. 250ms is under the gap between two scans and over
+   * the gap between two characters of one.
+   */
+  const loadList = useCallback(
+    async (nextRange: ReceiptRange, search: string) => {
+      setListing(true)
+      try {
+        const result = await listReceipts({ range: nextRange, search })
+        if (!result.ok) {
+          toast.error(result.error)
+          setReceipts([])
+          setTruncated(false)
+          return
+        }
+        setReceipts(result.receipts)
+        setTruncated(result.truncated)
+      } finally {
+        setListing(false)
       }
-      setInvoice(result.invoice)
-      setQtys({})
-      /* Default the refund to how they paid, when that tender can pay out —
-         cash otherwise. The cashier can still change it. */
-      const paid = result.invoice.tenders
-        .map((t) => refundable.find((r) => r.id === t.tenderTypeId))
-        .find((t) => t !== undefined)
-      setRefundTender(paid?.id ?? refundable.find((t) => t.code === 'CASH')?.id ?? refundable[0]?.id ?? null)
-    } finally {
-      setLooking(false)
-    }
-  }
+    },
+    [toast, listReceipts],
+  )
+
+  useEffect(() => {
+    // Only while the list is the thing on screen: an invoice is open means the
+    // cashier is picking lines, and refetching behind them is pure waste.
+    if (!open || !online || invoice) return
+    const search = scan.trim()
+    const timer = window.setTimeout(() => void loadList(range, search), search ? 250 : 0)
+    return () => window.clearTimeout(timer)
+  }, [open, online, invoice, range, scan, loadList])
+
+  /** Opens one sale from the list — the same lookup the typed number runs. */
+  const openReceipt = useCallback(
+    async (number: string) => {
+      if (!number.trim()) return
+      setLooking(true)
+      try {
+        const result = await findReceipt(number)
+        if (!result.ok) {
+          toast.error(result.error)
+          return
+        }
+        setInvoice(result.invoice)
+        setQtys({})
+        /* Default the refund to how they paid, when that tender can pay out —
+           cash otherwise. The cashier can still change it. */
+        const paid = result.invoice.tenders
+          .map((t) => refundable.find((r) => r.id === t.tenderTypeId))
+          .find((t) => t !== undefined)
+        setRefundTender(
+          paid?.id ?? refundable.find((t) => t.code === 'CASH')?.id ?? refundable[0]?.id ?? null,
+        )
+      } finally {
+        setLooking(false)
+      }
+    },
+    [refundable, toast, findReceipt],
+  )
 
   const picked = useMemo(() => {
     if (!invoice) return []
@@ -131,33 +219,139 @@ export default function ReceiptReturnModal({
 
   const ready = picked.length > 0 && reasonId !== null
 
+  const searching = scan.trim().length > 0
+  /* Whether every row on screen is from the same day. A search spans 90 days by
+     design, so it is never one day however the window is set. */
+  const oneDay = !searching && range !== 'week'
+
   return (
-    <Modal open={open} onClose={onClose} title="Return against a receipt">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Return against a receipt"
+      size="lg"
+      /* The filter strip is a subheader rather than the first thing in the body
+         so it stays PUT while a long day's sales scroll under it — the whole
+         point of the control is saying which slice you are looking at. Only
+         while the list is on screen: once a sale is open the strip would filter
+         nothing. */
+      subheader={
+        online && !invoice ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <SegmentedControl
+              options={RANGES}
+              value={range}
+              onChange={setRange}
+              aria-label="Which sales to show"
+              className="shrink-0"
+            />
+            <Input
+              value={scan}
+              onChange={(e) => setScan(e.target.value)}
+              onKeyDown={(e) => {
+                /* Enter on an exact number opens it straight away — a scanner
+                   ends its burst with one, so scanning a slip skips the list
+                   entirely rather than making the cashier tap the single row
+                   it just filtered down to. */
+                if (e.key === 'Enter') void openReceipt(scan)
+              }}
+              icon={<Icons.Search size={15} />}
+              placeholder="Invoice number or customer"
+              aria-label="Search for a sale"
+              className="sm:flex-1"
+              autoFocus
+            />
+          </div>
+        ) : undefined
+      }
+    >
       {!online ? (
         <Callout tone="brand" title="Receipted returns need the connection">
           Checking what has already been credited needs the server. A no-receipt return
           still works offline — use the Return toggle on the sale pane.
         </Callout>
       ) : !invoice ? (
-        <div className="flex flex-col gap-3">
-          <Field
-            label="Invoice number"
-            hint="On the customer’s slip — scan it or type it."
-          >
-            <Input
-              value={scan}
-              onChange={(e) => setScan(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void lookUp()
-              }}
-              placeholder="INV_01_01_000123"
-              autoFocus
+        <div className="flex flex-col gap-2">
+          {/* Said above the list, because it changes what the list MEANS: a
+              search ignores the window and looks back three months.
+
+              Suppressed when there is nothing to describe — the empty state
+              below carries the instruction in that case, and two of them at
+              once contradicted each other ("tap the sale" over no sales). */}
+          {receipts.length > 0 && (
+            <p className="text-xs text-muted">
+              {searching
+                ? 'Searching the last 90 days — the window above is ignored while you are typing.'
+                : 'Tap the sale that is coming back.'}
+            </p>
+          )}
+
+          {listing && receipts.length === 0 ? (
+            <div className="flex flex-col gap-2" aria-busy="true">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-16 w-full rounded-card" />
+              ))}
+            </div>
+          ) : receipts.length === 0 ? (
+            <EmptyState
+              icon={<Icons.Receipt size={22} />}
+              title={searching ? 'Nothing matched' : 'No sales in this window'}
+              hint={
+                searching
+                  ? 'Check the number on the slip, or try the customer’s name.'
+                  : range === 'week'
+                    ? 'Nothing was sold on this site in the last seven days. Type a number to look further back.'
+                    : `Try ${range === 'today' ? 'yesterday' : 'today'} or the last seven days — or type the number from the slip.`
+              }
             />
-          </Field>
-          <Button variant="primary" disabled={looking || !scan.trim()} onClick={() => void lookUp()}>
-            <Icons.Search size={15} />
-            {looking ? 'Looking…' : 'Find the sale'}
-          </Button>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {receipts.map((receipt) => (
+                <li key={receipt.documentId}>
+                  <TouchRow
+                    className="w-full"
+                    title={receipt.documentNumber}
+                    subtitle={[
+                      /* A single-day window shows the bare time — it is the
+                         fastest thing to match against what the customer
+                         remembers, and the day is already stated by the filter.
+                         A window that spans days must name the day too, or two
+                         rows an hour apart read as the same afternoon. */
+                      oneDay
+                        ? receipt.finalisedAt ?? receipt.documentDate
+                        : [receipt.documentDate, receipt.finalisedAt].filter(Boolean).join(' '),
+                      receipt.customerName ?? 'Walk-in',
+                      receipt.terminalCode ?? null,
+                      receipt.userName || null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    disabled={looking || busy}
+                    onClick={() => void openReceipt(receipt.documentNumber)}
+                    trailing={
+                      <span className="flex items-center gap-2">
+                        {/* A sale already credited once is still returnable —
+                            the rest of it may not have come back yet. Flagged
+                            rather than hidden, so the cashier knows before they
+                            open it why the quantities are capped. */}
+                        {receipt.partlyCredited && <Badge tone="warning">Credited</Badge>}
+                        <span className="numeric text-sm font-semibold text-ink">
+                          {formatMoney(receipt.totalIncl)}
+                        </span>
+                      </span>
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {truncated && (
+            <p className="text-xs text-muted">
+              Only the most recent sales are listed. Type the number or the customer’s
+              name to find an older one.
+            </p>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-4">
@@ -167,8 +361,11 @@ export default function ReceiptReturnModal({
               {invoice.documentDate} · {invoice.customerName ?? 'Walk-in'} ·{' '}
               {formatMoney(invoice.totalIncl)}
             </span>
+            {/* Back to the list, which is still filtered the way they left it —
+                setInvoice(null) alone re-arms the load effect. */}
             <Button variant="ghost" size="sm" onClick={() => setInvoice(null)}>
-              Different slip
+              <Icons.ChevronLeft size={14} />
+              Different sale
             </Button>
           </div>
 

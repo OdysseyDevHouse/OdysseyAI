@@ -39,6 +39,35 @@ function check(label: string, condition: boolean, detail = '') {
 const created: number[] = []
 const createdRoles: number[] = []
 
+/**
+ * A PIN nobody on this site is already using.
+ *
+ * These used to be literals, which made the whole suite depend on which PINs
+ * the shop's real staff happen to hold: this site's seeded users own 4827, so
+ * `createUser` refused it, the first check failed, and the script threw
+ * "cannot continue without a user" — a red line about the DATA, not the code.
+ *
+ * Availability is asked the same way the app asks it, through sign-in, so this
+ * agrees with `pinInUse` by construction rather than by reimplementing its
+ * bcrypt loop. Candidates skip the weak shapes `validate` rejects — a repeated
+ * digit, a straight run — so a free-but-refused PIN can never be picked.
+ */
+async function freePin(digits: 4 | 6): Promise<string> {
+  const weak = (pin: string) =>
+    /^(\d)\1+$/.test(pin) ||
+    '0123456789012345'.includes(pin) ||
+    '9876543210987654'.includes(pin)
+
+  for (let n = 0; n < 400; n++) {
+    // Deterministic rather than random, so a failure is reproducible.
+    const base = String(2000 + n * 7).slice(0, 4)
+    const candidate = digits === 4 ? base : `${base}${String(11 + (n % 80)).padStart(2, '0')}`
+    if (weak(candidate)) continue
+    if (!(await signInWithPin(SITE, candidate)).ok) return candidate
+  }
+  throw new Error(`no free ${digits}-digit PIN on site ${SITE}`)
+}
+
 async function main() {
   console.log(`\n${CAPABILITIES.length} capabilities defined\n`)
 
@@ -80,13 +109,17 @@ async function main() {
 
   // ── PINs ───────────────────────────────────────────────────────────────
   console.log('')
+  /* Chosen against the live site rather than written in, so a shop whose own
+     staff already hold one of these does not fail the suite. See freePin. */
+  const PIN = await freePin(4)
+  const PIN6 = await freePin(6)
   const pos = await createUser(SITE, {
     name: 'Test Cashier',
     email: null,
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
-    pin: '4827',
+    pin: PIN,
     isActive: true,
   })
   check('a POS-only user can be created with a PIN', pos.ok, pos.ok ? '' : pos.error)
@@ -98,7 +131,7 @@ async function main() {
     'SELECT pin_hash FROM users WHERE id = ?',
     [pos.id],
   )
-  check('the PIN is not stored in plaintext', !row?.pin_hash?.includes('4827'))
+  check('the PIN is not stored in plaintext', !row?.pin_hash?.includes(PIN))
   check('the PIN is stored as a bcrypt hash', /^\$2[aby]\$/.test(row?.pin_hash ?? ''))
 
   const stored = await getUser(SITE, pos.id)
@@ -112,7 +145,7 @@ async function main() {
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
-    pin: '4827',
+    pin: PIN,
     isActive: true,
   })
   check('a duplicate PIN is refused', !clash.ok, clash.ok ? '' : clash.error)
@@ -144,7 +177,7 @@ async function main() {
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
-    pin: '419573',
+    pin: PIN6,
     isActive: true,
   })
   check('a six-digit PIN is accepted', sixDigit.ok, sixDigit.ok ? '' : sixDigit.error)
@@ -152,13 +185,16 @@ async function main() {
 
   // ── Sign-in ────────────────────────────────────────────────────────────
   console.log('')
-  const good = await signInWithPin(SITE, '4827')
+  const good = await signInWithPin(SITE, PIN)
   check('the right PIN signs the right person in', good.ok && good.user.id === pos.id)
 
-  const wrong = await signInWithPin(SITE, '9999')
+  /* Free by the same test the others were chosen by, so "unknown" is a fact
+     about this site rather than a hope about 9999. */
+  const unknownPin = await freePin(4)
+  const wrong = await signInWithPin(SITE, unknownPin)
   check('an unknown PIN is refused', !wrong.ok)
 
-  const six = await signInWithPin(SITE, '419573')
+  const six = await signInWithPin(SITE, PIN6)
   check('a six-digit PIN signs in', six.ok && six.user.name === 'Test Six Digit')
 
   // An inactive user must not be able to open a till.
@@ -171,7 +207,7 @@ async function main() {
     pin: null,
     isActive: false,
   })
-  const inactive = await signInWithPin(SITE, '4827')
+  const inactive = await signInWithPin(SITE, PIN)
   check('an inactive user cannot sign in', !inactive.ok)
 
   // ...and their PIN is then free for someone else, since uniqueness only
@@ -182,7 +218,7 @@ async function main() {
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
-    pin: '4827',
+    pin: PIN,
     isActive: true,
   })
   check("an inactive user's PIN can be reused", reuse.ok, reuse.ok ? '' : reuse.error)

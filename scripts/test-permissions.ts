@@ -124,6 +124,39 @@ const SESSION_ROUTES = new Set([
   // The bell: personal feed; visibility filtered per capability in
   // src/lib/site/notifications.ts, mutations touch only the visitor's rows.
   'src/app/api/notifications/route.ts',
+  /*
+   * The business's own logo, for the letterhead on a printed document.
+   *
+   * Deliberately session-gated rather than capability-gated, and the route says
+   * why at length: the picture belongs to no one screen — it is on the purchase
+   * order a buyer prints, the invoice a clerk prints and the preview a designer
+   * looks at — so gating it on `setup.stationery` would blank the logo on
+   * everyone's paperwork except the person who uploaded it.
+   *
+   * Listed HERE and not in OPEN_ROUTES because it is not open: the check below
+   * still proves `requireSiteUser` is present, which is what resolves the site
+   * from the session. There is no id in the URL, so the route cannot be pointed
+   * at another shop's file.
+   */
+  'src/app/api/document-logo/route.ts',
+  /*
+   * Its two siblings, session-gated for the same documented reason and verified
+   * the same way — read individually, not swept in.
+   *
+   * `stationery-images` serves the pictures the shop chose to put ON the
+   * invoice a clerk prints and the order a buyer prints; gating them on
+   * `setup.stationery` would blank them for everyone but whoever uploaded them.
+   * The id in the path is safe because `readImage` is scoped to the site the
+   * SESSION resolves, so walking the range reaches only this shop's own
+   * pictures.
+   *
+   * `pos/slip-design` hands the till its active slip layout, which has to reach
+   * the client because printing.ts composes the slip in the browser at the
+   * counter. Anyone standing at a till may print a slip, and the site again
+   * comes from the session, so there is nothing in the URL to point elsewhere.
+   */
+  'src/app/api/stationery-images/[id]/route.ts',
+  'src/app/api/pos/slip-design/route.ts',
 ])
 
 /**
@@ -207,6 +240,43 @@ const OPEN_ROUTES = new Set([
   // store token plus `storefrontContext` agreeing the shop is open, not a
   // capability. A closed shop or a bad token both 404, indistinguishably.
   'src/app/api/store-images/[token]/shop/[imageId]/route.ts',
+  /*
+   * ── The mobile app's three auth endpoints ────────────────────────────────
+   *
+   * All three authenticate; none of them can do it with a capability, which is
+   * why the check cannot see it. Read individually before being added here.
+   *
+   * `login` is enrolment — the one time the app asks for a password. Requiring
+   * a session to sign in is the same contradiction as requiring one to sign
+   * out. It defers to `signIn()` rather than comparing a password itself, so
+   * the lockout counter, the account-enumeration rule, the sign-in log and the
+   * 2FA branch are the same ones the web form gets.
+   *
+   * `session` trades that enrolment token for a fresh session on each cold
+   * start. The bearer token IS the credential: it resolves a user, then re-reads
+   * the account and refuses a suspended one, a deleted one, or one told to
+   * change its password — with the same 401 a bad token gets, so an
+   * unauthenticated caller cannot learn which tokens name real accounts.
+   *
+   * `revoke` is the app's own "sign out", authenticated by the token because it
+   * is the token's holder asking to destroy it. It answers 204 either way, for
+   * that same non-enumeration reason, and scopes the delete by user AND token
+   * so no id but this token's own can be revoked through it.
+   */
+  'src/app/api/mobile/auth/login/route.ts',
+  'src/app/api/mobile/auth/session/route.ts',
+  'src/app/api/mobile/auth/revoke/route.ts',
+  /*
+   * The local box's overnight flush — the batch a shop's own machine hands to
+   * the cloud's posting path at 03:00, when nobody is signed in.
+   *
+   * Same shape and same reasoning as the cron ticks above: BOX_CRON_SECRET
+   * compared by `timingSafeEqual`, length-guarded first so a mismatch cannot
+   * leak the length, and every request refused when that variable is unset. It
+   * fails closed for a sharp reason — this posts real money to the books, so an
+   * open version would let anyone on the shop's LAN drive it.
+   */
+  'src/app/api/pos/box-flush/route.ts',
 ])
 
 async function main() {
@@ -224,7 +294,8 @@ async function main() {
   check(
     `every page checks a capability (${pages.length - unguardedPages.length}/${pages.length})`,
     unguardedPages.length === 0,
-    unguardedPages.slice(0, 5).join(', '),
+    // All of them, for the reason given at the routes check below.
+    unguardedPages.join(', '),
   )
 
   /* ── Server actions ────────────────────────────────────────────────── */
@@ -302,7 +373,11 @@ async function main() {
   check(
     `every non-public api route checks a capability (${routes.length - OPEN_ROUTES.size - unguardedRoutes.length} of ${routes.length - OPEN_ROUTES.size})`,
     unguardedRoutes.length === 0,
-    unguardedRoutes.slice(0, 5).join(', '),
+    /* ALL of them, not the first five. The cap hid two unguarded routes behind
+       the five it printed: fixing the named ones turned the line green-ish and
+       the rest only appeared on the next run. A list this check wants somebody
+       to act on has to show what there is to act on. */
+    unguardedRoutes.join(', '),
   )
 
   /* ── The old role must be gone ─────────────────────────────────────── */
@@ -312,10 +387,22 @@ async function main() {
   // the store's own, which both refuses people who were granted access and
   // admits people who were not.
   console.log('\nno stale role checks')
-  const everything = [
-    ...(await walk(path.join(APP, '(app)'), (n) => n.endsWith('.ts') || n.endsWith('.tsx'))),
-    ...(await walk(path.join(APP, 'api'), (n) => n.endsWith('.ts'))),
-  ].map(rel)
+  /*
+   * EVERY route group, not just (app) and api.
+   *
+   * This used to walk `(app)` and `api` alone, which left `(pos)`,
+   * `(invoicing)`, `(print)`, `store`, `portal` and the rest unscanned — so the
+   * stale-role check below never looked at the till, and the enforcement count
+   * further down reported a capability as unused when the only place enforcing
+   * it was the POS. `sales.cashup_other` is exactly that: guarded in
+   * (pos)/pos/shiftActions.ts, and listed as "not yet enforced" for it.
+   *
+   * Walking src/app wholesale rather than naming the groups, so a group added
+   * later is covered without anybody remembering to add it here.
+   */
+  const everything = (
+    await walk(path.join(ROOT, 'src', 'app'), (n) => n.endsWith('.ts') || n.endsWith('.tsx'))
+  ).map(rel)
 
   const stale: string[] = []
   for (const f of everything) {
@@ -456,10 +543,30 @@ async function main() {
   const unnamed = [...catalogueHrefs].filter((href) => !declaredLabels.has(href))
   check('every Setup hub tile has a label entry', unnamed.length === 0, unnamed.join(', '))
 
-  // And the reverse: a label for a screen no longer on the hub is dead weight,
-  // and points at a screen nothing links to.
-  const orphans = [...declaredLabels.keys()].filter((href) => !catalogueHrefs.has(href))
+  /*
+   * And the reverse: a label for a screen no longer on the hub is dead weight,
+   * and points at a screen nothing links to.
+   *
+   * Unless another hub has CLAIMED it in SUBPAGE_OWNER. A route's prefix is not
+   * the same question as which hub lists it — /setup/audit is listed in the
+   * reports catalogue, because it answers a question rather than deciding
+   * something, while its route stays where it always was. Such a screen is
+   * linked, named and reachable; it is simply not Setup's.
+   */
+  const ownedElsewhere = new Set(
+    [...navSrc.matchAll(/'(\/setup\/[a-z-]+)':\s*'(\/[a-z-]+)'/g)]
+      .filter((m) => m[2] !== '/setup')
+      .map((m) => m[1]),
+  )
+  const orphans = [...declaredLabels.keys()].filter(
+    (href) => !catalogueHrefs.has(href) && !ownedElsewhere.has(href),
+  )
   check('no label entry points at a screen the hub has dropped', orphans.length === 0, orphans.join(', '))
+  check(
+    'a setup-routed screen listed by another hub is claimed in SUBPAGE_OWNER',
+    ownedElsewhere.has('/setup/audit'),
+    [...ownedElsewhere].join(', ') || 'none claimed',
+  )
 
   await tillAttributionIsTheOperator()
 }

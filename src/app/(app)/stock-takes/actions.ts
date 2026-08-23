@@ -10,6 +10,7 @@ import {
   postStockTake,
   cancelStockTake,
   deleteStockTake,
+  approveVarianceLines,
   type StockTakeInput,
   type CountEntry,
 } from '@/lib/site/stockTakes'
@@ -109,6 +110,33 @@ export async function freezeStockTakeAction(takeId: number) {
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
   const result = await freezeStockTake(siteId, actor, takeId)
+  if (result.ok) revalidatePath(`/stock-takes/${takeId}`)
+  return result
+}
+
+/**
+ * Signs off lines whose variance crosses the threshold, so the count can post.
+ *
+ * Guarded on `stock.approve_variance`, NOT on `stock.adjust` — and that
+ * separation is the whole point of the feature. A counter who can clear their
+ * own flags has a second click, not a control. Whoever holds this right is by
+ * definition somebody other than the person who was holding the tablet, which
+ * is the only reason the number means anything.
+ *
+ * Passing `reasonId: null` clears an approval instead of granting one, so a
+ * signature given to the wrong line can be taken back while the sheet is open.
+ */
+export async function approveVarianceLinesAction(
+  takeId: number,
+  lineIds: number[],
+  input: { reasonId: number | null; note?: string | null },
+) {
+  const ctx = await actorForModule('inventory_advanced', 'stock.approve_variance')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+  const result = await approveVarianceLines(siteId, actor, takeId, lineIds, input)
+  // Unlike saveCounts this DOES revalidate: an approval changes whether the
+  // sheet can post, and the post button has to stop being refused.
   if (result.ok) revalidatePath(`/stock-takes/${takeId}`)
   return result
 }

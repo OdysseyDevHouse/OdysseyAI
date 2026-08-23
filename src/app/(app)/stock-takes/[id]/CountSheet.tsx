@@ -4,10 +4,15 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import {
   Badge,
   Button,
+  Callout,
+  Field,
   Icons,
   Input,
+  Modal,
   SegmentedControl,
+  Select,
   TableToolbar,
+  Textarea,
   ToolbarSearch,
   EmptyState,
   TABLE,
@@ -20,7 +25,7 @@ import {
 } from '@/components/ui'
 import { formatQty } from '@/lib/decimals'
 import type { StockTakeLine } from '@/lib/site/stockTakes'
-import { saveCountsAction } from '../actions'
+import { saveCountsAction, approveVarianceLinesAction } from '../actions'
 import { LineImportDialog } from '@/components/import/LineImportDialog'
 import type { LineDraft as ImportedLine } from '@/lib/import/documentLines'
 
@@ -48,7 +53,7 @@ import type { LineDraft as ImportedLine } from '@/lib/import/documentLines'
  * never drift from every other table in the app.
  */
 
-type Filter = 'all' | 'uncounted' | 'variances'
+type Filter = 'all' | 'uncounted' | 'variances' | 'signoff'
 
 /** What the screen holds per line while someone is typing into it. */
 type Draft = {
@@ -92,10 +97,27 @@ export default function CountSheet({
   takeId,
   lines,
   readOnly,
+  blind,
+  flagged,
+  reasons,
+  canApprove,
 }: {
   takeId: number
   lines: StockTakeLine[]
   readOnly: boolean
+  /**
+   * Hide the expected figure and the running variance (218).
+   *
+   * The page passes this as `isBlind && !readOnly` — blindness protects the
+   * count, and a posted sheet has nothing left to protect. So this component
+   * never has to reason about status.
+   */
+  blind: boolean
+  /** Lines needing sign-off, by line id, with why in the words the gate used. */
+  flagged: Record<number, string>
+  /** The adjustment reasons an approver picks from. Empty when nobody may. */
+  reasons: { id: number; name: string }[]
+  canApprove: boolean
 }) {
   const toast = useToast()
   const [drafts, setDrafts] = useState<Record<number, Draft>>(() => {
@@ -123,6 +145,25 @@ export default function CountSheet({
   const inputs = useRef<Record<number, HTMLInputElement | null>>({})
   const scanRef = useRef<HTMLInputElement>(null)
   const [importOpen, setImportOpen] = useState(false)
+
+  /**
+   * Which flagged line is being signed off, and with what.
+   *
+   * One at a time rather than a bulk "approve all": a signature that covers
+   * lines the approver did not look at individually is the thing this feature
+   * exists to prevent, and a select-all checkbox is an invitation to give one.
+   */
+  const [approving, setApproving] = useState<StockTakeLine | null>(null)
+  const [reasonId, setReasonId] = useState(0)
+  const [approvalNote, setApprovalNote] = useState('')
+  const [approvalBusy, setApprovalBusy] = useState(false)
+
+  /** Approved state held locally so a signature lands without a page reload. */
+  const [approvals, setApprovals] = useState<Record<number, string | null>>(() => {
+    const initial: Record<number, string | null> = {}
+    for (const line of lines) initial[line.id] = line.approvedAt ? (line.approvedBy ?? '') : null
+    return initial
+  })
 
   const serialCount = (line: StockTakeLine) => (serials[line.id] ?? []).length
 
@@ -156,6 +197,24 @@ export default function CountSheet({
   const countedCount = lines.filter((l) => (drafts[l.id]?.text ?? '').trim() !== '').length
   const unsaved = Object.values(drafts).some((d) => !d.saved)
 
+  /** Flagged lines still without a signature — exactly what blocks posting. */
+  const unsignedCount = lines.filter(
+    (l) => flagged[l.id] !== undefined && approvals[l.id] === null,
+  ).length
+
+  /**
+   * Whether the sign-off column exists at all.
+   *
+   * Only when this sheet has actually flagged something. A shop with the
+   * thresholds off — the default — never sees a trace of this feature, and a
+   * sheet where nothing crossed the line does not grow an empty column to
+   * say so.
+   */
+  const showSignoff = Object.keys(flagged).length > 0
+
+  /** Code + description + counted, plus whichever of the rest are rendered. */
+  const columnCount = 3 + (blind ? 0 : 2) + (showSignoff ? 1 : 0)
+
   const save = useCallback(
     async (lineId: number, text: string) => {
       const trimmed = text.trim()
@@ -165,6 +224,10 @@ export default function CountSheet({
       const result = await saveCountsAction(takeId, [{ lineId, countedQty: value }])
       if (result && 'ok' in result && result.ok) {
         setDrafts((d) => ({ ...d, [lineId]: { text, saved: true } }))
+        // saveCounts revokes the sign-off server-side, because a signature is
+        // against a specific figure. Mirroring it here keeps the row from
+        // claiming an approval the server has just dropped.
+        setApprovals((a) => (a[lineId] === null ? a : { ...a, [lineId]: null }))
         setFailed(false)
       } else {
         // Left unsaved on purpose: the count stays on screen so it can be
@@ -297,6 +360,49 @@ export default function CountSheet({
     }
   }
 
+  /** Records the signature, with the reason that makes it worth having. */
+  async function approve() {
+    const line = approving
+    if (!line || !reasonId) return
+    setApprovalBusy(true)
+    const result = await approveVarianceLinesAction(takeId, [line.id], {
+      reasonId,
+      note: approvalNote.trim() || null,
+    })
+    setApprovalBusy(false)
+
+    if (!result || !('ok' in result) || !result.ok) {
+      toast.error(
+        result && 'error' in result ? result.error : 'That line could not be signed off.',
+      )
+      return
+    }
+    // '' rather than a name: the server has the real one, and this only has to
+    // say "signed" until the next render brings it back.
+    setApprovals((a) => ({ ...a, [line.id]: '' }))
+    setApproving(null)
+    setReasonId(0)
+    setApprovalNote('')
+    toast.success('Signed off. This line can post now.')
+  }
+
+  /**
+   * Takes a signature back.
+   *
+   * Needed because the commonest mistake with a control like this is signing
+   * the row above the one you meant. Only possible while the sheet is open —
+   * the server refuses it on anything posted.
+   */
+  async function revoke(line: StockTakeLine) {
+    const result = await approveVarianceLinesAction(takeId, [line.id], { reasonId: null })
+    if (!result || !('ok' in result) || !result.ok) {
+      toast.error('That sign-off could not be withdrawn.')
+      return
+    }
+    setApprovals((a) => ({ ...a, [line.id]: null }))
+    toast.info('Sign-off withdrawn. This line blocks posting again.')
+  }
+
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase()
     return lines.filter((line) => {
@@ -321,10 +427,13 @@ export default function CountSheet({
         const v = varianceFor(line)
         return v !== null && Math.abs(v) > 0.0005
       }
+      // Everything the gate is holding, signed or not — an approver wants to
+      // see what they have already done alongside what is left.
+      if (filter === 'signoff') return flagged[line.id] !== undefined
       return true
     })
     // drafts is read inside, so the list re-filters as counts are typed.
-  }, [lines, search, filter, drafts])
+  }, [lines, search, filter, drafts, flagged])
 
   /**
    * A scan jumps to the product and selects what is in its box.
@@ -385,7 +494,13 @@ export default function CountSheet({
               options={[
                 { value: 'all', label: `All ${lines.length}` },
                 { value: 'uncounted', label: `To count ${lines.length - countedCount}` },
-                { value: 'variances', label: 'Variances' },
+                /* No variance filter on a blind sheet. It would answer the exact
+                   question blindness exists to withhold — "which of these did I
+                   get wrong" is the expected figure, one step removed. */
+                ...(blind ? [] : [{ value: 'variances', label: 'Variances' }]),
+                ...(unsignedCount > 0
+                  ? [{ value: 'signoff', label: `To sign off ${unsignedCount}` }]
+                  : []),
               ]}
             />
             <ToolbarSearch value={search} onChange={setSearch} placeholder="Find a product" />
@@ -477,9 +592,17 @@ export default function CountSheet({
               <tr className={TABLE_HEAD_ROW}>
                 <th className={TABLE_TH}>Code</th>
                 <th className={TABLE_TH}>Description</th>
-                <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>System says</th>
+                {/* On a blind sheet these two columns are not hidden with CSS
+                    or blanked out — they are not rendered at all. A greyed cell
+                    or a "•••" placeholder is an invitation to go and find the
+                    number somewhere else, and it tells the counter a figure
+                    exists that is being kept from them, which is its own kind
+                    of pressure. The sheet simply has four columns instead of
+                    six, and reads as a sheet built to be counted. */}
+                {!blind && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>System says</th>}
                 <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Counted</th>
-                <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Variance</th>
+                {!blind && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Variance</th>}
+                {showSignoff && <th className={TABLE_TH}>Sign-off</th>}
               </tr>
             </thead>
             <tbody>
@@ -506,7 +629,7 @@ export default function CountSheet({
                          counter has no way to see they belong together — which
                          is exactly when a size gets counted twice or skipped. */
                       <tr className="border-b border-border bg-surface-2">
-                        <td colSpan={5} className="px-4 py-1.5">
+                        <td colSpan={columnCount} className="px-4 py-1.5">
                           <span className="text-sm font-medium text-ink">
                             {line.parentDescription}
                           </span>
@@ -592,9 +715,11 @@ export default function CountSheet({
                           </div>
                         )}
                       </td>
-                      <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
-                        {formatQty(line.snapshotQty)}
-                      </td>
+                      {!blind && (
+                        <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
+                          {formatQty(line.snapshotQty)}
+                        </td>
+                      )}
                       <td className={`${TABLE_TD_INPUT} ${TABLE_NUMERIC} w-32`}>
                         {/* A serial line is counted by scanning units, not by
                             typing a number — so its quantity is shown, never
@@ -630,18 +755,64 @@ export default function CountSheet({
                           />
                         )}
                       </td>
-                      <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                        {counted === null ? (
-                          <span className="text-faint">—</span>
-                        ) : Math.abs(variance ?? 0) < 0.0005 ? (
-                          <span className="text-muted">0</span>
-                        ) : (
-                          <span className={(variance ?? 0) < 0 ? 'text-danger' : 'text-success'}>
-                            {(variance ?? 0) > 0 ? '+' : ''}
-                            {formatQty(variance ?? 0)}
-                          </span>
-                        )}
-                      </td>
+                      {!blind && (
+                        <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+                          {counted === null ? (
+                            <span className="text-faint">—</span>
+                          ) : Math.abs(variance ?? 0) < 0.0005 ? (
+                            <span className="text-muted">0</span>
+                          ) : (
+                            <span className={(variance ?? 0) < 0 ? 'text-danger' : 'text-success'}>
+                              {(variance ?? 0) > 0 ? '+' : ''}
+                              {formatQty(variance ?? 0)}
+                            </span>
+                          )}
+                        </td>
+                      )}
+
+                      {showSignoff && (
+                        <td className={TABLE_TD}>
+                          {flagged[line.id] === undefined ? (
+                            <span className="text-faint">—</span>
+                          ) : approvals[line.id] !== null ? (
+                            <div className="flex items-center gap-2">
+                              <Badge tone="success">
+                                <Icons.Check size={12} />
+                                Signed
+                              </Badge>
+                              {/* Withdrawable while the sheet is open: the
+                                  commonest mistake here is signing the row
+                                  above the one you meant. */}
+                              {canApprove && !readOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => void revoke(line)}
+                                  className="text-xs text-muted underline underline-offset-2 hover:text-danger"
+                                >
+                                  Withdraw
+                                </button>
+                              )}
+                            </div>
+                          ) : canApprove && !readOnly ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                setApproving(line)
+                                setReasonId(0)
+                                setApprovalNote('')
+                              }}
+                            >
+                              Sign off
+                            </Button>
+                          ) : (
+                            /* The counter sees THAT it is held and by whom it
+                               must be cleared — not a dead button they will
+                               click and be refused. */
+                            <Badge tone="warning">Needs a manager</Badge>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   </Fragment>
                 )
@@ -657,6 +828,74 @@ export default function CountSheet({
         onLines={(rows) => void addImportedCounts(rows)}
         noun="counts"
       />
+
+      <Modal
+        open={approving !== null}
+        onClose={() => setApproving(null)}
+        title="Sign off this variance"
+        size="sm"
+        closeOnBackdrop={false}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setApproving(null)} disabled={approvalBusy}>
+              Cancel
+            </Button>
+            {/* A reason is what makes the signature worth having, so the button
+                does not arm without one. */}
+            <Button
+              variant="primary"
+              onClick={() => void approve()}
+              disabled={approvalBusy || !reasonId}
+            >
+              {approvalBusy ? 'Signing…' : 'Sign off'}
+            </Button>
+          </>
+        }
+      >
+        {approving && (
+          <div className="flex flex-col gap-4">
+            <div>
+              <div className="text-sm font-medium text-ink">
+                {approving.productCode ? `${approving.productCode} — ` : ''}
+                {approving.description}
+              </div>
+              <div className="mt-0.5 text-sm text-muted">{flagged[approving.id]}</div>
+            </div>
+
+            <Field
+              label="Where did it go?"
+              hint="The same reasons the adjustment screens use, so a quarter's losses read as one list."
+            >
+              <Select value={String(reasonId)} onChange={(e) => setReasonId(Number(e.target.value))}>
+                <option value="0">Choose a reason…</option>
+                {reasons.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field
+              label="Note"
+              hint="Optional. A reason code says breakage; this is where you say a pallet never came off the truck."
+            >
+              <Textarea
+                value={approvalNote}
+                onChange={(e) => setApprovalNote(e.target.value)}
+                maxLength={190}
+                rows={2}
+                placeholder="What happened, in your words"
+              />
+            </Field>
+
+            <Callout tone="neutral" icon={<Icons.Info size={18} />}>
+              Your name and the time are recorded against this line. Re-typing the count withdraws
+              the sign-off automatically — a signature belongs to the figure it was given for.
+            </Callout>
+          </div>
+        )}
+      </Modal>
     </>
   )
 }

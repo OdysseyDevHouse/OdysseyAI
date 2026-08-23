@@ -43,9 +43,12 @@ export type LocationOption = { id: number; name: string; isMain: boolean }
 export default function TerminalsClient({
   terminals,
   locations,
+  suggestedCode,
 }: {
   terminals: Terminal[]
   locations: LocationOption[]
+  /** The next code auto-numbering would issue, or null when it is switched off. */
+  suggestedCode: string | null
 }) {
   const [editing, setEditing] = useState<Terminal | null>(null)
   const [adding, setAdding] = useState(false)
@@ -253,6 +256,7 @@ export default function TerminalsClient({
       <TerminalModal
         terminal={adding ? null : editing}
         open={adding || editing !== null}
+        suggestedCode={suggestedCode}
         pending={pending}
         onClose={() => {
           setAdding(false)
@@ -290,12 +294,14 @@ function describe(terminal: Terminal, thisDevice: string | null): string {
 function TerminalModal({
   terminal,
   open,
+  suggestedCode,
   pending,
   onClose,
   onSave,
 }: {
   terminal: Terminal | null
   open: boolean
+  suggestedCode: string | null
   pending: boolean
   onClose: () => void
   onSave: (input: { code: string; name: string; location: string | null; isActive: boolean }) => void
@@ -308,7 +314,11 @@ function TerminalModal({
 
   if (open && seeded !== (terminal?.id ?? 0)) {
     setSeeded(terminal?.id ?? 0)
-    setCode(terminal?.code ?? '')
+    /* A NEW till opens on the suggestion; an existing one always keeps its own
+       code, which is why `terminal?.code` is read first. Clearing the field is
+       how somebody asks for the next code instead of the one on screen — the
+       server issues it from the sequence when a blank arrives. */
+    setCode(terminal?.code ?? suggestedCode ?? '')
     setName(terminal?.name ?? '')
     setLocation(terminal?.location ?? '')
     setIsActive(terminal?.isActive ?? true)
@@ -338,7 +348,16 @@ function TerminalModal({
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Code" hint="Prints on the slip and groups reports. e.g. TILL01">
+        {/* The hint changes with the suggestion, because "clear it for the next
+            one" is only true when there IS a next one to fall back to. */}
+        <Field
+          label="Code"
+          hint={
+            !terminal && suggestedCode
+              ? 'Prints on the slip and groups reports. Type over it, or clear it for the next code.'
+              : 'Prints on the slip and groups reports. e.g. TILL01'
+          }
+        >
           <Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={24} />
         </Field>
         <Field label="Name">

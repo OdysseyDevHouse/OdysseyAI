@@ -3,15 +3,15 @@ import { nextMasterCode, previewMasterCode, type CodeDocType } from './sequences
 import { getBooleanSetting } from './settings'
 
 /**
- * Auto-numbered customer, supplier and product codes.
+ * Auto-numbered customer, supplier, product and till codes.
  *
  * ── WHERE THIS RUNS ──────────────────────────────────────────────────────
  *
- * Inside createCustomer / createSupplier / createProduct, NOT in the server
- * action behind the form. The form is one way a customer gets created; the
- * till's quick-add is another, and an import is a third. Filling the code in
- * at the action would leave the other two still demanding one, which is the
- * bug this feature exists to remove.
+ * Inside createCustomer / createSupplier / createProduct / createTerminal, NOT
+ * in the server action behind the form. The form is one way a customer gets
+ * created; the till's quick-add is another, and an import is a third. Filling
+ * the code in at the action would leave the other two still demanding one,
+ * which is the bug this feature exists to remove.
  *
  * ── WHY A BLANK CODE IS THE TRIGGER ──────────────────────────────────────
  *
@@ -33,10 +33,14 @@ import { getBooleanSetting } from './settings'
  */
 
 /** The setting that switches each type on. */
-const SETTING_FOR: Record<CodeDocType, 'autocode_customer' | 'autocode_supplier' | 'autocode_product'> = {
+const SETTING_FOR: Record<
+  CodeDocType,
+  'autocode_customer' | 'autocode_supplier' | 'autocode_product' | 'autocode_terminal'
+> = {
   customer: 'autocode_customer',
   supplier: 'autocode_supplier',
   product: 'autocode_product',
+  terminal: 'autocode_terminal',
 }
 
 /**

@@ -131,6 +131,20 @@ export const CAPABILITY_GROUPS = [
     capabilities: [
       { key: 'stock.view', label: 'View stock', hint: 'See quantities on hand and movement history.' },
       { key: 'stock.adjust', label: 'Adjust stock', hint: 'Write stock on or off, and count it.' },
+      // Separate from stock.adjust deliberately, and OFF for whoever counts.
+      //
+      // A threshold that the counter can clear themselves is not a control —
+      // it is a second click. The whole value of the gate is that a large
+      // variance is seen by somebody who was not holding the tablet, which
+      // only happens if the two rights can be held by different people.
+      //
+      // Same shape as sales.cashup vs sales.cashup_blind: one screen behaving
+      // differently for the person being checked and the person checking.
+      {
+        key: 'stock.approve_variance',
+        label: 'Sign off a large count variance',
+        hint: 'Approve stock-take lines that cross the variance threshold, so the count can post.',
+      },
       { key: 'stock.transfer', label: 'Transfer stock', hint: 'Move stock between locations or stores.' },
     ],
   },

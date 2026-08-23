@@ -47,6 +47,7 @@ export function ActionTile({
   corner,
   chevron = false,
   edge,
+  active = false,
   tileHeight = 150,
   disabled = false,
   onClick,
@@ -68,6 +69,21 @@ export function ActionTile({
    * tiles. On a quick key this is the colour the shop chose for that key.
    */
   edge?: CategoryTone
+  /**
+   * The act this tile starts is ARMED and waiting — press it again to stop.
+   *
+   * For the small class of keys that are not one-shot verbs but toggles: the
+   * till's Refund key arms the next item and disarms on a second press, and a
+   * cashier looking at a bar of twenty identical tiles has no other way to tell
+   * which one is holding a state.
+   *
+   * A ring plus a brand-tinted face rather than a badge in the corner, because
+   * this has to be findable at a glance from a metre away by somebody who is
+   * looking at a customer. It overrides the edge colour deliberately — the
+   * shop's chosen hue is an identifier, and "this is live right now" outranks
+   * "this is the green one" for as long as it is true.
+   */
+  active?: boolean
   tileHeight?: number
   disabled?: boolean
   onClick?: () => void
@@ -83,12 +99,17 @@ export function ActionTile({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`relative flex h-full min-w-0 rounded-card border bg-surface text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 ${
-        edge
-          ? /* No hover:border-brand with an edge — as one declaration it repaints all
-               four sides and takes the key's own colour with it. */
-            `${EDGE_RING[edge]} ${EDGE_LEAD[edge]} border-l-4`
-          : 'border-border hover:border-brand/50'
+      className={`relative flex h-full min-w-0 rounded-card border text-left shadow-card transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 ${
+        active
+          ? /* Armed. The ring is what carries at a distance; the tint keeps the
+               caption legible, which a solid brand fill would not. It replaces
+               the edge rather than sitting beside it — see the `active` prop. */
+            'border-brand bg-brand-soft ring-2 ring-brand ring-offset-1 ring-offset-surface'
+          : edge
+            ? /* No hover:border-brand with an edge — as one declaration it repaints all
+                 four sides and takes the key's own colour with it. */
+              `bg-surface ${EDGE_RING[edge]} ${EDGE_LEAD[edge]} border-l-4`
+            : 'border-border bg-surface hover:border-brand/50'
       } ${
         short
           ? `items-center gap-3 py-2 pr-3 ${edge ? 'pl-2.5' : 'pl-3'}`

@@ -207,6 +207,105 @@ async function main() {
   ok('  double void refused', !(await voidDocument(SITE, actor, draft.id, { reasonId: VOID_REASON_ID, note: 'again' })).ok)
   ok('  finalised document cannot be discarded', !(await discardDocument(SITE, draft.id)).ok)
 
+  /*
+   * ── A MIXED SLIP: GOODS BOUGHT, ONE ITEM HANDED BACK ─────────────────────
+   *
+   * The counter swap. A customer buys two of something and hands one of another
+   * back in the same conversation, so it is ONE invoice with one total — the
+   * refund line rides negative on the sale (see `refundArmed` in the till's sale
+   * state, and the doc-type rule in validateDocument).
+   *
+   * What is being proved here is not that the numbers add up — documentMath was
+   * always signed — but that the line MOVES STOCK THE OTHER WAY. A refund that
+   * nets off the total while quietly taking another unit off the shelf is the
+   * failure that would not show up until a stock take.
+   */
+  const mixBefore = await stockOf(normalId)
+  const mixReturnBefore = await stockOf(returnableId)
+  const mixDraft = await saveDraft(SITE, actor, {
+    docType: 'invoice',
+    customerName: 'Walk-in',
+    lines: [
+      { productId: normalId, productCode: `TST${stamp}N`, description: 'Test normal', productType: 'normal', qty: 2, unitPriceIncl: 30, vatRatePct: vatRate, unitCostExcl: 8 },
+      // The one coming back. Negative on the same document.
+      { productId: returnableId, productCode: `TST${stamp}R`, description: 'Test returnable', productType: 'returnable', qty: -1, unitPriceIncl: 20, vatRatePct: vatRate, unitCostExcl: 2 },
+    ],
+  })
+  ok('*** an invoice ACCEPTS a negative line ***', mixDraft.ok, mixDraft.ok ? '' : mixDraft.error)
+
+  if (mixDraft.ok) {
+    const md = (await getDocument(SITE, mixDraft.id))!
+    // 60 out, 20 back = 40 owed. The refund is netted, not a second document.
+    ok('  the total nets the refund off the sale', Math.abs(md.totalIncl - 40) < 0.005, String(md.totalIncl))
+    ok(
+      '  and the document still balances',
+      Math.round((md.subtotalExcl + md.vatTotal) * 100) === Math.round(md.totalIncl * 100),
+      `${md.subtotalExcl}+${md.vatTotal} vs ${md.totalIncl}`,
+    )
+
+    const mixFin = await finaliseDocument(SITE, actor, {
+      documentId: mixDraft.id,
+      tenders: [{ tenderTypeId: cash.id, amount: 40 }],
+    })
+    ok('  it posts on a tender of the NET', mixFin.ok, mixFin.ok ? mixFin.documentNumber : mixFin.error)
+
+    if (mixFin.ok) {
+      ok('  the sold line took stock out', (await stockOf(normalId)) === mixBefore - 2, `${mixBefore} -> ${await stockOf(normalId)}`)
+      /* THE assertion this whole case exists for. A `returnable` product's own
+         direction is already inverted — selling one puts stock IN — so a NEGATIVE
+         line on it must take stock OUT. Two sign flips that have to compose, on
+         the one product type where getting it backwards still looks plausible. */
+      ok(
+        '*** and the refunded line moved stock the OTHER way ***',
+        (await stockOf(returnableId)) === mixReturnBefore - 1,
+        `${mixReturnBefore} -> ${await stockOf(returnableId)}`,
+      )
+      const mixMoves = await listMovements(SITE, returnableId, 10)
+      ok(
+        '  recorded as a return movement, not a sale',
+        mixMoves.some((m) => m.movementType === 'sale_return' && m.sourceDocId === mixDraft.id),
+        JSON.stringify(mixMoves[0]),
+      )
+    }
+  }
+
+  /*
+   * A slip that pays money BACK is refused, with the way through.
+   *
+   * Not a limitation to be routed around later: this document has no refund
+   * tender, no return reason and no supervisor against it, all of which a payout
+   * needs. Left unrefused, `netPayable` clamps to zero and a cash tender is
+   * recorded as CHANGE — money out of the drawer on a slip that says the
+   * customer paid nothing. It balances, and it is wrong.
+   */
+  const payoutDraft = await saveDraft(SITE, actor, {
+    docType: 'invoice',
+    customerName: 'Walk-in',
+    lines: [
+      { productId: normalId, productCode: `TST${stamp}N`, description: 'Test normal', productType: 'normal', qty: 1, unitPriceIncl: 10, vatRatePct: vatRate, unitCostExcl: 8 },
+      { productId: returnableId, productCode: `TST${stamp}R`, description: 'Test returnable', productType: 'returnable', qty: -2, unitPriceIncl: 50, vatRatePct: vatRate, unitCostExcl: 2 },
+    ],
+  })
+  if (payoutDraft.ok) {
+    const payout = await finaliseDocument(SITE, actor, {
+      documentId: payoutDraft.id,
+      tenders: [{ tenderTypeId: cash.id, amount: 0 }],
+    })
+    ok('*** a slip that owes the CUSTOMER money is refused ***', !payout.ok, !payout.ok ? payout.error : 'it posted')
+    await discardDocument(SITE, payoutDraft.id)
+  }
+
+  /* A quote may still not carry one — it is a promise about a future sale, and
+     cannot promise to take back what has not gone out. */
+  const badQuote = await saveDraft(SITE, actor, {
+    docType: 'quote',
+    customerName: 'Walk-in',
+    lines: [
+      { productId: normalId, productCode: `TST${stamp}N`, description: 'Test normal', productType: 'normal', qty: -1, unitPriceIncl: 10, vatRatePct: vatRate, unitCostExcl: 8 },
+    ],
+  })
+  ok('  a QUOTE still refuses a negative line', !badQuote.ok, badQuote.ok ? 'it saved' : badQuote.error)
+
   // ── The invariants.
   ok('*** reconcileStock returns ZERO drift ***', (await reconcileStock(SITE)).length === 0, JSON.stringify(await reconcileStock(SITE)))
   ok('*** reconcileBalances returns ZERO drift ***', (await reconcileBalances(SITE)).length === 0)

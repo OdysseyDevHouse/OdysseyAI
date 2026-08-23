@@ -395,9 +395,15 @@ const CODE_TABLES: Record<string, string> = {
   customer: 'customers',
   supplier: 'suppliers',
   product: 'products',
+  /* A till is master data in exactly the sense that matters here: its code is
+     typed by hand, must be unique, and prints on the slip. NOT to be confused
+     with `till_number`, which this file does not issue — that is the two-digit
+     segment inside an invoice number, allocated by `nextFreeTillNumber` in
+     terminals.ts, and the two answer different questions. */
+  terminal: 'terminals',
 }
 
-export type CodeDocType = 'customer' | 'supplier' | 'product'
+export type CodeDocType = 'customer' | 'supplier' | 'product' | 'terminal'
 
 /**
  * Claims the next free code for a customer, supplier or product.

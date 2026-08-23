@@ -65,14 +65,11 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'indigo',
         capability: 'setup.users',
       },
-      {
-        href: '/setup/audit',
-        description: 'Every change anyone made, and who signed in when.',
-        keywords: 'audit log history who changed sign in login security trail',
-        icon: 'History',
-        tone: 'sky',
-        capability: 'setup.audit',
-      },
+      /* The audit trail is NOT here any more — it is in the reports catalogue,
+         under Operations. It was the one tile in this hub that answered a
+         question rather than deciding something, and "who changed this price"
+         is asked at the reports screen. The route is unchanged; only where it
+         is listed moved. See `/reports` and `AUDIT_HREF` in nav.ts. */
       {
         href: '/setup/api',
         description: 'Keys that let outside programs read this store, and where events get pushed.',
@@ -254,6 +251,22 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         description: 'Why stock was written on or off. What a loss report groups by.',
         keywords: 'write off shrinkage damage breakage wastage expired codes',
         icon: 'SlidersHorizontal',
+        tone: 'teal',
+        capability: 'setup.edit',
+        module: 'inventory_advanced',
+      },
+      /* Beside Adjustment reasons because they are two halves of one sentence:
+         that tile is the vocabulary a variance is explained IN, this one is when
+         an explanation becomes compulsory. */
+      {
+        href: '/setup/stock-takes',
+        description: 'How large a counted difference may be before somebody else has to sign it off.',
+        keywords:
+          'stock take count variance threshold approval sign off signoff shrinkage tolerance blind count second signature',
+        /* `Scale` from the hub's own icon union — weighing a difference, and
+           distinct from the SlidersHorizontal on the tile beside it so the two
+           read as two things when somebody is scanning the row. */
+        icon: 'Scale',
         tone: 'teal',
         capability: 'setup.edit',
         module: 'inventory_advanced',

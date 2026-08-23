@@ -43,6 +43,8 @@ export function SalePane({
   onClear,
   onPay,
   returning,
+  refundArmed = false,
+  onCancelRefund,
   docType = 'invoice',
   onDocDiscount,
   onFindReceipt,
@@ -87,6 +89,18 @@ export function SalePane({
    * credit note posts — the pane reports it, it does not offer to change it.
    */
   returning: boolean
+  /**
+   * The NEXT item rung up comes back as a refund line on this same slip.
+   *
+   * Distinct from `returning` above in the way that matters to this component:
+   * that one is visible in the lines, because every one of them is a credit.
+   * This is visible in NOTHING until the next scan lands — which is exactly why
+   * the pane says it loudly. Defaulted so a caller that has not been taught
+   * about it renders as it always did.
+   */
+  refundArmed?: boolean
+  /** Disarms it. Undefined leaves the banner without its cancel button. */
+  onCancelRefund?: () => void
   /**
    * What KIND of document this basket will become.
    *
@@ -195,7 +209,7 @@ export function SalePane({
           restaurant ever prints, costing every shop a strip of the basket whether or
           not it served tables. A hospitality shop puts them on a bar; a retail one
           never sees them. */}
-      {(returning || exchange) && (
+      {(returning || exchange || refundArmed) && (
       <div className="border-b border-border p-3 pb-2">
         <div className="flex items-center gap-2">
           {returning && (
@@ -221,6 +235,44 @@ export function SalePane({
               <Button variant="secondary" size="sm" disabled={busy} onClick={onFindReceipt}>
                 <Icons.Search size={14} />
                 Find receipt
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* ── THE NEXT ITEM IS A REFUND ──────────────────────────────────────
+            The loudest thing on the pane, and deliberately louder than the
+            Return strip above it. That one describes a basket the cashier chose
+            and can see — every line on the screen is a credit. This describes a
+            state that has NOT happened yet and is invisible in the lines: the
+            till looks like an ordinary sale, and the next scan will behave
+            differently from the one before it.
+
+            Solid rather than soft for the same reason. It is on screen for one
+            scan, so it has to be readable at a glance by somebody looking at a
+            customer rather than at the till.
+
+            `!returning` because the two cannot both be true — the runner refuses
+            to arm inside return mode — but it is stated rather than assumed, so
+            a future route in cannot stack two contradictory banners. */}
+        {!returning && refundArmed && (
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-control bg-danger px-3 py-1.5">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-white">
+              <Icons.Undo size={14} />
+              Refund — the next item comes back
+            </span>
+            {/* The way out that does not involve crediting something. The key
+                toggles too, but a cashier who armed by mistake is looking at
+                the slip, not hunting the bar for the key they just pressed. */}
+            {onCancelRefund && (
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Cancel the refund"
+                onClick={onCancelRefund}
+              >
+                <Icons.Close size={14} className="text-white" />
               </Button>
             )}
           </div>
@@ -284,6 +336,10 @@ export function SalePane({
               line={line}
               lineTotal={totals.perLine[index]?.lineTotalIncl ?? 0}
               effectiveDiscountPct={effectiveDiscountPct(line.discountPct, lineSpecials[index])}
+              /* Already computed by lineTotals for this very line — the badge
+                 reads it rather than re-deriving it, so the chip and the money
+                 column cannot disagree about the same discount. */
+              discountIncl={totals.perLine[index]?.discountIncl ?? 0}
               /* A granted line has no entry in `lineSpecials` — it is free
                  rather than discounted, so the engine never claimed it — but it
                  does know which deal produced it. Named from the specials list

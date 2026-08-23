@@ -1,6 +1,7 @@
 import type { ColumnType } from './spec'
 import type { Capability } from '../site/permissions'
 import { LINE_KINDS } from '../jobStatusModel'
+import { ACCOUNT_TYPES } from '../accountTypes'
 
 /**
  * The report builder's FIELD CATALOG — the whitelist of everything anyone is
@@ -1798,12 +1799,10 @@ const CUSTOMERS_SOURCE: CatalogSource = {
       ],
       group: FIELD_GROUPS.ACCOUNT,
     },
-    enumField('accountType', 'Account type', 't.account_type', [
-      'open_item',
-      'balance_fwd',
-      'cash',
-      'lay_by',
-    ]),
+    /* Read from the shared constant rather than listed again here: a filter
+       whose options are a second copy of an enum is how one silently stops
+       matching the values in the column. */
+    enumField('accountType', 'Account type', 't.account_type', [...ACCOUNT_TYPES]),
     { key: 'createdAt', label: 'Account opened', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
   ],
 }
@@ -3185,6 +3184,11 @@ const STOCK_TAKE_LINES_SOURCE: CatalogSource = {
     { name: 'take', sql: 'INNER JOIN stock_takes st ON st.id = t.stock_take_id', always: true },
     { name: 'location', sql: 'LEFT JOIN stock_locations loc ON loc.id = st.location_id' },
     { name: 'product', sql: 'LEFT JOIN products pm ON pm.id = t.product_id' },
+    /* The reason a large variance was signed off with (218). The SAME table the
+       adjustment source reads, deliberately — approving a count variance and
+       raising a write-off answer the same question, so "what did breakage cost
+       last quarter" must not split across two vocabularies. */
+    { name: 'approvalReason', sql: 'LEFT JOIN stock_adjustment_reasons ar ON ar.id = t.approval_reason_id' },
     PRODUCT_DEPT_JOIN,
   ],
   /* A draft count is somebody halfway through a shelf. Only a posted sheet is
@@ -3243,8 +3247,35 @@ const STOCK_TAKE_LINES_SOURCE: CatalogSource = {
     { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
     { key: 'locationName', label: 'Location', type: 'text', expr: 'loc.name', needs: ['location'], group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'takenBy', label: 'Sheet raised by', type: 'text', expr: 'st.user_name', group: FIELD_GROUPS.PEOPLE },
+
+    /* ── Sign-off (218) ───────────────────────────────────────────────────
+       The whole value of a second signature is that somebody can ask about it
+       afterwards — who signed off what, for which reason, over what period.
+       A control nobody can report on is a control nobody audits. */
+    { key: 'approvedBy', label: 'Signed off by', type: 'text', expr: 't.approved_by', group: FIELD_GROUPS.PEOPLE },
+    { key: 'approvedAt', label: 'Signed off at', type: 'datetime', expr: 't.approved_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'approvalReasonName',
+      label: 'Sign-off reason',
+      type: 'text',
+      /* Blank rather than "Not recorded": on this source the overwhelming
+         majority of lines never crossed a threshold, so they were never
+         REQUIRED to have a reason. Saying one is missing would report a
+         control failure on every ordinary line in the shop. */
+      expr: "COALESCE(ar.name, '')",
+      needs: ['approvalReason'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'Only lines whose variance crossed the sign-off threshold carry one.',
+    },
+    { key: 'approvalNote', label: 'Sign-off note', type: 'text', expr: 't.approval_note', group: FIELD_GROUPS.OTHER },
+
     enumField('status', 'Status', 'st.status', ['draft', 'counting', 'posted', 'cancelled']),
     enumField('scope', 'Scope', 'st.scope', ['full', 'department', 'brand', 'supplier', 'manual']),
+    /* How the count was TAKEN, which is part of how far it can be trusted.
+       Filterable, so "our shrinkage on blind counts vs sighted ones" is a
+       report somebody can actually run — the question that shows whether
+       blind counting is earning its keep. */
+    yesNo('isBlind', 'Counted blind', 'st.is_blind'),
     ...timeBuckets('document_date').map((f) => ({
       ...f,
       expr: f.expr.replace(/t\.`document_date`/g, 'st.`document_date`'),

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './Button'
+import { usePadKeys } from './padKeys'
 import * as Icons from './icons'
 
 /**
@@ -80,6 +81,13 @@ export function PinPad({
     onSubmitRef.current = onSubmit
   })
 
+  // Same reason as onSubmitRef: an inline arrow is a new identity every render,
+  // and the key handler must not be rebound for it.
+  const onCancelRef = useRef(onCancel)
+  useEffect(() => {
+    onCancelRef.current = onCancel
+  })
+
   // The keyboard handler needs the current pin to decide whether Enter is
   // valid, but reading it from state would put `pin` in that effect's
   // dependencies and rebind the listener on every keystroke.
@@ -101,22 +109,39 @@ export function PinPad({
     if (error) setPin('')
   }, [error])
 
-  useEffect(() => {
-    function onKey(event: KeyboardEvent) {
-      if (busy) return
+  /* Anchors the listener to whether this pad is actually on screen — a pad in a
+     closed <dialog> is still mounted, and was still eating keys. See padKeys.ts. */
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  const onKey = useCallback(
+    (event: KeyboardEvent) => {
       if (event.key >= '0' && event.key <= '9') {
         setPin((current) => (current.length >= 6 ? current : current + event.key))
       } else if (event.key === 'Backspace') {
         setPin((current) => current.slice(0, -1))
       } else if (event.key === 'Enter') {
         if (pinRef.current.length >= 4) send(pinRef.current)
-      } else if (event.key === 'Escape' && onCancel) {
-        onCancel()
+      } else if (event.key === 'Escape') {
+        /* LEFT UNCLAIMED, always. Escape is the dialog's to act on: `Modal`
+           closes on the <dialog>'s native `cancel` event, which the browser
+           only raises if this keydown is not defaulted. Claiming it here would
+           make a pad in a Modal with no onCancel impossible to close. */
+        onCancelRef.current?.()
+        return
+      } else {
+        return
       }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [busy, send, onCancel])
+      /* CLAIMED, so nothing below acts on the same key twice — the contract
+         NumPad already keeps, and the one `usePadKeys` reads when it skips an
+         already-handled key. Without it, a PIN typed while another pad is also
+         on screen is entered in both places: a supervisor's digits land in the
+         quantity or price field behind the dialog as well as in this one. */
+      event.preventDefault()
+    },
+    [send],
+  )
+
+  usePadKeys(rootRef, onKey, !busy)
 
   // A four-digit PIN submits on the fourth digit; a six-digit one cannot, since
   // there is no way to tell "done" from "halfway" until Enter.
@@ -133,6 +158,7 @@ export function PinPad({
 
   return (
     <div
+      ref={rootRef}
       className={`flex flex-col gap-3 ${wide ? 'w-[510px] max-w-[92vw]' : 'w-full max-w-xs'} ${
         shake ? 'pin-shake' : ''
       }`}

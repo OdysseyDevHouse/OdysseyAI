@@ -21,6 +21,8 @@ import {
   type QuickKeyTarget,
 } from '@/lib/quickKeys'
 import { listTerminals } from '@/lib/site/terminals'
+import { browseForTill, type TillProduct } from '@/lib/site/tillSearch'
+import { listPriceStructures } from '@/lib/site/lookups'
 import { STARTER_TEMPLATES } from './templates'
 
 /**
@@ -334,3 +336,56 @@ export async function deleteQuickKeyAction(id: number): Promise<QuickKeysResult>
   return result
 }
 
+
+/**
+ * The catalogue behind the library's Products and Depts tabs.
+ *
+ * ── WHY THIS IS NOT `browseProductsAction` ────────────────────────────────
+ *
+ * The till's own browse action is guarded by `sales.till`, and the person arranging a
+ * bar is not necessarily the person who rings up sales — capabilities are set per role,
+ * so a shop can perfectly well have a manager with `setup.edit` and no till rights. That
+ * manager could open this screen and find the Products tab throwing on every keystroke.
+ *
+ * So the designer browses under its OWN capability. It is the same `browseForTill`
+ * underneath, which is the part that matters: the tiles here and the tiles on the till
+ * come from one query, so a department that looks empty in the designer is empty on the
+ * till too.
+ *
+ * ── THE PRICE IS THE SHOP'S DEFAULT STRUCTURE ─────────────────────────────
+ *
+ * Resolved here rather than passed in. A price structure is a property of a TILL —
+ * which register is selling at which list — and a manager laying out keys is at none,
+ * so there is nothing for the client to send. The default structure is the shelf price,
+ * which is the figure a manager recognises a product by.
+ *
+ * It must be resolved rather than left null: `browseForTill` reads a structure id
+ * straight into its price join and coalesces a miss to zero, so passing null prices the
+ * entire grid at R0.00 — tiles that look like a broken product file rather than like a
+ * catalogue. The location is left null on purpose, which counts the main pile; the tile
+ * shows no stock figure, so there is nothing for a room to change.
+ *
+ * None of it decides anything downstream. A key stores a product id and nothing else,
+ * so what this tile shows never affects what the till later charges.
+ */
+export async function browseCatalogueAction(options: {
+  term?: string
+  departmentId?: number | null
+  limit?: number
+}): Promise<TillProduct[]> {
+  const ctx = await actorFor('setup.edit')
+  // An empty grid rather than a throw: this feeds a tile grid on every keystroke, and
+  // the screen behind it has already been guarded. Nothing here is a write.
+  if ('ok' in ctx) return []
+
+  /* The same fallback chain the till's page uses — the flagged default, else the first
+     structure, else nothing. One rule in two places rather than two rules. */
+  const structures = await listPriceStructures(ctx.siteId)
+  const priceStructureId = (structures.find((s) => s.isDefault) ?? structures[0])?.id ?? null
+
+  return browseForTill(ctx.siteId, {
+    ...options,
+    priceStructureId,
+    limit: options.limit ?? 60,
+  })
+}

@@ -92,6 +92,19 @@ export function VoidReasonModal({
       open={open}
       onClose={onClose}
       title={copy.title}
+      /* Said once, at the top, in the header's own quiet line rather than as a
+         warning block in the body. Nothing here is recoverable from the till —
+         the line is gone off the screen and the void is written — and a cashier
+         should read that before the reasons rather than after choosing one. */
+      description="This action cannot be undone."
+      /* The kind of act, in the kit's title slot. Danger-soft rather than solid:
+         the disc is identifying what this dialog is, and the one solid red thing
+         on the panel should be the button that does it. */
+      titleMedia={
+        <span className="flex size-10 items-center justify-center rounded-pill bg-danger-soft text-danger">
+          <Icons.Trash size={20} />
+        </span>
+      }
       size="sm"
       /* A stray tap on the backdrop must not throw away the line the cashier is
          still deciding about, nor submit a half-picked reason. */
@@ -117,17 +130,35 @@ export function VoidReasonModal({
       <div className="flex flex-col gap-3">
         {/* What is going, and what it was worth. The badge repeats the kind
             beside it, because the heading scrolls out of view on a short till
-            screen once the reason list opens. */}
-        <div className="rounded-card border border-border bg-surface-2 px-4 py-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="truncate font-semibold text-ink">{description}</span>
-            <span className="numeric shrink-0 font-bold text-ink">{formatMoney(valueIncl)}</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <Badge tone="danger">{copy.badge}</Badge>
-            <span className="numeric text-sm text-muted">
-              {formatQty(qty)} {voidType === 'sale' ? '' : '×'}
+            screen once the reason list opens.
+
+            Two stacked columns rather than two full-width rows: the thing and
+            its label belong together on the left, the two figures line up on the
+            right, and the eye reads down one side or the other instead of
+            zig-zagging across a box four lines tall.
+
+            No glyph. The fill and the badge already separate this strip from the
+            plain-bordered reason keys under it, and a second red disc directly
+            below the one in the header was the same mark twice in 100px saying
+            nothing the second time. */}
+        <div className="flex items-center gap-3 rounded-card border border-border bg-surface-2 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <span className="block truncate font-semibold text-ink">{description}</span>
+            <span className="mt-1 block">
+              <Badge tone="danger">{copy.badge}</Badge>
             </span>
+          </div>
+
+          <div className="shrink-0 text-right">
+            <span className="numeric block font-bold text-ink">{formatMoney(valueIncl)}</span>
+            {/* How many, under the money — but only where the left has not
+                already said it. A sale void's description IS the count ("2
+                lines"), so printing it again here put the same two words twice
+                on one strip; the caller builds that string, so the check is on
+                the KIND rather than on comparing the two texts. */}
+            {voidType !== 'sale' && (
+              <span className="numeric mt-0.5 block text-sm text-muted">{formatQty(qty)} ×</span>
+            )}
           </div>
         </div>
 
@@ -139,6 +170,7 @@ export function VoidReasonModal({
           onNoteChange={setNote}
           label="Why is this coming off?"
           hint="Recorded against the till, and what a void report groups by."
+          touch
           disabled={busy}
         />
       </div>

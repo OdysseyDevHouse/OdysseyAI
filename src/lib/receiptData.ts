@@ -31,8 +31,45 @@ export type SlipInstruction = {
  * a null document number, the mirror of billData's "no number is load-bearing".
  */
 
+/**
+ * Whether this slip may print its lines as absolute values.
+ *
+ * ── WHY THE SLIP EVER DROPPED THE SIGN ────────────────────────────────────
+ *
+ * A credit note is negative in every line, and its heading already says CREDIT
+ * NOTE. Printing "−2 × R80.00 … −R160.00" under that heading states the same
+ * fact twice and reads to a customer as a double negative — so the renderers
+ * print the magnitudes and let the document's name carry the direction. That is
+ * still right, and it is what this returns true for.
+ *
+ * ── WHY IT CANNOT BE UNCONDITIONAL ANY MORE ───────────────────────────────
+ *
+ * An invoice may now carry a refund line: one item handed back in the middle of
+ * a sale (see `refundArmed` in the till's sale state). On THAT slip the heading
+ * says nothing about direction, because most of the slip is a sale. Taking the
+ * absolute value there prints a returned R150 shirt as a positive R150 line
+ * while the footer total is R150 lower than the lines add to — a slip that does
+ * not add up, handed to the customer, at the moment they are checking it.
+ *
+ * So the test is on the DOCUMENT, not the line: drop the sign only when every
+ * line points the same way and the heading can therefore speak for all of them.
+ * A mixed slip prints its signs and adds up.
+ */
+function signsAreRedundant(lines: readonly { qty: number }[]): boolean {
+  return lines.every((l) => l.qty <= 0) || lines.every((l) => l.qty >= 0)
+}
+
 export type ReceiptLine = {
   description: string
+  /**
+   * NEGATIVE on a refund line of an otherwise ordinary sale.
+   *
+   * Positive on every line of an invoice and, despite the underlying document,
+   * on every line of a credit note too — see `signsAreRedundant`. A renderer
+   * should print what it is given rather than re-deciding: the two that exist
+   * (the browser print route and the ESC/POS renderer) must agree, and the only
+   * way they can is by not having the choice.
+   */
   qty: number
   unitPriceIncl: number
   lineTotalIncl: number
@@ -160,6 +197,7 @@ export function receiptDataFor(
     vatRatePct: l.vatRatePct,
   }))
   const totals = documentTotals(computed)
+  const plainSigns = signsAreRedundant(doc.lines)
 
   return {
     proForma: false,
@@ -175,15 +213,23 @@ export function receiptDataFor(
     customerVatNo: doc.customerVatNo?.trim() || null,
     lines: doc.lines.map((l, index) => ({
       description: l.description,
-      qty: Math.abs(l.qty),
+      /* Magnitudes only when the heading already says which way the whole
+         document goes — see signsAreRedundant. A mixed slip keeps its signs so
+         the lines add up to the total printed under them. */
+      qty: plainSigns ? Math.abs(l.qty) : l.qty,
       unitPriceIncl: l.unitPriceIncl,
-      lineTotalIncl: Math.abs(l.lineTotalIncl),
+      lineTotalIncl: plainSigns ? Math.abs(l.lineTotalIncl) : l.lineTotalIncl,
+      /* The PERCENTAGE is absolute either way. It is a rate, not an amount:
+         "10% off" is the same claim on a line going out and one coming back,
+         and a printed "−10%" would read as a surcharge. */
       discountPct: Math.abs(l.discountPct),
       /* The RECOMPUTED amount, not the stored column, and for the same reason
          the VAT split above is recomputed: `computed` already resolved the
          "absolute wins over percentage" rule, so a line discounted by pct
          alone still reports rands here instead of the zero the column holds. */
-      discountIncl: Math.abs(computed[index].discountIncl),
+      discountIncl: plainSigns
+        ? Math.abs(computed[index].discountIncl)
+        : computed[index].discountIncl,
       specialName: (l.specialId !== null ? opts.specialNames?.get(l.specialId) : null) ?? null,
       notes: receiptNotes(l.instructions),
     })),
@@ -247,6 +293,7 @@ export function receiptDataFromBasket(input: {
     vatRatePct: l.vatRatePct,
   }))
   const totals = documentTotals(computed)
+  const plainSigns = signsAreRedundant(input.lines)
 
   return {
     proForma: false,
@@ -262,9 +309,15 @@ export function receiptDataFromBasket(input: {
     customerVatNo: null,
     lines: input.lines.map((l, index) => ({
       description: l.description,
-      qty: Math.abs(l.qty),
+      /* Signed on a mixed slip, magnitudes on a one-way one — see
+         signsAreRedundant. The offline slip is the one a customer is MOST
+         likely to be handed for a counter swap, since arming a refund is the
+         one return path a disconnected till can still run. */
+      qty: plainSigns ? Math.abs(l.qty) : l.qty,
       unitPriceIncl: l.unitPriceIncl,
-      lineTotalIncl: Math.abs(computed[index].lineTotalIncl),
+      lineTotalIncl: plainSigns
+        ? Math.abs(computed[index].lineTotalIncl)
+        : computed[index].lineTotalIncl,
       /*
        * DERIVED when only an amount was given, not echoed back.
        *
@@ -291,13 +344,24 @@ export function receiptDataFromBasket(input: {
        *
        * A caller stating a REAL percentage still wins: it is not falsy.
        */
+      /*
+       * The guard is on the gross being NON-ZERO, not on it being positive.
+       *
+       * It read `> 0` while every line was positive, and on a refund line —
+       * negative gross, negative discount — that silently fell to the zero
+       * branch and printed "0% off" on a discounted item coming back. The ratio
+       * itself is sign-safe: two negatives divide to the positive rate that is
+       * actually wanted, which is why the percentage stays absolute below.
+       */
       discountPct: Math.abs(
         l.discountPct ||
-          (computed[index].grossIncl > 0
+          (computed[index].grossIncl !== 0
             ? round((computed[index].discountIncl / computed[index].grossIncl) * 100, 3)
             : 0),
       ),
-      discountIncl: Math.abs(computed[index].discountIncl),
+      discountIncl: plainSigns
+        ? Math.abs(computed[index].discountIncl)
+        : computed[index].discountIncl,
       specialName: l.specialName ?? null,
       notes: receiptNotes(l.instructions, l.note),
     })),

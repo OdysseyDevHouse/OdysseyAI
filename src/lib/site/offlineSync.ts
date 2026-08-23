@@ -77,9 +77,23 @@ export function validateOfflineSale(sale: OfflineSale): string | null {
   for (const [i, line] of sale.lines.entries()) {
     const where = `Line ${i + 1}`
     if (!line.description?.trim()) return `${where}: no description.`
-    // Zero is refused as well as non-finite: a zero-qty line contributes nothing
-    // and is only ever a client bug.
-    if (!Number.isFinite(line.qty) || line.qty <= 0) return `${where}: bad quantity.`
+    /*
+     * Zero is refused as well as non-finite: a zero-qty line contributes nothing
+     * and is only ever a client bug.
+     *
+     * NEGATIVE is now allowed, and getting this wrong would have been expensive.
+     * A refund line — one item handed back mid-sale, see `refundArmed` in the
+     * till's sale state — is the ONE return path a disconnected till can still
+     * run, because it asks the server nothing. So it is exactly the thing that
+     * arrives in this queue after an outage.
+     *
+     * Read the rule above this function before tightening it back: a refusal
+     * here is PERMANENT. The sale is not retried, so a cashier who took goods
+     * back during an outage would have the whole transaction — the sale as well
+     * as the refund — silently discarded on reconnect, with the customer already
+     * gone and a slip in their hand.
+     */
+    if (!Number.isFinite(line.qty) || line.qty === 0) return `${where}: bad quantity.`
     if (!Number.isFinite(line.unitPriceIncl) || line.unitPriceIncl < 0) return `${where}: bad price.`
     if (!Number.isFinite(line.discountPct) || line.discountPct < 0 || line.discountPct > 100) {
       return `${where}: bad discount.`

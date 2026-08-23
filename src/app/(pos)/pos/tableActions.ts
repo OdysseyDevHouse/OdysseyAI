@@ -1,6 +1,7 @@
 'use server'
 
-import { actorFor, actorForOrThrow, withTillOperator } from '@/lib/auth'
+import { actorFor, actorForOrThrow, requireSite, withTillOperator } from '@/lib/auth'
+import { billDataFor, type BillData } from '@/lib/billData'
 import {
   listTables,
   seatTable,
@@ -262,6 +263,51 @@ function carryAttribution(
   })
 }
 
+export type BillDataResult = { ok: true; bill: BillData } | { ok: false; error: string }
+
+/**
+ * The pro-forma bill for an open tab, as data.
+ *
+ * Exists so the till can show the bill WITHOUT navigating: printing one used to
+ * push a new tab at /sales/[id]/bill, a back-office route, which took the till
+ * off the screen it exists to be and landed a waiter in the office chrome with
+ * a half-scanned basket behind them. The same argument ReprintModal records.
+ *
+ * Returns `BillData` rather than markup because three renderers consume it —
+ * the modal's `BillSlip`, the thermal `renderBill`, and the print route that is
+ * still the fallback — and a slip built twice is a slip that disagrees with
+ * itself.
+ *
+ * SAVED documents only, matching the print route exactly: a finalised sale has
+ * a real invoice, a draft was never parked, and a cancelled one is nobody's
+ * bill. All three refuse rather than render a banner that would be a lie.
+ */
+export async function billDataAction(documentId: number): Promise<BillDataResult> {
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  const site = await requireSite()
+  const doc = await getDocument(siteId, documentId)
+  if (!doc || doc.status !== 'saved') {
+    return { ok: false, error: 'That tab is not parked, so it has no bill to print.' }
+  }
+
+  return {
+    ok: true,
+    bill: billDataFor(
+      doc,
+      { name: site.displayName, vatNumber: site.vatNumber },
+      {
+        printedAt: new Date().toLocaleString('en-ZA', {
+          dateStyle: 'short',
+          timeStyle: 'short',
+        }),
+      },
+    ),
+  }
+}
+
 /** Marks the bill as asked for, so the floor shows who is waiting to pay. */
 export async function askForBillAction(tableId: number): Promise<TablesResult> {
   const ctx = await actorFor('sales.till')
@@ -431,7 +477,11 @@ export async function splitTableAction(input: {
 }): Promise<TablesResult> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
-  const { siteId, actor } = ctx
+  /* The PIN operator, not the browser session — the same reasoning `recordUndoAction`
+     states. A manager who signed this till in at seven is not the waiter who moved
+     the table at nine, and the trail this move now writes must name the person who
+     made it. */
+  const { siteId, actor } = await withTillOperator(ctx)
 
   const result = await splitTableBill(siteId, actor, input)
   if (!result.ok) return result
@@ -450,7 +500,8 @@ export async function transferTableAction(input: {
 }): Promise<TablesResult> {
   const ctx = await actorFor('sales.till')
   if ('ok' in ctx) return ctx
-  const { siteId, actor } = ctx
+  // The waiter who moved the party, not whoever opened the browser — as above.
+  const { siteId, actor } = await withTillOperator(ctx)
 
   const result = await transferTableBill(siteId, actor, input)
   if (!result.ok) return result

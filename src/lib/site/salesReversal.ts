@@ -140,6 +140,24 @@ export async function creditableLines(siteId: number, invoiceId: number) {
 
   return invoice.lines.map((line) => {
     const already = credited.get(line.id) ?? 0
+    /*
+     * A line that was ALREADY a refund has nothing left to credit.
+     *
+     * An invoice may carry one: an item handed back mid-sale, stored negative on
+     * the same slip as the goods that were bought (see `refundArmed` in the
+     * till's sale state). The money for it has already gone back to the customer
+     * — it is netted off the total they paid.
+     *
+     * `Math.abs` below is what makes this necessary rather than optional. It was
+     * written to read a credit note's own negative lines, and without this guard
+     * it reads a −1 refund as "1 available to credit" — so the shop could raise a
+     * credit note against goods it has already handed the money back for, and
+     * pay for the same shirt twice. Zero is the honest answer, and the finder
+     * shows the line greyed with nothing to take.
+     */
+    if (line.qty < 0 && invoice.docType !== 'credit_sale') {
+      return { ...line, alreadyCredited: already, creditable: 0 }
+    }
     return {
       ...line,
       alreadyCredited: already,

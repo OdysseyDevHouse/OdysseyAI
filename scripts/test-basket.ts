@@ -15,6 +15,7 @@ import {
   removeBasketLine,
   discountAllowed,
   isPriceOverridden,
+  isRefundLine,
   basketCount,
   lineFromProduct,
   withRewards,
@@ -169,6 +170,74 @@ function main() {
     ok('basketCount counts items, not lines', basketCount(lines) === 5, String(basketCount(lines)))
     lines = removeBasketLine(lines, lines[0].key)
     ok('removing a line drops its items', basketCount(lines) === 2)
+  }
+
+  /* ── A REFUND LINE ON AN ORDINARY SALE ────────────────────────────────────
+     One item handed back mid-basket, stored as a NEGATIVE quantity on the same
+     slip as the goods being bought. See `refundArmed` in the till's sale state
+     for why it is a one-shot rather than a mode. These are the basket-level
+     rules that make it safe. */
+
+  {
+    const sold = lineFromProduct(product(), 1, 0)
+    const back = lineFromProduct(product(), -1, 1)
+    ok('a negative line reads as a refund', isRefundLine(back))
+    ok('  and a positive one does not', !isRefundLine(sold))
+  }
+
+  {
+    /* THE one that would silently lose money. A −1 and a +1 of the same product
+       folded together give a qty-0 line, which validateDocument refuses — so the
+       whole sale dies at the tender, naming a line the cashier sees nothing wrong
+       with. The customer's shirt would simply have vanished off the slip. */
+    const back = lineFromProduct(product(), -1, 0)
+    const after = addToBasket([back], product(), 1)
+    ok(
+      '*** a sale never merges into a refund line of the same product ***',
+      after.length === 2,
+      JSON.stringify(after.map((l) => l.qty)),
+    )
+    ok(
+      '  so neither cancels the other out',
+      after[0].qty === -1 && after[1].qty === 1,
+      JSON.stringify(after.map((l) => l.qty)),
+    )
+  }
+
+  {
+    /* The chip a cashier checks a bag against. Netting read "0 items" on a
+       one-in-one-out basket, which on a screen with two lines on it looks like an
+       empty till. */
+    const lines = [lineFromProduct(product(), 1, 0), lineFromProduct(product({ id: 2 }), -1, 1)]
+    ok(
+      'basketCount counts a refund as an item, not against one',
+      basketCount(lines) === 2,
+      String(basketCount(lines)),
+    )
+  }
+
+  {
+    /* The stepper works in the LINE's own direction, so + and − mean what the
+       screen says they mean. Before this, − on a −1 line deleted it (next <= 0)
+       and + on it deleted it too (next === 0) — the row was untouchable. */
+    const back = [lineFromProduct(product(), -1, 0)]
+    const more = stepQty(back, back[0].key, 1)
+    ok(
+      'stepping + on a refund line credits MORE of it',
+      more[0]?.qty === -2,
+      JSON.stringify(more.map((l) => l.qty)),
+    )
+    const fewer = stepQty(more, more[0].key, -1)
+    ok('  and − walks it back toward zero', fewer[0]?.qty === -1, JSON.stringify(fewer.map((l) => l.qty)))
+    const gone = stepQty(fewer, fewer[0].key, -1)
+    ok('  and stepping the last one off removes the line', gone.length === 0)
+  }
+
+  {
+    /* Unchanged for an ordinary line — the sign-aware branch must not have
+       changed what − does to the last unit of something being sold. */
+    const sold = addToBasket([], product(), 1)
+    ok('− on the last unit of a sale still removes it', stepQty(sold, sold[0].key, -1).length === 0)
   }
 
   {

@@ -16,7 +16,7 @@ import {
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import { searchCustomersAction } from '@/app/(app)/sales/actions'
+import { searchCustomersAction, listTillCustomersAction } from '@/app/(app)/sales/actions'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import {
@@ -87,15 +87,27 @@ export function AccountPaymentModal({
     setTenderTypeId(payableTenders(tenders)[0]?.id ?? null)
   }, [open, tenders])
 
-  /* 180ms, the same as every other search on this screen. */
+  /*
+   * 180ms, the same as every other search on this screen — and it runs on an
+   * empty box, asking for the first page of the book rather than showing
+   * nothing. See CustomerModal, which does the same for the same reason: the
+   * person paying their account at the counter is one of the shop's regulars,
+   * and making the cashier guess their spelling to find them is work the list
+   * can simply do.
+   *
+   * Skipped once an account is CHOSEN — the pane below has become the payment
+   * form, and there is no list to fill.
+   */
   useEffect(() => {
-    if (!open || account || query.trim().length < 2) {
+    if (!open || account) {
       setResults([])
       return
     }
+    const term = query.trim()
     const timer = setTimeout(() => {
       setSearching(true)
-      searchCustomersAction(query)
+      const lookup = term.length >= 2 ? searchCustomersAction(term) : listTillCustomersAction()
+      lookup
         .then(setResults)
         .catch(() => setResults([]))
         .finally(() => setSearching(false))
@@ -229,16 +241,24 @@ export function AccountPaymentModal({
               </div>
             )}
 
-            {query.trim().length >= 2 && !searching && results.length === 0 && (
+            {/* A missed search and an empty book are different problems and get
+                different words — see CustomerModal. */}
+            {!searching && !loadingAccount && results.length === 0 && (
               <EmptyState
                 icon={<Icons.Users size={26} />}
-                title="No account found"
-                hint="Only account customers can pay this way. Check the spelling."
+                title={query.trim().length >= 2 ? 'No account found' : 'No accounts yet'}
+                hint={
+                  query.trim().length >= 2
+                    ? 'Only account customers can pay this way. Check the spelling.'
+                    : 'Only account customers can pay this way, and none are open yet.'
+                }
               />
             )}
 
+            {/* Taller than it was, for the same reason as CustomerModal: the
+                list now opens on the book rather than on a few search hits. */}
             {results.length > 0 && (
-              <div className="till-pane flex max-h-64 flex-col gap-2 overflow-y-auto">
+              <div className="till-pane flex max-h-96 flex-col gap-2 overflow-y-auto">
                 {results.map((result) => (
                   <TouchRow
                     key={result.id}

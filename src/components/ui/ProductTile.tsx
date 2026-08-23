@@ -140,7 +140,13 @@ export function ProductTile({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`flex h-full min-w-0 rounded-card border text-left transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
+      /* w-full as well as h-full: as a direct grid item the tile was stretched to its
+         track and never needed it, but a caller that WRAPS the tile — to hang a drag
+         handle or a hover action off it — makes this button an ordinary block child
+         that sizes to its content instead, and a long product name then renders a tile
+         wider than the column it sits in. Filling the box it is given is what the tile
+         meant in both cases. */
+      className={`flex h-full w-full min-w-0 rounded-card border text-left transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 ${
         dashed
           ? /* The same skin as the till's new-table opener — see HeroTile in
                TableGate. Both are dashed tiles that start something rather than

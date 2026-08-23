@@ -4,6 +4,7 @@ import { listLocations } from '@/lib/site/stockLocations'
 import { listLicences } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
 import { getNumericSetting, getSetting } from '@/lib/site/settings'
+import { suggestedMasterCode } from '@/lib/site/masterCodes'
 
 import TerminalsClient from './TerminalsClient'
 import LicencesPanel from './LicencesPanel'
@@ -26,6 +27,10 @@ export default async function TerminalsPage() {
      both, so offering them would be a choice whose only outcome is a toast
      saying no. (excludeTransit = true, includeInactive = false.) */
   const locations = await listLocations(siteId, false, true)
+  /* The code the "add a till" dialog opens with, or null when auto-numbering is
+     off. Claims nothing — two managers opening the dialog together see the same
+     suggestion, and the second one saves under the next code up. */
+  const suggestedCode = await suggestedMasterCode(siteId, 'terminal')
   /* Licences come from the CONTROL database, not this shop's own. Read here
      rather than in the client so a manager sees them on first paint — this is
      the screen somebody opens when a till will not start. */
@@ -65,6 +70,7 @@ export default async function TerminalsPage() {
           <TerminalsClient
             terminals={terminals}
             locations={locations.map((l) => ({ id: l.id, name: l.name, isMain: l.isMain }))}
+            suggestedCode={suggestedCode}
           />
           {/* How the tills BEHAVE, under the list of which tills there are. One
               field, so it sits between the registers and the licences rather than

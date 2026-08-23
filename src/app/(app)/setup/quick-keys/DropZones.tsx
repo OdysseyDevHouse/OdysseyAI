@@ -45,14 +45,22 @@ export function BackTile({
       type="button"
       data-kit-ok
       onClick={onClick}
-      className={`flex size-24 flex-col items-center justify-center gap-1.5 rounded-card border-2 border-dashed px-1 text-center transition ${
+      /* The till's own dashed back tile, class for class — glyph beside the words on
+         one row, brand/40 dashes, full grid-cell height. The designer is a preview of
+         the counter screen, so its way out of a group must look like the cashier's. */
+      className={`flex h-full w-full min-w-0 items-center gap-3 rounded-card border-2 border-dashed py-2 pr-3 pl-2.5 text-left transition active:scale-[0.98] ${
         active
           ? 'border-brand bg-brand-soft text-brand-ink'
-          : 'border-border bg-surface-2 text-muted hover:border-border-strong hover:text-ink'
+          : 'border-brand/40 bg-surface text-ink hover:border-brand hover:bg-brand-soft'
       }`}
     >
-      <Icons.Reverse size={20} />
-      <span className="line-clamp-2 text-[11px] font-semibold leading-tight">
+      <span
+        aria-hidden
+        className="flex size-10 shrink-0 items-center justify-center rounded-[14px] bg-brand-soft text-brand"
+      >
+        <Icons.Reverse size={18} />
+      </span>
+      <span className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-tight">
         {active ? 'Take it out' : `Back to ${label}`}
       </span>
     </button>
@@ -78,7 +86,9 @@ export function AppendZone({ active }: { active: boolean }) {
       ref={setNodeRef}
       data-kit-ok
       aria-hidden
-      className={`flex h-24 min-w-24 flex-1 items-center justify-center rounded-card border-2 border-dashed text-[11px] font-semibold transition ${
+      /* h-full, not a fixed height: it is a cell of the same grid the tiles sit in
+         now, so the row sets its height and this fills it. */
+      className={`flex h-full min-w-0 items-center justify-center rounded-card border-2 border-dashed text-[13px] font-semibold transition ${
         active
           ? 'border-brand bg-brand-soft text-brand-ink'
           : 'border-border text-faint'

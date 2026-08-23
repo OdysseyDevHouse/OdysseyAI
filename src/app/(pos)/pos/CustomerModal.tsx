@@ -16,7 +16,7 @@ import {
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
-import { searchCustomersAction } from '@/app/(app)/sales/actions'
+import { searchCustomersAction, listTillCustomersAction } from '@/app/(app)/sales/actions'
 
 /**
  * Who is buying.
@@ -68,16 +68,26 @@ export function CustomerModal({
     setName(walkInName)
   }, [open, walkInName])
 
-  /* Debounced at 180ms, the same as the product search. A cashier types a
-     surname at speed and querying per character is a dozen wasted round trips. */
+  /*
+   * Debounced at 180ms, the same as the product search. A cashier types a
+   * surname at speed and querying per character is a dozen wasted round trips.
+   *
+   * ── AND IT RUNS ON AN EMPTY BOX ──────────────────────────────────────────
+   *
+   * Under two characters this asks for the FIRST PAGE of the book rather than
+   * clearing the pane. A picker that opens empty makes the shop's whole debtors
+   * list conditional on guessing a spelling, when the account being asked for is
+   * nearly always one of the same few dozen — which a list simply shows. A
+   * hundred names alphabetically is the whole book for most shops and a starting
+   * page for the rest; typing still narrows it the way it always did.
+   */
   useEffect(() => {
-    if (!open || query.trim().length < 2) {
-      setResults([])
-      return
-    }
+    if (!open) return
+    const term = query.trim()
     const timer = setTimeout(() => {
       setSearching(true)
-      searchCustomersAction(query)
+      const lookup = term.length >= 2 ? searchCustomersAction(term) : listTillCustomersAction()
+      lookup
         .then(setResults)
         .catch(() => setResults([]))
         .finally(() => setSearching(false))
@@ -160,16 +170,27 @@ export function CustomerModal({
           </div>
         )}
 
-        {query.trim().length >= 2 && !searching && results.length === 0 && (
+        {/* Two different emptinesses, and saying which is the whole job of this
+            block: a search that missed is a spelling problem, an empty book is a
+            shop that has not opened an account yet. "No account found" under an
+            untouched search box would read as the first when it is the second. */}
+        {!searching && results.length === 0 && (
           <EmptyState
             icon={<Icons.Users size={26} />}
-            title="No account found"
-            hint="Check the spelling, or sell to them as a walk-in."
+            title={query.trim().length >= 2 ? 'No account found' : 'No accounts yet'}
+            hint={
+              query.trim().length >= 2
+                ? 'Check the spelling, or sell to them as a walk-in.'
+                : 'Accounts are opened in the back office. Anyone else is a walk-in.'
+            }
           />
         )}
 
+        {/* Taller than it was: this pane used to hold a few search hits and now
+            opens on a hundred names, so the extra rows are the difference
+            between scrolling and scrolling twice. */}
         {results.length > 0 && (
-          <div className="till-pane flex max-h-64 flex-col gap-2 overflow-y-auto">
+          <div className="till-pane flex max-h-96 flex-col gap-2 overflow-y-auto">
             {results.map((result) => (
               <CustomerRow
                 key={result.id}

@@ -26,6 +26,10 @@ const CODE_TYPES = [
   { docType: 'customer', label: 'Customer codes', setting: 'autocode_customer' },
   { docType: 'supplier', label: 'Supplier codes', setting: 'autocode_supplier' },
   { docType: 'product', label: 'Product codes', setting: 'autocode_product' },
+  /* Tills. Master data in the sense that matters here — the code is typed, must
+     be unique, and prints on the slip. NOT `till_number`, which is the segment
+     inside an invoice number and is allocated by terminals.ts on its own. */
+  { docType: 'terminal', label: 'Till codes', setting: 'autocode_terminal' },
 ] as const
 
 export default async function NumberingPage() {
@@ -48,6 +52,7 @@ export default async function NumberingPage() {
       'autocode_customer',
       'autocode_supplier',
       'autocode_product',
+      'autocode_terminal',
     ]),
   ])
 

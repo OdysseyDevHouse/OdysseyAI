@@ -35,6 +35,28 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
+/**
+ * A till number nothing is already holding.
+ *
+ * This used to be the literal 97, which made the suite depend on what else had
+ * ever run against this site: three abandoned "Multi-tender screenshot till"
+ * rows from a script that no longer exists sit on 97, 98 and 99, so the INSERT
+ * died on `uq_terminal_till_number` and the whole suite failed AFTER its pure
+ * checks had already passed — a red line about leftover data, not the code.
+ *
+ * Counting down from 99 keeps scratch tills clear of the low numbers a real
+ * shop uses. Same helper, same range and same reason as test-cashup.ts.
+ */
+async function freeTillNumber(): Promise<string> {
+  const rows = await siteQuery<any>(SITE, 'SELECT till_number FROM terminals WHERE till_number IS NOT NULL')
+  const taken = new Set(rows.map((r: any) => String(r.till_number)))
+  for (let n = 99; n >= 50; n--) {
+    const candidate = String(n)
+    if (!taken.has(candidate)) return candidate
+  }
+  throw new Error('No free till number in 50..99 — sweep the scratch terminals.')
+}
+
 /** A minimal basket line for the pure half. */
 function bl(partial: Partial<BasketLine> & { key: string; qty: number; unitPriceIncl: number }): BasketLine {
   return {
@@ -151,7 +173,7 @@ async function main() {
   // Its own terminal + sequence, so the site-wide run is never consumed.
   const term = await siteExecute(SITE,
     'INSERT INTO terminals (code, name, till_number) VALUES (?,?,?)',
-    [`DD${stamp}`.slice(0, 24), 'Doc discount till', 97])
+    [`DD${stamp}`.slice(0, 24), 'Doc discount till', await freeTillNumber()])
   const terminalId = term.insertId
   await siteExecute(SITE,
     `INSERT INTO document_sequences (terminal_id, doc_type, prefix, next_number, padding)

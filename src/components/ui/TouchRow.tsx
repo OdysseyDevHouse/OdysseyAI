@@ -81,7 +81,20 @@ export function TouchRow({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`relative flex w-full items-center gap-3 overflow-hidden rounded-card border py-3 pr-3 text-left transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50 ${
+      /* shrink-0 is NOT decoration — it is what stops the row collapsing.
+         Nearly every list that uses these is a `flex flex-col … overflow-y-auto`
+         pane, and a flex child defaults to shrink:1. Once the rows total more
+         than the pane is tall the browser's first move is to squeeze THEM
+         rather than scroll: forty reprint rows come back at two-thirds height,
+         each one's text spilling into the row below, so the list reads as
+         overlapping strips of clipped type. It looks like a broken component
+         and it is really an un-pinned flex child.
+
+         Fixed here rather than at each call site because every one of them
+         wants the same thing — a row is as tall as its content, always — and
+         because a caller who forgets it writes a bug that only appears once the
+         list is long enough to scroll. */
+      className={`relative flex w-full shrink-0 items-center gap-3 overflow-hidden rounded-card border py-3 pr-3 text-left transition active:scale-[0.99] disabled:pointer-events-none disabled:opacity-50 ${
         /* The bar is the row's own LEFT BORDER, not a rectangle laid over it.
            That is what curves its inner edge: a border follows border-radius on
            both sides, so the colour tapers into the corners exactly as the card

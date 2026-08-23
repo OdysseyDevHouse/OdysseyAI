@@ -25,7 +25,7 @@ import {
 } from '../src/lib/site/customerLedger'
 import { creditBlockedReason, headroomRefusal } from '../src/lib/creditRules'
 import {
-  ACCOUNT_TYPES, allowsCredit, autoAllocates, accountTypeLabel, toAccountType,
+  ACCOUNT_TYPES, DEFAULT_ACCOUNT_TYPE, allowsCredit, autoAllocates, accountTypeLabel, toAccountType,
 } from '../src/lib/accountTypes'
 
 const SITE = 1
@@ -68,8 +68,12 @@ async function main() {
   ok('*** only balance_fwd auto-allocates ***',
     autoAllocates('balance_fwd') && !autoAllocates('open_item') &&
     !autoAllocates('cash') && !autoAllocates('lay_by'))
-  ok('an unknown value falls back to open_item, never to "no credit"',
-    toAccountType('nonsense') === 'open_item')
+  // The point of this check is the SECOND half: a value nobody recognises must
+  // not quietly become a type that refuses credit, because that turns a typo
+  // into a customer who cannot buy. Which type it lands on is the default's
+  // business, so that half reads the constant.
+  ok(`an unknown value falls back to ${DEFAULT_ACCOUNT_TYPE}, never to "no credit"`,
+    toAccountType('nonsense') === DEFAULT_ACCOUNT_TYPE && allowsCredit(toAccountType('nonsense')))
 
   // ── Credit is refused by TYPE, with the type named
   const position = { name: 'Test Co', status: 'active', creditLimit: 5000, balance: 0 }
@@ -195,10 +199,14 @@ async function main() {
   ok('*** a lay-by customer gets no credit either ***',
     layby.ok && !(await getCustomer(SITE, layby.id))?.canBuyOnAccount)
 
-  ok('  the default for a new customer is open_item',
+  // Asserted against the constant rather than a literal: what matters is that
+  // a customer created with no account type lands on the SAME type the form
+  // pre-selects and the list treats as unremarkable, whichever that is. A
+  // literal here fails the day the default moves, which says nothing.
+  ok(`  the default for a new customer is ${DEFAULT_ACCOUNT_TYPE}`,
     (await createCustomer(SITE, actor, { code: `DF${stamp}`, name: 'Default Co' })).ok)
   const def = await siteQueryOne<any>(SITE, 'SELECT account_type FROM customers WHERE code = ?', [`DF${stamp}`])
-  ok('  confirmed', def?.account_type === 'open_item', String(def?.account_type))
+  ok('  confirmed', def?.account_type === DEFAULT_ACCOUNT_TYPE, String(def?.account_type))
 
   // ── Invariant
   ok('*** reconcileBalances zero drift ***', (await reconcileBalances(SITE)).length === 0)

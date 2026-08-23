@@ -37,7 +37,7 @@ export type ButtonVariant =
  * sizes rather than call-site overrides so that "how big is a finger target"
  * stays one answer in one place; see --spacing-touch in globals.css.
  */
-export type ButtonSize = 'md' | 'sm' | 'touch' | 'touch-lg' | 'keypad'
+export type ButtonSize = 'md' | 'sm' | 'touch' | 'touch-lg' | 'keypad' | 'keypad-sm'
 
 /* Layout, radius, type scale and motion — identical for every variant, so
    none of them can drift. Only colour changes below. */
@@ -121,6 +121,19 @@ const BUTTON_SIZE: Record<ButtonSize, { text: string; icon: string }> = {
   keypad: {
     text: 'h-auto w-full rounded-card py-5 text-3xl font-bold',
     icon: 'h-auto w-full rounded-card py-5',
+  },
+  /* The same full-width key, for a pad that shares its dialog with a figure, a
+     text field and a footer rather than owning the screen.
+
+     MEASURED, not eyeballed: at `keypad` the drawer-movement dialogs came to
+     556px of body against a 560px cap on a 1366×768 till — four pixels, which
+     is a coincidence rather than a margin, and the row that fell off the bottom
+     first was the Reason field the dialog refuses to record without. This buys
+     64px back, and the key still measures 62px at its narrowest — past the 56px
+     (--spacing-touch) a finger needs, and taller again in a wider dialog. */
+  'keypad-sm': {
+    text: 'h-auto w-full rounded-card py-3.5 text-2xl font-bold',
+    icon: 'h-auto w-full rounded-card py-3.5',
   },
 }
 

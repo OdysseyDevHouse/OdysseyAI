@@ -26,6 +26,41 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
+/**
+ * Put stock on a product for the duration of the test, and give it back.
+ *
+ * The checks that expect an order to SUCCEED need a shop that can actually
+ * promise the item: this storefront holds stock (hold_minutes 60), so
+ * placePublicOrder refuses anything whose stock_on_hand is 0 with "has just
+ * sold out". Every published product on this fixture site is at 0, so those
+ * checks were failing on the DATA — a true statement about the fixture and
+ * nothing about trading hours, which is what this suite exists to prove.
+ *
+ * Lending rather than skipping, because a skip here would quietly stop testing
+ * the accept path altogether — the failure mode the refusal checks cannot
+ * catch, since they pass whether or not an order could ever be accepted.
+ *
+ * The exact prior value is restored through `undo`, so a shop that did have
+ * stock is left exactly as it was.
+ */
+async function lendStock(
+  productId: number,
+  undo: (() => Promise<void>)[],
+  qty = 25,
+): Promise<void> {
+  const before = await siteQueryOne<{ stock_on_hand: string | number }>(
+    SITE,
+    'SELECT stock_on_hand FROM products WHERE id = ?',
+    [productId],
+  )
+  if (!before) return
+  const previous = before.stock_on_hand
+  await siteExecute(SITE, 'UPDATE products SET stock_on_hand = ? WHERE id = ?', [qty, productId])
+  undo.push(async () => {
+    await siteExecute(SITE, 'UPDATE products SET stock_on_hand = ? WHERE id = ?', [previous, productId])
+  })
+}
+
 async function main() {
   const undo: (() => Promise<void>)[] = []
 
@@ -119,11 +154,28 @@ async function main() {
     process.exit(1)
   }
 
-  const catalogue = await publishedProducts(context, { limit: 5 })
+  /* A wider slice than the five this used to take, because the item has to be
+     one the shop could ACTUALLY sell — see the pick below. */
+  const catalogue = await publishedProducts(context, { limit: 60 })
+  /*
+   * The item this section orders has to be one the shop could ACTUALLY sell.
+   *
+   * `catalogue[0]` on this shop is BBQ Brisket Smash, whose stock_on_hand is 0.
+   * With hold_minutes at 60 the storefront refuses to promise stock it has not
+   * got, so the checks that expect an order to SUCCEED were failing on "has just
+   * sold out" — a true statement about the fixture data and nothing at all about
+   * trading hours, which is what this suite is for.
+   *
+   * One with stock if the shop has one, else the first published product with
+   * stock LENT to it for the run. The refusal checks are unaffected either way:
+   * being paused and being marked sold out both refuse regardless of stock,
+   * which is the point of each.
+   */
   if (catalogue.length === 0) {
     console.log('SKIP  this shop publishes nothing — order refusals not exercised')
   } else {
-    const item = catalogue[0]
+    const item = catalogue.find((p) => p.stockRaw > 0) ?? catalogue[0]
+    if (item.stockRaw <= 0) await lendStock(item.id, undo)
     const shopper = {
       fulfilment: 'collect' as const,
       contactName: 'Trading Hours Test',
@@ -195,11 +247,17 @@ async function main() {
   ok('the shop offers times', offered.length > 0, String(offered.length))
 
   const slotCtx = await storefrontContext(SITE)
-  const slotCatalogue = slotCtx ? await publishedProducts(slotCtx, { limit: 1 }) : []
+  /* Wide enough to find one with stock, for the same reason as the pick above:
+     the two checks below expect an order to be ACCEPTED, and the storefront will
+     not promise stock the shop has not got. */
+  const slotCatalogue = slotCtx ? await publishedProducts(slotCtx, { limit: 60 }) : []
   if (!slotCtx || slotCatalogue.length === 0) {
     console.log('SKIP  nothing publishable to order with')
   } else {
-    const line = { productId: slotCatalogue[0].id, qty: 1 }
+    // Same rule as the pick above, and stock lent for the run when there is none.
+    const slotItem = slotCatalogue.find((p) => p.stockRaw > 0) ?? slotCatalogue[0]
+    if (slotItem.stockRaw <= 0) await lendStock(slotItem.id, undo)
+    const line = { productId: slotItem.id, qty: 1 }
     const shopper = {
       fulfilment: 'collect' as const,
       contactName: 'Trading Hours Test',

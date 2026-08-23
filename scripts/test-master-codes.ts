@@ -1,5 +1,5 @@
 /**
- * Auto-numbered customer, supplier and product codes.
+ * Auto-numbered customer, supplier, product and till codes.
  *
  * The things worth proving are the ones that only break under conditions a
  * person clicking through the UI will not reproduce:
@@ -18,6 +18,7 @@ import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
 import { createCustomer } from '../src/lib/site/customers'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { createProduct } from '../src/lib/site/products'
+import { createTerminal } from '../src/lib/site/terminals'
 import { resolveMasterCode, suggestedMasterCode } from '../src/lib/site/masterCodes'
 import { previewMasterCode } from '../src/lib/site/sequences'
 import { setSetting, getSetting } from '../src/lib/site/settings'
@@ -32,7 +33,7 @@ const ok = (label: string, cond: boolean, extra = '') => {
 }
 
 /** Ids created here, torn down at the end regardless of outcome. */
-const made = { customers: [] as number[], suppliers: [] as number[], products: [] as number[] }
+const made = { customers: [] as number[], suppliers: [] as number[], products: [] as number[], terminals: [] as number[] }
 
 async function main() {
   // The sequences are shared site state, so the test drives them to a private
@@ -41,10 +42,14 @@ async function main() {
     customer: await getSetting(SITE, 'autocode_customer'),
     supplier: await getSetting(SITE, 'autocode_supplier'),
     product: await getSetting(SITE, 'autocode_product'),
+    terminal: await getSetting(SITE, 'autocode_terminal'),
   }
   const seqBefore = await siteQuery<any>(
     SITE,
-    "SELECT doc_type, prefix, next_number, padding FROM document_sequences WHERE doc_type IN ('customer','supplier','product')",
+    /* terminal_id = 0 is the SITE sequence. Scoped explicitly because this test
+       now creates tills, and a till carries its own per-till rows for the sales
+       doc types — restoring by doc_type alone would reach into those. */
+    "SELECT doc_type, prefix, next_number, padding FROM document_sequences WHERE terminal_id = 0 AND doc_type IN ('customer','supplier','product','terminal')",
   )
 
   try {
@@ -54,10 +59,14 @@ async function main() {
     const CUS = `TCUS${stamp}`.slice(0, 12)
     const SUP = `TSUP${stamp}`.slice(0, 12)
     const PRD = `TPRD${stamp}`.slice(0, 12)
+    /* Shorter, because validateTerminal caps a till code at 24 characters and
+       the typed-code case below appends to this. */
+    const TIL = `TT${stamp}`.slice(0, 10)
 
     await siteExecute(SITE, "UPDATE document_sequences SET prefix=?, next_number=1, padding=4 WHERE doc_type='customer'", [CUS])
     await siteExecute(SITE, "UPDATE document_sequences SET prefix=?, next_number=1, padding=4 WHERE doc_type='supplier'", [SUP])
     await siteExecute(SITE, "UPDATE document_sequences SET prefix=?, next_number=1, padding=4 WHERE doc_type='product'", [PRD])
+    await siteExecute(SITE, "UPDATE document_sequences SET prefix=?, next_number=1, padding=4 WHERE doc_type='terminal'", [TIL])
 
     /* ── Off by default ──────────────────────────────────────────────────
        A store that never opens the setting must keep typing its own codes —
@@ -74,6 +83,7 @@ async function main() {
     await setSetting(SITE, 'autocode_customer', '1')
     await setSetting(SITE, 'autocode_supplier', '1')
     await setSetting(SITE, 'autocode_product', '1')
+    await setSetting(SITE, 'autocode_terminal', '1')
 
     // The preview must not consume anything — an abandoned New Customer form
     // is the common case, and each one leaving a hole would be the bug.
@@ -129,6 +139,36 @@ async function main() {
     const p1row = p1.ok ? await siteQueryOne<any>(SITE, 'SELECT code FROM products WHERE id=?', [p1.id]) : null
     ok('product has its own counter', p1row?.code === `${PRD}0001`, String(p1row?.code))
 
+    /* ── Tills ───────────────────────────────────────────────────────────
+       A till's CODE comes off this sequence; its `till_number` does not — that
+       is the segment inside an invoice number and is allocated separately, by
+       lowest-free, so a decommissioned till's slot is reused. The two must not
+       be confused, and the second assertion is what would catch it if some
+       later change wired the code to the till number. */
+    const t1 = await createTerminal(SITE, { code: '', name: 'Auto till one' })
+    if (t1.ok) made.terminals.push(t1.id)
+    const t1row = t1.ok
+      ? await siteQueryOne<any>(SITE, 'SELECT code, till_number FROM terminals WHERE id=?', [t1.id])
+      : null
+    ok('till has its own counter', t1row?.code === `${TIL}0001`, String(t1row?.code))
+    ok(
+      '*** and its till_number is allocated separately, not from the code ***',
+      !!t1row?.till_number && String(t1row.till_number) !== `${TIL}0001`,
+      `code ${t1row?.code}, till_number ${t1row?.till_number}`,
+    )
+
+    const t2 = await createTerminal(SITE, { code: '', name: 'Auto till two' })
+    if (t2.ok) made.terminals.push(t2.id)
+    const t2row = t2.ok ? await siteQueryOne<any>(SITE, 'SELECT code FROM terminals WHERE id=?', [t2.id]) : null
+    ok('the next till gets the next code', t2row?.code === `${TIL}0002`, String(t2row?.code))
+
+    const tTyped = await createTerminal(SITE, { code: `${TIL}-BAR`, name: 'Typed till' })
+    if (tTyped.ok) made.terminals.push(tTyped.id)
+    const tTypedRow = tTyped.ok
+      ? await siteQueryOne<any>(SITE, 'SELECT code FROM terminals WHERE id=?', [tTyped.id])
+      : null
+    ok('a typed till code is kept', tTypedRow?.code === `${TIL}-BAR`, String(tTypedRow?.code))
+
     /* ── Concurrency ─────────────────────────────────────────────────────
        THE test. Ten saves fired together: under MySQL's default REPEATABLE
        READ a plain SELECT takes no lock, so a naive read-then-write hands the
@@ -177,18 +217,27 @@ async function main() {
       await siteExecute(SITE, "DELETE FROM activity_log WHERE entity='supplier' AND entity_id = ?", [id])
       await siteExecute(SITE, 'DELETE FROM suppliers WHERE id = ?', [id])
     }
+    /* A till is created WITH its own per-till numbering sequences, so deleting
+       the terminal alone would leave those rows behind — and a stray sequence
+       with no document is exactly what makes test-sales-posting fail instead of
+       this suite. The sequence rows go first, being the child side. */
+    for (const id of made.terminals) {
+      await siteExecute(SITE, 'DELETE FROM document_sequences WHERE terminal_id = ?', [id])
+      await siteExecute(SITE, 'DELETE FROM terminals WHERE id = ?', [id])
+    }
 
     // Put the sequences and settings back exactly as they were.
     for (const s of seqBefore) {
       await siteExecute(
         SITE,
-        'UPDATE document_sequences SET prefix=?, next_number=?, padding=?, last_issued_number=NULL WHERE doc_type=?',
+        'UPDATE document_sequences SET prefix=?, next_number=?, padding=?, last_issued_number=NULL WHERE doc_type=? AND terminal_id = 0',
         [s.prefix, s.next_number, s.padding, s.doc_type],
       )
     }
     await setSetting(SITE, 'autocode_customer', before.customer)
     await setSetting(SITE, 'autocode_supplier', before.supplier)
     await setSetting(SITE, 'autocode_product', before.product)
+    await setSetting(SITE, 'autocode_terminal', before.terminal)
   }
 
   console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAILURE(S)`)

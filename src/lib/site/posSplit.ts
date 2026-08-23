@@ -4,7 +4,7 @@ import { siteQueryOne, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { documentTotals, lineTotals } from '../documentMath'
 import { getDocument } from './salesDocuments'
-import type { Actor } from './activityLog'
+import { logActivityTx, type Actor } from './activityLog'
 import { tabPurpose } from './tabRouting'
 
 /**
@@ -291,6 +291,15 @@ export async function splitTableBill(
       [destination.documentId, input.toTableId] as never,
     )
 
+    await logSplit(tx, actor, {
+      sourceDocId,
+      destDocId: destination.documentId,
+      fromLabel: String(from.code),
+      toLabel: String(to.code),
+      moved,
+      sourceEmptied: kept.length === 0,
+    })
+
     return {
       ok: true,
       fromDocumentId: kept.length === 0 ? null : sourceDocId,
@@ -341,7 +350,10 @@ export async function splitBillOntoDocument(
         ? [input.fromDocumentId]
         : [input.fromDocumentId, input.toDocumentId].sort((a, b) => a - b)
     const [lockRows] = await tx.query(
-      `SELECT id, status FROM sales_documents WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY id FOR UPDATE`,
+      /* customer_name comes along for the audit line. On a hospitality bill it IS
+         the tab's name — "Dave", "Walk-in", the table's code — so it is what makes
+         a trail read as something a person recognises rather than two ids. */
+      `SELECT id, status, customer_name FROM sales_documents WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY id FOR UPDATE`,
       ids,
     )
     const locked = lockRows as Row[]
@@ -424,6 +436,22 @@ export async function splitBillOntoDocument(
         input.fromDocumentId,
       ] as never)
     }
+
+    const dest = locked.find((r) => Number(r.id) === input.toDocumentId)
+    await logSplit(tx, actor, {
+      sourceDocId: input.fromDocumentId,
+      destDocId: destination.documentId,
+      fromLabel: String(source.customer_name ?? '') || `Sale #${input.fromDocumentId}`,
+      /* A brand new bill has no row to read its name off yet — it was minted a few
+         lines ago — so the name the waiter typed is the label, and "a new sale" is
+         the honest fallback when they typed nothing. */
+      toLabel:
+        input.toDocumentId === null
+          ? input.newSaleName?.trim() || 'a new sale'
+          : String(dest?.customer_name ?? '') || `Sale #${input.toDocumentId}`,
+      moved,
+      sourceEmptied: kept.length === 0,
+    })
 
     return {
       ok: true,
@@ -516,8 +544,118 @@ export async function transferTableBill(
       ] as never,
     )
 
+    /* And in the activity trail too, beside the splits.
+     *
+     * Both, not one: `document_audit` is the DOCUMENT's own history — it hangs off
+     * the bill and travels with it — while this is the site-wide trail a manager
+     * reads without a document in mind. "What happened to INV000412" and "what did
+     * the floor do last night" are different questions, and a move that answered
+     * only the first would be invisible on the audit screen next to every split. */
+    try {
+      await logActivityTx(tx, actor, {
+        entity: 'pos_split',
+        entityId: sourceDocId,
+        action: 'transfer',
+        detail: `Whole bill moved from ${String(from.code)} to ${String(to.code)}`,
+        changes: { table: { from: String(from.code), to: String(to.code) } },
+      })
+    } catch (error) {
+      // Never at the cost of the move — the argument logSplit states in full.
+      console.error('pos_split activity_log write failed', error)
+    }
+
     return { ok: true as const, documentId: sourceDocId }
   }, await tabPurpose(siteId))
+}
+
+/* ── The trail ───────────────────────────────────────────────────────────── */
+
+/**
+ * Records one move, for both kinds of split.
+ *
+ * Written INSIDE the transaction, so the row commits with the move it describes rather
+ * than a moment later against a bill that may already have been settled — but NOT at
+ * the cost of the move. The `try` is the whole argument, and it is deliberate:
+ *
+ * A till is the wrong place to be strict. `activity_log` is not present on every site
+ * — the schema drifts, and this file already runs against one where the table does not
+ * exist — so a bare `logActivityTx` turns "we could not write the audit row" into "you
+ * may not move that table", mid-service, with the party already sitting down. Refusing
+ * a legitimate move to protect a log entry is a worse failure than the missing entry,
+ * and it is the failure a waiter cannot work around.
+ *
+ * So the move wins and the console carries the loss, exactly as `logActivity` argues
+ * for every other trail in the app. What is bought by being in the transaction anyway
+ * is that the row cannot outlive a move that rolled back for its OWN reasons — an
+ * audit line describing a split that never happened would be worse than none.
+ *
+ * The wording is stored rendered rather than rebuilt at read time, in keeping with the
+ * table's own note: an entry written tonight must still read correctly after this
+ * function has been rewritten, and after the products it names have been renamed.
+ */
+async function logSplit(
+  tx: Parameters<Parameters<typeof siteTransaction>[1]>[0],
+  actor: Actor,
+  info: {
+    sourceDocId: number
+    destDocId: number
+    /** What the bill was called, as a person would say it — a table code or a tab name. */
+    fromLabel: string
+    toLabel: string
+    /** The rows that moved, already halved. */
+    moved: Row[]
+    /** Whether the source was emptied out and cancelled. */
+    sourceEmptied: boolean
+  },
+): Promise<void> {
+  const items = info.moved
+    .map((l) => `${formatMovedQty(toNum(l.qty))} × ${String(l.description)}`)
+    .join(', ')
+  const value = info.moved.reduce(
+    (sum, l) =>
+      sum +
+      lineTotals({
+        qty: toNum(l.qty),
+        unitPriceIncl: toNum(l.unit_price_incl),
+        discountPct: toNum(l.discount_pct),
+        vatRatePct: toNum(l.vat_rate_pct),
+      }).lineTotalIncl,
+    0,
+  )
+
+  try {
+    await logActivityTx(tx, actor, {
+      entity: 'pos_split',
+      entityId: info.sourceDocId,
+      action: 'split',
+      /* Truncated by logActivityTx at 400 characters. A forty-line bill moved wholesale
+         will lose its tail, which is the right thing to lose: the sentence still says
+         who moved how much off what, and `changes` carries the count and the value. */
+      detail: `${items} moved from ${info.fromLabel} to ${info.toLabel}${
+        info.sourceEmptied ? ` — ${info.fromLabel} emptied and closed` : ''
+      }`,
+      /* from/to reads as the move itself: these lines were on that bill, they are on
+         this one now. `value` is the figure that makes the list worth scanning — it is
+         what separates a beer put on the wrong tab from a table's whole bill walking. */
+      changes: {
+        bill: { from: info.fromLabel, to: info.toLabel },
+        document: { from: info.sourceDocId, to: info.destDocId },
+        lines: { from: null, to: info.moved.length },
+        value: { from: null, to: round(value, 2) },
+        ...(info.sourceEmptied ? { sourceClosed: { from: null, to: true } } : {}),
+      },
+    })
+  } catch (error) {
+    /* Logged, not raised — see the note above. A site with no activity_log lands here
+       on every split, so this must stay cheap and quiet rather than throwing service
+       after service. */
+    console.error('pos_split activity_log write failed', error)
+  }
+}
+
+/** Trims a DECIMAL(12,3) quantity to what a person would write: 2, not 2.000. */
+function formatMovedQty(qty: number): string {
+  return Number.isInteger(qty) ? String(qty) : String(round(qty, 3))
 }
 
 /* ── Writing the two halves ──────────────────────────────────────────────── */

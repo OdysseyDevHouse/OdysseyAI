@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { requireSiteUser } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getDocument, isEditable } from '@/lib/site/salesDocuments'
 import { listPriceStructures, repsForLines } from '@/lib/site/lookups'
 import { listUsers } from '@/lib/site/users'
@@ -27,7 +27,14 @@ export const dynamic = 'force-dynamic'
  * form: every figure on a line is editable until the document is finalised.
  */
 export default async function InvoicingPage({ params }: { params: Promise<{ id: string }> }) {
-  const { site, user, capabilities } = await requireSiteUser()
+  /* `sales.view` — the same right the register asks for, because this screen is
+     one of its rows opened up. `requireSiteUser` proved somebody was signed in
+     and nothing more, so a user with no sales rights at all could read any
+     invoice by typing its id.
+
+     Every finer question this page asks — may they edit, void, credit, see cost
+     — is still asked per control below. This is only the door. */
+  const { siteId, actor, capabilities } = await requireCapability('sales.view')
   const { id } = await params
 
   const documentId = Number(id)
@@ -44,44 +51,44 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
     voidReasons,
     returnReasons,
   ] = await Promise.all([
-    getDocument(site.id, documentId),
-    listPriceStructures(site.id),
+    getDocument(siteId, documentId),
+    listPriceStructures(siteId),
     // Users, not sales_reps: commission is paid to a user (047), so the
     // per-line picker has to name one or the attribution goes nowhere.
-    listUsers(site.id),
-    listTenderTypes(site.id),
-    getNumericSetting(site.id, 'sales_cash_rounding'),
+    listUsers(siteId),
+    listTenderTypes(siteId),
+    getNumericSetting(siteId, 'sales_cash_rounding'),
     // Windows unevaluated — the editor checks them against its own clock.
-    liveSpecials(site.id),
+    liveSpecials(siteId),
     // What is held against this invoice (172). Batched here rather than fetched
     // by the panel, so the figures paint with the page instead of after it.
-    depositSummary(site.id, documentId),
+    depositSummary(siteId, documentId),
     /* The two reason lists, for the dialog that appears once this invoice is
        posted — a counter cancelling or crediting picks from them without
        leaving the window. Active only: these are the lists somebody picks
        FROM, and a retired reason stays readable on the documents that used
        it. Batched here so the dialog opens with them already in hand. */
-    listSalesReasons(site.id, 'void'),
-    listSalesReasons(site.id, 'return'),
+    listSalesReasons(siteId, 'void'),
+    listSalesReasons(siteId, 'return'),
   ])
   if (!document) notFound()
 
   // Whoever is capturing is pre-selected on every new line — right nearly
   // every time, and otherwise they pick themselves out of a list on each one.
-  const { reps, defaultUserId } = repsForLines(users, user.id)
+  const { reps, defaultUserId } = repsForLines(users, actor.userId)
 
   // The credit position for the attached account, so the finalise dialog can
   // judge the account tender without a round trip on open. Depends on the
   // document, so it cannot join the batch above.
   const customer = document.customerId
-    ? await getTillCustomer(site.id, document.customerId)
+    ? await getTillCustomer(siteId, document.customerId)
     : null
 
   // Only once it is a real document. A draft has nothing to prove yet, and an
   // upload box on a half-captured invoice is noise in the way of the grid.
   const attachments = isEditable(document.status)
     ? []
-    : await listAttachments(site.id, 'sales_document', documentId)
+    : await listAttachments(siteId, 'sales_document', documentId)
 
   return (
     <>

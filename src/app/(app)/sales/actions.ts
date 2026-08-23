@@ -34,6 +34,7 @@ import { terminalStockLocationId } from '@/lib/site/terminals'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
 import {
   searchCustomersForTill,
+  listCustomersForPicker,
   getTillCustomer,
   type TillCustomer,
 } from '@/lib/site/tillCustomers'
@@ -145,6 +146,31 @@ export async function searchCustomersAction(term: string): Promise<TillCustomer[
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
   return searchCustomersForTill(siteId, term)
+}
+
+/**
+ * The opening list for a till's customer picker, before anything is typed.
+ *
+ * ── WHY A PICKER SHOULD NOT OPEN EMPTY ───────────────────────────────────
+ *
+ * `searchCustomersAction` returns nothing under two characters, which is right
+ * for a type-ahead and wrong for the first thing a cashier sees. A dialog that
+ * opens on an empty pane makes the shop's whole debtors book conditional on
+ * guessing how a name is spelled — and the customer standing at the counter is
+ * usually one of the same forty accounts, which a list would simply show.
+ *
+ * A hundred, alphabetically. That covers the whole book for most shops outright,
+ * and for a bigger one it is a starting page to scroll or refine rather than a
+ * claim to completeness — the search is still there and still the way to reach
+ * account 900.
+ *
+ * `sales.till`, matching the search beside it: the same people see the same
+ * accounts whether they type or scroll.
+ */
+export async function listTillCustomersAction(): Promise<TillCustomer[]> {
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
+  return listCustomersForPicker(siteId, 100)
 }
 
 /**

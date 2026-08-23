@@ -16,9 +16,8 @@ import {
   PieChart,
   Settings,
   ShoppingBag,
-  Gem,
+  ShoppingCart,
   Gift,
-  Plus,
   FileText,
   Users,
   Undo2 as Reverse,
@@ -116,7 +115,7 @@ export const NAV: NavSection[] = [
     label: 'Sales',
     icon: LineChart,
     items: [
-      { label: 'Point of sale', href: '/pos', icon: Plus, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
+      { label: 'Point of sale', href: '/pos', icon: ShoppingCart, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
       /* One row, not two. Invoicing was the capture worklist and Documents the
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
@@ -210,10 +209,10 @@ export const NAV: NavSection[] = [
       { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view', module: 'customers', description: 'Chase overdue accounts and record the outcome' },
       { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view', module: 'customers', description: 'What a customer undertook to pay, and by when' },
       { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view', module: 'customers', description: 'Send account statements out to customers' },
-      /* The members list, which is the loyalty screen anybody actually opens.
-         The programme, its tiers and the punch cards decide how it WORKS and
-         are set once, so they are in the setup hub. */
-      { label: 'Loyalty', href: '/loyalty', icon: Gem, built: true, capability: 'loyalty.view', module: 'loyalty', description: 'Members, their points and what they have earned' },
+      /* Loyalty is NOT a row here any more — the members list is listed in the
+         Online Store hub, which is where a shop goes to run what it offers
+         shoppers. The programme, its tiers and the punch cards decide how it
+         WORKS and are set once, so those stay in the setup hub. */
       /* Stored value, not a points programme — a shop that wants gift cards
          rarely wants loyalty, so this stays in the base package. */
       { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', description: 'Sell, check and manage stored-value cards' },
@@ -558,6 +557,7 @@ export const SUBPAGE_LABELS = {
   '/setup/linked-stores': 'Linked stores',
   '/setup/locations': 'Stock locations',
   '/setup/adjustment-reasons': 'Adjustment reasons',
+  '/setup/stock-takes': 'Stock take approvals',
   '/setup/sales-reasons': 'Void & return reasons',
   '/setup/pricing': 'Price types & VAT',
   '/setup/customer-groups': 'Customer groups',
@@ -604,6 +604,10 @@ export const SUBPAGE_LABELS = {
   '/staff/leave-types': 'Leave types',
   '/staff/cost': 'Cost per employee',
   '/credit/levels': 'Credit levels',
+  /* The members list. It was a menu row under Customers and is now a tile in
+     the Online Store hub — what the shop offers its shoppers — so this is where
+     it is named. Its three setup screens below still belong to /setup. */
+  '/loyalty': 'Loyalty',
   '/loyalty/programme': 'Loyalty programme',
   '/loyalty/tiers': 'Loyalty tiers',
   '/loyalty/cards': 'Punch cards',
@@ -711,6 +715,15 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
   '/suppliers/remittances': '/accounting',
   '/credit/runs': '/accounting',
   '/sales/offline': '/accounting',
+  /* Listed in the reports catalogue rather than the setup hub — it answers a
+     question instead of deciding something. The route stayed under /setup so
+     the prefix would otherwise send the trail to the hub that no longer lists
+     it, leaving no way back to the screen it was reached from. */
+  '/setup/audit': '/reports',
+  /* The members list is listed in the online store's hub, but its route is its
+     own — /loyalty matches no hub prefix, so without this the screen renders
+     with no trail at all. Its three setup screens below still read "Setup ›". */
+  '/loyalty': '/online-store',
   '/staff/pay-rules': '/setup',
   '/staff/leave-types': '/setup',
   '/staff/cost': '/setup',
@@ -783,6 +796,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/linked-stores': 'multi store group branches sharing',
   '/setup/locations': 'warehouse storeroom bins branches',
   '/setup/adjustment-reasons': 'write off shrinkage damage breakage wastage codes',
+  '/setup/stock-takes':
+    'stock take count variance threshold approval sign off signoff shrinkage tolerance blind count second signature manager',
   '/setup/sales-reasons': 'void cancel reasons refund return credit note faulty codes exception',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/customer-groups':
@@ -820,6 +835,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/staff/cost': 'wages salary labour cost payroll per employee',
   '/commission/rules': 'commission rates rules percentage sales rep earnings targets',
   '/credit/levels': 'credit limit terms account hold blocked risk dunning reminders',
+  '/loyalty': 'loyalty members points balance rewards earned customers programme',
   '/loyalty/programme': 'points rewards earn rate redemption programme rules',
   '/loyalty/tiers': 'tiers levels vip bronze silver gold status benefits',
   '/loyalty/cards': 'punch card stamps buy x get y free coffee',

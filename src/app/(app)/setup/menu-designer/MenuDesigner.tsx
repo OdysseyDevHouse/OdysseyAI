@@ -24,6 +24,7 @@ import {
   Card,
   EmptyState,
   Icons,
+  TileGrid,
   toneForId,
   toneForTileToken,
   useToast,
@@ -42,7 +43,7 @@ import {
   type MenuActionResult,
   type MenuPayload,
 } from './actions'
-import { BackTile, DepartmentTile, DragOverlayCards, ProductTile } from './tiles'
+import { BackTile, DepartmentTile, DragOverlayCards, ProductTile, TILE_H } from './tiles'
 import { NewDepartmentModal } from './NewDepartmentModal'
 import { TileEditorModal, type EditorTarget } from './TileEditorModal'
 import { UnassignedTray } from './UnassignedTray'
@@ -873,7 +874,7 @@ export function MenuDesigner({
                 }
               />
             ) : (
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-4">
+              <TileGrid tileWidth={168} tileHeight={TILE_H}>
                 {path.length > 0 && (
                   <BackTile
                     label={path.length > 1 ? path[path.length - 2].name : 'All departments'}
@@ -948,31 +949,34 @@ export function MenuDesigner({
                     />
                   )
                 })}
+              </TileGrid>
+            )}
 
-                {/* Says what is not on screen rather than truncating quietly —
-                    a department that draws 200 of its 20,000 products and says
-                    nothing is a screen lying about what it holds. */}
-                {gridHidden > 0 && (
-                  <div className="col-span-full flex items-center justify-center gap-3 rounded-card border border-dashed border-border px-4 py-3 text-sm text-muted">
-                    <span>
-                      Showing {gridShown.length.toLocaleString()} of{' '}
-                      {gridProducts.length.toLocaleString()} products here.
-                    </span>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setGridLimit((l) => l + GRID_PAGE)}
-                    >
-                      Show {Math.min(GRID_PAGE, gridHidden).toLocaleString()} more
-                    </Button>
-                  </div>
-                )}
+            {/* Says what is not on screen rather than truncating quietly — a
+                department that draws 200 of its 20,000 products and says nothing is a
+                screen lying about what it holds.
 
-                {emptyLevel && (
-                  <div className="col-span-full">
-                    <EmptyLevel label={levelDropLabel} receiving={over?.id === 'level'} />
-                  </div>
-                )}
+                Outside the grid: its rows are a fixed tile height now, and a notice
+                sitting in one would be clipped to 116px. */}
+            {!emptyLevel && gridHidden > 0 && (
+              <div className="mt-4 flex items-center justify-center gap-3 rounded-card border border-dashed border-border px-4 py-3 text-sm text-muted">
+                <span>
+                  Showing {gridShown.length.toLocaleString()} of{' '}
+                  {gridProducts.length.toLocaleString()} products here.
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setGridLimit((l) => l + GRID_PAGE)}
+                >
+                  Show {Math.min(GRID_PAGE, gridHidden).toLocaleString()} more
+                </Button>
+              </div>
+            )}
+
+            {emptyLevel && (
+              <div className="mt-4">
+                <EmptyLevel label={levelDropLabel} receiving={over?.id === 'level'} />
               </div>
             )}
           </div>

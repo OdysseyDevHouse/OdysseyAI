@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { toPosMode, type PosMode } from '../posMode'
+import { resolveMasterCode } from './masterCodes'
 
 /**
  * Tills, registered as master data.
@@ -153,10 +154,23 @@ export function validateTerminal(input: TerminalInput): string | null {
 }
 
 export async function createTerminal(siteId: number, input: TerminalInput): Promise<SaveResult> {
-  const invalid = validateTerminal(input)
+  /*
+   * BEFORE validate, which rejects a blank code — see masterCodes.ts. Every path
+   * that registers a till lands here, so this is the one place it belongs.
+   *
+   * Uppercased through the same expression the insert uses below, so an issued
+   * code and a typed one are normalised identically and the clash check sees
+   * one shape.
+   */
+  const withCode = {
+    ...input,
+    code: await resolveMasterCode(siteId, 'terminal', input.code),
+  }
+
+  const invalid = validateTerminal(withCode)
   if (invalid) return { ok: false, error: invalid }
 
-  const code = input.code.trim().toUpperCase()
+  const code = withCode.code.trim().toUpperCase()
   const clash = await siteQueryOne<RowDataPacket & { id: number }>(
     siteId,
     'SELECT id FROM terminals WHERE code = ? LIMIT 1',

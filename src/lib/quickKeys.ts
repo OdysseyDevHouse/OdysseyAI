@@ -160,69 +160,24 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
      */
     hint: 'Saves the basket. Asks what to call it if it has no name yet.',
   },
-  {
-    slug: 'view-saved-sales',
-    label: 'Saved sales',
-    icon: 'ListOrdered',
-    capability: 'sales.view',
-    retailOnly: true,
-    hint: 'The parked baskets, to bring one back.',
-  },
 
   /*
-   * ── THE THREE LISTS ───────────────────────────────────────────────────────
+   * ── NO DOCUMENT-LIST KEYS ─────────────────────────────────────────────────
    *
-   * "Find an existing quote / order / lay-by" is one question asked of three
-   * different piles, and until now only two of them had a way in from the till:
-   * the basket carried a recall key that CHANGED MEANING with the module it was
-   * showing. That key is gone. It cost every shop a strip of the basket, it sat
-   * beside Save where a thumb rests, and it could only ever reach the list for
-   * the module already on screen — so a cashier ringing a sale who was asked
-   * about a quote had to switch module, binning the basket, to look one up.
+   * Saved sales, quotes, orders and lay-bys are deliberately absent, and this
+   * note is here so they are not put back.
    *
-   * As keys they are three things a shop places, or does not, and any of them
-   * opens over whatever is on screen without touching it. Three slugs rather
-   * than one "Documents" key for the same reason the modals are separate: a
-   * quote is answered by recalling it, an order by delivering it, a lay-by by
-   * taking a payment against it. One key would have to ask which — which is the
-   * question the cashier already answered by pressing it.
+   * Every one of those piles already has its own way in from the till: picking
+   * the module opens the list (`openModuleList` in PosShell) — saved sales on
+   * the sale module, and a lay-by, which is list-only since the basket is never
+   * one, opens on the pick itself. A key beside that is a second button for an
+   * act the till already puts one press away, and this catalogue is for the
+   * acts that have nowhere else to live.
    *
-   * All three take `sales.view`: this is reading the shop's documents, not
-   * writing one. What they lead to re-checks for itself, as every action does.
+   * `save-sale` above is NOT the same case and stays. Saving is a thing the
+   * cashier DOES to the basket in front of them; finding one again is a list
+   * the module menu already carries.
    */
-  /*
-   * All three RETAIL-ONLY, which is the same call the module menu makes: it is
-   * hidden on a restaurant till because every row behind it is a promise about
-   * goods leaving the shop later, and a kitchen makes none of those. Offering
-   * the same three as keys there would put the menu back one button at a time.
-   */
-  {
-    slug: 'view-quotes',
-    label: 'Quotes',
-    icon: 'ListOrdered',
-    capability: 'sales.view',
-    retailOnly: true,
-    retailReason: 'Quotes are a counter act — a restaurant till does not write them.',
-    hint: "The shop's quotes, to bring one onto the till.",
-  },
-  {
-    slug: 'view-orders',
-    label: 'Orders',
-    icon: 'Package',
-    capability: 'sales.view',
-    retailOnly: true,
-    retailReason: 'Sales orders are a counter act — a restaurant till does not write them.',
-    hint: 'Sales orders waiting to go out, to deliver one.',
-  },
-  {
-    slug: 'view-laybys',
-    label: 'Lay-bys',
-    icon: 'PackageOpen',
-    capability: 'sales.view',
-    retailOnly: true,
-    retailReason: 'Lay-bys are a counter act — a restaurant till does not write them.',
-    hint: 'The lay-bys on the go, to take a payment or hand one over.',
-  },
   {
     slug: 'undo',
     label: 'Undo',
@@ -283,12 +238,35 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     capability: 'sales.till',
     hint: 'Holds money against the sale on screen.',
   },
+  /*
+   * ── CREDIT SALE, AND WHY IT IS NOT `refund` ───────────────────────────────
+   *
+   * This slug used to be "Account sale" and opened the customer picker — the
+   * same dialog the customer button at the head of the slip already shows. It
+   * was removed for that duplication, and the name is now free for the act that
+   * genuinely needs a key of its own.
+   *
+   * A credit sale reverses a PAST SALE: find the receipt, pick the lines off it,
+   * credit them at the prices printed on it. That is the ordinary way goods come
+   * back, because the customer gets back what they actually paid rather than
+   * today's shelf figure — a discounted sale credited at full price is a shop
+   * paying out money it never took.
+   *
+   * This is what `refund` used to do. The two acts are genuinely different and
+   * now have a key each: this one settles a document that already exists, and
+   * `refund` below takes an item back into the basket in front of the cashier,
+   * with no paperwork to find. A cashier who has the slip should reach for this
+   * one every time.
+   *
+   * Not placed on the default boards. Both keys are ordinary catalogue entries
+   * and the designer is where a manager puts the ones their counter uses.
+   */
   {
     slug: 'credit-sale',
-    label: 'Account sale',
-    icon: 'Contact',
-    capability: 'customers.credit',
-    hint: 'Puts the sale on a customer account.',
+    label: 'Credit sale',
+    icon: 'Reverse',
+    capability: 'sales.credit_note',
+    hint: 'Finds a past sale and credits it back.',
   },
   {
     slug: 'cashup',
@@ -342,12 +320,29 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     noTables: true,
     hint: 'Records cash skimmed out to the safe mid-shift.',
   },
+  /*
+   * ── REFUND IS A ONE-ITEM MODE, NOT A DOCUMENT ─────────────────────────────
+   *
+   * Pressing it ARMS the next item. The cashier presses Refund, scans the thing
+   * the customer is handing back, and it lands on the slip as a negative line —
+   * then the till is selling again with nothing to switch off.
+   *
+   * One item per press, deliberately. A mode that stays on until it is turned
+   * off is a mode a cashier forgets they are in, and the cost of forgetting here
+   * is a till that credits the next customer's shopping. Arming exactly one line
+   * makes the dangerous state last for one scan, which is short enough that the
+   * banner is still on screen when the item lands.
+   *
+   * It is for the mid-basket case: a customer at the counter swapping one thing,
+   * with no slip in hand. When there IS a slip, `credit-sale` above is the right
+   * key — it credits at the prices the customer actually paid.
+   */
   {
     slug: 'refund',
     label: 'Refund',
     icon: 'Reverse',
     capability: 'sales.credit_note',
-    hint: 'Credits goods coming back.',
+    hint: 'Arms the next item as a refund on this slip.',
   },
   {
     slug: 'redeem-voucher',
@@ -452,14 +447,18 @@ export const QUICK_KEY_ACTIONS: readonly QuickKeyAction[] = [
     hospitalityOnly: true,
     hint: 'Divides a table’s bill between payers.',
   },
-  {
-    slug: 'add-tip',
-    label: 'Add a tip',
-    icon: 'Coins',
-    capability: 'sales.till',
-    hospitalityOnly: true,
-    hint: 'Adds a gratuity to the bill.',
-  },
+  /*
+   * REMOVED: `add-tip` ("Add a tip").
+   *
+   * The tender pad already declares tips, and it is the only place that can do
+   * it correctly: a tip and change are two claims on ONE excess, and the pad is
+   * where that excess exists and gets divided. This key never captured a tip at
+   * all — it printed a sentence telling the cashier to go and use the pad — so
+   * removing it takes away a signpost, not a feature.
+   *
+   * The `manual` source on `tips` is unaffected and still meaningful: a typed
+   * amount is a manual tip whichever screen collects it. See sql/site/091_tips.
+   */
   {
     slug: 'send-to-kitchen',
     label: 'Send to kitchen',
@@ -480,10 +479,13 @@ export function actionForSlug(slug: string): QuickKeyAction | null {
  * Whether an action makes sense on THIS KIND of till — and why not, when it does not.
  *
  * The mirror of `quickKeyAllowedOnSection`, which is about which BAR. This is about the
- * shop: on a hospitality till the floor already lists every open bill, so a "Saved sales"
- * key is a second floor beside the gate — two lists of the same tabs, disagreeing as soon
- * as one goes stale. A retail till has no tables, so the bill and kitchen keys have
- * nothing to act on.
+ * shop: a retail till has no tables, so the bill and kitchen keys have nothing to act on.
+ *
+ * `retailOnly` is the other direction and currently has no action using it — the keys
+ * that did were the document lists, and those are gone from the catalogue for a reason
+ * that had nothing to do with tables (see the note above `undo`). The flag and its
+ * `retailReason` sentence are kept because the rule itself is still right: an action that
+ * only makes sense at a counter should declare it here rather than in the designer.
  *
  * Returns null when it is fine, or the sentence to show. Unlike the section rule, an
  * action refused here is HIDDEN rather than greyed: the section rule answers "which bar
@@ -500,14 +502,10 @@ export function quickKeyAllowedOnTill(
   if (!action) return null
   if (action.retailOnly && hospitality) {
     /*
-     * TWO REASONS A KEY IS RETAIL-ONLY, and one sentence would only ever fit one
-     * of them. "The table is the parked basket" answers Saved sales exactly, and
-     * answers Quotes with a non-sequitur: nobody was asking about parking.
-     *
-     * So the ones that are about DOCUMENTS the shop does not write say that
-     * instead. The distinction is `retailReason` on the action rather than a
-     * second flag, because both still mean the same thing to every caller —
-     * hide it — and a second flag would be a second thing to keep in step.
+     * `retailReason` rather than one fixed sentence, because "the table is your
+     * parked basket" answers a parking key exactly and answers a document key
+     * with a non-sequitur. An action says why in its own words, or takes the
+     * default. One flag, not two, since both mean the same thing to callers: hide it.
      */
     return (
       action.retailReason ??

@@ -128,7 +128,27 @@ export default function DocDiscountModal({
       open={open}
       onClose={onClose}
       title="Discount the whole sale"
-      size="sm"
+      /* The screen's crest, in the kit's own slot — so the title and the close
+         button keep the positions every other dialog in the app uses. */
+      titleMedia={
+        <span className="flex h-12 w-12 items-center justify-center rounded-card bg-brand-soft text-brand">
+          <Icons.Tag size={24} />
+        </span>
+      }
+      description="Apply a discount to the entire sale."
+      /* `md`, not `sm`: the pad is full width here, and three touch-size tabs
+         plus a Rand figure do not fit a 448px panel without the tab labels
+         wrapping. */
+      size="md"
+      /* MEASURED on a 1366×768 till: tabs, plaque and pad come to 510px, past
+         the default 60vh cap of 461. `bodyGrows` lifts it to 560, which keeps
+         the whole pad on screen at rest — the state the cashier types in.
+
+         The Total/Saving preview and the supervisor callout push past that, and
+         are LEFT to scroll on purpose: both appear only after a figure is
+         entered, and neither is something to type into. Scrolling to read the
+         saving is fine; scrolling to reach a key is not. */
+      bodyGrows
       footer={
         <>
           <Button variant="ghost" size="touch" onClick={onClose}>
@@ -154,19 +174,27 @@ export default function DocDiscountModal({
             onClick={apply}
           >
             <Icons.Check size={20} />
-            {needsSupervisor ? 'Ask a supervisor' : 'Apply'}
+            {needsSupervisor ? 'Ask a supervisor' : 'Apply discount'}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-3">
+        {/* Touch-size and full width — three keys a thumb picks between, not a
+            toolbar filter. Each carries a glyph so the cashier meeting this
+            forty times a day aims at the shape rather than reading the word;
+            all three or none, per the control's own rule. */}
         <SegmentedControl
+          size="touch"
+          aria-label="How to discount"
           value={kind}
           onChange={(v) => setKind(v === 'amount' ? 'amount' : v === 'code' ? 'code' : 'percent')}
           options={[
-            { value: 'percent', label: 'Percent' },
-            { value: 'amount', label: 'Rand' },
-            ...(onCode ? [{ value: 'code', label: 'Code' }] : []),
+            { value: 'percent', label: 'Percent', icon: <Icons.Percent size={18} /> },
+            { value: 'amount', label: 'Rand', icon: <Icons.Money size={18} /> },
+            ...(onCode
+              ? [{ value: 'code' as const, label: 'Code', icon: <Icons.Ticket size={18} /> }]
+              : []),
           ]}
         />
 
@@ -217,9 +245,15 @@ export default function DocDiscountModal({
             <NumPadDisplay
               label={kind === 'percent' ? 'Percent off the sale' : 'Rand off the sale'}
               value={entry}
+              /* Percent only. The app writes money with the mark LEADING —
+                 formatMoney gives "R20.00" — so a trailing R here would be the
+                 one place in the product that sets it after the figure. The
+                 Rand tab's label already says which unit it is. */
+              suffix={kind === 'percent' ? '%' : undefined}
+              layout="plaque"
               tone={needsSupervisor ? 'danger' : 'default'}
             />
-            <NumPad value={entry} onChange={setEntry} />
+            <NumPad size="wide" value={entry} onChange={setEntry} />
           </>
         )}
 

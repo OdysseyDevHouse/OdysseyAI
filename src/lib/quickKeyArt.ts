@@ -53,7 +53,6 @@ const ART_BY_SLUG: Readonly<Record<string, QuickKeyArt>> = {
   /* Sale-level acts */
   'void-sale': { file: 'void-sale.svg', tone: 'rose' },
   'save-sale': { file: 'save-sale.svg', tone: 'indigo' },
-  'view-saved-sales': { file: 'save-sale.svg', tone: 'indigo' },
   undo: { file: 'undo.svg', tone: 'violet' },
   'global-discount': { file: 'global-discount.svg', tone: 'rose' },
   'price-change': { file: 'price-change.svg', tone: 'orange' },
@@ -61,7 +60,6 @@ const ART_BY_SLUG: Readonly<Record<string, QuickKeyArt>> = {
 
   /* Money */
   'customer-payment': { file: 'customer-payment.svg', tone: 'amber' },
-  'credit-sale': { file: 'credit-sale.svg', tone: 'violet' },
   cashup: { file: 'cashup.svg', tone: 'emerald' },
   refund: { file: 'refund.svg', tone: 'amber' },
   'cash-out': { file: 'cash-out.svg', tone: 'emerald' },
@@ -93,7 +91,6 @@ const ART_BY_SLUG: Readonly<Record<string, QuickKeyArt>> = {
   /* Hospitality */
   'table-transfer': { file: 'table-transfer.svg', tone: 'indigo' },
   'split-table': { file: 'split-table.svg', tone: 'teal' },
-  'add-tip': { file: 'add-tip.svg', tone: 'amber' },
 
   /* Orders and lay-bys reuse the parked-sale art — both are "not yet a sale". */
   'save-as-order': { file: 'save-sale.svg', tone: 'indigo' },

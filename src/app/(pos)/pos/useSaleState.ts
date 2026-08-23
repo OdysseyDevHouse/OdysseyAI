@@ -98,6 +98,35 @@ export type SaleState = {
    */
   returning: boolean
   /**
+   * The NEXT item rung up comes back as a refund, and only the next one.
+   *
+   * ── A ONE-SHOT, NOT A MODE ────────────────────────────────────────────────
+   *
+   * `returning` above is a mode: it lasts until somebody turns it off, and it
+   * owns the whole basket. This is the opposite shape on purpose. The cashier
+   * presses Refund, scans the one thing the customer is handing back, and the
+   * till is selling again before they have looked up — there is nothing to
+   * remember to switch off, because the dangerous state lasts exactly one scan.
+   *
+   * That matters more here than anywhere else on the till. A forgotten return
+   * mode credits the next customer's whole shopping, and nothing on the screen
+   * looks wrong while it happens. Disarming automatically means the window in
+   * which that can happen is one item wide and the banner is still up.
+   *
+   * ── WHY NOT JUST USE `returning` ──────────────────────────────────────────
+   *
+   * Because the two answer different questions. `returning` says THIS WHOLE
+   * DOCUMENT is a credit, which changes what is written and suppresses specials
+   * across the basket. This says ONE LINE goes the other way inside an ordinary
+   * invoice — the customer is swapping a shirt and buying socks, and that is one
+   * slip with one total, not two documents and two queues.
+   *
+   * Cleared by ADD (it has done its job), by the cashier pressing the key again,
+   * and by anything that starts a basket over. It is never persisted: a parked
+   * basket recalled tomorrow must not still be armed.
+   */
+  refundArmed: boolean
+  /**
    * WHAT KIND of document this basket will be saved as.
    *
    * Separate from `returning` rather than folded into it, and the distinction is
@@ -154,6 +183,7 @@ export const initialSaleState: SaleState = {
   catalog: { kind: 'keys' },
   query: '',
   returning: false,
+  refundArmed: false,
   docType: 'invoice',
   undoCount: 0,
   baseline: null,
@@ -274,6 +304,20 @@ export type SaleAction =
    */
   | { type: 'SET_RETURNING'; returning: boolean }
   /**
+   * Arm — or disarm — the next item as a refund.
+   *
+   * Does NOT clear the basket, and that is the whole difference from
+   * SET_RETURNING above. A refund line joins the sale in progress: the customer
+   * is handing one thing back across the same counter they are buying at, so
+   * throwing away what has already been scanned would make the cashier ring it
+   * all again.
+   *
+   * Toggled off by pressing the key a second time, which is the only way out
+   * that does not involve scanning something — a cashier who armed it by mistake
+   * needs an escape that is not "credit an item you did not mean to".
+   */
+  | { type: 'ARM_REFUND'; armed: boolean }
+  /**
    * Start a basket of a different KIND — a quote rather than an invoice.
    *
    * Clears, like SET_RETURNING and for the same reason: the lines cannot follow
@@ -321,18 +365,51 @@ export type SaleAction =
 export function saleReducer(state: SaleState, action: SaleAction): SaleState {
   switch (action.type) {
     case 'ADD': {
-      const lines = addToBasket(
-        state.lines,
-        action.product,
-        action.qty ?? 1,
-        action.resolvedIncl ?? action.product.priceIncl,
-        // The attached account's standing discount rides every add — capped
-        // per product inside the basket rules. A walk-in adds at zero.
-        state.customer?.discountPct ?? 0,
-      )
+      const qty = action.qty ?? 1
+      /*
+       * ── AN ARMED REFUND BUILDS ITS OWN LINE ───────────────────────────────
+       *
+       * Straight to `lineFromProduct` with the quantity negated, bypassing
+       * `addToBasket` entirely — because merging is exactly the wrong thing here.
+       * `addToBasket` looks for a line of the same product at the same price to
+       * fold into, and on a basket holding one shirt sold it would find it: the
+       * −1 would cancel the +1 and BOTH lines would vanish, leaving a slip with
+       * no record that anything came back and a customer owed money the till has
+       * forgotten about.
+       *
+       * A refund is also its own event even against another refund. Two shirts
+       * handed back are two things the cashier looked at and accepted, and a slip
+       * that shows them separately is the one a supervisor can check.
+       *
+       * `refundArmed` is spent whatever happens next, including when the product
+       * turns out to be one that asks questions — see ADD_WITH_INSTRUCTIONS,
+       * which is where that add finishes.
+       */
+      const lines = state.refundArmed
+        ? [
+            ...state.lines,
+            lineFromProduct(
+              action.product,
+              -Math.abs(qty),
+              state.lines.length,
+              action.resolvedIncl ?? action.product.priceIncl,
+              state.customer?.discountPct ?? 0,
+            ),
+          ]
+        : addToBasket(
+            state.lines,
+            action.product,
+            qty,
+            action.resolvedIncl ?? action.product.priceIncl,
+            // The attached account's standing discount rides every add — capped
+            // per product inside the basket rules. A walk-in adds at zero.
+            state.customer?.discountPct ?? 0,
+          )
       return {
         ...state,
         lines,
+        // Spent. One press, one line — see `refundArmed`.
+        refundArmed: false,
         // Adding closes any open action row. Leaving it open means the next tap
         // on + or − lands on the line the cashier stopped looking at.
         selectedKey: null,
@@ -365,7 +442,11 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
        */
       const base = lineFromProduct(
         action.product,
-        action.qty,
+        /* The armed refund survives the questions dialog. A product that asks
+           what size or which sauce is still a product a customer can hand back,
+           and the arming happened before the dialog opened — losing it here
+           would ring the returned item up as a sale after the cashier answered. */
+        state.refundArmed ? -Math.abs(action.qty) : action.qty,
         state.lines.length,
         action.resolvedIncl ?? action.product.priceIncl,
         state.customer?.discountPct ?? 0,
@@ -373,6 +454,7 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
       return {
         ...state,
         lines: [...state.lines, withInstructions(base, action.instructions, action.note)],
+        refundArmed: false,
         selectedKey: null,
         query: '',
         catalog: state.catalog,
@@ -476,6 +558,18 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
            for a cashier to find themselves. */
         docType: 'invoice',
       }
+
+    case 'ARM_REFUND':
+      /*
+       * The basket is untouched — no spread of initialSaleState, unlike the two
+       * cases either side of this one.
+       *
+       * That is the point of the whole feature. Arming a refund happens in the
+       * MIDDLE of a sale, with the customer's shopping already on the screen and
+       * one thing to hand back before they pay for the rest. Clearing here would
+       * lose the sale to save the refund, which is the wrong half.
+       */
+      return { ...state, refundArmed: action.armed }
 
     case 'SET_DOC_TYPE':
       return {
@@ -586,6 +680,16 @@ export function saleReducer(state: SaleState, action: SaleAction): SaleState {
          * somebody else's basket.
          */
         undoCount: 0,
+        /*
+         * An armed refund does not follow a basket in.
+         *
+         * Not covered by a spread of initialSaleState — LOAD replaces the sale in
+         * place — so it is stated. A cashier who armed the key and then recalled
+         * a parked sale instead of scanning has changed their mind about what
+         * they are doing; the first item they ring on the recalled basket must
+         * be a sale, not a credit against somebody else's tab.
+         */
+        refundArmed: false,
         /*
          * THE session baseline is taken here and only here.
          *

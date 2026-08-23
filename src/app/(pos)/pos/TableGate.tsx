@@ -157,6 +157,7 @@ export function TableGate({
   onToggleTransferring,
   onTransferTable,
   onEmptyArm,
+  floorLoaded = true,
   onShowQuickKeys,
   onPickTab,
   onPickTable,
@@ -200,6 +201,22 @@ export function TableGate({
    * the mode was pressed on another screen entirely. The shell says why.
    */
   onEmptyArm?: (mode: 'split' | 'move') => void
+  /**
+   * Has `tabs`/`tables` been read from the server yet, or is this the empty
+   * initial state?
+   *
+   * The armed modes are the only thing that asks. They refuse when nothing on
+   * the floor could be their source, and without this an unread floor is
+   * indistinguishable from an empty one — so arming from a quick key, which
+   * mounts this component and starts the read in the same breath, refused on
+   * the first paint every time. The waiter got "there is nothing to move" while
+   * sitting in the table they meant to move.
+   *
+   * Defaults true for callers that hand over a floor synchronously and have no
+   * loading state to report — the Style Guide preview, and any future caller
+   * with the list already in hand.
+   */
+  floorLoaded?: boolean
   /**
    * Opens the shop's own keys for the floor — the `tables` bar from the designer.
    *
@@ -335,12 +352,20 @@ export function TableGate({
      moves on its own, because the floor is re-read on a timer behind this screen — so
      without a latch the same refusal stacked up two and three toasts deep for a single
      press of the key. React's development double-invoke made it a guaranteed pair. */
+  /* And said only once the floor is REAL. `tabs` and `tables` start empty, and the
+     quick key mounts this component and starts the read in the same breath — so
+     the first paint of an armed gate always counted zero armable bills and always
+     refused, a beat before the waiter's own table arrived. Waiting for the read
+     costs one paint of an amber banner over a floor still filling in, which is the
+     honest picture; refusing early was simply wrong, and wrong in the one way that
+     makes a working feature look unbuilt. */
   const refusedArm = useRef(false)
   useEffect(() => {
     if (!splitting && !transferring) {
       refusedArm.current = false
       return
     }
+    if (!floorLoaded) return
     if (armableCount === 0 && !refusedArm.current) {
       refusedArm.current = true
       onToggleSplitting?.(false)
@@ -348,7 +373,7 @@ export function TableGate({
       onEmptyArm?.(splitting ? 'split' : 'move')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [armableCount, splitting, transferring])
+  }, [armableCount, splitting, transferring, floorLoaded])
 
   const visitOptions = [
     { value: ALL_VISITS, label: 'All tables', count: searched.length },
@@ -527,8 +552,14 @@ export function TableGate({
               <span className="text-[14px] font-semibold text-ink">
                 {splitting ? 'Tap the bill to split.' : 'Tap the bill to move.'}
               </span>
+              {/* "0 bills can take it" is the one thing this must never say while the
+                  floor is still arriving — it contradicts the line beside it and reads
+                  as the refusal that used to fire here. Counting is held back until
+                  there is something to count. */}
               <span className="text-[13px] text-muted">
-                {armableCount === 1 ? '1 bill can' : `${armableCount} bills can`} take it.
+                {!floorLoaded
+                  ? 'Reading the floor…'
+                  : `${armableCount === 1 ? '1 bill' : `${armableCount} bills`} can take it.`}
               </span>
               <Button
                 variant="secondary"

@@ -44,12 +44,18 @@ export const SETTING_DEFAULTS = {
 
   /* ── Auto-numbered master data ─────────────────────────────────────────
      Whether a new customer, supplier or product gets its code suggested from
-     the matching sequence instead of being typed. Off by default so a store
-     with an existing coding scheme keeps it — see 062_master_data_codes.sql.
+     the matching sequence instead of being typed. ON by default — a blank code
+     on a hand-added account should produce a code rather than a validation
+     error, and a store with its own scheme still types one, because a typed
+     code always beats the suggestion. See 062_master_data_codes.sql.
      The suggestion stays editable; these switch the default, not the field. */
-  autocode_customer: '0',
-  autocode_supplier: '0',
-  autocode_product: '0',
+  autocode_customer: '1',
+  autocode_supplier: '1',
+  autocode_product: '1',
+  /* Tills too. A shop names its registers TILL01, TILL02 without being asked —
+     the code prints on the slip and groups every report, so it wants to be
+     regular, and there is no imported coding scheme to preserve. */
+  autocode_terminal: '1',
   barcode_variable_prefix: '2',
   barcode_plu_length: '5',
   barcode_value_divisor: '100',
@@ -104,6 +110,47 @@ export const SETTING_DEFAULTS = {
    * business to the spend, and a button hidden in the UI is a suggestion.
    */
   purchase_approval_threshold: '0',
+
+  /**
+   * How far a counted line may drift from the snapshot before somebody else
+   * has to sign it off.
+   *
+   * A PERCENTAGE of what the system believed. Catches the failure a rand
+   * figure misses: a fast-moving cheap line where the books say 400 and the
+   * shelf holds 40 is a catastrophe worth six rand, and no value threshold
+   * will ever see it.
+   *
+   * ZERO IS OFF, and is the default — the same convention
+   * purchase_approval_threshold uses, for the same reason. A control that
+   * arrives switched on gets switched off on the first busy morning.
+   *
+   * Measured against the SNAPSHOT rather than against the pile at post time,
+   * because it is the counter's claim being checked, not the arithmetic. See
+   * flagLines() in stockTakes.ts.
+   */
+  stock_take_variance_qty_pct: '0',
+
+  /**
+   * What a single line's variance may be worth before somebody else has to
+   * sign it off.
+   *
+   * The other half of the pair, catching what a percentage misses: one missing
+   * unit out of three is 33% and might sit under a percentage threshold, but
+   * if the unit is worth R14,000 it is the most important line on the sheet.
+   *
+   * Read on the ABSOLUTE value, so stock found is checked as carefully as
+   * stock lost. A count that only questions losses is a count that teaches
+   * people to write things on.
+   *
+   * Excluding VAT, unlike purchase_approval_threshold — deliberately. That one
+   * reads inclusive because it gates what the business PAYS, and the figure on
+   * the order is inclusive. This gates what the business WROTE OFF, and stock
+   * is held, valued and journalled excluding VAT everywhere in this schema.
+   *
+   * Zero is off, and is the default.
+   */
+  stock_take_variance_value: '0',
+
   /**
    * What a cash-up reconciles.
    *
@@ -988,6 +1035,23 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return null
     }
 
+    case 'stock_take_variance_qty_pct': {
+      const pct = Number(value)
+      // Zero is meaningful: it switches the percentage half of the check off.
+      if (!Number.isFinite(pct) || pct < 0) return 'The percentage cannot be negative.'
+      // Above 100% the only lines it can still catch are ones that more than
+      // doubled, which is a threshold that looks configured and checks nothing.
+      if (pct > 100) return 'A percentage above 100 would let almost every variance through.'
+      return null
+    }
+
+    case 'stock_take_variance_value': {
+      const amount = Number(value)
+      // Zero is meaningful: it switches the value half of the check off.
+      if (!Number.isFinite(amount) || amount < 0) return 'The amount cannot be negative.'
+      return null
+    }
+
     case 'price_ending_direction':
       return value === 'up' || value === 'down' || value === 'nearest'
         ? null
@@ -1033,6 +1097,7 @@ export function validateSetting(key: SettingKey, value: string): string | null {
     case 'autocode_customer':
     case 'autocode_supplier':
     case 'autocode_product':
+    case 'autocode_terminal':
       return value === '0' || value === '1' ? null : 'That setting must be on or off.'
 
     case 'layby_cancellation_fee_pct': {

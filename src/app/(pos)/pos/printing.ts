@@ -1,11 +1,12 @@
 'use client'
 
 import { bridgeConfig, printRaw } from '@/lib/printBridge'
-import { renderReceipt, renderKitchenTicket, type KitchenTicketData } from '@/lib/escpos/slips'
+import { renderReceipt, renderBill, renderKitchenTicket, type KitchenTicketData } from '@/lib/escpos/slips'
 import { EscPos } from '@/lib/escpos/encoder'
 import { renderSlipSpec } from '@/lib/escpos/slipSpec'
 import { parseSlip, validateSlip } from '@/lib/stationery/slip'
 import type { ReceiptData } from '@/lib/receiptData'
+import type { BillData } from '@/lib/billData'
 
 /**
  * The till's printing decisions, out of PosShell so the shell stays wiring.
@@ -85,6 +86,25 @@ export async function printSlipViaBridge(
   }
 
   return printRaw('receipt', renderReceipt(receipt, { columns: config.columns }))
+}
+
+/**
+ * Prints a pro-forma bill through the bridge. The caller falls back to the
+ * print route.
+ *
+ * No designed-slip branch, unlike `printSlipViaBridge`: the stationery designer
+ * describes a RECEIPT, and a bill is a different document — no number, no
+ * tender, and a banner saying nothing has been paid. Running a receipt design
+ * over bill data would print a slip claiming to be something it is not.
+ */
+export async function printBillViaBridge(
+  bill: BillData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const config = bridgeConfig()
+  if (!config || !config.receiptPrinter) {
+    return { ok: false, error: 'No print bridge is set up on this machine.' }
+  }
+  return printRaw('receipt', renderBill(bill, { columns: config.columns }))
 }
 
 /** Prints a kitchen ticket. The caller already checked a printer exists. */

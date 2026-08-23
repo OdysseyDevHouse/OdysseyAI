@@ -9,12 +9,16 @@ import {
   documentClaim,
   listDocuments,
 } from '@/lib/site/salesDocuments'
+import { tabPurpose } from '@/lib/site/tabRouting'
 import { basketLinesForDocument, type RecalledLine } from './recalledLines'
 import { siteQuery } from '@/lib/siteDb'
 import { recordServiceChargeRemoval } from '@/lib/site/tips'
 import { logActivity } from '@/lib/site/activityLog'
 import { recordVoidEvents, type VoidType } from '@/lib/site/posVoids'
 import { requireSalesReason } from '@/lib/site/salesReasons'
+import { priceCheckForTill, getTillProduct, type TillProduct } from '@/lib/site/tillSearch'
+import { listPriceStructures } from '@/lib/site/lookups'
+import { terminalStockLocationId } from '@/lib/site/terminals'
 import type { BasketLine } from '@/lib/basket'
 
 /**
@@ -128,7 +132,12 @@ export type OpenTab = {
  */
 export async function listOpenTabsAction(): Promise<OpenTab[]> {
   const { siteId } = await actorForOrThrow('sales.till')
-  const rows = await listOpenTabs(siteId)
+  /* The tab purpose, exactly as `listTablesAction` passes it. These two reads
+     are joined by the floor screen — a bill is armable only when a table is
+     carrying it — so they have to come from the SAME database. Reading one from
+     the box and the other from the cloud is what made Move and Split refuse on
+     a floor full of open tables. */
+  const rows = await listOpenTabs(siteId, await tabPurpose(siteId))
 
   return rows.map((r) => {
     const reference = (r.reference ?? '').trim()
@@ -159,6 +168,21 @@ export type RecalledSale =
       documentId: number
       customerId: number | null
       customerName: string | null
+      /**
+       * The structure the basket was PARKED on, so the till can go back onto it.
+       *
+       * The pricing choice is a property of the sale — it is written to
+       * `sales_documents.price_structure_id` when the basket is saved — but the
+       * till used to hold it only in React state, so a wholesale sale recalled
+       * on a fresh basket came back reading "@Retail" on every line. The prices
+       * themselves were right, which is what made it look like a display bug:
+       * the line wore a "Price changed" badge because the wholesale figure no
+       * longer matched the retail shelf price it was being compared against.
+       *
+       * Null for a document parked before this was recorded, or one saved on the
+       * site default — the till falls back to its own resolution either way.
+       */
+      priceStructureId: number | null
       lines: RecalledLine[]
     }
   | { ok: false; error: string }
@@ -206,7 +230,13 @@ export async function recallSaleForTillAction(
 ): Promise<RecalledSale> {
   const { siteId, actor } = await withTillOperator(await actorForOrThrow('sales.till'))
 
-  const doc = await getDocument(siteId, documentId)
+  /* Read with the tab purpose, for the same reason the floor list is: what this
+     recalls IS a tab. On a hybrid site the bill a waiter just tapped lives on the
+     box, and reading it from the cloud finds nothing — "that saved sale no longer
+     exists", about a table sitting on the screen behind the message. */
+  const purpose = await tabPurpose(siteId)
+
+  const doc = await getDocument(siteId, documentId, purpose)
   if (!doc) return { ok: false, error: 'That saved sale no longer exists.' }
   if (doc.status !== 'saved') {
     // Another till got there first, or it was discarded from the back office.
@@ -221,12 +251,15 @@ export async function recallSaleForTillAction(
   // occupancy is read from: a resumed table used to read as FREE, its bill invisible to
   // the floor and the split screen, and stranded outright if the till never came back.
   // See 171_document_claim.sql.
-  const claimed = await claimDocument(siteId, documentId, actor.userId, terminalId ?? null)
+  /* Claimed in the SAME database the document was read from. A claim written to
+     the cloud for a bill that lives on the box guards nothing: the second till
+     reads the box, sees no claim, and both put the same bill on screen. */
+  const claimed = await claimDocument(siteId, documentId, actor.userId, terminalId ?? null, purpose)
   if (!claimed.ok) {
     /* Say WHICH till is holding it. "That sale is open on another till" sends
        somebody hunting; naming the machine and how long it has held the bill is
        what lets them go and look, or fetch a supervisor. */
-    const holder = await documentClaim(siteId, documentId)
+    const holder = await documentClaim(siteId, documentId, purpose)
     if (holder?.terminalCode) {
       const since = holder.claimedAt
         ? ` since ${holder.claimedAt.toISOString().slice(11, 16)}`
@@ -241,12 +274,29 @@ export async function recallSaleForTillAction(
     return { ok: false, error: claimed.error }
   }
 
+  /*
+   * The DOCUMENT's structure wins over the till's current one.
+   *
+   * `priceStructureId` above is whatever the recalling till happens to be on,
+   * and re-pricing against it is wrong in both directions. A basket parked on
+   * wholesale came back with RETAIL shelf prices, and `shelfPriceIncl` is
+   * exactly what `isPriceOverridden` compares the line against — so every line
+   * of a perfectly ordinary wholesale sale wore a "Price changed" badge, while
+   * the line card read "@Retail" over a wholesale figure. Two symptoms, one
+   * cause: the sale's pricing basis was never carried back.
+   *
+   * Falls back to the caller's when the document has none — an older parked
+   * basket, or one saved before the column was written.
+   */
+  const documentStructureId = doc.priceStructureId ?? priceStructureId
+
   return {
     ok: true,
     documentId: doc.id,
     customerId: doc.customerId,
     customerName: doc.customerName,
-    lines: await basketLinesForDocument(siteId, doc, priceStructureId),
+    priceStructureId: doc.priceStructureId,
+    lines: await basketLinesForDocument(siteId, doc, documentStructureId),
   }
 }
 
@@ -498,4 +548,121 @@ export async function listPastSalesAction(
     totalIncl: doc.totalIncl,
     printCount: doc.printCount,
   }))
+}
+
+/* ── Price check ─────────────────────────────────────────────────────────── */
+
+/** One product, with what it costs on each of the shop's price types. */
+export type PriceCheckResult = {
+  productId: number
+  code: string
+  description: string
+  /** Available to sell from this till's room: on hand less what is reserved. */
+  availableQty: number
+  allowFractions: boolean
+  /**
+   * Whether the till must ASK for the price rather than quote one.
+   *
+   * An open-price item has no figure to check, and the rows below would all read
+   * R0.00 — which looks like "free" rather than "you tell me". The dialog says so
+   * instead of showing a wall of zeroes.
+   */
+  askPriceAtSale: boolean
+  prices: {
+    structureId: number
+    structureName: string
+    priceIncl: number
+    /**
+     * No `product_prices` row for this structure, so there is no price — as
+     * distinct from a price of zero, which a shop may legitimately set. The
+     * dialog prints "Not priced" and refuses to add the line, because a zero
+     * treated as a figure is how something gets sold for nothing.
+     */
+    unpriced: boolean
+  }[]
+}
+
+/**
+ * Looks a product up without putting it on the sale.
+ *
+ * ── WHY EVERY PRICE TYPE, NOT THE ONE THE TILL IS ON ─────────────────────
+ *
+ * The question at the counter is rarely "what does it cost" — the shelf answers
+ * that. It is "what does it cost for THIS customer", asked by somebody who may
+ * be about to open a trade account, or who is on the phone. Showing the single
+ * figure the till happens to be sitting on answers a question nobody asked and
+ * makes the cashier re-key the price type to find out the rest.
+ *
+ * ── `products.view`, NOT `sales.till` ────────────────────────────────────
+ *
+ * This adds nothing and posts nothing; it reads the product file. That is the
+ * same capability the quick key itself is gated on (see `price-enquiry` in
+ * lib/quickKeys), so the key and the endpoint behind it agree — a till operator
+ * who may not see the product file does not get the answer by calling this
+ * directly either.
+ */
+export async function priceCheckAction(
+  productId: number,
+  terminalId?: number | null,
+): Promise<PriceCheckResult | null> {
+  const { siteId } = await actorForOrThrow('products.view')
+
+  const structures = await listPriceStructures(siteId)
+  if (structures.length === 0) return null
+
+  const found = await priceCheckForTill(
+    siteId,
+    productId,
+    structures.map((s) => s.id),
+    await terminalStockLocationId(siteId, terminalId ?? null),
+  )
+  if (!found) return null
+
+  return {
+    productId: found.product.id,
+    code: found.product.code,
+    description: found.product.description,
+    availableQty: found.product.availableQty,
+    allowFractions: found.product.allowFractions,
+    askPriceAtSale: found.product.askPriceAtSale,
+    prices: found.prices.map((p) => ({
+      structureId: p.structureId,
+      structureName: structures.find((s) => s.id === p.structureId)?.name ?? '',
+      priceIncl: p.priceIncl,
+      /* Zero means "no row", because that is what the COALESCE in the query
+         turns a missing price into. A shop that genuinely wants a zero price has
+         `ask_price_at_sale` for it, which is handled above. */
+      unpriced: p.priceIncl <= 0,
+    })),
+  }
+}
+
+/**
+ * One product by ID, priced on a named structure.
+ *
+ * ── WHY NOT `scanAction` ─────────────────────────────────────────────────
+ *
+ * Because `resolveScan` matches a BARCODE or a CODE, and a product id is
+ * neither. Handing it `String(productId)` works only where a shop happens to use
+ * numeric product codes that coincide with their ids, and it silently rings up
+ * the WRONG ITEM where those numbers belong to different products — which is the
+ * one failure a till must never have.
+ *
+ * Used by the price check to add a line at the price type the customer was just
+ * quoted, which is why the structure is a parameter rather than the till's own:
+ * quoting trade and ringing up retail is the whole bug the dialog exists to
+ * avoid.
+ */
+export async function productForTillAction(
+  productId: number,
+  priceStructureId: number | null,
+  terminalId?: number | null,
+): Promise<TillProduct | null> {
+  const { siteId } = await actorForOrThrow('sales.till')
+  return getTillProduct(
+    siteId,
+    productId,
+    priceStructureId,
+    await terminalStockLocationId(siteId, terminalId ?? null),
+  )
 }

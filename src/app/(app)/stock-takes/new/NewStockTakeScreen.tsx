@@ -59,6 +59,7 @@ export default function NewStockTakeScreen({
   const [scopeRefId, setScopeRefId] = useState(0)
   const [reference, setReference] = useState('')
   const [includeZeroStock, setIncludeZeroStock] = useState(false)
+  const [isBlind, setIsBlind] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const needsRef = scope === 'department' || scope === 'supplier'
@@ -73,6 +74,7 @@ export default function NewStockTakeScreen({
         scopeRefId: needsRef ? scopeRefId : null,
         reference: reference.trim() || null,
         includeZeroStock,
+        isBlind,
       })
       if (!result.ok) {
         setError(result.error)
@@ -149,6 +151,16 @@ export default function NewStockTakeScreen({
             onChange={setIncludeZeroStock}
             label="Include products the system says are at zero"
             hint="Worth doing when you suspect stock exists that the books have lost track of. It makes the sheet considerably longer."
+          />
+
+          {/* Off by default, like every other control that changes how a sheet
+              behaves. Chosen per sheet because a shrinkage count and a
+              stockroom reconciliation want opposite answers — see 218. */}
+          <Switch
+            checked={isBlind}
+            onChange={setIsBlind}
+            label="Count blind — hide what the system believes"
+            hint="The counter sees no expected figure and no running variance, so what they write down is what they actually found. The figures come back the moment the sheet is posted. This is what makes a shrinkage number worth acting on."
           />
 
           {error && <Callout tone="danger" title="Cannot create this sheet">{error}</Callout>}

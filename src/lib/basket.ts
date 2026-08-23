@@ -351,6 +351,21 @@ export function addToBasket(
     (l) =>
       l.productId === product.id &&
       /*
+       * A refund line never absorbs a sale.
+       *
+       * Without this, a customer handing back a shirt and then buying the same
+       * shirt in another size — same product code — would have the +1 folded
+       * into the −1 and BOTH would vanish into a qty-0 line. That line is not
+       * merely invisible: `validateDocument` refuses a zero quantity, so the
+       * whole sale would fail at the tender with an error naming a line the
+       * cashier cannot see anything wrong with.
+       *
+       * Refunds do not merge with each other either — see the ADD case in
+       * useSaleState, which never routes an armed refund through here at all.
+       * This is the guard for the scan that comes AFTER one.
+       */
+      !isRefundLine(l) &&
+      /*
        * A discounted line never merges with a NEW unit — unless the discount
        * is exactly the account's standing one the new unit would get anyway.
        * The original rule protects a per-line decision from leaking onto
@@ -408,14 +423,44 @@ export function removeBasketLine(lines: BasketLine[], key: string): BasketLine[]
  *
  * A product that does not allow fractions steps by whole units however small the
  * step asked for, so a − on a 1kg line of tinned beans cannot leave 0.5 of a tin.
+ *
+ * ── A REFUND LINE STEPS THE OTHER WAY ─────────────────────────────────────
+ *
+ * A line with a negative quantity is an item coming BACK (see `refundArmed` in
+ * useSaleState). On such a line + and − mean what they say on the screen — "more
+ * of this refunded", "less of it" — so the step is applied in the line's own
+ * direction rather than the basket's, and a cashier pressing + on a −1 shirt gets
+ * −2 rather than watching the refund cancel itself.
+ *
+ * Removal is therefore "crossed zero", not "reached zero or below": the test is
+ * on the SIGN changing, which catches −1 stepped to 0 and 1 stepped to 0 alike,
+ * and never deletes a refund line for the crime of being negative.
  */
 export function stepQty(lines: BasketLine[], key: string, delta: number): BasketLine[] {
   const line = lines.find((l) => l.key === key)
   if (!line) return lines
-  const step = line.allowFractions ? delta : Math.sign(delta) * Math.max(1, Math.round(Math.abs(delta)))
+  const magnitude = line.allowFractions
+    ? Math.abs(delta)
+    : Math.max(1, Math.round(Math.abs(delta)))
+  // The line's own direction, so a refund grows downwards.
+  const direction = line.qty < 0 ? -1 : 1
+  const step = Math.sign(delta) * magnitude * direction
   const next = round(line.qty + step, 3)
-  if (next <= 0) return removeBasketLine(lines, key)
+  // Stepped down to nothing, or through it: the cashier means "take it off".
+  if (next === 0 || Math.sign(next) !== direction) return removeBasketLine(lines, key)
   return updateBasketLine(lines, key, { qty: next })
+}
+
+/**
+ * Whether this line is goods coming BACK rather than going out.
+ *
+ * One predicate rather than `l.qty < 0` written out at each call site, because
+ * "negative quantity" and "this is a refund" are the same fact here and only one
+ * of those two phrasings survives being read six months later. Everything that
+ * renders, prices or posts a basket asks this.
+ */
+export function isRefundLine(line: Pick<BasketLine, 'qty'>): boolean {
+  return line.qty < 0
 }
 
 /**
@@ -444,7 +489,20 @@ export function isPriceOverridden(line: BasketLine): boolean {
   return round(line.unitPriceIncl - instructionAdjust(line), 4) !== round(line.shelfPriceIncl, 4)
 }
 
-/** How many individual items are in the basket — the count on the header chip. */
+/**
+ * How many individual items are in the basket — the count on the header chip.
+ *
+ * MAGNITUDES, so a refund line counts as an item rather than against one.
+ *
+ * Netting was what a plain sum did, and it answers a question nobody asked. A
+ * basket of one shirt sold and one handed back would have read "0 items", which
+ * to a cashier glancing at the chip is an EMPTY basket — with two lines on the
+ * screen and a customer waiting. Worse, it is the chip they check a bag against.
+ *
+ * The value of a refund is negative and belongs in the total, which is where it
+ * is. The COUNT is answering "how many things are we handling", and the answer
+ * is two.
+ */
 export function basketCount(lines: BasketLine[]): number {
-  return lines.reduce((sum, l) => sum + l.qty, 0)
+  return lines.reduce((sum, l) => sum + Math.abs(l.qty), 0)
 }

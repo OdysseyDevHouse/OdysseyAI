@@ -84,13 +84,34 @@ export function declareTip(
 
 /* ── Service charge ──────────────────────────────────────────────────────── */
 
+/** Whether a band charges a share of the bill or a flat sum. */
+export type ServiceChargeKind = 'percent' | 'amount'
+
 export type ServiceTier = {
   /** Inclusive. */
   minTotal: number
   /** EXCLUSIVE, or null for the open-ended top band. */
   maxTotal: number | null
+  /**
+   * Which of the two figures below this band actually charges.
+   *
+   * A discriminator rather than "amount overrides percent when set", because
+   * zero is a legitimate value for either and a shop that sets an amount of 0
+   * means no charge, not "fall back to the percentage".
+   */
+  chargeKind: ServiceChargeKind
+  /** The share of the bill, when `chargeKind` is 'percent'. */
   percent: number
+  /** The flat sum, in rands, when `chargeKind` is 'amount'. */
+  amount: number
   isActive: boolean
+}
+
+/** What one band charges on a given bill, whichever way it is configured. */
+export function tierCharge(tier: ServiceTier, total: number): number {
+  return tier.chargeKind === 'amount'
+    ? round(Math.max(0, tier.amount), 2)
+    : round((total * tier.percent) / 100, 2)
 }
 
 /**
@@ -105,19 +126,25 @@ export type ServiceTier = {
  * is a deliberate choice for a broken configuration: charging the higher percentage is
  * visible to the customer and gets reported, where silently charging the lower one hides
  * the misconfiguration for months.
+ *
+ * "Highest" is compared on the RESOLVED charge rather than on `percent`, because a band
+ * may now charge a flat amount instead: 10% and R25 are not comparable numbers, and
+ * ranking a R25 band as beating a 10% one on the strength of 25 > 10 would be an accident
+ * rather than a rule. Comparing what each would actually take off this bill is the same
+ * "the customer can see it" argument applied to a configuration that mixes the two.
  */
 export function serviceChargeFor(total: number, tiers: readonly ServiceTier[]): number {
   if (!Number.isFinite(total) || total <= 0) return 0
 
-  let best: ServiceTier | null = null
+  let best = 0
   for (const tier of tiers) {
     if (!tier.isActive) continue
     if (total < tier.minTotal) continue
     if (tier.maxTotal !== null && total >= tier.maxTotal) continue
-    if (!best || tier.percent > best.percent) best = tier
+    const charge = tierCharge(tier, total)
+    if (charge > best) best = charge
   }
-  if (!best) return 0
-  return round((total * best.percent) / 100, 2)
+  return best
 }
 
 /**

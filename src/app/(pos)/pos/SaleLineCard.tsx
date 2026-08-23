@@ -42,6 +42,7 @@ export function SaleLineCard({
   line,
   lineTotal,
   effectiveDiscountPct,
+  discountIncl,
   specialName,
   priceStructureName,
   sessionState,
@@ -57,6 +58,15 @@ export function SaleLineCard({
   lineTotal: number
   /** After the special-versus-manual comparison — what is actually charged. */
   effectiveDiscountPct: number
+  /**
+   * What that percentage came to in rands on this line.
+   *
+   * Shown BESIDE the percentage rather than instead of it, for the same reason
+   * the slip carries both: the percentage is the claim ("20% off"), the amount
+   * is what this customer actually saved. A cashier answering "so how much did
+   * I save?" should not have to work it out on a line already showing it.
+   */
+  discountIncl: number
   /** Named when a promotion is what discounted this line. */
   specialName: string | null
   /**
@@ -151,9 +161,22 @@ export function SaleLineCard({
                   {specialName ? `Free — ${specialName}` : 'Free'}
                 </Badge>
               )}
+              {/* NAME, PERCENTAGE AND VALUE — all three, not whichever one
+                  happened to be known.
+                  This used to read `specialName ?? '<pct>% off'`, so a line on a
+                  promotion showed the name ALONE: "Test13", with no hint of how
+                  much came off or what it was worth. That hid a real case as
+                  well as a figure — a cashier who discounts a line that already
+                  has a special still sees only the promotion's name, because
+                  effectiveDiscountPct takes the higher of the two and the badge
+                  never mentioned it. The slip prints name, percentage and rands
+                  together; the screen the customer is watching should not say
+                  less than the paper they are handed. */}
               {!granted && discounted && (
                 <Badge tone="warning" solid>
-                  {specialName ?? `${formatQty(effectiveDiscountPct)}% off`}
+                  {specialName ? `${specialName} · ` : ''}
+                  {formatQty(effectiveDiscountPct)}% off
+                  {discountIncl > 0 ? ` · ${formatMoney(discountIncl)}` : ''}
                 </Badge>
               )}
               {isPriceOverridden(line) && <Badge tone="brand" solid>Price changed</Badge>}

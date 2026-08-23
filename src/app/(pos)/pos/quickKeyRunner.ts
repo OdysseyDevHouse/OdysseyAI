@@ -56,20 +56,6 @@ export type QuickKeyHandlers = {
    * order is a promise, and a promise to "Walk-in" cannot be delivered against.
    */
   saveAsOrder: () => void
-  /** Opens the saved-sales list. */
-  showSaved: () => void
-  /**
-   * The three document lists, each opening OVER the basket without touching it.
-   *
-   * They replaced the basket's recall key, which was one button that meant a
-   * different list depending on the module showing — so the list a cashier
-   * could reach was decided by the document they happened to be writing. These
-   * are reachable from anywhere, mid-sale included, which is when somebody at
-   * the counter actually asks "did you quote me for this?".
-   */
-  showQuotes: () => void
-  showTillOrders: () => void
-  showLaybys: () => void
   /** Removes the last line added. */
   undo: () => void
   /** Opens the customer picker. */
@@ -83,6 +69,14 @@ export type QuickKeyHandlers = {
    * line's figure as an exception, this changes which price list the sale follows.
    */
   pickPriceType: () => void
+  /**
+   * Opens the price-check dialog — what something costs on every price type.
+   *
+   * A third distinct thing from the two above, and the reason all three exist:
+   * `editLine` changes one line as an exception, `pickPriceType` changes what the
+   * sale rings at, and this changes NOTHING. It answers a question.
+   */
+  priceCheck: () => void
   /**
    * Opens the account-payment dialog — money against a debtor, outside any sale.
    *
@@ -166,8 +160,31 @@ export type QuickKeyHandlers = {
    *
    * Not "open the refund pad": there is nothing to credit until the cashier has scanned
    * what came back, so the key does what the Sale/Return toggle does.
+   *
+   * No longer what the `refund` key calls — see `armRefund` below. It stays on the
+   * contract because the Sale/Return toggle on the pane is the same act, and a shop
+   * that wants the whole-basket behaviour on a key has one to bind to.
    */
   startReturn: () => void
+  /**
+   * Opens the receipt finder — today's sales, listed, with the older windows and a
+   * search a tap away.
+   *
+   * What the `credit-sale` key does. See the note on that key for why.
+   */
+  findReceipt: () => void
+  /**
+   * Arms the NEXT item as a refund on the sale in progress, or disarms it.
+   *
+   * What the `refund` key does. The basket is untouched: this is the mid-sale
+   * case, where a customer hands one thing back at the same counter they are
+   * buying at, and the pair belongs on one slip with one total.
+   *
+   * Takes the flag rather than toggling internally so the key and any other route
+   * in agree about what "off" means — a toggle that each caller flipped for itself
+   * is how an armed till ends up with two disagreeing indicators.
+   */
+  armRefund: (armed: boolean) => void
   /*
    * There is deliberately no `navigate` any more.
    *
@@ -209,6 +226,8 @@ export type RunContext = {
   hasCustomer: boolean
   /** True when the basket is already a return, so the refund key does not re-clear it. */
   returning: boolean
+  /** True when the next item is already armed as a refund, so the key can disarm it. */
+  refundArmed: boolean
 }
 
 /**
@@ -263,36 +282,6 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
     handlers.saveAsOrder()
   },
 
-  'view-saved-sales': ({ handlers }) => handlers.showSaved(),
-
-  /*
-   * ── THE THREE LISTS ───────────────────────────────────────────────────────
-   *
-   * Online-only, all three, and for the same reason the recall key they replaced
-   * was: these documents live on the server and are claimed there. An offline
-   * till would render the list's empty state — "No lay-bys on the go" — which
-   * reads as a fact about the SHOP rather than about the line, and sends a
-   * cashier to tell a customer their quote does not exist.
-   *
-   * Each says which pile it could not reach rather than sharing one message.
-   * "Quotes need the connection" is actionable; "that needs the connection" is
-   * the same sentence a cashier has already learnt to skip.
-   */
-  'view-quotes': ({ handlers, online }) =>
-    online
-      ? handlers.showQuotes()
-      : handlers.say('Quotes need the connection — they live on the server.', 'info'),
-
-  'view-orders': ({ handlers, online }) =>
-    online
-      ? handlers.showTillOrders()
-      : handlers.say('Sales orders need the connection — they live on the server.', 'info'),
-
-  'view-laybys': ({ handlers, online }) =>
-    online
-      ? handlers.showLaybys()
-      : handlers.say('Lay-bys need the connection — they live on the server.', 'info'),
-
   undo: ({ handlers, hasLines }) =>
     hasLines ? handlers.undo() : handlers.say('Nothing to undo.', 'info'),
 
@@ -333,24 +322,69 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
    */
   'price-change': ({ handlers }) => handlers.pickPriceType(),
 
-  'credit-sale': ({ handlers }) => handlers.pickCustomer(),
+  /*
+   * ── CREDIT SALE: REVERSE A DOCUMENT THAT EXISTS ───────────────────────────
+   *
+   * Opens the receipt finder. This is what the `refund` key used to do, and it is
+   * the right act — it just had the wrong name on it.
+   *
+   * Return mode was the original binding, and that was the wrong end of the job.
+   * Return mode is the NO-RECEIPT path: the cashier re-scans the goods and the
+   * credit comes out at today's shelf price, which is right when there is no slip
+   * and wrong every other time — the customer gets back something other than what
+   * they paid, and a discounted sale refunds at full price.
+   *
+   * So the key goes where the money is: find the sale, pick the lines, credit at
+   * the prices on it. The finder opens on today's sales already listed, because
+   * "which one is theirs" is answerable from the till and "what is the invoice
+   * number" usually is not — the slip is faded, folded or gone.
+   *
+   * Online only, and refused with the reason: the over-credit guard needs every
+   * credit note ever raised against the invoice, which a till cannot know offline.
+   * Sending a cashier somewhere else instead would be answering a different
+   * question than the one they asked — so it says what to do.
+   */
+  'credit-sale': ({ handlers, online }) =>
+    online
+      ? handlers.findReceipt()
+      : handlers.say(
+          'Finding a receipt needs the connection. Use Refund to take an item back without one.',
+          'error',
+        ),
 
   /*
-   * Switches the pane into return mode rather than opening anything.
+   * ── REFUND: ARM THE NEXT ITEM ─────────────────────────────────────────────
    *
-   * A key that jumped straight to a refund pad would be a refund with no lines — there
-   * is nothing to credit until the cashier has scanned what came back. So the key does
-   * what a cashier would otherwise do with the Sale/Return toggle, and the basket they
-   * then build is credited by the same Refund button.
+   * One press arms one line. The cashier presses Refund, scans the thing coming
+   * back, and it lands on the slip as a negative line — then the till is selling
+   * again with nothing to switch off. See `refundArmed` in useSaleState for why
+   * a one-shot rather than a mode.
    *
-   * Says so when already in return mode rather than silently re-clearing: SET_RETURNING
-   * empties the basket, and a key that wiped a half-scanned return because somebody
-   * pressed it twice would be worse than one that did nothing.
+   * Pressing it again disarms, which is the only way out that does not involve
+   * crediting something. A cashier who armed it by mistake needs an escape.
+   *
+   * ── WORKS OFFLINE, UNLIKE THE KEY ABOVE ───────────────────────────────────
+   *
+   * Deliberately no `online` guard. This path asks the server nothing: the goods
+   * are in front of the cashier, the price comes off the cached catalogue, and the
+   * whole slip queues like any other offline sale. That makes it the honest thing
+   * to point a disconnected till at, which is exactly what `credit-sale` does
+   * above when it refuses.
+   *
+   * ── REFUSED INSIDE RETURN MODE ────────────────────────────────────────────
+   *
+   * A basket that is ALREADY a credit note has every line going back; arming one
+   * more inside it would flip that line to positive and quietly sell the customer
+   * something in the middle of their return. Two ways of saying the same thing,
+   * one of them inverted, is worth a refusal rather than a clever merge.
    */
-  refund: ({ handlers, returning }) =>
-    returning
-      ? handlers.say('Already taking a return — scan what is coming back.', 'info')
-      : handlers.startReturn(),
+  refund: ({ handlers, returning, refundArmed }) => {
+    if (returning) {
+      handlers.say('This whole sale is already a return — every line goes back.', 'info')
+      return
+    }
+    handlers.armRefund(!refundArmed)
+  },
 
   /*
    * The full declaration, not the quick count.
@@ -419,8 +453,26 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
       ? handlers.showReprints()
       : handlers.say('A reprint needs the connection — past sales live on the server.', 'info'),
 
-  'price-enquiry': ({ handlers }) =>
-    handlers.say('Search for the product above — the tile shows its price.', 'info'),
+  /*
+   * A real dialog now, where this used to be a sentence telling the cashier to
+   * do it themselves ("search above — the tile shows its price").
+   *
+   * The tile shows ONE price: the one on whichever structure the till is sitting
+   * on. The question actually being asked at a counter is comparative — what is
+   * this on trade, what do I pay on my account — and the old answer forced the
+   * cashier to switch the till's price type to find out, which silently changes
+   * what the next scan rings up. A price CHECK must not be able to mis-price a
+   * sale. See PriceCheckModal.
+   *
+   * Online-only. The offline catalogue is priced on one structure — whichever
+   * the till last cached — so the ladder this dialog exists to show is the exact
+   * thing that is not there. Quoting a wholesale customer a retail price from a
+   * stale cache is worse than saying the connection is needed.
+   */
+  'price-enquiry': ({ handlers, online }) =>
+    online
+      ? handlers.priceCheck()
+      : handlers.say('A price check needs the connection — it reads every price type.', 'info'),
 
   'gift-card-balance': ({ handlers, online }) =>
     online
@@ -544,8 +596,10 @@ const RUN: Record<string, (ctx: RunContext) => void> = {
    */
   'split-table': ({ handlers }) => handlers.armSplit(),
 
-  'add-tip': ({ handlers }) =>
-    handlers.say('Tips are declared on the payment screen — tap Pay, then add the tip against the payment method.', 'info'),
+  /* `add-tip` was here and only ever said "go and use the payment screen", which
+     is where tips are actually declared — a tip and change divide one excess, and
+     the tender pad is where that excess is. Removed from the catalogue; see
+     QUICK_KEY_ACTIONS in lib/quickKeys. */
 
   'table-transfer': ({ handlers }) => handlers.armTransfer(),
 

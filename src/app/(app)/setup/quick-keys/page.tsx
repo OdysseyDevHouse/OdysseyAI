@@ -1,6 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { listQuickKeys, ensureSupervisorGroup } from '@/lib/site/quickKeys'
 import { listTerminals } from '@/lib/site/terminals'
+import { listDepartments } from '@/lib/site/departments'
 import { siteQuery } from '@/lib/siteDb'
 import { PageHeader, PageBody, Callout } from '@/components/ui'
 import QuickKeyCanvas from './QuickKeyCanvas'
@@ -45,10 +46,11 @@ export default async function QuickKeysPage() {
    * holds one list: every action already returns the whole section, and a tab that
    * had to round-trip before drawing would feel like a page load.
    */
-  const [mainKeys, tableKeys, terminals] = await Promise.all([
+  const [mainKeys, tableKeys, terminals, allDepartments] = await Promise.all([
     listQuickKeys(siteId, 'main'),
     listQuickKeys(siteId, 'tables'),
     listTerminals(siteId, false),
+    listDepartments(siteId),
   ])
 
   /* A retail shop is never shown the tables bar — it has no tables, so a second tab
@@ -85,6 +87,21 @@ export default async function QuickKeysPage() {
   ])
 
   const productNames = Object.fromEntries(products.map((p) => [p.id, p.description]))
+
+  /* The whole tree, narrowed on the way out exactly as the till's page narrows it: an
+     id, a parent, a name and an order. `color` and the image ids are deliberately left
+     behind — a tile painting itself from a stored hex puts a raw colour in a component,
+     and tile colour comes from `toneForId` on both screens.
+
+     Shipped with the page rather than fetched when the Depts tab is opened. A shop has
+     a few dozen departments, they change about never, and the library's drill reads
+     better when the first tap draws instantly instead of after a round trip. */
+  const departmentTree = allDepartments.map((d) => ({
+    id: d.id,
+    parentId: d.parentId,
+    name: d.name,
+    sortOrder: d.sortOrder,
+  }))
   const departmentNames = Object.fromEntries(departments.map((d) => [d.id, d.name]))
 
   return (
@@ -105,6 +122,7 @@ export default async function QuickKeysPage() {
           initialKeys={keys}
           productNames={productNames}
           departmentNames={departmentNames}
+          departmentTree={departmentTree}
           hospitality={hospitality}
         />
       </PageBody>

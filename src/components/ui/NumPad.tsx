@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './Button'
+import { usePadKeys } from './padKeys'
 import * as Icons from './icons'
 
 /**
@@ -36,8 +37,15 @@ export function NumPad({
    * are the only thing to hit, so they take the full width they are given and
    * grow to a comfortable thumb target rather than sitting as a small block in
    * the middle of an empty card. Opt in; it would burst a modal.
+   *
+   * `wide` is `lg`'s proportion at a dialog's scale: keys that still fill the
+   * width they are given — so a dialog whose subject IS the amount does not
+   * put a 256px block in the middle of it — but at a height a modal can carry
+   * alongside a figure, a text field and a footer. The drawer-movement dialogs
+   * are the case: at `lg` their body overran the modal's cap on a 1366×768
+   * till and pushed the required Reason field below the fold.
    */
-  size?: 'default' | 'lg'
+  size?: 'default' | 'wide' | 'lg'
   /**
    * 0 for a whole-number pad (quantity of a non-fractional product, covers).
    * The decimal key is then rendered as a gap rather than removed, so the 0 and
@@ -88,9 +96,12 @@ export function NumPad({
     [maxDecimals, maxLength],
   )
 
-  useEffect(() => {
-    if (disabled) return
-    function onKey(event: KeyboardEvent) {
+  /* The anchor `usePadKeys` measures to decide whether this pad is on screen at
+     all. A pad inside a closed <dialog> is still mounted — see padKeys.ts. */
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  const onKey = useCallback(
+    (event: KeyboardEvent) => {
       if (event.key >= '0' && event.key <= '9') press(event.key)
       else if (event.key === '.' || event.key === ',') press('.')
       else if (event.key === 'Backspace') press('back')
@@ -98,24 +109,29 @@ export function NumPad({
       // Only for keys we handled — Enter and Escape belong to the dialog around
       // us, and swallowing them here would break its confirm and cancel.
       event.preventDefault()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [press, disabled])
+    },
+    [press],
+  )
+
+  usePadKeys(rootRef, onKey, !disabled)
 
   const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9']
 
   const lg = size === 'lg'
+  const wide = size === 'wide'
+  /* Both full-width sizes carry their own type, so neither takes the override
+     below. */
+  const fills = lg || wide
   /* The SIZE prop, not a className. Button concatenates its own size classes
      with whatever className it is handed and does not resolve the conflict, so
      an `h-auto text-3xl` passed in loses to `h-touch text-base` on source order
      alone — the keys stayed 56px and 14px while every class looked right in the
      DOM. `keypad` puts the same declarations where they can win. */
-  const keySize = lg ? 'keypad' : 'touch'
-  const keyClass = lg ? '' : 'text-xl font-bold'
+  const keySize = lg ? 'keypad' : wide ? 'keypad-sm' : 'touch'
+  const keyClass = fills ? '' : 'text-xl font-bold'
 
   return (
-    <div className={`grid grid-cols-3 ${lg ? 'gap-3' : 'gap-2'}`}>
+    <div ref={rootRef} className={`grid grid-cols-3 ${fills ? 'gap-3' : 'gap-2'}`}>
       {KEYS.map((key) => (
         <Button
           key={key}
@@ -168,7 +184,7 @@ export function NumPad({
         {/* The key a cashier already knows. A ChevronLeft — which this used to
             be — reads as "go back a screen" on a touch till, which is the one
             thing this key must not be mistaken for mid-entry. */}
-        <Icons.Backspace size={lg ? 30 : 22} />
+        <Icons.Backspace size={lg ? 30 : wide ? 26 : 22} />
       </Button>
     </div>
   )
@@ -188,12 +204,22 @@ export function NumPadDisplay({
   placeholder = '0',
   tone = 'default',
   layout = 'stacked',
+  suffix,
 }: {
   label?: string
   value: string
   placeholder?: string
   /** `danger` while the entry is refused — over a discount ceiling, say. */
   tone?: 'default' | 'danger'
+  /**
+   * A unit set after the figure, smaller and quieter — "%" on a percentage pad.
+   *
+   * Part of the FIGURE rather than the label, because "Percent off the sale …
+   * 20" and "… 20 %" are the same statement said twice, and the cashier reading
+   * the number needs the unit next to the number. `plaque` only: the smaller
+   * layouts have no room to set it without crowding the digits.
+   */
+  suffix?: string
   /**
    * `stacked` puts the label above the figure — the default, and right for a
    * pad in a modal where the label runs long ("Cash — amount handed over").
@@ -202,23 +228,73 @@ export function NumPadDisplay({
    * in brand. It reads as one statement — "Opening float … 0.00" — which suits
    * a pad that IS the screen rather than one control on it. Opt in; a long
    * label would crowd the figure on the same row.
+   *
+   * `plaque` is the till's own step, and the shape every full-screen entry
+   * dialog uses: the label small along the top, the figure large along the
+   * bottom right, on a brand-tinted field. For a dialog whose ONLY subject is
+   * the number being typed — a payout, a pay-in, a drop, a discount — where the
+   * figure and the pad under it are the whole screen.
+   *
+   * The label goes ABOVE rather than beside, unlike `inline`: these labels are
+   * sentences ("Percent off the sale", "Cash — amount handed over") and on one
+   * line a long one squeezes the figure it is describing. Above, the label can
+   * run as long as it needs and the figure keeps its size.
    */
-  layout?: 'stacked' | 'inline'
+  layout?: 'stacked' | 'inline' | 'plaque'
 }) {
   const empty = value === ''
+  const plaque = layout === 'plaque'
   const inline = layout === 'inline'
-  const figure = `numeric font-extrabold ${inline ? 'text-3xl' : 'block text-right text-3xl'} ${
+  const figure = `numeric font-extrabold ${
+    plaque ? 'text-4xl leading-none' : inline ? 'text-3xl' : 'block text-right text-3xl'
+  } ${
     tone === 'danger'
       ? 'text-danger'
-      : /* Brand, not faint, when inline: the figure is the subject of the
-           screen, and greying the resting value made the one number the
-           cashier is about to change look disabled. */
-        inline
+      : /* Brand, not faint, when inline or on a plaque: the figure is the
+           subject of the screen, and greying the resting value made the one
+           number the cashier is about to change look disabled. */
+        inline || plaque
         ? 'text-brand'
         : empty
           ? 'text-faint'
           : 'text-ink'
   }`
+
+  if (plaque) {
+    return (
+      <div
+        className={`rounded-card border px-5 py-4 ${
+          /* The border follows the tone: a refused entry that keeps a brand
+             frame says "fine" in the same breath the figure says "no". */
+          tone === 'danger' ? 'border-danger/40 bg-danger-soft' : 'border-brand/25 bg-brand-soft'
+        }`}
+      >
+        {label && (
+          <span
+            className={`block text-sm font-semibold ${
+              tone === 'danger' ? 'text-danger' : 'text-brand'
+            }`}
+          >
+            {label}
+          </span>
+        )}
+        {/* `items-baseline`, so a suffix sits ON the figure's baseline rather
+            than centred against a 36px line box and floating above it. */}
+        <div className="mt-2 flex items-baseline justify-end gap-1.5">
+          <span className={figure}>{empty ? placeholder : value}</span>
+          {suffix && (
+            <span
+              className={`text-xl font-semibold ${
+                tone === 'danger' ? 'text-danger/70' : 'text-brand/70'
+              }`}
+            >
+              {suffix}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   if (inline) {
     return (

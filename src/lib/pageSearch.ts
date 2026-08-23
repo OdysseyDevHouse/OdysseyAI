@@ -128,6 +128,16 @@ CATALOGUE['/reports/multi-store-transfers'] = {
   keywords: 'store transfers in transit counted twice unsettled stale multi store group',
 }
 
+/* The audit trail, for the same reason as the pages above: it is listed in the
+   reports hub but is a PAGE rather than an engine spec, so no catalogue carries
+   its line. Its ROUTE is still /setup/audit — only where it is listed moved, and
+   the setup catalogue no longer names it. */
+CATALOGUE['/setup/audit'] = {
+  description: 'Every change anyone made, and who signed in when.',
+  icon: 'History',
+  keywords: 'audit log history who changed sign in login security trail',
+}
+
 /**
  * The searchable index for ONE user, built from the sections they can see.
  *

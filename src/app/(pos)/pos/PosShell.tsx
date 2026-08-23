@@ -82,6 +82,7 @@ import {
   recordServiceChargeWaivedAction,
   recordUndoAction,
   recordVoidAction,
+  productForTillAction,
   type OpenTab,
   type VoidEventPayload,
 } from './actions'
@@ -103,10 +104,13 @@ import { OutboxModal } from './OutboxModal'
 import { LineEditModal } from './LineEditModal'
 import { LineOptionsModal, type LineOption } from './LineOptionsModal'
 import { PriceTypeModal } from './PriceTypeModal'
+import { PriceCheckModal } from './PriceCheckModal'
 import { AccountPaymentModal } from './AccountPaymentModal'
 import { DepositModal } from './DepositModal'
 import { depositSummaryAction } from './depositActions'
 import { ReprintModal } from './ReprintModal'
+import { BillModal } from './BillModal'
+import type { BillData } from '@/lib/billData'
 import { OnlineOrdersModal } from './OnlineOrdersModal'
 import { ClockModal } from './ClockModal'
 import { collectOnlineOrderAction, type CollectableOrder } from './onlineOrderActions'
@@ -144,6 +148,7 @@ import { receiptDataFromBasket, type ReceiptData } from '@/lib/receiptData'
 import {
   kickDrawer,
   printSlipViaBridge,
+  printBillViaBridge,
   hasBridgeSlipPrinter,
   hasBridgeKitchenPrinter,
   printKitchenViaBridge,
@@ -165,6 +170,7 @@ import {
   type TillBooking,
   voidTableBillAction,
   askForBillAction,
+  billDataAction,
   tablePaidAction,
   billForSplitAction,
   billForSplitByDocumentAction,
@@ -420,6 +426,13 @@ export default function PosShell({
   const [pricingOverride, setPricingOverride] = useState<number | null>(null)
   /** The price-type list is open. */
   const [pickingPriceType, setPickingPriceType] = useState(false)
+  /**
+   * The price-check dialog is open.
+   *
+   * Independent of the basket, and deliberately so: the commonest price check is
+   * the one asked before anything has been scanned at all.
+   */
+  const [checkingPrice, setCheckingPrice] = useState(false)
   /** The account-payment dialog is open. Independent of the basket. */
   const [takingPayment, setTakingPayment] = useState(false)
   /**
@@ -434,6 +447,13 @@ export default function PosShell({
   const [depositHeld, setDepositHeld] = useState(0)
   /** The past-sales list is open, to reprint one. */
   const [showingReprints, setShowingReprints] = useState(false)
+  /* The pro-forma bill, shown on the till rather than in the back office.
+     `bill` is null while it is being fetched, which is what the dialog's
+     skeleton reads. */
+  const [billOpen, setBillOpen] = useState(false)
+  const [bill, setBill] = useState<BillData | null>(null)
+  const [billLoading, setBillLoading] = useState(false)
+  const [billPrinting, setBillPrinting] = useState(false)
   /** The web-order list is open, to collect one. */
   const [showingOrders, setShowingOrders] = useState(false)
   /** The clock pad is open. Whoever taps a PIN into it, not the operator. */
@@ -555,6 +575,28 @@ export default function PosShell({
 
   /** True while the waiter is choosing — the gate stands in front of the till. */
   const [choosingTable, setChoosingTable] = useState(hospitality)
+  /**
+   * The floor has been read from the server at least once.
+   *
+   * Only the armed modes care, and they care a great deal. `tabs` and `tables`
+   * both start empty, and the poll that fills them runs ONLY while the gate is
+   * up (see the `choosingTable` effect) — so at the instant the Move key mounts
+   * the gate, the floor it hands over is empty. "No bill can take this" is then
+   * a statement about a list that has never been fetched rather than about the
+   * shop: the gate refused, disarmed and toasted on the first paint, a beat
+   * before the read it had itself just started came back carrying the waiter's
+   * own table. The bill was on screen the whole time.
+   *
+   * Split escaped this by never going through the gate when a table is already
+   * open (see `openSplitForCurrentTable`). Move cannot take that route, because
+   * choosing a destination IS the gesture — so the gate has to learn to tell
+   * "nothing is open" apart from "nothing has loaded yet".
+   *
+   * Set once and never cleared: a floor that has been read stays read, so a
+   * later failed refresh leaves the last good list standing rather than
+   * re-opening the race mid-service.
+   */
+  const [floorLoaded, setFloorLoaded] = useState(false)
   /** The gate's split mode is armed — the next table tap opens the split screen. */
   const [armedForSplit, setArmedForSplit] = useState(false)
   /** The gate's move mode is armed — the next table tap picks the tab to move. */
@@ -1098,6 +1140,27 @@ export default function PosShell({
     if (hadLines.current && !has) setPricingOverride(null)
     hadLines.current = has
   }, [state.lines.length])
+
+  /**
+   * Puts the till back on the price type a recalled sale was rung at.
+   *
+   * The choice is a property of the SALE — it is written to the document when
+   * the basket is parked — but it used to live only in the state above, so a
+   * wholesale sale recalled onto a fresh basket read "@Retail" on every line
+   * and wore a "Price changed" badge on each one. The prices were right; the
+   * basis they were being described and compared against was not.
+   *
+   * Called on every recall path, ahead of the LOAD. Ordering matters only in
+   * that it must not run after the basket empties — it never does, because a
+   * recall goes empty → lines and the effect above fires the other way.
+   *
+   * Set unconditionally, including to null. A sale parked on the site default
+   * must CLEAR an override the till is sitting on, or a basket recalled while
+   * the screen happens to be on Wholesale would silently adopt it.
+   */
+  function restorePricing(structureId: number | null) {
+    setPricingOverride(structureId)
+  }
 
   /*
    * SPECIALS DO NOT APPLY TO A RETURN.
@@ -2818,6 +2881,34 @@ export default function PosShell({
       return
     }
 
+    /*
+     * ── A SALE THAT OWES THE CUSTOMER MONEY IS NOT A SALE ─────────────────
+     *
+     * A mixed basket may carry refund lines (see `refundArmed` in useSaleState),
+     * and while the goods bought outweigh the goods returned this is an ordinary
+     * invoice that nets to what is owed. When they do NOT, the till is being
+     * asked to hand money OVER, and the tender pad has no way to do that: it
+     * clamps what is payable at zero, so the pad would open showing nothing owed,
+     * refuse every amount keyed into it, and never reach a settled state. A
+     * cashier stuck in a pad that will not close, in front of a customer, with no
+     * message saying why.
+     *
+     * Refused here with the way through, rather than built out. Paying money back
+     * is a different act with different obligations — a reason, a refund tender,
+     * a supervisor's name against it — and the till already does it properly on
+     * the return path. A second half-built payout route beside that one would be
+     * the one that goes wrong.
+     *
+     * Zero is allowed through: a basket that nets exactly nothing is a straight
+     * swap, which posts cleanly with a zero tender and is a real thing shops do.
+     */
+    if (totals.doc.totalIncl < 0) {
+      toast.info(
+        'This slip pays money back. Take the returned goods on their own — use Credit sale for a receipted return, or the Return toggle without one.',
+      )
+      return
+    }
+
     if (warnOutOfStock && till.online) {
       /*
        * On-hand comes from the CATALOGUE, not the basket line, because a line
@@ -2998,6 +3089,10 @@ export default function PosShell({
         refreshTables()
         return
       }
+      /* Back onto the price type the tab was opened at — see restorePricing. A
+         trade tab resumed on a till sitting on retail otherwise re-reads every
+         line as an override. */
+      restorePricing(result.priceStructureId)
       /* The tab keeps its identity, so closing it again re-parks under the same
          label rather than prompting for a new one. */
       setTabLabel(tab.label)
@@ -3050,6 +3145,12 @@ export default function PosShell({
       return
     }
     setDocDiscount(null) // a recalled basket must not inherit the last one's discount
+    /* The parked row carries the price type it was rung at, same as the online
+       document does — see restorePricing. Offline it matters slightly more: the
+       lines come back at their PARKED prices with no re-read, so a basket
+       described as retail while holding wholesale figures has nothing at all to
+       correct it. */
+    restorePricing(row.priceStructureId ?? null)
     dispatch({
       type: 'LOAD',
       documentId: null,
@@ -3077,6 +3178,10 @@ export default function PosShell({
         return
       }
       setDocDiscount(null) // a recalled basket must not inherit the last one's discount
+      /* Back onto the price type this sale was parked at — see restorePricing.
+         Unlike the customer below, this IS safe to restore: it is a pricing
+         basis read off the document, not a credit position that may have moved. */
+      restorePricing(result.priceStructureId)
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -3129,6 +3234,8 @@ export default function PosShell({
         return
       }
       setDocDiscount(null)
+      /* The price type the STORE took the order on — see restorePricing. */
+      restorePricing(result.priceStructureId)
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -3222,6 +3329,9 @@ export default function PosShell({
         return
       }
       setDocDiscount(null)
+      /* The basis the quote was written on — see restorePricing. A quote is a
+         promise of a figure, so it must come back described as what was quoted. */
+      restorePricing(result.priceStructureId)
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -3297,6 +3407,10 @@ export default function PosShell({
         return
       }
       setDocDiscount(null)
+      /* The order's own price type — see restorePricing. The lines are the
+         order's snapshot, so describing them on the till's structure would name
+         a basis the customer was never quoted. */
+      restorePricing(result.priceStructureId)
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -3735,6 +3849,9 @@ export default function PosShell({
           () => null,
         )
         if (kept?.ok) {
+          /* The half that stayed keeps the bill's price type — see restorePricing.
+             A split must not re-base what the customer was already being charged on. */
+          restorePricing(kept.priceStructureId)
           dispatch({
             type: 'LOAD',
             documentId: kept.documentId,
@@ -3760,13 +3877,17 @@ export default function PosShell({
   }
 
   /**
-   * Prints the pro-forma bill for the open tab.
+   * Shows the pro-forma bill for the open tab, in a dialog on the till.
    *
-   * The tab is opened SYNCHRONOUSLY (a browser only allows window.open while it
-   * can attribute the call to the tap — same trick the store builder uses), then
-   * the current basket is pushed to the server so the paper matches the screen,
-   * then the blank tab navigates to the print route. Asking for the bill also
-   * marks the table amber on the floor — that is what "bill asked" is for.
+   * The current basket is pushed to the server first so the bill matches the
+   * screen, then asking for it marks the table amber on the floor — that is what
+   * "bill asked" is for — and then the slip is fetched as data and shown.
+   *
+   * It used to open /sales/[id]/bill in a new tab, which is a BACK-OFFICE route:
+   * a waiter mid-service got the office chrome and left the till behind a second
+   * tab with a half-scanned basket in it. See `BillModal` for the rest of the
+   * argument; printing itself still leaves this screen alone, going to the
+   * thermal bridge or, failing that, to the print route in a tab.
    */
   function printBill() {
     const documentId = state.documentId
@@ -3780,7 +3901,13 @@ export default function PosShell({
       toast.error('Printing a bill needs the connection — the tab lives on the server.')
       return
     }
-    const tab = window.open('', '_blank')
+
+    /* Opened before the round trip, showing its skeleton, rather than after —
+       a dialog that appears a second after the tap reads as a double press. */
+    setBill(null)
+    setBillLoading(true)
+    setBillOpen(true)
+
     startTransition(async () => {
       try {
         if (table && state.lines.length > 0) {
@@ -3792,7 +3919,8 @@ export default function PosShell({
             lines: salePayloadLines(state.lines, lineSpecials, docShares),
           })
           if (!saved.ok) {
-            tab?.close()
+            setBillOpen(false)
+            setBillLoading(false)
             toast.error(saved.error)
             return
           }
@@ -3802,10 +3930,51 @@ export default function PosShell({
           const asked = await askForBillAction(table.id)
           if (asked.ok) setTables(asked.tables)
         }
-        if (tab) tab.location.href = `/sales/${documentId}/bill`
+
+        const result = await billDataAction(documentId)
+        if (!result.ok) {
+          setBillOpen(false)
+          setBillLoading(false)
+          toast.error(result.error)
+          return
+        }
+        setBill(result.bill)
+        setBillLoading(false)
       } catch {
-        tab?.close()
+        setBillOpen(false)
+        setBillLoading(false)
         toast.error('The bill could not be prepared. Try again.')
+      }
+    })
+  }
+
+  /**
+   * Puts the bill on paper.
+   *
+   * The bridge first, and the print route as the fallback — never
+   * `window.print()`, which would print the till: this dialog is a native
+   * `<dialog>` in the top layer and the `(pos)` layout carries no print
+   * stylesheet. The fallback route lives in the bare `(print)` group, which is
+   * the only place laid out for paper, and `auto=1` prints it on arrival the way
+   * the slip reprint does.
+   */
+  function printBillPaper(data: BillData) {
+    const documentId = state.documentId
+    setBillPrinting(true)
+    startTransition(async () => {
+      try {
+        if (hasBridgeSlipPrinter()) {
+          const printed = await printBillViaBridge(data)
+          if (printed.ok) {
+            toast.success('Bill printed.')
+            setBillOpen(false)
+            return
+          }
+          toast.error(printed.error)
+        }
+        if (documentId) window.open(`/sales/${documentId}/bill`, '_blank')
+      } finally {
+        setBillPrinting(false)
       }
     })
   }
@@ -4050,18 +4219,26 @@ export default function PosShell({
   /* Hoisted out of the effect so the gate's Refresh button runs the SAME read the
      timer does. Two paths to "re-read the floor" is two places for it to drift. */
   const refreshTables = useCallback(() => {
-    void listTablesAction()
-      .then((r) => {
-        if (r.ok) setTables(r.tables)
-      })
-      .catch(() => {})
-    /* The tabs come with it: the gate shows both, and two Refresh buttons — or a
-       Refresh that updated half the screen — is worse than one read that costs a
-       second query. A failure leaves the last good list on screen rather than
-       blanking a floor mid-service. */
-    void listOpenTabsAction()
-      .then(setTabs)
-      .catch(() => {})
+    /* BOTH reads, awaited together, because `floorLoaded` gates a judgement that
+       joins them: the gate counts a bill as armable only when a configured table
+       is carrying it (`tableByDoc`), so tabs-without-tables reads as an empty
+       floor just as surely as no read at all. Flipping the flag on the first one
+       home would hand the armed mode half a floor and re-open the exact race the
+       flag exists to close. */
+    void Promise.allSettled([
+      listTablesAction()
+        .then((r) => {
+          if (r.ok) setTables(r.tables)
+        })
+        .catch(() => {}),
+      /* The tabs come with it: the gate shows both, and two Refresh buttons — or a
+         Refresh that updated half the screen — is worse than one read that costs a
+         second query. A failure leaves the last good list on screen rather than
+         blanking a floor mid-service. */
+      listOpenTabsAction()
+        .then(setTabs)
+        .catch(() => {}),
+    ]).then(() => setFloorLoaded(true))
   }, [])
 
   /**
@@ -4533,6 +4710,8 @@ export default function PosShell({
       setTable(picked)
       setChoosingTable(false)
       setDocDiscount(null) // a recalled basket must not inherit the last one's discount
+      /* The bill's own price type, not the till's — see restorePricing. */
+      restorePricing(result.priceStructureId)
       dispatch({
         type: 'LOAD',
         documentId: result.documentId,
@@ -4598,14 +4777,6 @@ export default function PosShell({
         },
         saveSale,
         saveAsOrder,
-        showSaved: () => setShowingSaved(true),
-        /* The three document lists. Each goes through the SAME guarded opener the
-           rest of the shell uses rather than setting its state flag directly —
-           the online check belongs with the thing being opened, not copied into
-           every caller. See `openQuoteList`. */
-        showQuotes: openQuoteList,
-        showTillOrders: openOrderList,
-        showLaybys: openLaybyList,
         undo: undoLastLine,
         pickCustomer: () => setPickingCustomer(true),
         editLine: () => {
@@ -4622,6 +4793,10 @@ export default function PosShell({
           }
           setPickingPriceType(true)
         },
+        /* Unconditional, unlike the key above it. A shop with one price type
+           still has prices worth checking — the ladder is only part of what this
+           answers, and "what does this cost and is there any" is the rest. */
+        priceCheck: () => setCheckingPrice(true),
         takePayment: () => setTakingPayment(true),
         takeDeposit: () => void openDeposit(),
         showReprints: () => setShowingReprints(true),
@@ -4672,6 +4847,28 @@ export default function PosShell({
           }
         },
         startReturn: () => dispatch({ type: 'SET_RETURNING', returning: true }),
+        findReceipt: () => setReceiptReturn(true),
+        /*
+         * Arms the next item as a refund on the sale in progress.
+         *
+         * A bare dispatch: no dialog, no confirmation, nothing asked. The whole
+         * value of this key is that it is one tap in the middle of serving
+         * somebody, and a question here would cost more than the mistake it
+         * prevents — the mistake being one line the cashier can see, on a slip
+         * they have not tendered, next to a badge that says Refund.
+         *
+         * The toast is the second half of the signal, not decoration. The
+         * banner (see SalePane) says the state; this says the state CHANGED,
+         * which is what a cashier who pressed the wrong key needs to hear.
+         */
+        armRefund: (armed: boolean) => {
+          dispatch({ type: 'ARM_REFUND', armed })
+          toast.info(
+            armed
+              ? 'Refund armed — ring up the item coming back.'
+              : 'Refund cancelled. The till is selling.',
+          )
+        },
         giftCardBalance: () => setGiftBalanceOpen(true),
         /*
          * The two gestures that act on a whole table, reached from a key — they were
@@ -4723,6 +4920,7 @@ export default function PosShell({
       hasLines: state.lines.length > 0,
       hasCustomer: state.customer !== null,
       returning: state.returning,
+      refundArmed: state.refundArmed,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     /* `state.undoCount` is in here for the undo handler's sake: it closes over the
@@ -4736,7 +4934,28 @@ export default function PosShell({
        memo last rebuilt — null, from before the waiter tapped a table — so pressing
        Split inside an open table read as "no table open", threw the waiter back to the
        floor and told them no bill was on one. The bill was on screen the whole time. */
-    [state.lines, state.selectedKey, state.customer, state.undoCount, state.returning, state.documentId, table, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid, hospitality],
+    /* `state.refundArmed` is here because the Refund key TOGGLES on it: a memo that
+       did not rebuild when it changed would keep re-arming an already-armed till, so
+       the second press — the cashier's only way out — would do nothing. */
+    [state.lines, state.selectedKey, state.customer, state.undoCount, state.returning, state.refundArmed, state.documentId, table, till.online, results, browse.products, canOverrideDiscount, canOverridePrice, canVoid, hospitality],
+  )
+
+  /*
+   * Which quick key, if any, is holding a state right now.
+   *
+   * One predicate passed to every panel rather than a flag per bar, because the
+   * shop decides where its keys live: Refund may sit on the counter bar, inside
+   * a folder, or on the tables bar of a restaurant till, and a ring that only
+   * appeared on one of them would be a cashier hunting for the armed key on a
+   * screen that is not showing it.
+   *
+   * Only action keys can be armed — a product or a department tile is a thing,
+   * not a mode — so everything else answers false without being asked.
+   */
+  const quickKeyActive = useCallback(
+    (key: QuickKeyRow) =>
+      key.kind === 'action' && key.actionSlug === 'refund' && state.refundArmed,
+    [state.refundArmed],
   )
 
   const customerLabel = state.customer?.name ?? (state.customerName.trim() || null)
@@ -5004,6 +5223,10 @@ export default function PosShell({
           onRefresh={refreshTables}
           features={floorFeatures}
           busy={pending}
+          /* Whether the floor below is the shop's or just an unfilled initial
+             state. The armed modes refuse on an empty floor, and until this is
+             true "empty" means "not read yet". */
+          floorLoaded={floorLoaded}
           onWalkIn={() => {
             clearTabIdentity()
             setTable(null)
@@ -5112,6 +5335,8 @@ export default function PosShell({
              mode rather than competing with it. */
           onPay={openTender}
           returning={state.returning}
+          refundArmed={state.refundArmed}
+          onCancelRefund={() => dispatch({ type: 'ARM_REFUND', armed: false })}
           /* Decides whether the finish key says Pay or Save — a quote and an
              order take no money. See SalePane. */
           docType={state.docType}
@@ -5171,6 +5396,7 @@ export default function PosShell({
                 productNames={keyProductNames}
                 departmentNames={keyDepartmentNames}
                 isEnabled={(key) => quickKeyEnabled(key, quickKeyContext)}
+                isActive={quickKeyActive}
                 onPress={(key) => runQuickKey(key, quickKeyContext)}
                 /* The default empty state says "pick a department on the left",
                    and on this screen there is no rail on the left — the code box
@@ -5223,6 +5449,7 @@ export default function PosShell({
               productNames={keyProductNames}
               departmentNames={keyDepartmentNames}
               isEnabled={(key) => quickKeyEnabled(key, quickKeyContext)}
+              isActive={quickKeyActive}
               onPress={(key) => runQuickKey(key, quickKeyContext)}
             />
           }
@@ -5784,7 +6011,16 @@ export default function PosShell({
            offline claim) rides the next save/finalise, and the audit row is
            already written under the manager's name. */
         onSupervisor={(request) => {
+          /* Captured before the dialog goes, because closing it clears `editing`
+             and the approval still has to land on the line it was raised for. */
           const line = editing
+          /* CLOSED BEFORE THE PAD OPENS, the same way the document discount closes
+             itself. Both dialogs carry a NumPad, and a pad is not unmounted when its
+             <dialog> closes — it is only hidden, which is the one state usePadKeys
+             can see. Left open, this one sits behind the supervisor's PinPad with
+             its own keys still live, and every digit of the manager's PIN is typed
+             into the quantity or price field underneath it as well. */
+          setEditing(null)
           setOverride({
             capability: request.capability,
             actionLabel: request.actionLabel,
@@ -5803,7 +6039,6 @@ export default function PosShell({
                 })
               }
               if (line) dispatch({ type: 'UPDATE', key: line.key, changes: request.changes })
-              setEditing(null)
               toast.success(`Approved by ${auth.name}.`)
             },
           })
@@ -5836,6 +6071,47 @@ export default function PosShell({
               ? 'Back to normal prices.'
               : `Now ringing up at ${picked?.name ?? 'the chosen price'}.`,
           )
+        }}
+      />
+
+      {/* What something costs on every price type, without touching the sale.
+          The counterpart to the dialog above: that one changes what the till
+          rings at, this one changes nothing unless the cashier asks it to. */}
+      <PriceCheckModal
+        open={checkingPrice}
+        priceStructureId={priceStructureId}
+        terminalId={terminal?.id ?? null}
+        onClose={() => setCheckingPrice(false)}
+        onAdd={(productId, structureId) => {
+          /*
+           * Rung at the price type that was QUOTED, not the one the till is on.
+           *
+           * Re-read rather than taken from the dialog's own figure: `add()` wants
+           * a whole TillProduct — its VAT rate, its discount ceiling, whether it
+           * is a scale item — and the price is only one field of it. Fetching it
+           * on the chosen structure gets all of them consistent with each other,
+           * where patching a price onto a product read on a different structure
+           * would leave a line whose price and shelf price disagree, which is
+           * exactly the false "Price changed" this session set out to fix.
+           *
+           * Deliberately does NOT switch the till: one item quoted on trade is
+           * one line, not a change of mode. See PriceTypeModal.
+           *
+           * By ID, not through `scanAction` — that resolves a BARCODE or a CODE,
+           * and an id is neither. See productForTillAction.
+           */
+          startTransition(async () => {
+            const found = await productForTillAction(
+              productId,
+              structureId,
+              terminal?.id ?? null,
+            ).catch(() => null)
+            if (!found) {
+              toast.error('That product could not be read. Try scanning it.')
+              return
+            }
+            add(found)
+          })
         }}
       />
 
@@ -5876,6 +6152,18 @@ export default function PosShell({
           window.open(`/sales/${sale.id}/slip?auto=1`, '_blank')
           setShowingReprints(false)
         }}
+      />
+
+      {/* The pro-forma bill for the open tab. On the till, for the same reason
+          the reprint list is: asking for a bill must not send a waiter to the
+          back office with a basket still on the screen behind them. */}
+      <BillModal
+        open={billOpen}
+        bill={bill}
+        loading={billLoading}
+        printing={billPrinting}
+        onClose={() => setBillOpen(false)}
+        onPrint={printBillPaper}
       />
 
       {/* Money against an account, with no sale involved. Any customer, not the
@@ -6194,6 +6482,7 @@ export default function PosShell({
           productNames={keyProductNames}
           departmentNames={keyDepartmentNames}
           isEnabled={(key) => quickKeyEnabled(key, quickKeyContext)}
+          isActive={quickKeyActive}
           onPress={(key) => {
             /* Only ever a key that RUNS — a folder is opened in place by the panel
                itself and never reaches here, which is what keeps a drill-down from

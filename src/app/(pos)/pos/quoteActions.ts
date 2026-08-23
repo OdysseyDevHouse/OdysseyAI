@@ -186,9 +186,14 @@ export async function recallQuoteForTillAction(
     documentId: doc.id,
     customerId: doc.customerId,
     customerName: doc.customerName,
+    /* The basis the QUOTE was priced on. A quote is a promise of a figure, so
+       coming back on the till's current price type would describe — and compare
+       against — something the customer was never quoted. See
+       recallSaleForTillAction. */
+    priceStructureId: doc.priceStructureId,
     /* Re-reads the discount ceiling, shelf price and fraction rule from the
        PRODUCT, not from the stored line — so a quote written before a ceiling
        was tightened comes back under the new one. See recalledLines. */
-    lines: await basketLinesForDocument(siteId, doc, priceStructureId),
+    lines: await basketLinesForDocument(siteId, doc, doc.priceStructureId ?? priceStructureId),
   }
 }

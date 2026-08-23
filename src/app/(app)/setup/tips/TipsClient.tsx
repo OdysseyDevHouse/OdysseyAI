@@ -8,16 +8,18 @@ import {
   Card,
   CardBody,
   CardHeader,
+  CurrencyInput,
   EmptyState,
   Field,
   Icons,
   NumberInput,
+  Select,
   SettingRow,
   Switch,
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import { serviceChargeFor } from '@/lib/tipMath'
+import { serviceChargeFor, type ServiceChargeKind } from '@/lib/tipMath'
 import {
   saveTierAction,
   deleteTierAction,
@@ -41,8 +43,15 @@ import {
  *
  * A manager mid-edit will always have a moment where two bands overlap, and refusing the
  * save would make the screen unusable. So the count is shown, and `serviceChargeFor`
- * resolves to the HIGHER percentage — charging more is visible and gets queried, where
- * charging less would hide the misconfiguration for months.
+ * resolves to whichever band charges MORE on that bill — charging more is visible and
+ * gets queried, where charging less would hide the misconfiguration for months.
+ *
+ * ── A BAND IS A PERCENTAGE OR A FLAT AMOUNT ───────────────────────────────
+ *
+ * A percentage is right for a restaurant's service charge and wrong for a tray or delivery
+ * fee, or a small-order charge where a share of a small bill does not cover what it exists
+ * to cover. The two are chosen between rather than combined, and the form asks for only
+ * the figure the chosen kind uses — see `chargeKind` in `src/lib/tipMath.ts`.
  */
 export default function TipsClient({
   tiers: initialTiers,
@@ -59,7 +68,24 @@ export default function TipsClient({
   const [tablesOnly, setTablesOnly] = useState(initialTablesOnly)
   const [overlaps, setOverlaps] = useState(initialOverlaps)
   const [adding, setAdding] = useState(false)
-  const [draft, setDraft] = useState({ minTotal: 0, maxTotal: 0, percent: 10 })
+  const [draft, setDraft] = useState<{
+    minTotal: number
+    maxTotal: number
+    chargeKind: ServiceChargeKind
+    percent: number
+    amount: number
+  }>({ minTotal: 0, maxTotal: 0, chargeKind: 'percent', percent: 10, amount: 0 })
+
+  /* Both figures are kept in the draft while the form is open, so switching the
+     selector back and forth does not lose what was typed on the other side. The
+     server zeroes whichever one the saved band does not use. */
+  const DRAFT_BLANK = {
+    minTotal: 0,
+    maxTotal: 0,
+    chargeKind: 'percent' as ServiceChargeKind,
+    percent: 10,
+    amount: 0,
+  }
 
   function apply(result: TiersResult): boolean {
     if (!result.ok) {
@@ -77,7 +103,7 @@ export default function TipsClient({
       <Card>
         <CardHeader
           title="Where a service charge applies"
-          description="A percentage added automatically to a bill, on top of what the goods cost."
+          description="Added automatically to a bill, on top of what the goods cost — either a percentage of it or a flat amount."
         />
         <SettingRow
           icon={<Icons.Users size={18} />}
@@ -117,8 +143,8 @@ export default function TipsClient({
           {overlaps > 0 && (
             <Callout tone="warning">
               {overlaps} band{overlaps === 1 ? '' : 's'} overlap another. A bill in the
-              overlap is charged the HIGHER percentage — tidy the ranges so there is one
-              answer per amount.
+              overlap is charged whichever band takes MORE off it — tidy the ranges so
+              there is one answer per amount.
             </Callout>
           )}
 
@@ -142,7 +168,11 @@ export default function TipsClient({
                         ? ' and above'
                         : ` up to ${formatMoney(tier.maxTotal)}`}
                       {' → '}
-                      <span className="text-brand">{tier.percent}%</span>
+                      <span className="text-brand">
+                        {tier.chargeKind === 'amount'
+                          ? formatMoney(tier.amount)
+                          : `${tier.percent}%`}
+                      </span>
                     </p>
                     {/* The half-open rule, in words. A manager reading "1000 up to 1500"
                         should not have to guess whether 1000 or 1500 is included. */}
@@ -199,12 +229,35 @@ export default function TipsClient({
                   onChange={(e) => setDraft({ ...draft, maxTotal: Number(e.target.value) || 0 })}
                 />
               </Field>
-              <Field label="Percent">
-                <NumberInput
-                  value={draft.percent}
-                  onChange={(e) => setDraft({ ...draft, percent: Number(e.target.value) || 0 })}
-                />
+              <Field label="Charge">
+                <Select
+                  value={draft.chargeKind}
+                  onChange={(e) =>
+                    setDraft({ ...draft, chargeKind: e.target.value as ServiceChargeKind })
+                  }
+                >
+                  <option value="percent">A percentage of the bill</option>
+                  <option value="amount">A flat amount</option>
+                </Select>
               </Field>
+              {/* Only the figure the band actually charges is asked for. Showing both at
+                  once would leave a manager wondering which one the till reads, and the
+                  server zeroes the unused one anyway. */}
+              {draft.chargeKind === 'amount' ? (
+                <Field label="Amount" hint="Added whatever the bill comes to">
+                  <CurrencyInput
+                    value={draft.amount}
+                    onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value) || 0 })}
+                  />
+                </Field>
+              ) : (
+                <Field label="Percent">
+                  <NumberInput
+                    value={draft.percent}
+                    onChange={(e) => setDraft({ ...draft, percent: Number(e.target.value) || 0 })}
+                  />
+                </Field>
+              )}
               <Button
                 variant="primary"
                 disabled={pending}
@@ -216,12 +269,14 @@ export default function TipsClient({
                          R0 is meaningless and an empty number input is awkward to
                          distinguish from a typed zero. */
                       maxTotal: draft.maxTotal > 0 ? draft.maxTotal : null,
+                      chargeKind: draft.chargeKind,
                       percent: draft.percent,
+                      amount: draft.amount,
                       isActive: true,
                     })
                     if (apply(result)) {
                       setAdding(false)
-                      setDraft({ minTotal: 0, maxTotal: 0, percent: 10 })
+                      setDraft(DRAFT_BLANK)
                       toast.success('Band added.')
                     }
                   })

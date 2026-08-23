@@ -130,11 +130,17 @@ function main() {
 
   /* ── 3. Service-charge tiers ────────────────────────────────────────────── */
 
-  const TIERS: ServiceTier[] = [
-    { minTotal: 500, maxTotal: 1000, percent: 10, isActive: true },
-    { minTotal: 1000, maxTotal: 1500, percent: 8, isActive: true },
-    { minTotal: 1500, maxTotal: null, percent: 5, isActive: true },
-  ]
+  /* A band charges a percentage OR a flat amount, so the fixtures below say which. Two
+     builders rather than object literals, so the unused figure is always zero and a test
+     can never accidentally assert against a percent a band does not use. */
+  const pct = (minTotal: number, maxTotal: number | null, percent: number): ServiceTier => ({
+    minTotal, maxTotal, chargeKind: 'percent', percent, amount: 0, isActive: true,
+  })
+  const flat = (minTotal: number, maxTotal: number | null, amount: number): ServiceTier => ({
+    minTotal, maxTotal, chargeKind: 'amount', percent: 0, amount, isActive: true,
+  })
+
+  const TIERS: ServiceTier[] = [pct(500, 1000, 10), pct(1000, 1500, 8), pct(1500, null, 5)]
 
   ok('a R400 bill earns nothing', serviceChargeFor(400, TIERS) === 0)
   ok('a R600 bill earns 10% = R60', serviceChargeFor(600, TIERS) === 60, String(serviceChargeFor(600, TIERS)))
@@ -171,10 +177,7 @@ function main() {
     /* A shop CAN misconfigure them, and then the highest percentage wins — deliberately.
        Charging the higher figure is visible to the customer and gets queried; silently
        charging the lower one hides the misconfiguration for months. */
-    const overlapping: ServiceTier[] = [
-      { minTotal: 500, maxTotal: 2000, percent: 10, isActive: true },
-      { minTotal: 1000, maxTotal: 1500, percent: 12, isActive: true },
-    ]
+    const overlapping: ServiceTier[] = [pct(500, 2000, 10), pct(1000, 1500, 12)]
     ok(
       'overlapping bands resolve to the HIGHER percentage',
       serviceChargeFor(1200, overlapping) === 144,
@@ -182,6 +185,48 @@ function main() {
     )
     ok('and the overlap is reportable', overlappingTiers(overlapping).length === 1)
     ok('while tidy bands report none', overlappingTiers(TIERS).length === 0)
+  }
+
+  /* ── 3b. Flat-amount bands ──────────────────────────────────────────────── */
+
+  {
+    /* The case a percentage cannot express: a small-order fee. 10% of a R60 order is R6,
+       which does not cover the tray it exists to pay for — the shop wants R15 flat. */
+    const SMALL: ServiceTier[] = [flat(0, 100, 15)]
+    ok('a flat band charges its amount', serviceChargeFor(60, SMALL) === 15, String(serviceChargeFor(60, SMALL)))
+    ok('*** and the SAME amount whatever the bill ***', serviceChargeFor(95, SMALL) === 15)
+    ok('a bill above the band earns nothing', serviceChargeFor(100, SMALL) === 0)
+    ok('a zero bill still earns nothing', serviceChargeFor(0, SMALL) === 0)
+    ok('an inactive flat band is ignored', serviceChargeFor(60, [{ ...SMALL[0], isActive: false }]) === 0)
+
+    /* A flat band ignores whatever is in `percent`, and a percentage band ignores
+       `amount`. Asserted because the two columns coexist on every row: a band reading the
+       wrong one would be silent, and wrong on every bill. */
+    ok(
+      '*** a flat band ignores a stray percent ***',
+      serviceChargeFor(600, [{ ...flat(500, null, 20), percent: 99 }]) === 20,
+    )
+    ok(
+      '*** a percentage band ignores a stray amount ***',
+      serviceChargeFor(600, [{ ...pct(500, null, 10), amount: 999 }]) === 60,
+    )
+
+    /* The tie-break compares what each band would actually TAKE, not percent against
+       amount. On a R600 bill the 10% band takes R60 and the flat band R25, so the
+       percentage wins — where comparing 25 > 10 would have picked the flat one. */
+    const mixed: ServiceTier[] = [pct(500, null, 10), flat(500, null, 25)]
+    ok(
+      '*** mixed overlapping bands compare the RESOLVED charge ***',
+      serviceChargeFor(600, mixed) === 60,
+      String(serviceChargeFor(600, mixed)),
+    )
+    /* And on a small bill inside the same bands the flat one wins, which is the same rule
+       giving the opposite answer — proof it is comparing charges rather than columns. */
+    ok(
+      'so the flat band wins when it takes more',
+      serviceChargeFor(200, [pct(100, null, 5), flat(100, null, 25)]) === 25,
+    )
+    ok('a negative amount cannot pay the customer', serviceChargeFor(600, [flat(500, null, -50)]) === 0)
   }
 
   /* ── 4. What the drawer should hold ─────────────────────────────────────── */

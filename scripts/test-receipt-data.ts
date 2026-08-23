@@ -238,6 +238,76 @@ ok(
   'a renderer keying its "why" row on discountIncl > 0 will say nothing here',
 )
 
+console.log('\n── A mixed slip: goods bought, one item handed back ────────\n')
+
+/*
+ * ── WHY THIS CASE EXISTS ──────────────────────────────────────────────────
+ *
+ * An invoice may carry a refund line — one item returned mid-sale, negative on
+ * the same slip as the goods being bought (see `refundArmed` in the till's sale
+ * state). Both builders used to take `Math.abs` of every line unconditionally,
+ * which is right on a credit note (the heading says CREDIT NOTE, so the signs
+ * are noise) and silently WRONG here: the returned R150 shirt printed as a
+ * positive R150 while the footer total was R150 lower than the lines add to.
+ *
+ * A slip that does not add up, handed to a customer at the moment they are
+ * checking it. So the assertion below is arithmetic rather than formatting.
+ */
+const mixed = receiptDataFromBasket({
+  siteName: site.name,
+  vatNumber: site.vatNumber,
+  documentNumber: 'INV000043',
+  documentDate: '2026-08-14',
+  printedAt: 'now',
+  cashierName: 'Ruth',
+  terminalCode: 'T1',
+  customerName: 'Walk-in',
+  lines: [
+    { description: 'Socks', qty: 2, unitPriceIncl: 40, vatRatePct: 15 },
+    // The shirt coming back.
+    { description: 'Shirt', qty: -1, unitPriceIncl: 150, vatRatePct: 15 },
+  ],
+  tenders: [{ name: 'Cash', amount: 0, changeGiven: 0, reference: null }],
+  changeGiven: 0,
+})
+
+const shirt = mixed.lines.find((l) => l.description === 'Shirt')
+ok('the returned line keeps its negative quantity', shirt?.qty === -1, String(shirt?.qty))
+ok('  and its negative money', shirt?.lineTotalIncl === -150, String(shirt?.lineTotalIncl))
+
+const lineSum = mixed.lines.reduce((s, l) => s + l.lineTotalIncl, 0)
+ok(
+  '*** the printed lines add up to the printed total ***',
+  Math.abs(lineSum - mixed.totalIncl) < 0.005,
+  `lines ${lineSum} vs total ${mixed.totalIncl}`,
+)
+ok('  and the total is what is actually owed', mixed.totalIncl === -70, String(mixed.totalIncl))
+
+/*
+ * The other half of the rule, and the reason it is a document-level test rather
+ * than a per-line one: a slip whose lines ALL go the same way still drops its
+ * signs, because the heading already says which way. Regressing this would put
+ * "−2 × R80.00" on every credit note in the shop.
+ */
+const allBack = receiptDataFromBasket({
+  siteName: site.name,
+  vatNumber: site.vatNumber,
+  documentNumber: 'CRN000007',
+  documentDate: '2026-08-14',
+  printedAt: 'now',
+  cashierName: 'Ruth',
+  terminalCode: 'T1',
+  customerName: 'Walk-in',
+  lines: [{ description: 'Shirt', qty: -1, unitPriceIncl: 150, vatRatePct: 15 }],
+  tenders: [{ name: 'Cash', amount: 0, changeGiven: 0, reference: null }],
+  changeGiven: 0,
+})
+ok(
+  'a slip that goes ONE way still prints magnitudes',
+  allBack.lines[0]?.qty === 1 && allBack.lines[0]?.lineTotalIncl === 150,
+  JSON.stringify(allBack.lines[0]),
+)
+
 console.log('\n── Notes formatting ────────────────────────────────────────\n')
 
 ok('qty > 1 formats as a count',

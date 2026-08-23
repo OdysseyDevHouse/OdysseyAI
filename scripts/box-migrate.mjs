@@ -87,6 +87,15 @@ const TAB_TABLES = [
      shop's own 878 rows of history stay in the cloud where the back office
      reads them. */
   'document_audit',
+  /* The site-wide trail, for the same reason and on the same terms. Splitting
+     and transferring a bill both write `pos_split` rows INSIDE the routed
+     transaction (posSplit.ts) — so on a hybrid site, whose tabs live here, this
+     is where those rows land. Without it the writes fail; they are caught
+     rather than fatal, but the result is a floor whose every split goes
+     unrecorded, which is the one place the trail is most worth having.
+     Shape only, never rows: the box records what happens on the box, and the
+     shop's master-file history stays in the cloud. */
+  'activity_log',
   /* The licence lease — the SAME table the local backend uses, derived like
      every other rather than a second shape meaning the same thing.
      lib/licence/lease.ts reads `licence_lease WHERE id = 1`, so giving the box

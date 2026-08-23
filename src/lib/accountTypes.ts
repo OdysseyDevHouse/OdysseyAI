@@ -12,10 +12,22 @@
  * ageing, statements — is identical for all four.
  */
 
-export const ACCOUNT_TYPES = ['open_item', 'balance_fwd', 'cash', 'lay_by'] as const
+/**
+ * Balance brought forward leads, and is the default.
+ *
+ * It is the account most shops actually run: a payment settles the oldest
+ * invoice and works forward, with nobody sitting down to allocate. Open item
+ * asks somebody to decide where every payment goes, which is real work and only
+ * worth it for a customer who queries individual invoices — so it is the one
+ * you choose, not the one you get.
+ *
+ * This order is the ONLY one: the dropdown, the import spec's choices and the
+ * report filter all read it from here, so first here is first everywhere.
+ */
+export const ACCOUNT_TYPES = ['balance_fwd', 'open_item', 'cash', 'lay_by'] as const
 export type AccountType = (typeof ACCOUNT_TYPES)[number]
 
-export const DEFAULT_ACCOUNT_TYPE: AccountType = 'open_item'
+export const DEFAULT_ACCOUNT_TYPE: AccountType = 'balance_fwd'
 
 export type AccountTypeOption = {
   id: AccountType
@@ -29,20 +41,20 @@ export type AccountTypeOption = {
 
 export const ACCOUNT_TYPE_OPTIONS: AccountTypeOption[] = [
   {
-    id: 'open_item',
-    name: 'Open item',
-    description:
-      'Buys on account. When a payment comes in, the unpaid invoices are listed and you choose what it settles — R300 against one, R200 against another.',
-    allowsCredit: true,
-    autoAllocates: false,
-  },
-  {
     id: 'balance_fwd',
     name: 'Balance brought forward',
     description:
       'Buys on account. A payment is applied to the oldest unpaid invoice first and works forward until it is used up. Nobody allocates anything by hand.',
     allowsCredit: true,
     autoAllocates: true,
+  },
+  {
+    id: 'open_item',
+    name: 'Open item',
+    description:
+      'Buys on account. When a payment comes in, the unpaid invoices are listed and you choose what it settles — R300 against one, R200 against another.',
+    allowsCredit: true,
+    autoAllocates: false,
   },
   {
     id: 'cash',

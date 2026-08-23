@@ -24,7 +24,7 @@ import {
   type Column,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import { accountTypeLabel } from '@/lib/accountTypes'
+import { accountTypeLabel, DEFAULT_ACCOUNT_TYPE } from '@/lib/accountTypes'
 import type { Customer, CustomerStatus, BulkChange } from '@/lib/site/customers'
 import { bulkUpdateCustomersAction } from './actions'
 import { startRunAction } from './statements/actions'
@@ -361,12 +361,14 @@ function StatusCell({ row }: { row: Customer }) {
       </Badge>
     )
   }
-  // The type is only worth a badge when it changes what the counter can do.
-  // An open-item account is the default and needs no label.
+  // The type is only worth a badge when it says something the default does not.
+  // Compared against DEFAULT_ACCOUNT_TYPE rather than a named one, so that
+  // changing the default moves the badge with it — hardcoding 'open_item' here
+  // would badge every ordinary account and leave the common one unlabelled.
   //
   // No dot on this one: it classifies the account rather than reporting its
   // state, and the row is "active" either way.
-  if (row.accountType !== 'open_item') {
+  if (row.accountType !== DEFAULT_ACCOUNT_TYPE) {
     return <Badge tone="neutral">{accountTypeLabel(row.accountType)}</Badge>
   }
   return (

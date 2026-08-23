@@ -29,6 +29,12 @@ export {
   DRAWER_PANEL,
   DRAWER_SIZE,
   type DrawerSize,
+  /* The coloured leading edge the department rail and the product tiles wear.
+     Exported so the quick-key designer can dress its canvas as the till it is a
+     preview of — a tile that looks different in the designer to the way it will
+     look on the counter is the one thing that screen must not do. */
+  EDGE_LEAD,
+  EDGE_RING,
 } from './styles'
 export {
   TABLE,

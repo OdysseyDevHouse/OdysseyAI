@@ -129,6 +129,19 @@ export default function DrawerMovementModal({
       open={open && type !== null}
       onClose={onClose}
       title={type ? MOVEMENT_TITLES[type] : ''}
+      /* The hint belongs in the header, not floating above the pad. It is a
+         one-line gloss on the title — "money out that is not a sale" — and the
+         header is where every other dialog in the app puts exactly that. Under
+         the pad's own plaque it read as an instruction the cashier had to get
+         past to reach the keys. */
+      description={type ? MOVEMENT_HINTS[type] : undefined}
+      /* MEASURED, not assumed: plaque + full-width pad + Reason is 514px of
+         body, and the default 60vh cap on a 1366×768 till is 461. Without this
+         the dialog scrolls, and the row that goes below the fold first is the
+         Reason field — on the one dialog that REFUSES a movement without one.
+         The cashier would meet a dead "Record it" with the cause out of sight.
+         `bodyGrows` lifts the cap to 560 and leaves 46px of headroom. */
+      bodyGrows
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={pending}>
@@ -167,13 +180,19 @@ export default function DrawerMovementModal({
           movement will land on it.
         </Callout>
       ) : (
-        <div className="flex flex-col items-center gap-4">
-          {type && <p className="text-sm text-muted">{MOVEMENT_HINTS[type]}</p>}
-          <div className="w-64">
-            <NumPadDisplay label="Amount" value={amountEntry} />
-            <NumPad value={amountEntry} onChange={setAmountEntry} />
-          </div>
-          <Field label="Reason" className="w-full">
+        /* FULL WIDTH, and the pad at `wide`. This dialog asks for one number
+           and one sentence, and it is worked mid-sale by a thumb on a touch
+           screen — so the keys take the room the dialog has rather than sitting
+           as a 256px block with a margin either side of it. That block was the
+           default size's own doing: `touch` keys are 56px tall whatever width
+           they are given, so a wider container only stretched them.
+
+           `wide` rather than `lg`: measured, `lg` here came to 556px of body
+           against a 560px cap on a 1366×768 till. See the size's own note. */
+        <div className="flex flex-col gap-4">
+          <NumPadDisplay label="Amount" value={amountEntry} layout="plaque" />
+          <NumPad size="wide" value={amountEntry} onChange={setAmountEntry} disabled={pending} />
+          <Field label="Reason">
             <Input
               value={reason}
               onChange={(e) => setReason(e.target.value)}

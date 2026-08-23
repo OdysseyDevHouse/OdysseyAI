@@ -153,6 +153,153 @@ export async function findReceiptAction(scan: string): Promise<ReceiptLookup> {
   }
 }
 
+/* ── BROWSING FOR THE SLIP ──────────────────────────────────────────────────
+ *
+ * A cashier holding a slip types its number; a cashier holding a customer who
+ * has lost theirs has nothing to type. `findReceiptAction` above answers the
+ * first case and is useless for the second, which is most of them — the number
+ * on a thermal slip fades, gets folded into a pocket, or was never kept.
+ *
+ * So the modal opens on a LIST instead: today's sales, newest first, with
+ * yesterday and the last week one tap away. That is the whole search a till
+ * needs — a return is nearly always same-day or same-week, and anything older
+ * is a back-office job with the customer's account to search by.
+ */
+
+/** One row of the browse list. Enough to recognise a sale, and nothing more. */
+export type ReceiptSummary = {
+  documentId: number
+  documentNumber: string
+  /** yyyy-mm-dd — the accounting date on the document. */
+  documentDate: string
+  /** Wall-clock HH:MM the sale was posted, which is how a cashier finds it. */
+  finalisedAt: string | null
+  customerName: string | null
+  totalIncl: number
+  terminalCode: string | null
+  userName: string
+  /** True when a credit note already points at this invoice. */
+  partlyCredited: boolean
+}
+
+/** How far back the list looks. Named windows rather than a date pair: a till
+ *  has no room for a date picker and a return is a recent-sale act. */
+export type ReceiptRange = 'today' | 'yesterday' | 'week'
+
+const RECEIPT_RANGES: readonly ReceiptRange[] = ['today', 'yesterday', 'week']
+
+/** Ceiling on one page of the list. A till scrolls with a thumb; past this the
+ *  search box is the faster tool, and the list says so. */
+const RECEIPT_LIMIT = 60
+
+/**
+ * The invoices a cashier can pick from, filtered by window and optionally by
+ * what they typed.
+ *
+ * The search runs INSIDE the SQL rather than over the fetched page: filtering
+ * a LIMIT-ed page would search today's first sixty sales rather than the day's
+ * sales, and quietly find nothing on a busy shop. A search also widens the
+ * window to the last 90 days by design — somebody typing a number is holding a
+ * slip, and which day it was rung is exactly what they do not have to know.
+ */
+export async function recentReceiptsAction(input: {
+  range: ReceiptRange
+  search?: string
+}): Promise<
+  { ok: true; receipts: ReceiptSummary[]; truncated: boolean } | { ok: false; error: string }
+> {
+  const ctx = await actorFor('sales.till')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  const range: ReceiptRange = RECEIPT_RANGES.includes(input.range) ? input.range : 'today'
+  // Scanners may prepend an AIM symbology prefix like ]C1 — strip it, same as
+  // the single lookup does, so a scan into the search box behaves.
+  const search = (input.search ?? '').trim().replace(/^\][A-Z]\d/i, '')
+
+  /* Computed here rather than with CURDATE(), for the reason modules.ts states:
+     the app's day and the database server's day are not guaranteed to be the
+     same one, and the app's is the one the shop is trading in. */
+  const now = new Date()
+  const isoOf = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const daysAgo = (n: number) => {
+    const d = new Date(now)
+    d.setDate(d.getDate() - n)
+    return isoOf(d)
+  }
+
+  const where: string[] = [`d.doc_type = 'invoice'`, `d.status = 'finalised'`]
+  const params: unknown[] = []
+
+  if (search) {
+    // A typed number beats the window — see the docblock.
+    where.push('d.document_date >= ?')
+    params.push(daysAgo(90))
+    where.push('(d.document_number LIKE ? OR d.customer_name LIKE ?)')
+    params.push(`%${search}%`, `%${search}%`)
+  } else if (range === 'today') {
+    where.push('d.document_date = ?')
+    params.push(isoOf(now))
+  } else if (range === 'yesterday') {
+    where.push('d.document_date = ?')
+    params.push(daysAgo(1))
+  } else {
+    where.push('d.document_date >= ?')
+    params.push(daysAgo(6))
+  }
+
+  const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT d.id, d.document_number, d.document_date, d.finalised_at, d.customer_name,
+            d.total_incl, d.terminal_code, d.user_name,
+            EXISTS (SELECT 1 FROM sales_documents c
+                     WHERE c.reverses_id = d.id
+                       AND c.doc_type = 'credit_sale'
+                       AND c.status = 'finalised') AS credited
+       FROM sales_documents d
+      WHERE ${where.join(' AND ')}
+      ORDER BY d.document_date DESC, d.finalised_at DESC, d.id DESC
+      LIMIT ${RECEIPT_LIMIT + 1}`,
+    params,
+  )
+
+  const page = rows.slice(0, RECEIPT_LIMIT)
+  return {
+    ok: true,
+    truncated: rows.length > RECEIPT_LIMIT,
+    receipts: page.map((r) => ({
+      documentId: Number(r.id),
+      documentNumber: String(r.document_number ?? ''),
+      documentDate: String(r.document_date),
+      /* getUTC*, not getHours: the pool reads DATETIME as UTC, so the wall
+         clock the till stamped comes back only through the UTC getters. */
+      finalisedAt: r.finalised_at ? wallClockTime(r.finalised_at) : null,
+      customerName: r.customer_name ? String(r.customer_name) : null,
+      totalIncl: toNum(r.total_incl),
+      terminalCode: r.terminal_code ? String(r.terminal_code) : null,
+      userName: String(r.user_name ?? ''),
+      partlyCredited: Number(r.credited) === 1,
+    })),
+  }
+}
+
+/**
+ * HH:MM as the till stamped it.
+ *
+ * The pool runs at timezone 'Z', so the driver's Date already holds the stored
+ * wall-clock reading in its UTC fields — getUTC*, never getHours(). And a Date
+ * instance only: re-parsing a String(value) is the "cleverer" path that has
+ * produced NaN in this codebase before. Same reasoning, and the same shape, as
+ * `wallClock()` in site/cashupBreakdown.ts.
+ */
+function wallClockTime(value: unknown): string | null {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return null
+  const hh = String(value.getUTCHours()).padStart(2, '0')
+  const mm = String(value.getUTCMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+
 /** Builds server-priced credit lines from the invoice, taking only qty from the client. */
 async function creditLinesFrom(
   siteId: number,

@@ -3,9 +3,9 @@
 import { useState, type ReactNode } from 'react'
 import {
   ActionTile,
-  Button,
   EmptyState,
   Icons,
+  ProductTile,
   TileGrid,
   toneForId,
   toneForTileToken,
@@ -44,6 +44,7 @@ export function QuickKeyPanel({
   productNames,
   departmentNames,
   isEnabled,
+  isActive,
   onPress,
 }: {
   keys: readonly QuickKeyRow[]
@@ -68,6 +69,16 @@ export function QuickKeyPanel({
   departmentNames: Record<number, string>
   /** False greys the tile — see quickKeyEnabled on why that beats refusing on press. */
   isEnabled: (key: QuickKeyRow) => boolean
+  /**
+   * True rings the tile: this key's act is ARMED and a second press stops it.
+   *
+   * A predicate, exactly like `isEnabled` above and for the same reason — the
+   * panel draws keys and knows nothing about what any of them mean. The shell
+   * holds the sale state and answers; adding a second toggling key later needs
+   * no change here. Optional, so the designer's preview and the style guide
+   * render without inventing a sale to ask about.
+   */
+  isActive?: (key: QuickKeyRow) => boolean
   onPress: (key: QuickKeyRow) => void
 }) {
   const [openGroupId, setOpenGroupId] = useState<number | null>(null)
@@ -115,17 +126,15 @@ export function QuickKeyPanel({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Back sits ABOVE the grid, at a fixed spot — a cashier finds it by position
-          rather than by reading, and it must not move as the grid changes length. */}
+      {/* An open folder is captioned exactly as a department is: the name alone, at
+          the same size and weight the breadcrumb's last crumb wears, in the same slot
+          above the grid. It used to be a filled Back button with the name beside it at
+          text-base — bigger than the department heading and a different shape — so the
+          two drill-downs read as two different screens. The way out is now the first
+          TILE in the grid below, which is where the department drill puts it. */}
       {openGroup ? (
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="touch" onClick={() => setOpenGroupId(null)}>
-            <Icons.Reverse size={18} />
-            Back
-          </Button>
-          <span className="truncate text-base font-semibold text-ink">
-            {labelFor(openGroup)}
-          </span>
+        <div className="flex flex-wrap items-center gap-1 text-[13px]">
+          <span className="truncate font-semibold text-ink">{labelFor(openGroup)}</span>
         </div>
       ) : (
         showEyebrow && (
@@ -143,13 +152,26 @@ export function QuickKeyPanel({
       )}
 
       {shown.length === 0 ? (
-        <EmptyState
-          icon={<Icons.LayoutGrid size={24} />}
-          title="Nothing in here"
-          hint="This folder is empty. Tap Back, or ask a manager to put something in it."
-        />
+        /* The Back tile comes WITH the empty state rather than instead of it, exactly
+           as an empty department does: an empty folder is the one screen where the way
+           out matters most, and it is now the only one on offer. */
+        <div className="flex flex-col gap-4">
+          <EmptyState
+            icon={<Icons.LayoutGrid size={24} />}
+            title="Nothing in here"
+            hint="This folder is empty. Ask a manager to put something in it."
+          />
+          <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
+            <BackTile tileHeight={tiles.height} onClick={() => setOpenGroupId(null)} />
+          </TileGrid>
+        </div>
       ) : (
         <TileGrid tileWidth={tiles.width} tileHeight={tiles.height}>
+          {/* FIRST cell, holding the same corner of the grid the department drill's
+              way-out holds — a cashier finds it by position across both. */}
+          {openGroup && (
+            <BackTile tileHeight={tiles.height} onClick={() => setOpenGroupId(null)} />
+          )}
           {shown.map((key) => (
             <KeyButton
               key={key.id}
@@ -158,6 +180,7 @@ export function QuickKeyPanel({
               tileHeight={tiles.height}
               memberCount={key.kind === 'group' ? visible(groupMembers(keys, key.id)).length : 0}
               enabled={isEnabled(key)}
+              active={isActive?.(key) ?? false}
               onPress={() => {
                 /* A group opens; everything else runs. Decided here rather than in the
                    runner so the runner never needs to know about panel state. */
@@ -169,6 +192,32 @@ export function QuickKeyPanel({
         </TileGrid>
       )}
     </div>
+  )
+}
+
+/**
+ * The way out of an open folder — the first cell of the grid.
+ *
+ * Deliberately the same tile the department drill uses (CatalogPane's BackTile): a
+ * dashed brand outline with the Reverse glyph, in the first cell, saying where it
+ * goes. The two drill-downs sit in the same pane and are walked the same way, so a
+ * cashier who has learnt one corner has learnt both.
+ *
+ * A ProductTile rather than an ActionTile, for the same reason the department's is:
+ * this is a way out, not a thing to run, and `dashed` is the shared idiom for that.
+ *
+ * No subtitle — the caption above already names the folder being left, and the tile
+ * already names where it goes.
+ */
+function BackTile({ tileHeight, onClick }: { tileHeight: number; onClick: () => void }) {
+  return (
+    <ProductTile
+      title="Back to quick keys"
+      icon={<Icons.Reverse size={20} />}
+      dashed
+      tileHeight={tileHeight}
+      onClick={onClick}
+    />
   )
 }
 
@@ -194,6 +243,7 @@ function KeyButton({
   label,
   memberCount,
   enabled,
+  active,
   tileHeight,
   onPress,
 }: {
@@ -201,6 +251,7 @@ function KeyButton({
   label: string
   memberCount: number
   enabled: boolean
+  active: boolean
   tileHeight: number
   onPress: () => void
 }) {
@@ -233,6 +284,7 @@ function KeyButton({
          colour stored simply gets none — an edge invented for it would look like a
          choice nobody made. */
       edge={toneForTileToken(keyRow.colourToken) ?? undefined}
+      active={active}
       tileHeight={tileHeight}
       chevron={keyRow.kind === 'group'}
       disabled={!enabled}

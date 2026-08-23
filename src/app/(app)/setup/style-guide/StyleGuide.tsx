@@ -47,6 +47,8 @@ import {
   Modal,
   Drawer,
   PinPad,
+  NumPad,
+  NumPadDisplay,
   TenderTile,
   SignaturePad,
   LaneWeek,
@@ -57,6 +59,7 @@ import {
   Radio,
   SegmentedControl,
   ReasonPicker,
+  type PickableReason,
   SectionTitle,
   SelectableCard,
   Select,
@@ -123,7 +126,11 @@ import { SaleLineCard } from '@/app/(pos)/pos/SaleLineCard'
 import { LineOptionsModal } from '@/app/(pos)/pos/LineOptionsModal'
 import InstructionsModal from '@/app/(pos)/pos/InstructionsModal'
 import { ReceiptModal } from '@/app/(pos)/pos/ReceiptModal'
+import { VoidReasonModal } from '@/app/(pos)/pos/VoidReasonModal'
+import type { VoidType } from '@/lib/site/posVoids'
 import { SplitPreview } from './SplitPreview'
+import { ReceiptReturnPreview } from './ReceiptReturnPreview'
+import { BillPreview } from './BillPreview'
 import { GatePreview, FloorPreview, OpenTillPreview } from './GatePreview'
 import { ModuleMenuPreview } from './ModuleMenuPreview'
 import { TenderPreview } from './TenderPreview'
@@ -190,6 +197,7 @@ export default function StyleGuidePage() {
         <ModalSection />
         <DrawerSection />
         <PinPadSection />
+        <NumPadSection />
         <SignaturePadSection />
         <LaneWeekSection />
         <ComboboxSection />
@@ -201,7 +209,9 @@ export default function StyleGuidePage() {
         <SaleLineSection />
         <InstructionsSection />
         <ReceiptSection />
+        <ReceiptReturnSection />
         <SplitBillSection />
+        <BillSection />
         <TableGateSection />
         <ModuleMenuSection />
         <PaginationSection />
@@ -739,6 +749,8 @@ const GUIDE_REASONS = [
 function ReasonPickerSection() {
   const [reasonId, setReasonId] = useState<number | null>(null)
   const [note, setNote] = useState('')
+  const [touchId, setTouchId] = useState<number | null>(null)
+  const [touchNote, setTouchNote] = useState('')
 
   return (
     <Card>
@@ -746,17 +758,41 @@ function ReasonPickerSection() {
         title="Reason picker"
         description="<ReasonPicker /> — picking a coded reason from a short list, with the note that only appears for reasons whose code cannot say enough"
       />
-      <CardBody className="max-w-md">
-        <ReasonPicker
-          reasons={GUIDE_REASONS}
-          value={reasonId}
-          note={note}
-          onChange={setReasonId}
-          onNoteChange={setNote}
-          label="Why is this being voided?"
-          hint="Choose “Something else” to see the note appear."
+      <Row>
+        <Spec
+          name="default"
+          note="A back-office form. No chevron — these rows choose rather than open — and the hint is Field's own, in the column of hints under the column of fields."
         />
-      </CardBody>
+        <div className="max-w-md">
+          <ReasonPicker
+            reasons={GUIDE_REASONS}
+            value={reasonId}
+            note={note}
+            onChange={setReasonId}
+            onNoteChange={setNote}
+            label="Why is this being voided?"
+            hint="Choose “Something else” to see the note appear."
+          />
+        </div>
+      </Row>
+      <Row>
+        <Spec
+          name="touch"
+          note="The till dress, used by <VoidReasonModal />. A chevron makes each full-width strip read as a key rather than a line of text, and the hint carries an info glyph because down there it stands alone rather than in a column of hints."
+        />
+        <div className="max-w-md">
+          <ReasonPicker
+            reasons={GUIDE_REASONS}
+            value={touchId}
+            note={touchNote}
+            onChange={setTouchId}
+            onNoteChange={setTouchNote}
+            label="Why is this coming off?"
+            hint="Recorded against the till, and what a void report groups by."
+            touch
+          />
+        </div>
+      </Row>
     </Card>
   )
 }
@@ -1581,6 +1617,25 @@ function TableControlsSection() {
               ]}
             />
           </div>
+          <div className="mt-4">
+            <Spec
+              name='size="touch"'
+              note="The till's step — the bar spans its container and the segments divide it equally, each a finger target. A size rather than a `w-full` at the call site: widening the default bar stretches the BAR and leaves three small chips at its left edge."
+            />
+          </div>
+          <div className="mt-2 max-w-md">
+            <SegmentedControl
+              size="touch"
+              aria-label="How to discount"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'all', label: 'Percent', icon: <Icons.Percent size={18} /> },
+                { value: 'orders', label: 'Rand', icon: <Icons.Money size={18} /> },
+                { value: 'grvs', label: 'Code', icon: <Icons.Ticket size={18} /> },
+              ]}
+            />
+          </div>
         </div>
 
         <div>
@@ -2163,6 +2218,71 @@ function PinPadSection() {
   )
 }
 
+function NumPadSection() {
+  const [small, setSmall] = useState('')
+  const [large, setLarge] = useState('')
+
+  return (
+    <Card>
+      <CardHeader
+        title="NumPad"
+        description="<NumPad /> with <NumPadDisplay /> — every “type an amount” moment on the till: quantity, price override, discount, tender, a payout. The value is a decimal STRING typed left to right, so “5.” keeps its point and “0.50” keeps its trailing zero mid-entry; numPadValue() parses it once, at the end. A physical keyboard drives it too — a till with one is as common as a till without"
+      />
+      <div className="flex flex-wrap items-start gap-8 px-5 py-5">
+        <Spec name="<NumPad value onChange>" note="a decimal string, never a number" />
+        <Spec name='size="lg"' note="keys fill their column — for a pad that IS the screen" />
+        <Spec name='size="wide"' note="the same, at a scale a dialog can carry beside a field and a footer" />
+        <Spec name="maxDecimals={0}" note="whole numbers; the point becomes a GAP, not a missing key" />
+        <Spec name="numPadValue(v)" note='"" and "12." both mean the number to their left' />
+        <Spec name='layout="plaque"' note="brand-tinted, for a dialog whose only subject is the amount" />
+        <Spec name="suffix" note='the unit ON the figure — "%" — never a leading one; R goes first' />
+        <Spec name='tone="danger"' note="the entry is refused — over a line's discount ceiling" />
+
+        {/* The two sizes SIDE BY SIDE, because the difference is the thing worth
+            looking at and it is invisible in prose: `touch` keys are 56px tall
+            whatever width they are given, so a default pad in a wide container
+            stretches rather than grows. */}
+        <div className="w-64 shrink-0">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            Default — one control among controls
+          </p>
+          <NumPadDisplay label="Quantity" value={small} />
+          <NumPad value={small} onChange={setSmall} />
+        </div>
+
+        <div className="w-full max-w-sm shrink-0">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            size=&quot;wide&quot; with layout=&quot;plaque&quot; — the drawer-movement and
+            discount dialogs
+          </p>
+          <div className="flex flex-col gap-4">
+            <NumPadDisplay
+              label="Percent off the sale"
+              value={large}
+              layout="plaque"
+              suffix="%"
+            />
+            <NumPad size="wide" value={large} onChange={setLarge} />
+          </div>
+          {/* The refused state, which is half of what `tone` is for and cannot
+              be looked at on the real dialog without a basket that breaches a
+              line's ceiling. */}
+          <p className="mt-4 mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            tone=&quot;danger&quot; — past a line&apos;s ceiling
+          </p>
+          <NumPadDisplay
+            label="Percent off the sale"
+            value="80"
+            layout="plaque"
+            suffix="%"
+            tone="danger"
+          />
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 function LaneWeekSection() {
   const days = ['Mon 3', 'Tue 4', 'Wed 5', 'Thu 6', 'Fri 7'].map((label, i) => ({
     date: `2026-08-0${3 + i}`,
@@ -2414,6 +2534,8 @@ function KeyArt({ slug }: { slug: string }) {
 function SaleLineSection() {
   const [open, setOpen] = useState<string | null>('new')
   const [showingOptions, setShowingOptions] = useState(false)
+  /** Which of the three kinds the void prompt is being previewed as. */
+  const [voiding, setVoiding] = useState<VoidType | null>(null)
 
   const line = (over: Partial<BasketLine>): BasketLine =>
     ({
@@ -2489,6 +2611,21 @@ function SaleLineSection() {
       total: 65,
       age: 0,
     },
+    {
+      state: 'new' as const,
+      note: 'On a promotion. The badge names it, states the percentage AND what that came to — a cashier asked "how much did I save?" should read the answer, not work it out.',
+      line: line({
+        key: 'special',
+        description: 'Buttermilk Chicken Burger',
+        unitPriceIncl: 115,
+        shelfPriceIncl: 115,
+      }),
+      total: 103.5,
+      age: 0,
+      discountPct: 10,
+      discountIncl: 11.5,
+      specialName: 'Winter Warmer',
+    },
   ]
 
   return (
@@ -2505,8 +2642,9 @@ function SaleLineSection() {
             <SaleLineCard
               line={d.line}
               lineTotal={d.total}
-              effectiveDiscountPct={0}
-              specialName={null}
+              effectiveDiscountPct={d.discountPct ?? 0}
+              discountIncl={d.discountIncl ?? 0}
+              specialName={d.specialName ?? null}
               priceStructureName="Retail Price"
               sessionState={d.state}
               ageMinutes={d.age}
@@ -2537,9 +2675,50 @@ function SaleLineSection() {
           />
         </div>
       </Row>
+
+      <Row>
+        <Spec
+          name="<VoidReasonModal />"
+          note="What − and Void open — the reason a draft line is coming off, asked before anything leaves the screen. Three kinds, and the words change with all three: an item void is one unit off a line, a line void is the whole line, a sale void is the basket. Not <VoidModal />, which reverses a FINALISED sale and does touch money."
+        />
+        <div className="flex flex-wrap gap-2">
+          {(['item', 'line', 'sale'] as const).map((kind) => (
+            <Button key={kind} variant="secondary" onClick={() => setVoiding(kind)}>
+              {kind === 'item' ? 'Void an item' : `Void a ${kind}`}
+            </Button>
+          ))}
+          <VoidReasonModal
+            open={voiding !== null}
+            voidType={voiding ?? 'line'}
+            description={voiding === 'sale' ? '2 lines' : 'Buttermilk Chicken Burger'}
+            qty={voiding === 'item' ? 1 : 2}
+            valueIncl={voiding === 'sale' ? 63 : 115}
+            reasons={GUIDE_VOID_REASONS}
+            onClose={() => setVoiding(null)}
+            onConfirm={() => setVoiding(null)}
+          />
+        </div>
+      </Row>
     </Card>
   )
 }
+
+/**
+ * The till's own void reasons, as a site would set them up.
+ *
+ * Longer than GUIDE_REASONS on purpose: the picker's shape only becomes a
+ * question at the length a real list runs to, where the dialog starts to
+ * scroll and the hint under it goes below the fold.
+ */
+const GUIDE_VOID_REASONS: PickableReason[] = [
+  { id: 1, code: 'WRONG-ITEM', name: 'Wrong item rung up', allowsNote: false },
+  { id: 2, code: 'WRONG-QTY', name: 'Wrong quantity or price', allowsNote: false },
+  { id: 3, code: 'DOUBLE-RUNG', name: 'Rung up twice', allowsNote: false },
+  { id: 4, code: 'CHANGED-MIND', name: 'Customer changed mind', allowsNote: false },
+  { id: 5, code: 'PAYMENT-FAILED', name: 'Payment did not go through', allowsNote: false },
+  { id: 6, code: 'TRAINING', name: 'Training or test sale', allowsNote: false },
+  { id: 7, code: 'OTHER', name: 'Something else', allowsNote: true },
+]
 
 /**
  * The questions a product asks, as the till puts them.
@@ -2708,6 +2887,28 @@ function ReceiptSection() {
   )
 }
 
+function ReceiptReturnSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Return against a receipt"
+        description="<ReceiptReturnModal /> — the refund key's screen. It opens on a LIST of today's sales rather than on an empty number field, because the number is the one thing a customer at the counter usually does not have: the slip is faded, folded or gone. The window filter and the search share the top strip, and the search widens to 90 days on its own — somebody typing a number is holding a slip, and which day it was rung is exactly what they need not know."
+      />
+      <Row>
+        <Spec
+          name="<ReceiptReturnModal open online reasons tenders onRefund onExchange>"
+          note="Two steps in one dialog: pick the sale, then pick what is coming back. Quantities cap at what is still creditable across every credit note ever raised on the invoice, and the prices are what the customer PAID — the server re-reads every one of them and never trusts this screen."
+        />
+        <Spec
+          name="listReceipts / findReceipt"
+          note="The two reads, injectable and defaulted to the real actions. The till passes neither; the preview beside this passes both, which is the only way to look at a screen that lives behind a clerk PIN."
+        />
+        <ReceiptReturnPreview />
+      </Row>
+    </Card>
+  )
+}
+
 function SplitBillSection() {
   return (
     <Card>
@@ -2721,6 +2922,24 @@ function SplitBillSection() {
           note="Destination first — a line cannot be dropped on a bill that has not been named. Picking an OCCUPIED table shows what it already holds, greyed and immovable, and the split appends to it. Nothing is written until Confirm."
         />
         <SplitPreview />
+      </Row>
+    </Card>
+  )
+}
+
+function BillSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="The bill"
+        description="<BillModal /> — the pro-forma a waiter puts on the table, shown ON THE TILL. It used to open the back office's print route in a second tab, which took the till off the screen it exists to be and left a half-scanned basket behind it. Printing still leaves this screen alone: the thermal bridge, or failing that the print route, never window.print() — a native dialog in the top layer would put the whole till on paper."
+      />
+      <Row>
+        <Spec
+          name="<BillModal open bill loading printing onPrint>"
+          note="Renders BillSlip over the same BillData the thermal renderer takes, so the paper and the screen cannot disagree about what is on the tab. `bill` is null while it is being fetched and the dialog holds the slip's shape, so the Print button does not jump down the screen when the data lands."
+        />
+        <BillPreview />
       </Row>
     </Card>
   )

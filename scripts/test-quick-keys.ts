@@ -382,30 +382,30 @@ async function main() {
 
   /* ── 13. Which kind of till an action suits ─────────────────────────────── */
 
-  /* RECALLING a parked basket is a counter idea: on a hospitality till the floor
-     already lists every open bill, so a second list is hidden from the designer
-     entirely. The rule is shared with the rail, so a filtered row and a refused save
-     cannot disagree. */
+  /* SAVING is a counter act and a floor act alike. The key runs the same
+     naming-and-parking path as Close, so on a restaurant till it IS that act on a
+     key a shop may place where it likes — which is what the designer is for. */
   ok(
-    'view-saved-sales is hidden on a hospitality till',
-    Boolean(quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'view-saved-sales' }, true)),
-    quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'view-saved-sales' }, true) ?? '',
-  )
-  /* SAVING is not, and used to be. The key now runs the same naming-and-parking path
-     as Close rather than parking anonymously, so on a restaurant till it is that act
-     on a key a shop may place where it likes — which is what the designer is for. */
-  ok(
-    '  but save-sale is offered on both',
+    'save-sale is offered on both kinds of till',
     !quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'save-sale' }, true) &&
       !quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'save-sale' }, false),
   )
   ok(
-    '  and view-saved-sales is fine on a retail till',
-    !quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'view-saved-sales' }, false),
-  )
-  ok(
     '  and send-to-kitchen is hidden on a retail one',
     Boolean(quickKeyAllowedOnTill({ kind: 'action', actionSlug: 'send-to-kitchen' }, false)),
+  )
+  /* NO ACTION IS retailOnly ANY MORE — the document-list keys that carried the flag
+     are gone from the catalogue. Asserted rather than left implied, because the flag
+     and its branch in `quickKeyAllowedOnTill` are deliberately kept for the next
+     counter-only key: this is what says the emptiness is a fact about the CATALOGUE
+     and not a rule that quietly stopped being applied. Delete this the day a key
+     takes the flag again — and give it a real hidden-on-hospitality check. */
+  ok(
+    '  no action claims retailOnly today',
+    QUICK_KEY_ACTIONS.every((a) => !a.retailOnly),
+    QUICK_KEY_ACTIONS.filter((a) => a.retailOnly)
+      .map((a) => a.slug)
+      .join(', '),
   )
   /* A product key is a way of adding to a bill, which is equally sensible either way —
      only ACTIONS are restricted. */

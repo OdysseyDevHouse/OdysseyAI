@@ -30,7 +30,10 @@ import {
   listStockTakes,
   validateStockTake,
   reconcileStockTakes,
+  approvalState,
+  approveVarianceLines,
 } from '../src/lib/site/stockTakes'
+import { setSetting } from '../src/lib/site/settings'
 import { reconcileStock, recordMovement } from '../src/lib/site/stockMovements'
 import { reconcileSerials } from '../src/lib/site/serials'
 import { verifySequence } from '../src/lib/site/sequences'
@@ -103,6 +106,28 @@ async function sweepStrays() {
   await siteExecute(SITE, `DELETE FROM stock_locations WHERE code LIKE '${LOC_PATTERN}' AND is_main = 0`)
 }
 
+/**
+ * Both variance thresholds back to OFF, which is the shipped default (218).
+ *
+ * Restored to the DEFAULT rather than to whatever was found, and that is the
+ * whole point. The obvious version — read the value, put it back in a finally
+ * — is wrong in a way that takes a while to see: if a previous run died between
+ * the setSetting and the finally, the "original" this run reads back IS the
+ * pollution, and it gets faithfully written back at the end. The site then
+ * stays dirty for ever, and the failure lands on some unrelated suite that
+ * posts a count.
+ *
+ * That is not hypothetical — it happened while this was being written, and the
+ * earlier sections of this file exit(1) on a fixture failure, which skips a
+ * finally entirely.
+ *
+ * Run at the START as well as the end, for the same reason sweepStrays is.
+ */
+async function sweepThresholds() {
+  await setSetting(SITE, 'stock_take_variance_qty_pct', '0')
+  await setSetting(SITE, 'stock_take_variance_value', '0')
+}
+
 /** Puts an opening pile in a room without pretending it moved there. */
 async function seed(productId: number, locationId: number, qty: number, cost: number) {
   await siteExecute(
@@ -123,6 +148,7 @@ async function seed(productId: number, locationId: number, qty: number, cost: nu
 
 async function main() {
   await sweepStrays()
+  await sweepThresholds()
 
   const stamp = Date.now().toString().slice(-8)
   // Baselined rather than reset: this runs against a shared dev database, and
@@ -490,6 +516,218 @@ async function main() {
     ok('*** a full sheet builds ***', false, full.error)
   }
 
+  /* ── 12b. Blind counting (218) ───────────────────────────────────────── */
+
+  /*
+   * The FLAG is what is tested here, not the rendering.
+   *
+   * Blindness is enforced by the grid not receiving the column, and the page
+   * resolves `blind = isBlind && !readOnly` before the component sees it. What
+   * a server-side suite can prove is that the flag survives a round trip, that
+   * a re-count inherits it, and — the part that would actually be a bug — that
+   * turning it on changes NOTHING about what posts. A blind sheet that valued
+   * or posted differently from a sighted one would be a second code path
+   * through the arithmetic, which is exactly what this design refuses.
+   */
+  const blindA = await makeProduct('N', 40, 6)
+  const blindTake = await createStockTake(SITE, actor, {
+    locationId: roomId,
+    scope: 'manual',
+    productIds: [blindA],
+    isBlind: true,
+  })
+  ok('*** a sheet can be created blind ***', blindTake.ok,
+    blindTake.ok ? '' : blindTake.error)
+
+  if (blindTake.ok) {
+    const bs = (await getStockTake(SITE, blindTake.id))!
+    ok('  the flag survives the round trip', bs.isBlind === true)
+    ok('  and the snapshot is still captured — hidden from the COUNTER, not from the books',
+      bs.lines[0]?.snapshotQty === 40)
+
+    await freezeStockTake(SITE, actor, blindTake.id)
+    await saveCounts(SITE, actor, blindTake.id, [{ lineId: bs.lines[0].id, countedQty: 34 }])
+    const bp = await postStockTake(SITE, actor, blindTake.id)
+    ok('  a blind sheet posts exactly as a sighted one does', bp.ok && bp.movements === 1,
+      bp.ok ? `${bp.movements} movement` : bp.error)
+    ok('  and writes the same difference', (await pile(blindA, roomId)) === 34,
+      `pile is ${await pile(blindA, roomId)}`)
+
+    const bre = await recountStockTake(SITE, actor, blindTake.id)
+    ok('*** a re-count of a blind sheet is blind too ***',
+      bre.ok && (await getStockTake(SITE, bre.id))!.isBlind === true)
+    if (bre.ok) await deleteStockTake(SITE, bre.id)
+  }
+
+  /* ── 12c. Variance sign-off (218) ────────────────────────────────────── */
+
+  /*
+   * The gate, end to end: a threshold flags a line, posting is REFUSED while
+   * it is unsigned, a signature clears it, and re-typing the count takes the
+   * signature back.
+   *
+   * The last of those is the one worth having a test for. A signature that
+   * survived an edit would let somebody approve "40 where the books said 400"
+   * and then post a 4 — a control that reads as enforced and is not, which is
+   * strictly worse than no control at all.
+   *
+   * ── THE THRESHOLDS ARE RESTORED TO ZERO, NOT TO WHAT WAS FOUND ─────────
+   *
+   * Settings are SITE-GLOBAL on a shared dev database, and the obvious version
+   * of this — read the value, restore it in a finally — is wrong in a way that
+   * takes a while to see: if a previous run died between the setSetting and the
+   * finally, the "original" this run reads back IS the pollution, and it gets
+   * faithfully written back at the end. The suite then leaves the site dirty
+   * for ever after, and the failure lands on some unrelated test that posts a
+   * count.
+   *
+   * That is not hypothetical — it happened while this was being written. The
+   * earlier sections of this suite exit(1) on a fixture failure, which skips
+   * the finally entirely.
+   *
+   * So the restore target is the DEFAULT (both off) rather than whatever was
+   * observed. Zero is what settings.ts ships and what every untouched site
+   * carries, so a run always leaves the site in the state a fresh one is in.
+   * A dev site that had deliberately set a threshold loses it — an acceptable
+   * trade for a suite that cannot poison the shared database.
+   */
+  // sweepThresholds() also ran at the very top of main(), beside sweepStrays,
+  // so the earlier sections never post against a leftover threshold.
+
+  try {
+    // 10% of 100 is 10 units; the line below moves 40, which is 40%.
+    await setSetting(SITE, 'stock_take_variance_qty_pct', '10')
+    await setSetting(SITE, 'stock_take_variance_value', '0')
+
+    const gateBig = await makeProduct('G', 100, 5)
+    const gateSmall = await makeProduct('H', 100, 5)
+    const gate = await createStockTake(SITE, actor, {
+      locationId: roomId, scope: 'manual', productIds: [gateBig, gateSmall],
+    })
+    if (!gate.ok) {
+      ok('*** the sign-off gate builds a sheet ***', false, gate.error)
+    } else {
+      await freezeStockTake(SITE, actor, gate.id)
+      const gs = (await getStockTake(SITE, gate.id))!
+      const bigLine = gs.lines.find((l) => l.productId === gateBig)!
+      const smallLine = gs.lines.find((l) => l.productId === gateSmall)!
+
+      // 60 against 100 is 40% out — over. 95 against 100 is 5% — under.
+      await saveCounts(SITE, actor, gate.id, [
+        { lineId: bigLine.id, countedQty: 60 },
+        { lineId: smallLine.id, countedQty: 95 },
+      ])
+
+      const state1 = await approvalState(SITE, (await getStockTake(SITE, gate.id))!)
+      ok('*** a line over the percentage threshold is flagged ***',
+        state1.flagged.length === 1 && state1.flagged[0].line.productId === gateBig,
+        `${state1.flagged.length} flagged`)
+      ok('  a line under it is not', !state1.flagged.some((f) => f.line.productId === gateSmall))
+      ok('  and the flag explains itself', /%/.test(state1.flagged[0]?.reason ?? ''),
+        state1.flagged[0]?.reason ?? '(none)')
+
+      const refused = await postStockTake(SITE, actor, gate.id)
+      ok('*** posting is REFUSED while a flagged line is unsigned ***', !refused.ok,
+        refused.ok ? 'it posted anyway' : '')
+      ok('  and the refusal names the product',
+        !refused.ok && refused.error.includes(`ZST${stamp}G`),
+        refused.ok ? '' : refused.error.slice(0, 90))
+
+      const reason = await siteQueryOne<any>(
+        SITE, 'SELECT id FROM stock_adjustment_reasons WHERE is_active=1 ORDER BY sort_order LIMIT 1')
+
+      const signed = await approveVarianceLines(SITE, actor, gate.id, [bigLine.id],
+        { reasonId: reason?.id ?? null, note: 'Counted twice, shelf is genuinely short' })
+      ok('*** a flagged line can be signed off ***', signed.ok,
+        signed.ok ? '' : signed.error)
+
+      const state2 = await approvalState(SITE, (await getStockTake(SITE, gate.id))!)
+      ok('  which clears what was outstanding', state2.outstanding.length === 0,
+        `${state2.outstanding.length} left`)
+      ok('  while the line stays flagged, so the sheet still shows it was checked',
+        state2.flagged.length === 1)
+
+      /* The one that matters most. */
+      await saveCounts(SITE, actor, gate.id, [{ lineId: bigLine.id, countedQty: 55 }])
+      const state3 = await approvalState(SITE, (await getStockTake(SITE, gate.id))!)
+      ok('*** re-typing the count WITHDRAWS the sign-off ***',
+        state3.outstanding.length === 1,
+        'a signature belongs to the figure it was given for')
+      ok('  so posting is refused again', !(await postStockTake(SITE, actor, gate.id)).ok)
+
+      // Sign the new figure, and it goes through.
+      await approveVarianceLines(SITE, actor, gate.id, [bigLine.id],
+        { reasonId: reason?.id ?? null, note: 'Re-counted' })
+      const posted = await postStockTake(SITE, actor, gate.id)
+      ok('*** once signed at the counted figure, the sheet posts ***', posted.ok,
+        posted.ok ? `${posted.movements} movements` : posted.error)
+      ok('  and both lines wrote their real difference',
+        (await pile(gateBig, roomId)) === 55 && (await pile(gateSmall, roomId)) === 95,
+        `${await pile(gateBig, roomId)} / ${await pile(gateSmall, roomId)}`)
+      ok('  the approval is recorded against the line',
+        (await getStockTake(SITE, gate.id))!.lines
+          .find((l) => l.productId === gateBig)?.approvedBy === actor.userName)
+
+      /* An approval on a posted sheet must be refused — there is nothing left
+         to gate, and letting it through would rewrite an audit record. */
+      const late = await approveVarianceLines(SITE, actor, gate.id, [bigLine.id],
+        { reasonId: reason?.id ?? null })
+      ok('  a posted sheet can no longer be signed off', !late.ok)
+    }
+
+    /* ── Both thresholds off is the DEFAULT, and must gate nothing ─────── */
+
+    await setSetting(SITE, 'stock_take_variance_qty_pct', '0')
+    await setSetting(SITE, 'stock_take_variance_value', '0')
+
+    const offP = await makeProduct('J', 100, 5)
+    const off = await createStockTake(SITE, actor, {
+      locationId: roomId, scope: 'manual', productIds: [offP],
+    })
+    if (off.ok) {
+      await freezeStockTake(SITE, actor, off.id)
+      const os = (await getStockTake(SITE, off.id))!
+      await saveCounts(SITE, actor, off.id, [{ lineId: os.lines[0].id, countedQty: 1 }])
+      const offState = await approvalState(SITE, (await getStockTake(SITE, off.id))!)
+      ok('*** with both thresholds off, a 99% variance is not flagged ***',
+        offState.flagged.length === 0, `${offState.flagged.length} flagged`)
+      const offPost = await postStockTake(SITE, actor, off.id)
+      ok('  and it posts with no signature at all', offPost.ok,
+        offPost.ok ? '' : offPost.error)
+    } else {
+      ok('*** a thresholds-off sheet builds ***', false, off.error)
+    }
+
+    /* ── The VALUE half catches what a percentage cannot ───────────────── */
+
+    await setSetting(SITE, 'stock_take_variance_qty_pct', '0')
+    await setSetting(SITE, 'stock_take_variance_value', '500')
+
+    // 1 of 3 missing is 33% — but at R14,000 each it is the biggest line on
+    // any sheet. This is the case a percentage threshold alone lets through.
+    const dear = await makeProduct('K', 3, 14000)
+    const val = await createStockTake(SITE, actor, {
+      locationId: roomId, scope: 'manual', productIds: [dear],
+    })
+    if (val.ok) {
+      await freezeStockTake(SITE, actor, val.id)
+      const vs = (await getStockTake(SITE, val.id))!
+      await saveCounts(SITE, actor, val.id, [{ lineId: vs.lines[0].id, countedQty: 2 }])
+      const vState = await approvalState(SITE, (await getStockTake(SITE, val.id))!)
+      ok('*** the value threshold catches one missing expensive unit ***',
+        vState.flagged.length === 1,
+        vState.flagged[0]?.reason ?? `${vState.flagged.length} flagged`)
+      ok('  and posting is held on it', !(await postStockTake(SITE, actor, val.id)).ok)
+      await cancelStockTake(SITE, actor, val.id, 'Test teardown')
+    } else {
+      ok('*** a value-threshold sheet builds ***', false, val.error)
+    }
+  } finally {
+    // Site-global. Left switched on, this fails every other suite that posts a
+    // count against this shared dev database — which is exactly what it did.
+    await sweepThresholds()
+  }
+
   /* ── 13. The reconciliations ─────────────────────────────────────────── */
 
   const takeDrift = await reconcileStockTakes(SITE)
@@ -512,9 +750,20 @@ async function main() {
   /* ── Clean up ────────────────────────────────────────────────────────── */
 
   await sweepStrays()
+  await sweepThresholds()
   const leftovers = await siteQuery<any>(
     SITE, `SELECT id FROM products WHERE code REGEXP '${CODE_PATTERN}'`)
   ok('the run leaves nothing behind', leftovers.length === 0)
+
+  // Asserted, not assumed. A threshold left switched on is invisible here and
+  // fails a different suite an hour later, which is the worst way to find it.
+  const leftPct = await siteQueryOne<any>(
+    SITE, "SELECT setting_value v FROM settings WHERE setting_key='stock_take_variance_qty_pct'")
+  const leftVal = await siteQueryOne<any>(
+    SITE, "SELECT setting_value v FROM settings WHERE setting_key='stock_take_variance_value'")
+  ok('  and leaves both variance thresholds switched off',
+    Number(leftPct?.v ?? 0) === 0 && Number(leftVal?.v ?? 0) === 0,
+    `pct='${leftPct?.v ?? ''}' value='${leftVal?.v ?? ''}'`)
 
   console.log(fails === 0 ? '\nAll stock take checks passed.' : `\n${fails} FAILED`)
   process.exit(fails === 0 ? 0 : 1)

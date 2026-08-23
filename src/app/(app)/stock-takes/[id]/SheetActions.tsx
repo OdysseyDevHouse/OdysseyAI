@@ -27,6 +27,7 @@ export default function SheetActions({
   counted,
   lineCount,
   varianceCount,
+  outstandingSignoffs,
 }: {
   id: number
   status: StockTakeStatus
@@ -34,6 +35,14 @@ export default function SheetActions({
   counted: number
   lineCount: number
   varianceCount: number
+  /**
+   * Flagged lines still unsigned (218).
+   *
+   * postStockTake refuses while this is above zero, so the button says so up
+   * front rather than letting somebody open the modal, read the summary, click
+   * Post and only then discover it was never going to work.
+   */
+  outstandingSignoffs: number
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -142,9 +151,18 @@ export default function SheetActions({
           <Button variant="ghost" onClick={() => setConfirmCancel(true)} disabled={pending}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => setConfirmPost(true)} disabled={pending || counted === 0}>
+          {/* Held rather than hidden, and it says WHY on its face. A disabled
+              button with no explanation sends people to support; this one sends
+              them to the sign-off filter on the sheet below. */}
+          <Button
+            variant="primary"
+            onClick={() => setConfirmPost(true)}
+            disabled={pending || counted === 0 || outstandingSignoffs > 0}
+          >
             <Icons.Check size={15} />
-            Post the count
+            {outstandingSignoffs > 0
+              ? `${outstandingSignoffs} to sign off first`
+              : 'Post the count'}
           </Button>
         </>
       )}

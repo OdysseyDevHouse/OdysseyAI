@@ -6,7 +6,7 @@ import { setSetting } from '@/lib/site/settings'
 import { siteExecute, siteQueryOne } from '@/lib/siteDb'
 import { listServiceTiers } from '@/lib/site/tips'
 import { overlappingTiers } from '@/lib/tipMath'
-import type { ServiceTier } from '@/lib/tipMath'
+import type { ServiceTier, ServiceChargeKind } from '@/lib/tipMath'
 
 /**
  * Configuring tips.
@@ -55,7 +55,9 @@ export async function loadTiersAction(): Promise<TiersResult> {
 function validate(input: {
   minTotal: number
   maxTotal: number | null
+  chargeKind: ServiceChargeKind
   percent: number
+  amount: number
 }): string | null {
   if (!Number.isFinite(input.minTotal) || input.minTotal < 0) {
     return 'The band must start at zero or more.'
@@ -68,6 +70,19 @@ function validate(input: {
       return 'The upper limit must be above the lower one.'
     }
   }
+
+  /* Only the figure this band actually charges is checked. Validating both would refuse a
+     perfectly good flat-amount band for the 0 sitting in the percent column it ignores. */
+  if (input.chargeKind === 'amount') {
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      return 'Give the band an amount.'
+    }
+    /* No upper bound to match the percentage's "not more than the bill": a flat charge is
+       compared against a bill whose value is not known until the till adds one up, and the
+       band's own lower limit is where a shop says which bills it applies to. */
+    return null
+  }
+
   if (!Number.isFinite(input.percent) || input.percent <= 0) {
     return 'Give the band a percentage.'
   }
@@ -81,7 +96,9 @@ export async function saveTierAction(input: {
   id?: number
   minTotal: number
   maxTotal: number | null
+  chargeKind: ServiceChargeKind
   percent: number
+  amount: number
   isActive: boolean
 }): Promise<TiersResult> {
   const ctx = await actorFor('setup.edit')
@@ -90,16 +107,25 @@ export async function saveTierAction(input: {
   const invalid = validate(input)
   if (invalid) return { ok: false, error: invalid }
 
+  /* Both columns are written every time, and the one this band does not use is zeroed
+     rather than left as it was. A band switched from 10% to R25 that kept its old percent
+     would read correctly on screen and still be one misread `charge_kind` away from
+     charging the wrong thing — so the stored row says only what the band actually does. */
+  const percent = input.chargeKind === 'percent' ? input.percent : 0
+  const amount = input.chargeKind === 'amount' ? input.amount : 0
+
   if (input.id) {
     await siteExecute(
       ctx.siteId,
       `UPDATE service_charge_tiers
-          SET min_total = ?, max_total = ?, percent = ?, is_active = ?
+          SET min_total = ?, max_total = ?, charge_kind = ?, percent = ?, charge_amount = ?, is_active = ?
         WHERE id = ?`,
       [
         input.minTotal.toFixed(2),
         input.maxTotal === null ? null : input.maxTotal.toFixed(2),
-        input.percent.toFixed(3),
+        input.chargeKind,
+        percent.toFixed(3),
+        amount.toFixed(2),
         input.isActive ? 1 : 0,
         input.id,
       ],
@@ -107,12 +133,14 @@ export async function saveTierAction(input: {
   } else {
     await siteExecute(
       ctx.siteId,
-      `INSERT INTO service_charge_tiers (min_total, max_total, percent, is_active)
-       VALUES (?,?,?,?)`,
+      `INSERT INTO service_charge_tiers (min_total, max_total, charge_kind, percent, charge_amount, is_active)
+       VALUES (?,?,?,?,?,?)`,
       [
         input.minTotal.toFixed(2),
         input.maxTotal === null ? null : input.maxTotal.toFixed(2),
-        input.percent.toFixed(3),
+        input.chargeKind,
+        percent.toFixed(3),
+        amount.toFixed(2),
         input.isActive ? 1 : 0,
       ],
     )

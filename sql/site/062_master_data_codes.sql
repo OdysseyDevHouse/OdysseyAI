@@ -29,12 +29,14 @@ INSERT IGNORE INTO document_sequences (doc_type, prefix, next_number, padding, r
   ('supplier', 'SUPP', 1, 5, 'none'),
   ('product',  'PRD',  1, 5, 'none');
 
--- Off by default, and deliberately so. An existing store has its own coding
--- scheme already in the data — switching it to CUST00001 without being asked
--- would make every new account inconsistent with the thousand before it. A new
--- store turns it on in Setup → Numbering & posting the first time it notices
--- it is typing codes by hand.
+-- ON by default. This was off, on the reasoning that a store arriving with its
+-- own coding scheme should keep it — but that case is the IMPORT, which carries
+-- its codes in the file and where a typed code always wins over the suggestion.
+-- What the default actually decides is what happens when somebody adds an
+-- account by hand and leaves the code blank, and there the honest answer is a
+-- code rather than a validation error. A store that wants its own scheme still
+-- types one, or turns this off in Setup → Numbering & posting.
 INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
-  ('autocode_customer', '0'),
-  ('autocode_supplier', '0'),
-  ('autocode_product',  '0');
+  ('autocode_customer', '1'),
+  ('autocode_supplier', '1'),
+  ('autocode_product',  '1');

@@ -26,6 +26,7 @@ import {
   EmptyState,
   Icons,
   Tabs,
+  TileGrid,
   useToast,
 } from '@/components/ui'
 import {
@@ -52,7 +53,7 @@ import { KeyTile } from './KeyTile'
 import { KeyInspector } from './KeyInspector'
 import { AddKeyModal } from './AddKeyModal'
 import { BackTile, AppendZone } from './DropZones'
-import { KeyLibrary, type NewKeyDraft } from './KeyLibrary'
+import { KeyLibrary, type LibraryDepartment, type NewKeyDraft } from './KeyLibrary'
 import { SelectionBar } from './SelectionBar'
 import { STARTER_TEMPLATES } from './templates'
 
@@ -93,16 +94,34 @@ import { STARTER_TEMPLATES } from './templates'
 
 const KEY_LIMIT = 60
 
+/**
+ * The tile size every grid on this canvas uses — the settled bar, an empty group's
+ * lone Back tile, and the append zone during a drag.
+ *
+ * Named rather than repeated at the three call sites: they must agree, or a key
+ * dropped into an empty group would change size the moment it landed.
+ *
+ * 240 rather than the till's 200 so a full-screen back office fits FOUR keys across
+ * instead of five. It is still a MINIMUM, not a width — see TileGrid — so the count
+ * steps down on a laptop and up on a very wide monitor. The tile stays a comfortable
+ * shape for a caption plus its hint at every step.
+ */
+const TILE_W = 240
+const TILE_H = 150
+
 export default function QuickKeyCanvas({
   initialKeys,
   productNames,
   departmentNames,
+  departmentTree,
   hospitality,
 }: {
   initialKeys: QuickKeyRow[]
   /** Resolved server-side: a product key with no caption reads its product's name. */
   productNames: Record<number, string>
   departmentNames: Record<number, string>
+  /** The whole tree, for the library's catalogue drill. The names above are for CAPTIONS. */
+  departmentTree: LibraryDepartment[]
   /** A restaurant till, which has a second bar for when a table is open. */
   hospitality: boolean
 }) {
@@ -712,16 +731,20 @@ export default function QuickKeyCanvas({
                  dead end. */
               <div className="flex flex-col gap-3">
                 {openGroup && (
-                  <div className="flex">
+                  /* One cell of the same grid, so an empty group's Back tile is the
+                     size it will be the moment a key lands beside it. */
+                  <TileGrid tileWidth={TILE_W} tileHeight={TILE_H} className={`[grid-template-columns:${TILE_W}px]`}>
                     <BackTile
                       label="the bar"
                       active={intent?.where === 'out'}
                       onClick={() => setOpenGroupId(null)}
                     />
-                  </div>
+                  </TileGrid>
                 )}
                 {dragId !== null || draggedDraft ? (
-                  <AppendZone active={intent?.where === 'append'} />
+                  <TileGrid tileWidth={TILE_W} tileHeight={TILE_H}>
+                    <AppendZone active={intent?.where === 'append'} />
+                  </TileGrid>
                 ) : (
                   <EmptyState
                     icon={<Icons.LayoutGrid size={22} />}
@@ -741,7 +764,12 @@ export default function QuickKeyCanvas({
                 )}
               </div>
             ) : (
-              <div className="flex flex-wrap gap-3">
+              /* The till's own grid recipe, at the till's own tile size, rather than
+                 a wrapped row of squares. This canvas is a PREVIEW of the counter
+                 screen: a designer whose tiles are a different shape to the ones a
+                 cashier will press is showing a layout that does not exist. See
+                 TileGrid on why the width is a minimum and the height is fixed. */
+              <TileGrid tileWidth={TILE_W} tileHeight={TILE_H}>
                 {/* Inside a group, Back is the FIRST tile — a fixed spot at the start of
                     the row, so it does not move as the group's contents change, and it
                     is the shortest drag from anywhere in the grid. */}
@@ -790,7 +818,7 @@ export default function QuickKeyCanvas({
                 {(dragId !== null || draggedDraft) && (
                   <AppendZone active={intent?.where === 'append'} />
                 )}
-              </div>
+              </TileGrid>
             )}
           </div>
         </Card>
@@ -826,6 +854,7 @@ export default function QuickKeyCanvas({
             keys={keys}
             section={section}
             hospitality={hospitality}
+            departments={departmentTree}
             busy={pending}
             onAdd={addDraft}
           />
@@ -842,7 +871,11 @@ export default function QuickKeyCanvas({
         {dragged || draggedDraft ? (
           <div
             data-kit-ok
-            className="flex size-24 items-center justify-center rounded-card border-2 border-brand bg-surface px-1 text-center text-[11px] font-semibold text-ink shadow-pop"
+            /* Sized to the tile it stands for, now that a tile is a wide rectangle:
+               a square chip under the cursor while the grid holds rectangles reads as
+               dragging something other than the key that was picked up. Still a cheap
+               chip rather than the real tile — see above. */
+            className="flex h-[150px] w-[200px] items-center justify-center rounded-card border-2 border-brand bg-surface px-3 text-center text-[15px] font-semibold text-ink shadow-pop"
           >
             {dragged ? labelFor(dragged) : draggedDraft?.label}
           </div>

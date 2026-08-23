@@ -7,6 +7,7 @@ import {
   Button,
   CategoryTile,
   Icons,
+  ProductTile as KitTile,
   toneForId,
   toneForTileToken,
   type CategoryTone,
@@ -47,6 +48,24 @@ import type { Department, DragData, DropData, DropZone, MenuProduct } from './ty
 function productTone(product: MenuProduct): CategoryTone {
   return toneForTileToken(product.imageColor) ?? toneForId(product.departmentId ?? product.id)
 }
+
+/**
+ * How tall a tile stands here.
+ *
+ * Above SHORT_TILE_MAX (128), so the kit tile takes its TALL layout — glyph and name
+ * on the top line, then the code and the price beneath. That is the arrangement the
+ * till uses at its default size, and this screen's whole claim is to show what the
+ * cashier will see.
+ *
+ * The threshold is the constraint, not a preference. Below it the kit flips to a
+ * side-by-side row and DROPS the subtitle, which here carries "3 sections · 12
+ * products" — the one line telling a manager how much menu sits behind a tile. A
+ * first pass at 116 silently lost it on every tile.
+ *
+ * 136 rather than the till's 150: a manager reads this canvas whole at desk distance,
+ * so the tile only has to clear the threshold, not match a counter screen.
+ */
+export const TILE_H = 136
 
 /* ── shared bits ──────────────────────────────────────────────────────────── */
 
@@ -172,14 +191,19 @@ export function ProductTile({
   })
 
   const hidden = !product.visibleInPos
+  const tone = productTone(product)
 
   return (
     <div ref={setDropRef} className="relative">
       {zone === 'before' && <Caret side="before" />}
       {zone === 'after' && <Caret side="after" />}
 
-      {/* data-kit-ok: a draggable tile carrying its own hover actions. A kit
-          Button cannot hold nested controls, and no variant should learn to. */}
+      {/* data-kit-ok: the WRAPPER, not the tile. It carries the drag listeners, the
+          keyboard affordance and the hover actions — none of which a kit component
+          should learn — while the tile inside is the real `ProductTile` the till
+          draws. That split is the point: this screen promises a preview of the till,
+          and the only way to keep that promise is for the preview to BE the till's
+          component rather than a copy of it that drifts. */}
       <div
         data-kit-ok
         ref={setNodeRef}
@@ -196,12 +220,42 @@ export function ProductTile({
             onClick(e as unknown as MouseEvent)
           }
         }}
-        className={`group relative flex h-full min-h-[104px] cursor-grab touch-manipulation select-none flex-col justify-between gap-2 rounded-card border bg-surface p-3 text-left shadow-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+        className={`group relative cursor-grab touch-manipulation select-none rounded-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
           isDragging || dimmed ? 'opacity-40' : ''
-        } ${hidden && !selected ? 'opacity-60' : ''} ${
-          selected ? 'border-brand ring-2 ring-brand' : 'border-border hover:border-border-strong'
-        }`}
+        } ${hidden && !selected ? 'opacity-60' : ''}`}
       >
+        <KitTile
+          title={product.description}
+          /* The barcode, as the till's own tile shows it — see CatalogPane, which
+             swaps in a STOCK note there instead. It does not belong here: a manager
+             arranging the menu is identifying which product a tile is, and "none on
+             hand" answers a question nobody is asking at this desk. */
+          subtitle={product.barcode || product.code}
+          price={formatMoney(product.price)}
+          /* The product's own icon when a manager has uploaded one, so the tile a
+             cashier will actually press is what shows here. It sits ON the tone rather
+             than replacing it, so a transparent glyph keeps its background. */
+          icon={
+            product.imageIcon ? (
+              <img
+                src={`/api/product-icon/${product.id}`}
+                alt=""
+                className="size-full object-contain p-0.5"
+              />
+            ) : (
+              <Icons.Package size={20} />
+            )
+          }
+          tone={tone}
+          edge={tone}
+          tileHeight={TILE_H}
+          selected={selected}
+          /* No onClick: the wrapper above owns the gesture, because a drag has to be
+             told apart from a tap and only the wrapper carries the drag listeners. The
+             tile is a drawing here, and giving it a handler of its own would put two
+             click targets on one tile. */
+        />
+
         <TileActions pinned={hidden}>
           {hidden && <HiddenChip />}
           {canEdit && (
@@ -218,40 +272,6 @@ export function ProductTile({
             </>
           )}
         </TileActions>
-
-        <span className="flex items-start gap-2 pr-1">
-          {/* The same disc the till draws, with the same tone — and the
-              product's own icon inside it when a manager has uploaded one, so
-              the tile a cashier will actually press is what shows here. The
-              icon sits ON the tone rather than replacing it, so a transparent
-              glyph keeps its background (TillTilePanel makes the same call). */}
-          <CategoryTile
-            tone={productTone(product)}
-            icon={
-              product.imageIcon ? (
-                <img
-                  src={`/api/product-icon/${product.id}`}
-                  alt=""
-                  className="size-full object-contain p-0.5"
-                />
-              ) : (
-                <Icons.Package size={18} />
-              )
-            }
-          />
-          <span className="line-clamp-2 text-sm font-semibold leading-tight text-ink">
-            {product.description}
-          </span>
-        </span>
-
-        <span>
-          <span className="block truncate text-xs text-muted">
-            {product.barcode || product.code}
-          </span>
-          <span className="numeric text-[15px] font-bold text-ink">
-            {formatMoney(product.price)}
-          </span>
-        </span>
       </div>
     </div>
   )
@@ -297,13 +317,14 @@ export function DepartmentTile({
 
   const hidden = !department.isActive
   const receiving = zone === 'onto'
+  const tone = toneForTileToken(department.color) ?? toneForId(department.id)
 
   return (
     <div ref={setDropRef} className="relative">
       {zone === 'before' && <Caret side="before" />}
       {zone === 'after' && <Caret side="after" />}
 
-      {/* data-kit-ok: see the note on ProductTile above. */}
+      {/* data-kit-ok: the wrapper only — see the note on ProductTile above. */}
       <div
         data-kit-ok
         ref={setNodeRef}
@@ -319,14 +340,30 @@ export function DepartmentTile({
             onOpen()
           }
         }}
-        className={`group relative flex min-h-[104px] cursor-grab touch-manipulation select-none flex-col justify-between gap-2 rounded-card border bg-surface p-3 text-left shadow-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+        className={`group relative cursor-grab touch-manipulation select-none rounded-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
           isDragging || dimmed ? 'opacity-40' : ''
         } ${hidden ? 'opacity-60' : ''} ${
-          receiving || springing
-            ? 'border-brand ring-2 ring-brand'
-            : 'border-border hover:border-border-strong'
+          receiving || springing ? 'ring-2 ring-brand' : ''
         }`}
       >
+        <KitTile
+          title={department.name}
+          /* "3 sections · 12 products", where the till would show a code. Both answer
+             "which one is this" — at the counter by identifying the product, here by
+             saying how much menu is behind the tile, which is what a manager is
+             deciding about when they arrange one. */
+          subtitle={detail}
+          icon={<Icons.Tag size={20} />}
+          tone={tone}
+          edge={tone}
+          /* The affordance the hand-rolled tile never had: on the till a department
+             tile promises another screen, and this one opens a level too. Drawn only
+             where the promise is kept — see `chevron` on the kit tile. */
+          chevron
+          tileHeight={TILE_H}
+          selected={receiving || springing}
+        />
+
         <TileActions pinned={hidden}>
           {hidden && <HiddenChip />}
           {canEdit && (
@@ -343,21 +380,6 @@ export function DepartmentTile({
             </>
           )}
         </TileActions>
-
-        {/* The till's department tile: a Tag in a tinted disc, toned by the
-            colour a manager picked and otherwise derived from the id — the same
-            two lines CatalogPane's department rail draws. */}
-        <CategoryTile
-          tone={toneForTileToken(department.color) ?? toneForId(department.id)}
-          icon={<Icons.Tag size={18} />}
-        />
-
-        <span>
-          <span className="line-clamp-2 pr-6 text-sm font-semibold leading-tight text-ink">
-            {department.name}
-          </span>
-          <span className="mt-0.5 block text-xs text-muted">{detail}</span>
-        </span>
 
         {/* Says what the release will do, on the tile it will do it to. */}
         {receiving && (
@@ -396,27 +418,23 @@ export function BackTile({
   })
 
   return (
-    /* data-kit-ok: a drop-target tile the size of the grid's cells. A kit
-       Button would be the wrong shape and could not carry the ring. */
-    <button
-      data-kit-ok
+    /* The kit's DASHED tile — the same way-out skin the till's catalogue draws as the
+       first cell of every department grid, and the same one the tables screen gives its
+       new-table opener. The wrapper exists only to carry the drop ref and the ring,
+       because a droppable needs a node and a kit component does not forward one. */
+    <div
       ref={setNodeRef}
-      type="button"
-      onClick={onClick}
-      className={`flex min-h-[104px] flex-col justify-between gap-2 rounded-card border-2 border-dashed bg-surface-2 p-3 text-left transition hover:border-border-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
-        receiving || springing ? 'border-brand ring-2 ring-brand' : 'border-border'
-      }`}
+      className={`rounded-card transition ${receiving || springing ? 'ring-2 ring-brand' : ''}`}
     >
-      <span aria-hidden className="text-muted">
-        <Icons.Reverse size={18} />
-      </span>
-      <span>
-        <span className="block text-sm font-semibold text-ink">Back</span>
-        <span className="block truncate text-xs text-muted">
-          {receiving ? 'Move up to here' : label}
-        </span>
-      </span>
-    </button>
+      <KitTile
+        title="Back"
+        subtitle={receiving ? 'Move up to here' : label}
+        icon={<Icons.Reverse size={20} />}
+        dashed
+        tileHeight={TILE_H}
+        onClick={onClick}
+      />
+    </div>
   )
 }
 

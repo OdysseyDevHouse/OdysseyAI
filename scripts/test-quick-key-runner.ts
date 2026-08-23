@@ -95,6 +95,7 @@ function ctxFor(
     hasLines: true,
     hasCustomer: true,
     returning: false,
+    refundArmed: false,
     ...over,
   } as RunContext
 }
@@ -216,29 +217,81 @@ function main() {
     )
   }
 
-  /* ── 4b. The refund key switches the MODE, it does not open a pad ─────────
-     There is nothing to credit until the cashier has scanned what came back, so a key
-     that jumped to a refund pad would open it on an empty basket. */
+  /* ── 4b. CREDIT SALE opens the receipt finder ──────────────────────────────
+     The `refund` key used to do this, under that name. Crediting a sale that EXISTS is
+     the ordinary way goods come back — the customer gets the prices they paid — so it
+     keeps the behaviour and gets an honest name. */
 
-  const refund = press('refund')
+  const creditSale = press('credit-sale')
   ok(
-    'the refund key starts a return',
-    refund.some((c) => c.name === 'startReturn'),
-    JSON.stringify(refund),
+    'the credit sale key opens the receipt finder',
+    creditSale.some((c) => c.name === 'findReceipt'),
+    JSON.stringify(creditSale),
   )
-  /* Pressed twice, it must NOT re-clear: SET_RETURNING empties the basket, so a key that
-     wiped a half-scanned return because somebody double-tapped it would be worse than one
-     that did nothing. */
-  const refundAgain = press('refund', { returning: true })
+  /* Offline the finder cannot run at all — the over-credit guard needs every credit
+     note raised against the invoice. It must say so and name the way through, not
+     silently drop the cashier into a different kind of return than they asked for. */
+  const creditOffline = press('credit-sale', { online: false })
   ok(
-    '*** and pressing it again does NOT wipe a half-scanned return ***',
-    refundAgain.every((c) => c.name !== 'startReturn'),
-    JSON.stringify(refundAgain),
+    '  offline it says so and names the no-receipt path',
+    creditOffline.some(
+      (c) =>
+        c.name === 'say' &&
+        /connection/i.test(String((c.arg as any).message)) &&
+        /refund/i.test(String((c.arg as any).message)),
+    ),
+    JSON.stringify(creditOffline),
   )
   ok(
-    '  it says so instead',
-    refundAgain.some((c) => c.name === 'say'),
-    JSON.stringify(refundAgain),
+    '  and opens nothing offline',
+    creditOffline.every((c) => c.name !== 'findReceipt'),
+    JSON.stringify(creditOffline),
+  )
+
+  /* ── 4c. REFUND arms the next item, one press at a time ────────────────────
+     A different act from the key above: no slip to find, one item handed back across
+     the counter mid-sale. It lands on the SAME basket as a negative line, so the
+     cashier rings the swap as one transaction with one total. */
+
+  const arm = press('refund')
+  ok(
+    'the refund key arms the next item',
+    arm.some((c) => c.name === 'armRefund' && c.arg === true),
+    JSON.stringify(arm),
+  )
+  /* Pressing it again is the escape. A cashier who armed by mistake must not have to
+     credit something to get out of it. */
+  const disarm = press('refund', { refundArmed: true })
+  ok(
+    '  and pressing it again disarms',
+    disarm.some((c) => c.name === 'armRefund' && c.arg === false),
+    JSON.stringify(disarm),
+  )
+  /* THE property the whole feature rests on. SET_RETURNING empties the basket; arming
+     must not, because the sale in progress is precisely what the refund is joining. */
+  const armMidSale = press('refund', { hasLines: true })
+  ok(
+    '*** and it never clears a half-scanned basket ***',
+    armMidSale.every((c) => c.name !== 'startReturn' && c.name !== 'clear'),
+    JSON.stringify(armMidSale),
+  )
+  /* Offline it still works, unlike credit-sale. Nothing is asked of the server: the
+     goods are in front of the cashier and the price is on the cached catalogue. That
+     is what makes it the honest thing for the offline refusal above to point at. */
+  const armOffline = press('refund', { online: false })
+  ok(
+    '  and it works offline, which is what the credit-sale refusal points at',
+    armOffline.some((c) => c.name === 'armRefund' && c.arg === true),
+    JSON.stringify(armOffline),
+  )
+  /* Inside return mode every line already goes back. Arming one more would flip that
+     line positive and sell the customer something mid-return. */
+  const armInReturn = press('refund', { returning: true, hasLines: true })
+  ok(
+    '  and it refuses inside return mode rather than inverting a line',
+    armInReturn.every((c) => c.name !== 'armRefund') &&
+      armInReturn.some((c) => c.name === 'say'),
+    JSON.stringify(armInReturn),
   )
 
   /* ── 5. A missing capability refuses before anything happens ─────────────── */

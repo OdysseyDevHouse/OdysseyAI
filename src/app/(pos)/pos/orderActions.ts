@@ -204,11 +204,21 @@ export async function collectOrderForTillAction(
     documentId: invoice.id,
     customerId: invoice.customerId,
     customerName: invoice.customerName,
+    /* The pricing basis the ORDER was taken on, which is also what the shelf
+       price below has to be read through. Priced on wholesale and collected at
+       a till sitting on retail, the comparison price came back retail and every
+       line read as an override. Falls back to the till's when the document has
+       none. See recallSaleForTillAction, where the same fix is made. */
+    priceStructureId: invoice.priceStructureId,
     /* Prices come from the ORDER's own snapshot — deliverOrder copies them —
        so a price rise between order and collection is the shop's problem, not
        the customer's. What basketLinesForDocument re-reads from the product is
        the EDITING rules: the discount ceiling, the shelf price to compare an
        override against, and whether a fraction is allowed. */
-    lines: await basketLinesForDocument(siteId, invoice, priceStructureId),
+    lines: await basketLinesForDocument(
+      siteId,
+      invoice,
+      invoice.priceStructureId ?? priceStructureId,
+    ),
   }
 }
