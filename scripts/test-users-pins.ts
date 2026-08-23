@@ -116,6 +116,7 @@ async function main() {
   const pos = await createUser(SITE, {
     name: 'Test Cashier',
     email: null,
+    mobile: null,
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
@@ -142,6 +143,7 @@ async function main() {
   const clash = await createUser(SITE, {
     name: 'Test Clash',
     email: null,
+    mobile: null,
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
@@ -161,6 +163,7 @@ async function main() {
     const bad = await createUser(SITE, {
       name: `Test Bad ${pin}`,
       email: null,
+      mobile: null,
       userType: 'pos_only',
       roleId: cashier!.id,
       salesRepId: null,
@@ -174,6 +177,7 @@ async function main() {
   const sixDigit = await createUser(SITE, {
     name: 'Test Six Digit',
     email: null,
+    mobile: null,
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
@@ -201,6 +205,7 @@ async function main() {
   await updateUser(SITE, pos.id, {
     name: 'Test Cashier',
     email: null,
+    mobile: null,
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
@@ -215,6 +220,7 @@ async function main() {
   const reuse = await createUser(SITE, {
     name: 'Test Reuse',
     email: null,
+    mobile: null,
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
@@ -231,6 +237,7 @@ async function main() {
   const noPin = await createUser(SITE, {
     name: 'Test No PIN',
     email: null,
+    mobile: null,
     userType: 'pos_only',
     roleId: cashier!.id,
     salesRepId: null,
@@ -243,6 +250,7 @@ async function main() {
   const noEmail = await createUser(SITE, {
     name: 'Test No Email',
     email: null,
+    mobile: null,
     userType: 'back_office',
     roleId: cashier!.id,
     salesRepId: null,

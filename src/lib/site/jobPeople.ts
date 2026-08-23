@@ -4,7 +4,7 @@ import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { logActivity, type Actor } from './activityLog'
 import { getSetting } from './settings'
 import { listUsers } from './users'
-import { isConfigured, send } from '../mail'
+import { dispatch, staffRecipients, type NotifyEvent, type NotifyOutcome } from './jobNotify'
 
 /**
  * Who is on a job, and who hears about it.
@@ -305,12 +305,12 @@ export async function peopleCounts(
  * rather than failing silently in a way that looks like success.
  */
 
-export type NotifyEvent = 'assigned' | 'status' | 'closed'
-
-export type NotifyOutcome = {
-  sent: number
-  skipped: 'disabled' | 'not-configured' | 'no-recipients' | 'no-addresses' | null
-}
+/*
+ * Both now live in jobNotify, and are re-exported so the dozen call sites that
+ * import them from here keep working. The types moved with the sending: an
+ * outcome that counts four channels is that module's answer to describe.
+ */
+export type { NotifyEvent, NotifyOutcome }
 
 /** Which moments are switched on. */
 async function enabledEvents(siteId: number): Promise<Set<string>> {
@@ -343,15 +343,27 @@ export async function everyoneOn(siteId: number, jobId: number): Promise<number[
 }
 
 /**
- * Emails a set of users about a job.
+ * Tells a set of users about a job, on every channel they accept.
  *
  * `exclude` is the person who CAUSED the event. Telling somebody what they
- * themselves just did is the fastest way to teach them the emails are noise.
+ * themselves just did is the fastest way to teach them the messages are noise.
  *
- * Exported as `notifyAbout` at the bottom of this file so jobAutomations can send
- * its own wording through the same switches, the same recipient rules and the
- * same never-throw guarantee. A second sender would be a second place for the
- * "mail is off" setting to be forgotten.
+ * ── THIS IS NOW A THIN WRAPPER, AND THAT IS THE POINT ──────────────────────
+ *
+ * It used to send the email itself. It now resolves WHO should hear — which is
+ * this module's subject — and hands the message to jobNotify.dispatch(), which
+ * owns HOW it goes out: bell, email, SMS, WhatsApp, consent, quiet hours,
+ * duplicate suppression and the delivery log.
+ *
+ * The split is deliberate. "Who is on this job" and "which channels has this
+ * shop switched on" are different questions with different reasons to change,
+ * and mixing them is what left the module able to reach only the people who
+ * read email. Every caller keeps the signature it always had.
+ *
+ * Exported as `notifyAbout` at the bottom of this file so jobAutomations can
+ * send its own wording through the same switches and the same never-throw
+ * guarantee. A second sender would be a second place for job_notify_enabled to
+ * be forgotten.
  */
 async function mailAbout(
   siteId: number,
@@ -363,39 +375,17 @@ async function mailAbout(
   recipients?: number[],
 ): Promise<NotifyOutcome> {
   try {
-    const on = await getSetting(siteId, 'job_notify_enabled').catch(() => '1')
-    if (on === '0') return { sent: 0, skipped: 'disabled' }
-
-    const events = await enabledEvents(siteId)
-    if (!events.has(event)) return { sent: 0, skipped: 'disabled' }
-
     const ids = (recipients ?? (await everyoneOn(siteId, jobId))).filter((id) => id !== exclude)
-    if (ids.length === 0) return { sent: 0, skipped: 'no-recipients' }
-
-    // Checked AFTER the recipient list so a misconfigured mail server is
-    // distinguishable from a job nobody is watching.
-    if (!isConfigured()) return { sent: 0, skipped: 'not-configured' }
-
-    const users = await listUsers(siteId)
-    const to = users
-      .filter((u) => ids.includes(u.id) && u.isActive && u.email?.trim())
-      .map((u) => u.email!.trim())
-    if (to.length === 0) return { sent: 0, skipped: 'no-addresses' }
-
-    let sent = 0
-    for (const address of to) {
-      const result = await send({ to: address, subject, text: body })
-      if (result.ok) sent++
-    }
-    return { sent, skipped: null }
+    const who = await staffRecipients(siteId, ids)
+    return await dispatch(siteId, jobId, event, { subject, body }, who)
   } catch {
     /*
-     * The outermost guard. Everything above is already defensive, but this runs
-     * from the middle of a status change and MUST NOT be the reason one fails.
-     * A job that cannot be closed because a mail server is down is a worse
+     * dispatch() already guarantees it does not throw. This guard covers the
+     * two lines above it — resolving the audience touches the database, and a
+     * job that cannot be closed because a recipient lookup failed is a worse
      * outcome than a notification nobody receives.
      */
-    return { sent: 0, skipped: 'not-configured' }
+    return { sent: 0, skipped: 0, suppressed: 0, failed: 0, reason: null }
   }
 }
 
@@ -419,7 +409,7 @@ export async function notifyAssigned(
   userId: number,
 ): Promise<NotifyOutcome> {
   const wanted = await getSetting(siteId, 'job_notify_assignee').catch(() => '1')
-  if (wanted === '0') return { sent: 0, skipped: 'disabled' }
+  if (wanted === '0') return { sent: 0, skipped: 0, suppressed: 0, failed: 0, reason: 'disabled' }
 
   const label = await jobLabel(siteId, jobId)
   return mailAbout(

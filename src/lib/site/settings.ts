@@ -750,6 +750,52 @@ export const SETTING_DEFAULTS = {
    */
   job_notify_assignee: '1',
 
+  /**
+   * Which channels a job message may take (PRD 36).
+   *
+   * 'bell,email' is what the module did before SMS and WhatsApp reached it, so a
+   * site that never opens the setup screen keeps exactly the behaviour it had —
+   * and, more to the point, is not silently billed for text messages nobody
+   * asked for. Both metered channels are opt-in at the site level and opt-in
+   * again per customer contact.
+   *
+   * A list rather than a column each, matching job_notify_events directly above:
+   * 'push' becomes a settings change rather than a migration.
+   */
+  job_notify_channels: 'bell,email',
+
+  /**
+   * Quiet hours: when NOT to make somebody's phone light up.
+   *
+   * Empty by default, meaning no quiet window at all. Both must be set for the
+   * window to exist — a half-configured pair is treated as unset and sending
+   * continues, because the alternative is a typo silently muting every text the
+   * shop sends and looking exactly like a broken gateway.
+   *
+   * Applies to SMS and WhatsApp ONLY. The bell and email do not wake anybody,
+   * and holding email until morning would mean a technician's day starts with
+   * nothing in the inbox about the job reassigned to them overnight.
+   *
+   * "21:00" to "06:00" is the expected shape, and it wraps midnight — which is
+   * the whole difficulty, and is why insideQuietHours() in jobNotify is tested.
+   */
+  job_quiet_from: '',
+  job_quiet_to: '',
+
+  /**
+   * Minutes within which the same message to the same person is not repeated.
+   *
+   * 0 — OFF. Suppression nobody asked for is indistinguishable from
+   * notifications quietly breaking, and this is exactly the sort of helpfulness
+   * that costs a day to diagnose. A shop turns it on once it has the problem: a
+   * workshop moving a job through six statuses in ten minutes does not want six
+   * texts about it.
+   *
+   * Suppressed messages are RECORDED as suppressed in job_notifications, not
+   * silently dropped, so a window set too wide is visible rather than mysterious.
+   */
+  job_notify_dedupe_minutes: '0',
+
   /* ── The three time-based automations (121) ─────────────────────────────── */
 
   /**

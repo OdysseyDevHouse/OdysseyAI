@@ -70,6 +70,39 @@ CREATE TABLE IF NOT EXISTS customer_contacts (
   phone       VARCHAR(40)  NULL,
   notes       VARCHAR(400) NULL,
 
+  /*
+   * ── Consent, PER CHANNEL and per contact (PRD 17.3, 36, rule 14) ────────
+   *
+   * Holding an address is not permission to use it. The accounts clerk whose
+   * email is on file so a statement can reach her has not thereby agreed to be
+   * WhatsApped every time a technician moves a job to In Progress.
+   *
+   * THREE columns rather than one `consent` flag, because the channels are not
+   * interchangeable to the person receiving them. Email is free and ignorable;
+   * an SMS arrives on a phone at 03:00 and costs the shop money each time.
+   * Somebody who happily takes one may reasonably refuse the other, and a
+   * single flag cannot express that.
+   *
+   * Email DEFAULTS ON, SMS and WhatsApp default OFF. Not squeamishness — it is
+   * the existing behaviour written down. Job mail already reaches whoever is on
+   * the job, so defaulting email off would silently stop notifications that
+   * work today; SMS and WhatsApp have never been sent from a job, so defaulting
+   * them on would start billing shops for messages nobody asked for.
+   *
+   * These say whether this person may be contacted AT ALL on a channel. Whether
+   * they hear about ONE PARTICULAR job is a different question, answered by
+   * job_card_people — the PRD is explicit that the two are separate, and
+   * collapsing them would make unsubscribing from one job revoke consent for
+   * every future one.
+   *
+   * Only on CUSTOMER contacts. supplier_contacts below deliberately has no
+   * equivalent: a supplier is sent a purchase order because there is an order,
+   * which is a transaction they asked for, not a subscription they may leave.
+   */
+  consent_email    TINYINT(1) NOT NULL DEFAULT 1,
+  consent_sms      TINYINT(1) NOT NULL DEFAULT 0,
+  consent_whatsapp TINYINT(1) NOT NULL DEFAULT 0,
+
   -- The one to ask for by default. Not a substitute for the account email:
   -- this picks a PERSON to call, never an address a statement run posts to.
   --

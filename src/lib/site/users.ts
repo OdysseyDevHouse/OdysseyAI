@@ -27,6 +27,13 @@ export type SiteUser = {
   id: number
   name: string
   email: string | null
+  /**
+   * Where a text message reaches them (041, PRD 36).
+   *
+   * Local to the site, unlike `email` which is copied from upstream: the person
+   * who knows a technician's number is the manager standing next to them.
+   */
+  mobile: string | null
   controlUserId: number | null
   userType: UserType
   roleId: number | null
@@ -43,6 +50,7 @@ type UserRow = RowDataPacket & {
   id: number
   name: string
   email: string | null
+  mobile: string | null
   control_user_id: number | null
   user_type: UserType
   role_id: number | null
@@ -56,7 +64,7 @@ type UserRow = RowDataPacket & {
 }
 
 const SELECT_USER = `
-  SELECT u.id, u.name, u.email, u.control_user_id, u.user_type, u.role_id,
+  SELECT u.id, u.name, u.email, u.mobile, u.control_user_id, u.user_type, u.role_id,
          r.name AS role_name, r.is_owner,
          u.sales_rep_id, sr.name AS rep_name,
          u.pin_hash, u.is_active, u.last_login_at
@@ -70,6 +78,7 @@ function mapUser(r: UserRow): SiteUser {
     id: r.id,
     name: r.name,
     email: r.email,
+    mobile: r.mobile,
     controlUserId: r.control_user_id,
     userType: r.user_type,
     roleId: r.role_id,
@@ -141,6 +150,8 @@ export type UserSaveResult = { ok: true; id: number } | { ok: false; error: stri
 export type UserInput = {
   name: string
   email: string | null
+  /** Optional, and not required for any user type — a till operator may have none. */
+  mobile: string | null
   userType: UserType
   roleId: number | null
   salesRepId: number | null
@@ -194,11 +205,12 @@ export async function createUser(siteId: number, input: UserInput): Promise<User
 
   const res = await siteExecute(
     siteId,
-    `INSERT INTO users (name, email, user_type, role_id, sales_rep_id, pin_hash, is_active)
-     VALUES (?,?,?,?,?,?,?)`,
+    `INSERT INTO users (name, email, mobile, user_type, role_id, sales_rep_id, pin_hash, is_active)
+     VALUES (?,?,?,?,?,?,?,?)`,
     [
       input.name.trim(),
       input.email?.trim() || null,
+      input.mobile?.trim() || null,
       input.userType,
       input.roleId,
       input.salesRepId,
@@ -240,12 +252,13 @@ export async function updateUser(
   await siteExecute(
     siteId,
     `UPDATE users
-        SET name = ?, email = ?, user_type = ?, role_id = ?, sales_rep_id = ?,
+        SET name = ?, email = ?, mobile = ?, user_type = ?, role_id = ?, sales_rep_id = ?,
             is_active = ?${checked.pinHash ? ', pin_hash = ?' : ''}
       WHERE id = ?`,
     [
       input.name.trim(),
       input.email?.trim() || null,
+      input.mobile?.trim() || null,
       input.userType,
       input.roleId,
       input.salesRepId,

@@ -241,6 +241,7 @@ import {
   notifyStatusChanged,
   notifyClosed,
 } from '../src/lib/site/jobPeople'
+import { __test } from '../src/lib/site/jobNotify'
 import {
   listJobTeams,
   getJobTeam,
@@ -4336,7 +4337,22 @@ async function main() {
     await setSetting(SITE, 'job_notify_enabled', '0')
 
     const users = await listUsers(SITE)
-    const active = users.filter((u) => u.isActive && u.userType === 'back_office')
+    /*
+     * Somebody who is NOT the actor.
+     *
+     * This block makes `alice` the job's owner and then checks that the ACTOR
+     * can still follow it. If alice and the actor are the same person the owner
+     * guard fires on the actor's own follow, and two assertions fail for a
+     * reason that has nothing to do with what they test.
+     *
+     * It read `active[0]` and happened to work only because every database it
+     * had ever run against had a second user. A freshly migrated site has one,
+     * so the suite failed on a clean build — a fixture assumption rotting
+     * against the data, not a bug in following.
+     */
+    const active = users.filter(
+      (u) => u.isActive && u.userType === 'back_office' && u.id !== actor.userId,
+    )
 
     const pJob = await saveJobCard(SITE, actor, {
       id: null, customerId, customerName: null, customerPhone: null,
@@ -4418,7 +4434,14 @@ async function main() {
 
       // ── Following is not assigning ──────────────────────────────────────
       const meFollow = await toggleFollow(SITE, actor, pJobId)
-      ok('(J22) a person can follow a job themselves', meFollow.ok && meFollow.following === true)
+      // The detail is printed because without it this assertion says only
+      // "false", and the reason it can fail — the actor turning out to BE the
+      // owner — is invisible from the boolean.
+      ok(
+        '(J22) a person can follow a job themselves',
+        meFollow.ok && meFollow.following === true,
+        meFollow.ok ? '' : meFollow.error,
+      )
 
       const meUnfollow = await toggleFollow(SITE, actor, pJobId)
       ok('(J22) and unfollow it', meUnfollow.ok && meUnfollow.following === false)
@@ -4467,9 +4490,9 @@ async function main() {
      */
     const notified = await notifyStatusChanged(SITE, actor, pJobId, 'In progress')
     ok(
-      '(J22) *** with mail switched off, nothing is sent and it says so ***',
-      notified.sent === 0 && notified.skipped === 'disabled',
-      `sent ${notified.sent}, skipped ${notified.skipped ?? 'nothing'}`,
+      '(J22) *** with notices switched off, nothing is sent and it says so ***',
+      notified.sent === 0 && notified.reason === 'disabled',
+      `sent ${notified.sent}, reason ${notified.reason ?? 'none'}`,
     )
 
     const gone = await notifyClosed(SITE, actor, 999999)
@@ -4479,14 +4502,26 @@ async function main() {
       `skipped ${gone.skipped ?? 'nothing'}`,
     )
 
-    // The recipient list is still worked out correctly while sending is off, so
-    // the switch is not hiding a broken query.
-    const stillKnows = await everyoneOn(SITE, pJobId)
-    ok(
-      '(J22) the switch stops the SENDING, not the working out of who to tell',
-      stillKnows.length > 0,
-      `${stillKnows.length} would be told`,
-    )
+    /*
+     * The recipient list is still worked out correctly while sending is off, so
+     * the switch is not hiding a broken query.
+     *
+     * Conditional on the SAME precondition as the block above, and this matters:
+     * nobody is put on this job and no owner is set except inside that block, so
+     * on a site with one user "0 would be told" is the correct answer rather
+     * than a failure. Asserting it unconditionally made a true statement about
+     * an empty job look like a broken query — a vacuous assertion inverted.
+     */
+    if (active.length > 0) {
+      const stillKnows = await everyoneOn(SITE, pJobId)
+      ok(
+        '(J22) the switch stops the SENDING, not the working out of who to tell',
+        stillKnows.length > 0,
+        `${stillKnows.length} would be told`,
+      )
+    } else {
+      ok('(J22) SKIPPED — nobody is on the job, so there is no list to check', true)
+    }
 
     // ── Deleting the job takes its people with it ─────────────────────────
     await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [pJobId])
@@ -4507,6 +4542,50 @@ async function main() {
       '(J22) the notification setting was put back as it was',
       (await getSetting(SITE, 'job_notify_enabled')) === notifyWasEnabled,
       notifyWasEnabled,
+    )
+  }
+
+  /* ══ (J35) Quiet hours, and the midnight wrap ═══════════════════════════
+   *
+   * Pure, so it is tested directly rather than through a send. The wrap is the
+   * whole difficulty: 21:00–06:00 is the setting everybody actually picks, and
+   * it is NOT `start <= now < end` — that comparison is false for every minute
+   * of the night it is supposed to cover, which fails in the one direction
+   * nobody notices, by sending.
+   */
+  {
+    const at = (h: number, m = 0) => new Date(2026, 0, 15, h, m, 0)
+    const quiet = __test.insideQuietHours
+
+    ok('(J35) an ordinary daytime window holds', quiet('09:00', '17:00', at(12)) === true)
+    ok('(J35) and excludes the time outside it', quiet('09:00', '17:00', at(8, 59)) === false)
+    ok(
+      '(J35) the END of a window is exclusive — 17:00 is not quiet',
+      quiet('09:00', '17:00', at(17)) === false,
+    )
+
+    ok(
+      '(J35) *** a window that wraps midnight covers the late evening ***',
+      quiet('21:00', '06:00', at(22, 30)) === true,
+    )
+    ok(
+      '(J35) *** and the small hours on the OTHER side of midnight ***',
+      quiet('21:00', '06:00', at(2)) === true,
+    )
+    ok(
+      '(J35) *** but not the working day between them ***',
+      quiet('21:00', '06:00', at(13)) === false,
+    )
+
+    /* A half-set or malformed window must SEND, not mute. Muting on a typo
+       looks exactly like a broken gateway and is far harder to diagnose than a
+       message that went out when somebody would rather it had not. */
+    ok('(J35) *** a malformed window sends rather than mutes ***', quiet('rubbish', '06:00', at(2)) === false)
+    ok('(J35) an empty window sends', quiet('', '', at(2)) === false)
+    ok('(J35) an impossible hour sends', quiet('25:00', '06:00', at(2)) === false)
+    ok(
+      '(J35) *** and a zero-length window is no window at all ***',
+      quiet('21:00', '21:00', at(21)) === false,
     )
   }
 

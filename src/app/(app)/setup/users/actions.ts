@@ -158,9 +158,15 @@ export async function revokeAccessAction(userId: number): Promise<Result> {
   }
 
   if (target.controlUserId) await revokeSiteAccess(target.controlUserId, ctx.site.id)
+  /*
+   * Every field is carried across, not just the ones being changed: updateUser
+   * writes the whole row, so anything omitted here is silently blanked. Only
+   * isActive and pin are meant to move.
+   */
   await updateUser(ctx.site.id, userId, {
     name: target.name,
     email: target.email,
+    mobile: target.mobile,
     userType: target.userType,
     roleId: target.roleId,
     salesRepId: target.salesRepId,

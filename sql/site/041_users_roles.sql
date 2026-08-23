@@ -72,6 +72,19 @@ CREATE TABLE users (
   -- the credential: the password lives upstream and is verified there.
   email           VARCHAR(190) NULL,
 
+  -- Where a text message reaches this person (PRD 36).
+  --
+  -- Local to the site, unlike `email`, which is copied from upstream: a mobile
+  -- number is how a TECHNICIAN is reached about today's work, and the person who
+  -- knows it is the manager standing next to them, not whoever created the
+  -- control-panel login.
+  --
+  -- Free text rather than a normalised form. normaliseSaPhone() in sms/phone.ts
+  -- is the one place that decides what dials, and it runs at send time — storing
+  -- a normalised copy would mean two representations to disagree, and would
+  -- silently discard a number it could not parse at capture time.
+  mobile          VARCHAR(40)  NULL,
+
   -- bcrypt of the PIN. The PIN itself is never stored, exactly like a password.
   --
   -- That means uniqueness cannot be enforced with a UNIQUE index — two

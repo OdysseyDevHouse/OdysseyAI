@@ -270,6 +270,7 @@ function UserForm({
 }) {
   const [name, setName] = useState(user?.name ?? '')
   const [email, setEmail] = useState(user?.email ?? '')
+  const [mobile, setMobile] = useState(user?.mobile ?? '')
   const [userType, setUserType] = useState<UserType>(user?.userType ?? 'pos_only')
   const [roleId, setRoleId] = useState<string>(user?.roleId ? String(user.roleId) : '')
   const [repId, setRepId] = useState<string>(user?.salesRepId ? String(user.salesRepId) : '')
@@ -294,6 +295,7 @@ function UserForm({
       const result = await saveUserAction(user?.id ?? null, {
         name,
         email: email.trim() || null,
+        mobile: mobile.trim() || null,
         userType,
         roleId: roleId ? Number(roleId) : null,
         salesRepId: repId ? Number(repId) : null,
@@ -396,6 +398,24 @@ function UserForm({
             autoComplete="off"
             placeholder="••••"
             className="max-w-[10rem]"
+          />
+        </Field>
+
+        {/* Deliberately OUTSIDE the back-office block below, unlike the email
+            address. A till-only technician is precisely the person a text about
+            today's work needs to reach, and they have no email to sign in with.
+            Optional for everyone — a number is how somebody is reached, never
+            how they are identified. */}
+        <Field
+          label="Mobile number"
+          hint="For job messages by SMS or WhatsApp. Optional."
+        >
+          <Input
+            type="tel"
+            value={mobile}
+            onChange={(e) => setMobile(e.target.value)}
+            placeholder="082 123 4567"
+            className="max-w-[14rem]"
           />
         </Field>
 

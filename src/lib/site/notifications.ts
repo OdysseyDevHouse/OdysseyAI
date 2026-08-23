@@ -29,6 +29,20 @@ export type NotificationEvent =
   /** A promise was missed and nobody has replied yet (164). To one manager. */
   | 'sla_escalation'
   /**
+   * Something happened on a job somebody is on — assigned, moved, closed.
+   *
+   * ONE event for every job notice rather than one per kind, on the same
+   * reasoning as `alert_fired` below: which kind it was is the sender's
+   * business, and what the bell needs is a title, a line and somewhere to go.
+   * The kind is preserved with full fidelity in job_notifications.event (219),
+   * which is where an audit reads it from.
+   *
+   * Always addressed to a named person. The audience for "you have been given
+   * this job" is one technician, and a capability-wide row would put it in
+   * front of everybody who can see job cards.
+   */
+  | 'job_notice'
+  /**
    * An alert rule found something. Always addressed to a named person: a rule
    * NAMES its recipients, so an audience-wide row would tell the whole shop
    * about something one person asked to watch.
