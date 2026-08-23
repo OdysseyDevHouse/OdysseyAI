@@ -578,6 +578,7 @@ export const SUBPAGE_LABELS = {
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
      boards that show them, and somebody looking for either should find it. */
   '/setup/job-workflow': 'Job workflow',
+  '/setup/job-forms': 'Forms',
   /* "Tickets", matching the section it configures. The lanes and the running
      limit are one screen because both answer "how does this desk work". */
   '/setup/tickets': 'Tickets',

@@ -333,6 +333,21 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         module: 'job_cards',
       },
       {
+        /* Its own tile rather than a sixth panel on job workflow, which already
+           stacks five and says in its own header why they belong together. A
+           form builder is not one of those cards: it is a list, an editor, a
+           field editor inside that, and a version history — a screen with
+           screens in it, opened once a quarter, which would bury the five
+           settings somebody changes weekly. */
+        href: '/setup/job-forms',
+        description: 'What a technician records on site — readings, checks, a commissioning report.',
+        keywords: 'form forms custom builder checklist questions fields survey report capture',
+        icon: 'FileText',
+        tone: 'amber',
+        capability: 'jobs.setup',
+        module: 'job_cards',
+      },
+      {
         /* Beside job workflow, because the two are the same kind of decision
            for two different teams. Its own tile rather than a panel there:
            `tickets.setup` is a separate capability, so somebody who configures
