@@ -38,6 +38,11 @@ import { valuesFor } from './customFields'
  *                                  business prices, not what was agreed
  *   other customers, everything    every WHERE names this customer
  *   custom fields not marked public  is_public defaults to 0 for this reason
+ *   forms not marked public, and   is_public defaults to 0 there too, and a
+ *   forms not yet SUBMITTED        draft is a technician's working notes
+ *   form answers that are files,   a file id is a key to something the files
+ *   coordinates or record ids      rule above gates; a GPS reading is where a
+ *                                  technician stood, which is staffing data
  */
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -58,6 +63,68 @@ const text = (v: unknown): string | null => {
   if (v === null || v === undefined) return null
   const s = String(v).trim()
   return s === '' ? null : s
+}
+
+/**
+ * Flat answer rows into one entry per form (222).
+ *
+ * The query returns a row per FIELD, because that is the only way to get the
+ * fields and their answers in one round trip. Grouped here rather than by
+ * issuing a query per form, which on a job with four reports would be five.
+ *
+ * An UNANSWERED field is dropped rather than shown blank. A customer reading a
+ * commissioning report does not need a list of questions nobody filled in — and
+ * a conditional field that was never asked would otherwise appear as an
+ * unanswered one, which reads as an omission rather than an irrelevance.
+ */
+function groupForms(rows: Row[]): PortalJobDetail['forms'] {
+  const byResponse = new Map<number, PortalJobDetail['forms'][number]>()
+
+  for (const r of rows) {
+    const id = Number(r.response_id)
+    let entry = byResponse.get(id)
+    if (!entry) {
+      entry = {
+        id,
+        name: String(r.form_name ?? ''),
+        submittedAt: wallClock(r.submitted_at),
+        answers: [],
+      }
+      byResponse.set(id, entry)
+    }
+
+    const type = String(r.field_type)
+    if (type === 'heading') {
+      entry.answers.push({ label: String(r.label ?? ''), value: '', isHeading: true })
+      continue
+    }
+
+    /*
+     * One value out of four typed columns, in the order the model stores them.
+     * A boolean reads as Yes or No rather than 1 or 0 — a customer report
+     * saying "Isolator locked off: 1" is a report nobody can read.
+     */
+    let value: string | null = null
+    if (r.value_bool !== null && r.value_bool !== undefined) {
+      value = Number(r.value_bool) === 1 ? 'Yes' : 'No'
+    } else if (r.value_number !== null && r.value_number !== undefined) {
+      value = `${Number(r.value_number)}${r.unit ? ` ${String(r.unit)}` : ''}`
+    } else if (r.value_date !== null && r.value_date !== undefined) {
+      value = wallClock(r.value_date)
+    } else if (r.value_text !== null && r.value_text !== undefined) {
+      value = String(r.value_text)
+    }
+
+    if (value === null || value.trim() === '') continue
+    entry.answers.push({ label: String(r.label ?? ''), value, isHeading: false })
+  }
+
+  /*
+   * A form whose every answer was dropped shows nothing at all. Publishing an
+   * empty report would say "we did this and recorded nothing", which is worse
+   * than not mentioning it.
+   */
+  return [...byResponse.values()].filter((f) => f.answers.some((a) => !a.isHeading))
 }
 
 export type PortalJob = {
@@ -91,6 +158,24 @@ export type PortalJobDetail = PortalJob & {
     total: number
     status: string
     isAccepted: boolean
+  }[]
+  /**
+   * Submitted forms the business marked public, with their answers.
+   *
+   * Both halves are required: `is_public` on the form and `submitted_at` on the
+   * response. A draft is a technician's working notes — readings still being
+   * taken — and publishing one would show a customer figures nobody has stood
+   * behind yet.
+   *
+   * Answers are TEXT ONLY. A file id would hand out a key to something the
+   * files rule above deliberately gates, and a GPS reading says where a
+   * technician was standing, which is staffing information.
+   */
+  forms: {
+    id: number
+    name: string
+    submittedAt: string | null
+    answers: { label: string; value: string; isHeading: boolean }[]
   }[]
 }
 
@@ -154,7 +239,7 @@ export async function portalJob(
     )
     if (!row) return null
 
-    const [visits, comments, files, extras, quotes] = await Promise.all([
+    const [visits, comments, files, extras, quotes, formRows] = await Promise.all([
       /*
        * WHEN somebody is coming, and deliberately not WHO.
        *
@@ -220,6 +305,43 @@ export async function portalJob(
           ORDER BY d.document_date DESC`,
         [jobId],
       ).catch(() => [] as Row[]),
+      /*
+       * Forms a customer may see, and only those (222).
+       *
+       * FOUR conditions, and every one of them is load-bearing:
+       *
+       *   f.is_public = 1        the flag defaults to 0, so a form is internal
+       *                          until somebody deliberately shares it — the
+       *                          same stance custom fields take
+       *   submitted_at NOT NULL  a half-filled draft is a technician's working
+       *                          notes, not a report. Publishing one would show
+       *                          a customer readings that are still being taken
+       *   r.job_card_id = ?      this job, which the outer WHERE already proved
+       *                          belongs to this customer
+       *   fields joined by the RESPONSE'S OWN VERSION, not the live one — the
+       *   customer sees the questions that were actually asked, which is the
+       *   whole point of versioning
+       *
+       * Answers come back as text only. No attachment_id, no record_id, no
+       * coordinates: publishing a file id would hand out a key to something the
+       * files rule above deliberately gates, and a GPS reading is where a
+       * TECHNICIAN was standing, which is staffing information.
+       */
+      siteQuery<Row>(
+        siteId,
+        `SELECT r.id AS response_id, f.name AS form_name, r.submitted_at,
+                fl.id AS field_id, fl.label, fl.field_type, fl.unit, fl.sort_order,
+                a.value_text, a.value_number, a.value_date, a.value_bool
+           FROM job_form_responses r
+           JOIN job_forms f        ON f.id = r.form_id AND f.is_public = 1
+           JOIN job_form_fields fl ON fl.version_id = r.version_id
+           LEFT JOIN job_form_answers a ON a.response_id = r.id AND a.field_id = fl.id
+          WHERE r.job_card_id = ?
+            AND r.submitted_at IS NOT NULL
+            AND fl.field_type NOT IN ('page_break')
+          ORDER BY r.submitted_at DESC, r.id, fl.sort_order, fl.id`,
+        [jobId],
+      ).catch(() => [] as Row[]),
     ])
 
     return {
@@ -262,6 +384,7 @@ export async function portalJob(
         status: String(q.quote_outcome ?? 'open'),
         isAccepted: Number(q.is_accepted) === 1,
       })),
+      forms: groupForms(formRows),
     }
   } catch {
     return null
