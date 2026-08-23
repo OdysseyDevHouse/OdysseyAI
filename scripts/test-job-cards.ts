@@ -191,6 +191,19 @@ import {
   type FormAnswer,
 } from '../src/lib/jobFormModel'
 import {
+  createForm,
+  getForm,
+  getVersion,
+  saveDraft,
+  publishVersion,
+  startDraft,
+  saveResponse,
+  loadResponse,
+  setHeadlineForms,
+  formsForJob,
+  outstandingFormsTx,
+} from '../src/lib/site/jobForms'
+import {
   createLocation,
   listLocations,
   listVans,
@@ -5307,6 +5320,202 @@ async function main() {
     // multi_select round-trips through the shared text column.
     ok('(J41) several choices read back', parseMultiSelect('["A","B"]').join(',') === 'A,B')
     ok('(J41) and rubbish in that column reads as nothing chosen', parseMultiSelect('not json').length === 0)
+  }
+
+  /* ══ (J42) A published form is frozen; editing makes the next one ══════
+   *
+   * The reason forms are not job_headline_items with more columns. The
+   * checklist versions by COPY-ON-ATTACH, which protects signed-off history but
+   * cannot say which version a copy came from. Here the response NAMES the
+   * version, so a template edit is provably invisible to what was already
+   * answered.
+   */
+  {
+    const made = await createForm(SITE, actor, {
+      name: `JCF${stamp} commissioning`,
+      description: 'Panel test form',
+    })
+    ok('(J42) a form is created', made.ok, JSON.stringify(made))
+    if (!made.ok) return
+
+    const formId = made.id
+    const form1 = (await getForm(SITE, formId))!
+    ok('(J42) it starts with a draft and nothing published', form1.draftVersionId !== null && form1.liveVersionId === null)
+
+    const emptyPublish = await publishVersion(SITE, actor, form1.draftVersionId!)
+    ok(
+      '(J42) a form with no fields cannot be published',
+      !emptyPublish.ok,
+      emptyPublish.ok ? 'ACCEPTED' : emptyPublish.error,
+    )
+
+    /*
+     * A condition may only point BACKWARDS. Forwards would let two fields hide
+     * each other, and a form where nothing can ever be shown is one nobody can
+     * debug from the screen it is on.
+     */
+    const forwards = await saveDraft(SITE, actor, form1.draftVersionId!, [
+      { fieldType: 'short_text', label: 'A', showIfIndex: 1, showIfValue: 'x' },
+      { fieldType: 'short_text', label: 'B' },
+    ])
+    ok('(J42) *** a condition cannot point at a field below it ***', !forwards.ok, forwards.ok ? '' : forwards.error)
+
+    const noChoices = await saveDraft(SITE, actor, form1.draftVersionId!, [
+      { fieldType: 'dropdown', label: 'Condition', options: [] },
+    ])
+    ok('(J42) a list with no choices is refused', !noChoices.ok)
+
+    const saved = await saveDraft(SITE, actor, form1.draftVersionId!, [
+      { fieldType: 'yesno', label: 'Did it pass?', isRequired: true },
+      { fieldType: 'long_text', label: 'Why not?', showIfIndex: 0, showIfValue: 'no' },
+      { fieldType: 'measure', label: 'Gas pressure', unit: 'kPa', minValue: 100, maxValue: 400 },
+    ])
+    ok('(J42) the draft takes its fields', saved.ok, saved.ok ? '' : saved.error)
+
+    const draft = (await getVersion(SITE, form1.draftVersionId!))!
+    ok('(J42) three fields, in order', draft.fields.length === 3)
+    ok(
+      '(J42) *** and the condition resolved to a real field id, not an index ***',
+      draft.fields[1]!.showIfFieldId === draft.fields[0]!.id,
+      `${draft.fields[1]!.showIfFieldId} vs ${draft.fields[0]!.id}`,
+    )
+
+    ok('(J42) it publishes', (await publishVersion(SITE, actor, form1.draftVersionId!)).ok)
+    const form2 = (await getForm(SITE, formId))!
+    ok('(J42) v1 is now live and there is no draft', form2.liveVersion === 1 && form2.draftVersionId === null)
+
+    const frozen = await saveDraft(SITE, actor, form2.liveVersionId!, [
+      { fieldType: 'short_text', label: 'Sneaky' },
+    ])
+    ok(
+      '(J42) *** a published version cannot be edited ***',
+      !frozen.ok,
+      frozen.ok ? 'ACCEPTED' : frozen.error,
+    )
+
+    // ── Answering ────────────────────────────────────────────────────
+    const jobForm = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null, customerEmail: null,
+      serviceAddressId: null, locationId: null, statusId: null, priority: 'normal',
+      ownerUserId: null, ownerName: '', title: `JCF${stamp} form job`, description: null,
+      dueAt: null, source: 'manual', reference: null, internalNote: null,
+    })
+    if (!jobForm.ok) throw new Error('form job fixture failed')
+
+    const fields = (await getVersion(SITE, form2.liveVersionId!))!.fields
+    const pass = fields[0]!, why = fields[1]!, pressure = fields[2]!
+
+    /*
+     * A DRAFT is not validated. Somebody halfway up a ladder saving what they
+     * have must not be told the reading they have not taken is required — that
+     * is a save button that refuses to save.
+     */
+    const partial = await saveResponse(SITE, actor, {
+      jobId: jobForm.id, formId, answers: [], submit: false,
+    })
+    ok('(J42) *** a draft saves with nothing in it ***', partial.ok, JSON.stringify(partial))
+
+    const missing = await saveResponse(SITE, actor, {
+      jobId: jobForm.id, formId, responseId: partial.ok ? partial.id : null,
+      answers: [{ fieldId: pressure.id, number: 250 }], submit: true,
+    })
+    ok('(J42) but submitting without a required answer is refused', !missing.ok, missing.ok ? '' : missing.error)
+
+    const outOfRange = await saveResponse(SITE, actor, {
+      jobId: jobForm.id, formId, responseId: partial.ok ? partial.id : null,
+      answers: [{ fieldId: pass.id, bool: true }, { fieldId: pressure.id, number: 900 }],
+      submit: true,
+    })
+    ok('(J42) and a reading outside its range is too', !outOfRange.ok, outOfRange.ok ? '' : outOfRange.error)
+
+    /*
+     * "Why not?" is required-looking but conditional, and the answer is Yes —
+     * so it was never asked and must not block. This is the assertion that
+     * makes conditional logic worth having.
+     */
+    const done = await saveResponse(SITE, actor, {
+      jobId: jobForm.id, formId, responseId: partial.ok ? partial.id : null,
+      answers: [{ fieldId: pass.id, bool: true }, { fieldId: pressure.id, number: 250 }],
+      submit: true,
+    })
+    ok(
+      '(J42) *** and it submits without the question that was never asked ***',
+      done.ok,
+      done.ok ? '' : done.error,
+    )
+
+    // ── The version freeze, proved ───────────────────────────────────
+    const nextDraft = await startDraft(SITE, actor, formId)
+    ok('(J42) editing a published form starts a new draft', nextDraft.ok, JSON.stringify(nextDraft))
+    if (nextDraft.ok) {
+      const copied = (await getVersion(SITE, nextDraft.id))!
+      ok('(J42) which is a copy of what was live', copied.fields.length === 3)
+      ok(
+        '(J42) *** with its condition re-pointed INTO the copy, not back at v1 ***',
+        copied.fields[1]!.showIfFieldId === copied.fields[0]!.id &&
+          copied.fields[1]!.showIfFieldId !== why.showIfFieldId,
+        `${copied.fields[1]!.showIfFieldId} vs v1 ${why.showIfFieldId}`,
+      )
+
+      await saveDraft(SITE, actor, nextDraft.id, [
+        { fieldType: 'yesno', label: 'Did it pass?', isRequired: true },
+        { fieldType: 'short_text', label: 'Serial of the unit', isRequired: true },
+      ])
+      await publishVersion(SITE, actor, nextDraft.id)
+
+      const answered = (await loadResponse(SITE, done.ok ? done.id : 0))!
+      ok(
+        '(J42) *** the submitted response still reads against v1 ***',
+        answered.version === 1 && answered.fields.length === 3,
+        `v${answered.version}, ${answered.fields.length} fields`,
+      )
+      ok(
+        '(J42) and the live version is now v2, with different questions',
+        (await getForm(SITE, formId))!.liveVersion === 2,
+      )
+    }
+
+    // ── The close gate ───────────────────────────────────────────────
+    const headline = await siteExecute(
+      SITE,
+      // `code` is NOT NULL and frozen at creation — see 114. A fixture that
+      // omits it fails on the insert rather than on anything being tested.
+      `INSERT INTO job_headlines (code, name, is_active) VALUES (?, ?, 1)`,
+      [`jcf${stamp}`.slice(0, 40), `JCF${stamp} headline`],
+    )
+    await siteExecute(SITE, `INSERT INTO job_card_headlines (job_card_id, headline_id) VALUES (?,?)`, [
+      jobForm.id, headline.insertId,
+    ])
+    await setHeadlineForms(SITE, headline.insertId, [{ formId, isRequired: true }])
+
+    const entries = await formsForJob(SITE, jobForm.id)
+    ok('(J42) the job is asked for the form its headline attaches', entries.some((e) => e.formId === formId))
+
+    /*
+     * The response was submitted against v1 and the form is now on v2. It is
+     * still a submitted response to that form, so it must still satisfy the
+     * gate — requiring a re-answer every time somebody edits a template would
+     * make publishing a change reopen every job that used it.
+     */
+    const gate = await siteTransaction(SITE, (tx) => outstandingFormsTx(tx, jobForm.id))
+    ok(
+      '(J42) *** a response submitted against an OLDER version still satisfies it ***',
+      gate.length === 0,
+      JSON.stringify(gate),
+    )
+
+    await siteExecute(SITE, `DELETE FROM job_form_responses WHERE job_card_id = ?`, [jobForm.id])
+    const gateNow = await siteTransaction(SITE, (tx) => outstandingFormsTx(tx, jobForm.id))
+    ok('(J42) and with no response at all, it blocks', gateNow.length === 1, JSON.stringify(gateNow))
+
+    // Teardown, in FK order: responses, then the form, then the headline.
+    await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id = ?`, [jobForm.id])
+    await siteExecute(SITE, `DELETE FROM job_headline_forms WHERE headline_id = ?`, [headline.insertId])
+    await siteExecute(SITE, `DELETE FROM job_headlines WHERE id = ?`, [headline.insertId])
+    await siteExecute(SITE, `DELETE FROM job_forms WHERE id = ?`, [formId])
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_form'`, [])
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [jobForm.id])
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [jobForm.id])
   }
 
   /*

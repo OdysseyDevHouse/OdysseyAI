@@ -82,6 +82,14 @@ export type ActivityEntity =
      records a cost that somebody else later decides not to charge for. Both
      halves of that need a name against them. */
   | 'job_card'
+  /* A custom form (222). Separate from job_card because the trail is about the
+     TEMPLATE rather than any job: who added a required field, who published v3,
+     and who retired a form people were still filling in.
+
+     Filling one in logs against job_card instead, which is where somebody looks
+     for what happened on a job. The two trails answer different questions and
+     neither is a good place for the other. */
+  | 'job_form'
   /* A support ticket (165). Separate from job_card because it is a separate
      module: a ticket has no money on it, and the questions its trail answers
      are different ones — who picked this up, who had it while the clock ran,

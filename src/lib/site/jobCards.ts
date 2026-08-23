@@ -10,6 +10,7 @@ import { statusForRole, listJobStatuses } from './jobStatuses'
 import { applyDeadlinesTx } from './jobSla'
 // Likewise jobHeadlines — it reads settings and its own tables, never jobCards.
 import { itemsBlockClose, outstandingRequiredTx } from './jobHeadlines'
+import { outstandingFormsTx } from './jobForms'
 import { missingSignoffTx, signoffRule } from './jobSignoff'
 // And jobAssets, which reads its own tables plus job_cards but never imports back.
 import { recordServiceOnClose } from './jobAssets'
@@ -1174,7 +1175,22 @@ export async function setStatus(
       const blocking = stageRule ?? (await itemsBlockClose(siteId))
 
       if (blocking) {
-        const outstanding = await outstandingRequiredTx(tx, jobId)
+        /*
+         * Checks and FORMS, in one list (222).
+         *
+         * The same rule governs both because they answer the same question —
+         * has the work been recorded — and a job blocked by one while silently
+         * ignoring the other would be a gate people learn to distrust.
+         *
+         * Both reads run inside this transaction so the check and the close see
+         * the same state: a form submitted in the moment between them must not
+         * let a job through that should have been held.
+         */
+        const [items, forms] = await Promise.all([
+          outstandingRequiredTx(tx, jobId),
+          outstandingFormsTx(tx, jobId),
+        ])
+        const outstanding = [...items, ...forms]
         if (outstanding.length > 0) {
           const listed = outstanding.slice(0, 3).join(', ')
           const more = outstanding.length > 3 ? ` and ${outstanding.length - 3} more` : ''
