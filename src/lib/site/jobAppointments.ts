@@ -51,6 +51,15 @@ export type ConflictKind =
   | 'on_leave'
   | 'outside_hours'
   | 'job_closed'
+  /*
+   * Busy in their own linked calendar (226).
+   *
+   * Deliberately opaque: the message says the person is not free and NEVER what
+   * they are doing. job_calendar_busy stores no title precisely so that a
+   * dispatcher screen cannot show a technician's private appointments, and a
+   * message that leaked one here would undo that at the last step.
+   */
+  | 'external_busy'
 
 export type Conflict = {
   kind: ConflictKind
@@ -505,6 +514,53 @@ export async function findConflicts(
     // No leave table on this site. Not a reason to refuse a booking.
   }
 
+  // ── Busy in a linked calendar (226) ─────────────────────────────────────
+  /*
+   * Wrapped in a try for the reason the leave check is: a site that has not run
+   * 226 must still be able to book a visit.
+   *
+   * is_ours is excluded, and that exclusion is load-bearing. We push a visit to
+   * Google and read the busy time back — without it the scheduler would warn
+   * that the technician is already booked on the very visit being edited, every
+   * single time somebody changed one.
+   */
+  try {
+    const external = await siteQuery<Row>(
+      siteId,
+      `SELECT b.user_id, b.starts_at, b.ends_at, a.user_name
+         FROM job_calendar_busy b
+         JOIN job_calendar_accounts a ON a.id = b.account_id
+        WHERE b.user_id IN (${placeholders})
+          AND b.is_ours = 0
+          AND DATE(b.starts_at) = ?`,
+      [...userIds, day],
+    )
+    for (const row of external) {
+      const otherStart = minutesOf(row.starts_at)
+      /*
+       * Both ends through minutesOf, never storedMillis directly.
+       *
+       * minutesOf goes via wallClock first so a driver Date and a bare string
+       * arrive in one shape — and its own comment records what skipping that
+       * costs: the overlap check compared NaN and reported no conflicts while
+       * the query was returning the clashing row.
+       */
+      const otherMins = Math.max(1, minutesOf(row.ends_at) - otherStart)
+      if (!overlaps(start, mins, otherStart, otherMins)) continue
+
+      const who = String(row.user_name ?? '')
+      conflicts.push({
+        kind: 'external_busy',
+        userId: Number(row.user_id),
+        userName: who,
+        // What, never why. See the ConflictKind comment.
+        message: `${who || 'That person'} is busy in their own calendar at that time.`,
+      })
+    }
+  } catch {
+    // No 226 on this site, or nothing linked. Not a reason to refuse a booking.
+  }
+
   return conflicts
 }
 
@@ -670,6 +726,21 @@ export async function saveAppointment(
     return appointmentId as number
   })
 
+  /*
+   * And into whatever calendars the people attending have linked (226).
+   *
+   * AFTER the commit and never awaited for its outcome: a provider round-trip
+   * inside the transaction would hold this row's locks for the length of
+   * somebody else's network, and Google having an afternoon must never be why a
+   * dispatcher cannot book a visit at 16:55 on a Friday.
+   *
+   * pushAppointment swallows everything internally and records failures on the
+   * account row, where a person reads them.
+   */
+  void import('./jobCalendar')
+    .then((m) => m.pushAppointment(siteId, id as number))
+    .catch(() => {})
+
   return { ok: true, id, conflicts }
 }
 
@@ -783,6 +854,21 @@ export async function setAppointmentStatus(
     })
 
     return { ok: true as const }
+  }).then((result) => {
+    /*
+     * The calendar, after the commit and swallowed (226).
+     *
+     * A status change is exactly the moment a calendar goes wrong if nobody
+     * tells it: a cancelled visit that stays on the technician's phone is a
+     * drive to a customer who called it off. pushAppointment re-derives the
+     * event, sees cancelled, and sends the cancellation.
+     */
+    if (result.ok) {
+      void import('./jobCalendar')
+        .then((m) => m.pushAppointment(siteId, appointmentId))
+        .catch(() => {})
+    }
+    return result
   })
 }
 
@@ -798,6 +884,32 @@ export async function deleteAppointment(
   actor: Actor,
   appointmentId: number,
 ): Promise<AppointmentActionResult> {
+  /*
+   * The calendar events go FIRST, before the row they hang off (226).
+   *
+   * job_calendar_links CASCADEs from the appointment, so deleting the
+   * appointment first destroys the only record that those events exist —
+   * leaving a ghost booking in somebody's calendar that nothing will ever clean
+   * up, for a visit that no longer exists.
+   *
+   * Outside the transaction, awaited: it is a provider round-trip, and holding
+   * a row lock across it is exactly what the push path refuses to do.
+   *
+   * The cost of this order is the opposite failure — events removed for a
+   * delete that then gets refused. So the same two guards the transaction
+   * applies are re-read first: a visit somebody attended keeps its events,
+   * because the delete below is going to refuse it anyway.
+   */
+  const removable = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id, status, arrived_at FROM job_card_appointments WHERE id = ?`,
+    [appointmentId],
+  ).catch(() => null)
+  if (removable && removable.arrived_at === null && String(removable.status) !== 'completed') {
+    const { removeCalendarEvents } = await import('./jobCalendar')
+    await removeCalendarEvents(siteId, appointmentId)
+  }
+
   return siteTransaction(siteId, async (tx) => {
     const [rows] = await tx.query<Row[]>(
       `SELECT id, job_card_id, status, visit_number, arrived_at FROM job_card_appointments WHERE id = ?`,

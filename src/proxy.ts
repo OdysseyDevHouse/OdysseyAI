@@ -110,7 +110,14 @@ const PUBLIC_PREFIXES = [
   // subscription at once.
   //
   // The trailing slash matters, as it does for '/store/' and '/reserve/' above.
-  '/api/jobs/calendar/',
+  //
+  // '/feed/' rather than the whole of '/api/jobs/calendar/', and that narrowing
+  // is load-bearing since 226. The OAuth link, callback and pull tick all live
+  // under this path and NONE of them may be public: link would hand anybody an
+  // authorisation redirect, callback calls requireModuleCapability and would
+  // throw with no session, and the tick carries its own secret. A prefix here
+  // is a decision about every route that will ever sit beneath it.
+  '/api/jobs/calendar/feed/',
   // Product photographs for the public shop. Guarded the same way the shop
   // itself is: the URL carries the signed store token, and the route refuses
   // an image whose product that store does not publish.
@@ -202,6 +209,11 @@ const PUBLIC_PREFIXES = [
   // the escalation is the one that matters: a job breaches its promise, the
   // worklist shows it, and the person who could still act on it is never told.
   '/api/jobs/automations/tick',
+  // The calendar pull. Reads linked calendars back for busy time and notices
+  // anything somebody dragged. Its own secret, for the reason the two above
+  // give: one secret across every tick means rotating it for one reason
+  // silently breaks the others.
+  '/api/jobs/calendar/tick',
   // The landing page for an emailed "pay this invoice" link. The payer is a
   // customer, not a user of the back office, and will never have a session.
   //

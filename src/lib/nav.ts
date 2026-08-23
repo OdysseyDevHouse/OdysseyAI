@@ -584,6 +584,9 @@ export const SUBPAGE_LABELS = {
      automations is how somebody ends up on the one that cannot do what they
      came for. Alerts run on a clock; these run when something happens. */
   '/setup/job-rules': 'Rules',
+  /* "Calendars", plural: the screen is about the linked ACCOUNTS. The
+     singular would read as the shop's own diary, which is /jobs/schedule. */
+  '/setup/job-calendar': 'Calendars',
   /* "Tickets", matching the section it configures. The lanes and the running
      limit are one screen because both answer "how does this desk work". */
   '/setup/tickets': 'Tickets',

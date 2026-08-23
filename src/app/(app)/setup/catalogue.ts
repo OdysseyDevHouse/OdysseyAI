@@ -348,6 +348,23 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         module: 'job_cards',
       },
       {
+        /* Beside rules and forms, and its own tile for the same reason: the
+           screen is a queue as much as a setting. A visit somebody dragged in
+           their own calendar waits here to be decided, and a queue buried in a
+           panel is a queue nobody reads. */
+        href: '/setup/job-calendar',
+        description: 'Job visits in Google or Outlook, and what those calendars say back.',
+        /* "sync", "google" and "outlook" are the words somebody reaches for;
+           none of them is in the label. */
+        keywords:
+          'calendar calendars google outlook microsoft sync ical subscribe availability busy free',
+        icon: 'Clock',
+        tone: 'amber',
+        capability: 'jobs.setup',
+        module: 'job_cards',
+      },
+
+      {
         /* Its own tile for the same reason forms got one, and one more: the
            rules screen is where somebody goes when a job moved on its own and
            nobody can say why. Buried in a panel it would be found by the

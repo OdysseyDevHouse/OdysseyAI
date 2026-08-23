@@ -94,6 +94,11 @@ export type ActivityEntity =
      who wrote it, who switched it off — while what a rule DID to a job is
      logged against that job, where somebody asks why it moved. */
   | 'job_rule'
+  /* A linked calendar account (226). Keyed by USER id rather than account id,
+     because the question is "what happened to this person's calendar link" and
+     the account row is replaced on every re-link — a trail keyed to it would
+     lose its own history the moment somebody fixed a revoked token. */
+  | 'job_calendar'
   /* A support ticket (165). Separate from job_card because it is a separate
      module: a ticket has no money on it, and the questions its trail answers
      are different ones — who picked this up, who had it while the clock ran,

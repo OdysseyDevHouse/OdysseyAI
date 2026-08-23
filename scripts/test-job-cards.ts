@@ -162,6 +162,7 @@ import {
   deleteAppointment,
   unscheduledJobCount,
   unscheduledJobIds,
+  findConflicts,
 } from '../src/lib/site/jobAppointments'
 import {
   saveServiceAddress,
@@ -231,6 +232,14 @@ import {
   reconcileJobRules,
 } from '../src/lib/site/jobRules'
 import { ruleProblem, describeRule } from '../src/lib/jobRuleModel'
+import {
+  pendingChanges,
+  acceptChange,
+  reconcileJobCalendar,
+  __test as calTest,
+} from '../src/lib/site/jobCalendar'
+import { eventFingerprint, isMeaningfulChange } from '../src/lib/calendarModel'
+import { storedMillis } from '../src/lib/jobStatusModel'
 import { buildIcs, escapeIcsText, foldIcsLine, toIcsStamp } from '../src/lib/icsFeed'
 import { createCalendarToken, readCalendarToken } from '../src/lib/calendarToken'
 import {
@@ -5635,6 +5644,479 @@ async function main() {
      * "the original" faithfully would re-write that pollution for the next run.
      */
     await setSetting(SITE, 'job_notify_enabled', ruleNotifyWas === '0' ? '1' : ruleNotifyWas)
+  }
+
+  /*
+   * ── (J44) Calendar sync: out goes truth, back come proposals (§46.13) ─────
+   *
+   * No provider is contacted. Every network call in this feature is behind
+   * CalendarProvider, and the parts worth testing are the ones on this side of
+   * it: what the event SAYS, when a push is skipped, whether a drag becomes a
+   * proposal, and whether accepting one goes through the real booking path.
+   *
+   * The load-bearing checks are the last two. A proposal that silently rewrote
+   * the appointment would be the exact failure 226's header refuses, and an
+   * accept that bypassed saveAppointment would skip every conflict check the
+   * scheduler has — so the test asserts that accepting a change onto a CLOSED
+   * job is refused, which is only possible if the real path ran.
+   */
+  {
+    const calJob = await saveJobCard(SITE, actor, {
+      id: null, customerId, customerName: null, customerPhone: null,
+      customerEmail: null, serviceAddressId: null, locationId: null, statusId: null,
+      priority: 'normal', ownerUserId: null, ownerName: '',
+      title: `JCT${stamp} calendar job`, description: null, dueAt: null,
+      source: 'manual', reference: null, internalNote: null,
+    })
+    if (!calJob.ok) throw new Error('calendar job fixture failed')
+
+    /*
+     * An address with ACCESS NOTES on it.
+     *
+     * The gate code is the single most useful thing a technician can have on
+     * their phone, and it lives on the address rather than the visit. A build
+     * that dropped it would still produce a perfectly plausible event.
+     */
+    const calAddr = await saveServiceAddress(SITE, actor, {
+      id: null,
+      customerId,
+      locationId: null,
+      code: null,
+      name: `JCT${stamp} calendar site`,
+      addressLine1: '14 Loop Street',
+      addressLine2: null,
+      city: 'Cape Town',
+      postalCode: '8001',
+      latitude: null,
+      longitude: null,
+      contactId: null,
+      accessNotes: 'Gate code 4471. Park in the side street.',
+      note: null,
+      isDefault: false,
+      isActive: true,
+    })
+    if (!calAddr.ok) throw new Error('calendar address fixture failed')
+
+    const calVisit = await saveAppointment(SITE, actor, {
+      id: null,
+      jobCardId: calJob.id,
+      // Late in the day, away from (J10)'s visits for the same technician:
+      // a collision here is not this block's subject, and the refusal it caused
+      // left a half-built fixture behind for an unrelated suite to trip over.
+      startsAt: at('16:00'),
+      durationMinutes: 90,
+      serviceAddressId: calAddr.id,
+      visitType: 'Repair',
+      notes: 'Bring the long ladder.',
+      assignees: [{ userId: 1, userName: 'JCT Technician', isLead: true }],
+      overrideReason: 'fixture',
+    })
+    ok('(J44) a visit is booked for the calendar tests', calVisit.ok, JSON.stringify(calVisit))
+    if (!calVisit.ok) throw new Error('calendar visit fixture failed')
+
+    // ── What the technician actually sees ───────────────────────────────────
+    const event = await calTest.buildEvent(SITE, calVisit.id)
+    ok('(J44) an event is built for the visit', event !== null)
+    if (!event) throw new Error('buildEvent returned nothing')
+
+    ok(
+      '(J44) the title leads with the customer — that is what a lock screen shows',
+      event.summary.startsWith('JCT Test'),
+      event.summary,
+    )
+    ok(
+      '(J44) and carries the job number for looking it up afterwards',
+      event.summary.includes(String(calJob.documentNumber)),
+      event.summary,
+    )
+    /*
+     * The money rule, and it is the reason this assertion is starred.
+     *
+     * 26.6 spent eight permission keys deciding who may see cost. A calendar
+     * event lands on a phone's lock screen and a watch — the least controlled
+     * surface this app writes to — and a price reaching it would make that
+     * whole permission set worth nothing.
+     */
+    /*
+     * A CAPITAL R at a word boundary, and the words spelt out.
+     *
+     * The first version was case-insensitive and unanchored, so it matched
+     * "r 8" inside "Customer 825051" and failed an event containing no money
+     * whatsoever. A leak-detector that cries wolf on the fixture's own name is
+     * a detector somebody deletes.
+     */
+    const money = /\bR\s?\d|\b(cost|price|total|margin|profit|amount|vat)\b/i
+    ok(
+      '(J44) *** NO money anywhere in the event — not the title, not the body ***',
+      !money.test(event.summary) && !money.test(event.description),
+      `${event.summary} :: ${event.description}`,
+    )
+    ok(
+      '(J44) *** the gate code rides along, from the ADDRESS not the visit ***',
+      event.description.includes('Gate code 4471'),
+      event.description,
+    )
+    ok(
+      '(J44) and the visit note as well',
+      event.description.includes('Bring the long ladder'),
+      event.description,
+    )
+    ok(
+      '(J44) the location is the address, assembled',
+      event.location.includes('14 Loop Street') && event.location.includes('Cape Town'),
+      event.location,
+    )
+    ok(
+      '(J44) the end is the start plus the duration',
+      event.endsAt.getTime() - event.startsAt.getTime() === 90 * 60_000,
+      String((event.endsAt.getTime() - event.startsAt.getTime()) / 60_000),
+    )
+    ok('(J44) a live visit is not a cancellation', event.cancelled === false)
+
+    // ── The fingerprint decides whether to push at all ──────────────────────
+    /*
+     * An appointment row is touched by things a calendar cannot see —
+     * arrived_at, travel_started_at, an outcome note. Re-pushing on those burns
+     * provider quota and buzzes a phone to announce that nothing happened.
+     */
+    const printBefore = eventFingerprint(event)
+    await siteExecute(SITE, `UPDATE job_card_appointments SET arrived_at = NOW() WHERE id = ?`, [
+      calVisit.id,
+    ])
+    const afterArrival = await calTest.buildEvent(SITE, calVisit.id)
+    ok(
+      '(J44) *** marking an arrival changes NOTHING a calendar can see ***',
+      afterArrival !== null && eventFingerprint(afterArrival) === printBefore,
+      'the fingerprint moved',
+    )
+
+    await siteExecute(
+      SITE,
+      `UPDATE job_card_appointments SET notes = 'Bring the short ladder.' WHERE id = ?`,
+      [calVisit.id],
+    )
+    const afterNote = await calTest.buildEvent(SITE, calVisit.id)
+    ok(
+      '(J44) but changing the note does',
+      afterNote !== null && eventFingerprint(afterNote) !== printBefore,
+    )
+
+    // ── A called-off visit is a cancellation, a finished one is not ─────────
+    await siteExecute(
+      SITE,
+      `UPDATE job_card_appointments SET status = 'cancelled' WHERE id = ?`,
+      [calVisit.id],
+    )
+    const cancelled = await calTest.buildEvent(SITE, calVisit.id)
+    ok('(J44) a cancelled visit pushes as a cancellation', cancelled?.cancelled === true)
+
+    await siteExecute(
+      SITE,
+      `UPDATE job_card_appointments SET status = 'completed' WHERE id = ?`,
+      [calVisit.id],
+    )
+    const completed = await calTest.buildEvent(SITE, calVisit.id)
+    /*
+     * A visit that HAPPENED stays in the calendar as a record of the day.
+     * Striking it through every evening would rewrite somebody's history.
+     */
+    ok(
+      '(J44) *** but a COMPLETED one is not — it is a record of the day ***',
+      completed?.cancelled === false,
+    )
+    await siteExecute(
+      SITE,
+      `UPDATE job_card_appointments SET status = 'scheduled', notes = 'Bring the long ladder.' WHERE id = ?`,
+      [calVisit.id],
+    )
+
+    // ── Is a change worth waking somebody for ───────────────────────────────
+    /*
+     * Providers round. A calendar storing seconds against a system storing
+     * minutes reports a "change" of 30 seconds on an event nobody touched, and
+     * a queue full of those is a queue nobody reads.
+     */
+    const base = new Date('2026-09-01T09:00:00Z')
+    ok(
+      '(J44) a thirty-second drift is not a change anybody made',
+      !isMeaningfulChange(base, 60, new Date(base.getTime() + 30_000), 60),
+    )
+    ok(
+      '(J44) *** but half an hour is somebody dragging it ***',
+      isMeaningfulChange(base, 60, new Date(base.getTime() + 1_800_000), 60),
+    )
+    ok(
+      '(J44) and so is making it longer without moving it',
+      isMeaningfulChange(base, 60, base, 120),
+    )
+
+    // ── A drag becomes a PROPOSAL, never a write ────────────────────────────
+    const calAcct = await siteExecute(
+      SITE,
+      `INSERT INTO job_calendar_accounts (user_id, user_name, provider, account_email, refresh_token_enc)
+       VALUES (?,?,?,?,NULL)`,
+      [1, `JCT${stamp} tech`, 'microsoft', `jct${stamp}@example.test`],
+    )
+    const acctId = Number(calAcct.insertId)
+    await siteExecute(
+      SITE,
+      `INSERT INTO job_calendar_links (account_id, appointment_id, external_id, pushed_hash)
+       VALUES (?,?,?,?)`,
+      [acctId, calVisit.id, `ext-${stamp}`, 'x'],
+    )
+
+    const before = await getAppointment(SITE, calVisit.id)
+    /*
+     * startsAt is a stored WALL-CLOCK string, not a Date. storedMillis is the
+     * one parser for it — String(driverDate) is a locale string, so the naive
+     * +'Z' fix yields NaN and every comparison below would quietly pass.
+     */
+    const beforeMs = storedMillis(before!.startsAt)
+    const movedTo = new Date(beforeMs + 3 * 3_600_000)
+
+    await calTest.detectMovedEvents(
+      SITE,
+      {
+        id: acctId,
+        userId: 1,
+        userName: `JCT${stamp} tech`,
+        provider: 'microsoft' as const,
+        accountEmail: '',
+        calendarId: 'primary',
+        pushEnabled: true,
+        pullEnabled: true,
+        isUsable: true,
+        lastError: '',
+        lastPushAt: null,
+        lastPullAt: null,
+      },
+      [
+        {
+          startsAt: movedTo,
+          endsAt: new Date(movedTo.getTime() + 90 * 60_000),
+          externalId: `ext-${stamp}`,
+        },
+      ],
+    )
+
+    const unchanged = await getAppointment(SITE, calVisit.id)
+    ok(
+      '(J44) *** a drag in the calendar does NOT move the visit ***',
+      storedMillis(unchanged!.startsAt) === beforeMs,
+      `${unchanged!.startsAt} vs ${before!.startsAt}`,
+    )
+
+    const queue = await pendingChanges(SITE)
+    const mine = queue.filter((c) => c.appointmentId === calVisit.id)
+    ok('(J44) *** it raises exactly one proposal ***', mine.length === 1, `${mine.length}`)
+    ok(
+      '(J44) which says where it came from and where it is going',
+      mine[0]?.previousStartsAt.getTime() === beforeMs &&
+        mine[0]?.proposedStartsAt.getTime() === movedTo.getTime(),
+    )
+
+    /*
+     * Running the pull again must not queue it a second time.
+     *
+     * The calendar still says 14:00 and the appointment still says 11:00 until
+     * somebody decides, so without the guard the queue grows by one row per
+     * appointment per tick until nobody can find the proposal that matters.
+     */
+    await calTest.detectMovedEvents(
+      SITE,
+      {
+        id: acctId, userId: 1, userName: '', provider: 'microsoft' as const,
+        accountEmail: '', calendarId: 'primary', pushEnabled: true, pullEnabled: true,
+        isUsable: true, lastError: '', lastPushAt: null, lastPullAt: null,
+      },
+      [
+        {
+          startsAt: movedTo,
+          endsAt: new Date(movedTo.getTime() + 90 * 60_000),
+          externalId: `ext-${stamp}`,
+        },
+      ],
+    )
+    const queue2 = (await pendingChanges(SITE)).filter((c) => c.appointmentId === calVisit.id)
+    ok(
+      '(J44) *** and pulling again does not queue it twice ***',
+      queue2.length === 1,
+      `${queue2.length} proposals`,
+    )
+
+    // ── Accepting runs the REAL booking path ───────────────────────────────
+    /*
+     * The whole point of the design. A closed job must still refuse — which is
+     * only possible if saveAppointment ran rather than an UPDATE. If this
+     * passes because of a bespoke check inside acceptChange, the check is in
+     * the wrong place; the assertion is here to prove the path, not the answer.
+     */
+    await siteExecute(SITE, `UPDATE job_cards SET status = 'closed' WHERE id = ?`, [calJob.id])
+    const refused = await acceptChange(SITE, actor, mine[0].id)
+    /*
+     * The refusal must be ABOUT the closed job.
+     *
+     * An earlier version of this passed while the real error was 'That is not a
+     * real date and time' — a bug in acceptChange's own date handling, which
+     * the assertion happily read as proof the closed-job check had fired. A
+     * test that accepts any refusal proves only that something went wrong.
+     */
+    ok(
+      '(J44) *** accepting onto a CLOSED job is refused — the real path ran ***',
+      !refused.ok && /closed|problems with that slot/i.test(refused.error),
+      refused.ok ? 'it went through' : refused.error,
+    )
+    const closedConflicts = await findConflicts(SITE, {
+      appointmentId: calVisit.id,
+      jobCardId: calJob.id,
+      startsAt: at('16:00'),
+      durationMinutes: 90,
+      assignees: [{ userId: 1, userName: 'JCT Technician' }],
+    })
+    ok(
+      '(J44) and the closed job is one of the reasons named',
+      closedConflicts.some((c) => c.kind === 'job_closed'),
+      JSON.stringify(closedConflicts.map((c) => c.kind)),
+    )
+    await siteExecute(SITE, `UPDATE job_cards SET status = 'open' WHERE id = ?`, [calJob.id])
+
+    const accepted = await acceptChange(SITE, actor, mine[0].id)
+    ok('(J44) and on an open one it goes through', accepted.ok, JSON.stringify(accepted))
+
+    const nowAt = await getAppointment(SITE, calVisit.id)
+    ok(
+      '(J44) *** the visit has moved to what the calendar proposed ***',
+      storedMillis(nowAt!.startsAt) === movedTo.getTime(),
+      `${nowAt!.startsAt} vs ${movedTo.toISOString()}`,
+    )
+    /*
+     * And the person going is still going.
+     *
+     * saveAppointment replaces the whole aggregate, so an accept that passed
+     * only the new time would silently unassign everybody — taking the
+     * technician whose drag started this off their own visit.
+     */
+    ok(
+      '(J44) *** and the technician is still on it — the aggregate was carried ***',
+      nowAt!.assignees.length === 1 && nowAt!.assignees[0].userId === 1,
+      JSON.stringify(nowAt!.assignees),
+    )
+
+    ok(
+      '(J44) a decided proposal cannot be decided again',
+      !(await acceptChange(SITE, actor, mine[0].id)).ok,
+    )
+    ok(
+      '(J44) and the queue is empty again',
+      (await pendingChanges(SITE)).filter((c) => c.appointmentId === calVisit.id).length === 0,
+    )
+
+    // ── Drift reports, never repairs ───────────────────────────────────────
+    await siteExecute(
+      SITE,
+      `UPDATE job_calendar_accounts SET last_error = 'Token revoked.' WHERE id = ?`,
+      [acctId],
+    )
+    const calDrift = await reconcileJobCalendar(SITE)
+    // ── Busy time keeps the scheduler off a private appointment ───────────
+    /*
+     * The whole point of reading a calendar back. Without this the scheduler
+     * cheerfully books a technician who is at the dentist, because the dentist
+     * is in a calendar it cannot see.
+     */
+    const busyStart = at('08:00')
+    await siteExecute(
+      SITE,
+      `INSERT INTO job_calendar_busy (account_id, user_id, starts_at, ends_at, is_ours)
+       VALUES (?,?,?,DATE_ADD(?, INTERVAL 60 MINUTE),0)`,
+      [acctId, 1, busyStart, busyStart],
+    )
+    const withBusy = await findConflicts(SITE, {
+      appointmentId: null,
+      jobCardId: calJob.id,
+      startsAt: busyStart,
+      durationMinutes: 60,
+      assignees: [{ userId: 1, userName: 'JCT Technician' }],
+    })
+    ok(
+      '(J44) *** a private appointment in a linked calendar blocks the slot ***',
+      withBusy.some((c) => c.kind === 'external_busy'),
+      JSON.stringify(withBusy.map((c) => c.kind)),
+    )
+    /*
+     * And it says WHAT, never WHY.
+     *
+     * job_calendar_busy stores no title precisely so a dispatcher screen cannot
+     * show somebody's private entries. A message that leaked one would undo
+     * that at the last step, which is the only step anybody looks at.
+     */
+    ok(
+      '(J44) *** and says only that they are busy, never what they are doing ***',
+      withBusy
+        .filter((c) => c.kind === 'external_busy')
+        .every((c) => /busy in their own calendar/.test(c.message)),
+      JSON.stringify(withBusy.filter((c) => c.kind === 'external_busy').map((c) => c.message)),
+    )
+
+    /*
+     * OUR OWN pushed visit must not accuse us.
+     *
+     * We push a visit to Google and read the busy time back. Without the
+     * is_ours exclusion the scheduler warns that the technician is already
+     * booked — on the very visit being edited — every time anybody changes one.
+     */
+    await siteExecute(SITE, `UPDATE job_calendar_busy SET is_ours = 1 WHERE account_id = ?`, [
+      acctId,
+    ])
+    const withOurs = await findConflicts(SITE, {
+      appointmentId: null,
+      jobCardId: calJob.id,
+      startsAt: busyStart,
+      durationMinutes: 60,
+      assignees: [{ userId: 1, userName: 'JCT Technician' }],
+    })
+    ok(
+      '(J44) *** but our OWN pushed visit does not — the sync cannot accuse itself ***',
+      !withOurs.some((c) => c.kind === 'external_busy'),
+      JSON.stringify(withOurs.map((c) => c.kind)),
+    )
+
+    ok(
+      '(J44) reconcile reports an account that has stopped working',
+      calDrift.failing.some((f) => f.accountId === acctId),
+      JSON.stringify(calDrift.failing),
+    )
+    ok(
+      '(J44) and repairs nothing — a revoked token needs a person',
+      String(
+        (
+          await siteQueryOne<any>(
+            SITE,
+            'SELECT last_error FROM job_calendar_accounts WHERE id = ?',
+            [acctId],
+          )
+        )?.last_error,
+      ) === 'Token revoked.',
+    )
+
+    // ── Teardown ──────────────────────────────────────────────────────────
+    /*
+     * Links, busy rows and changes all CASCADE from the account, so the account
+     * goes first and takes them. The appointment and job follow.
+     */
+    await siteExecute(SITE, `DELETE FROM job_calendar_accounts WHERE id = ?`, [acctId])
+    await siteExecute(SITE, `DELETE FROM job_appointment_assignees WHERE appointment_id = ?`, [
+      calVisit.id,
+    ])
+    await siteExecute(SITE, `DELETE FROM job_card_appointments WHERE id = ?`, [calVisit.id])
+    await siteExecute(SITE, `DELETE FROM service_addresses WHERE id = ?`, [calAddr.id])
+    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_calendar'`, [])
+    await siteExecute(
+      SITE,
+      `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`,
+      [calJob.id],
+    )
+    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [calJob.id])
   }
 
   /*

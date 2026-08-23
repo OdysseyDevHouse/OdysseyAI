@@ -94,7 +94,11 @@ export default async function MyWorkPage() {
    */
   const calendarToken = await createCalendarToken(siteId, actor.userId).catch(() => '')
   const calendarUrl = calendarToken
-    ? `${(process.env.APP_URL ?? '').replace(/\/$/, '')}/api/jobs/calendar/${calendarToken}.ics`
+    // /feed/ since 226: the OAuth link and callback now sit under
+    // /api/jobs/calendar/ too, and only the feed may be public. proxy.ts lists
+    // the narrower prefix, so this path must match it or every subscription
+    // 307s to the login page and renders an empty calendar with no error.
+    ? `${(process.env.APP_URL ?? '').replace(/\/$/, '')}/api/jobs/calendar/feed/${calendarToken}.ics`
     : ''
 
   const nothing =
