@@ -25,11 +25,29 @@ export type QuoteOutcome = 'open' | 'accepted' | 'declined'
  * anybody triggers, so a stored status would need a nightly job to stay true
  * and would be wrong in between. Computed on read, it is always right.
  */
-export type QuoteState = 'draft' | 'open' | 'expired' | 'accepted' | 'declined' | 'cancelled'
+export type QuoteState =
+  | 'draft'
+  | 'open'
+  | 'sent'
+  | 'viewed'
+  | 'expired'
+  | 'accepted'
+  | 'declined'
+  | 'cancelled'
 
 export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
   draft: 'Draft',
   open: 'Awaiting a decision',
+  /*
+   * "Sent" and "Seen" rather than "Emailed" and "Viewed".
+   *
+   * Both are what a person would say out loud about a quote, and "Seen" is the
+   * weaker word on purpose — see 227's header on what a view actually proves.
+   * "Viewed" reads like a fact about the customer's attention; it is a fact
+   * about a link being opened.
+   */
+  sent: 'Sent',
+  viewed: 'Seen by the customer',
   expired: 'Expired',
   accepted: 'Accepted',
   declined: 'Declined',
@@ -55,6 +73,14 @@ export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
 export const QUOTE_STATE_TONES: Record<QuoteState, 'success' | 'danger' | 'warning' | 'default'> = {
   draft: 'warning',
   open: 'warning',
+  /*
+   * Both still amber: sent and seen are steps ALONG the way to a decision, not
+   * decisions. Colouring "seen" green would read as good news on a quote the
+   * customer has looked at twice and not replied to, which is the one that most
+   * needs chasing.
+   */
+  sent: 'warning',
+  viewed: 'warning',
   expired: 'danger',
   accepted: 'success',
   declined: 'default',
@@ -89,6 +115,10 @@ export function quoteState(input: {
   status: string
   outcome: QuoteOutcome
   validUntil: string | null
+  /** When it was last emailed to the customer (227). */
+  sentAt?: string | Date | null
+  /** When the customer first opened it (227). */
+  viewedAt?: string | Date | null
   asAt?: string
 }): QuoteState {
   if (input.status === 'cancelled') return 'cancelled'
@@ -96,7 +126,23 @@ export function quoteState(input: {
   if (input.outcome === 'declined') return 'declined'
   if (input.status === 'draft' || input.status === 'saved') return 'draft'
 
+  /*
+   * EXPIRY BEATS SENT AND SEEN, and that ordering is the whole point.
+   *
+   * A quote emailed in March and opened in April is still expired today, and
+   * the state a person needs to see is the one that says the prices no longer
+   * stand. Reading sent/viewed first would leave every stale quote in the
+   * register showing "Seen by the customer" — encouraging a follow-up call
+   * offering prices the business has withdrawn.
+   */
   const asAt = input.asAt ?? todayLocal()
   if (input.validUntil && input.validUntil < asAt) return 'expired'
+
+  /*
+   * Seen beats sent, because it is the later thing that happened. Neither is an
+   * outcome: both mean the quote is still open, said more precisely.
+   */
+  if (input.viewedAt) return 'viewed'
+  if (input.sentAt) return 'sent'
   return 'open'
 }

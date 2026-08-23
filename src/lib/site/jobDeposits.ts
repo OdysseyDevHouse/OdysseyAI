@@ -71,6 +71,14 @@ export type DepositSummary = {
   /** Of that, how much is still sitting unallocated on the account. */
   unallocated: number
   /**
+   * How much has been given back.
+   *
+   * Its own figure rather than netted into `taken`: "R2 000 taken, R500
+   * refunded" and "R1 500 taken" are different histories, and only the first
+   * explains why the customer is asking about a payment they remember making.
+   */
+  refunded: number
+  /**
    * The accepted quote total, where there is one. Null when the job was never
    * quoted — a deposit on an unquoted job is legitimate, and inventing a
    * "balance" against nothing would be a made-up figure.
@@ -137,7 +145,22 @@ export async function jobDeposits(siteId: number, jobId: number): Promise<JobDep
 export async function depositSummary(siteId: number, jobId: number): Promise<DepositSummary> {
   const deposits = await jobDeposits(siteId, jobId)
   const taken = deposits.reduce((sum, d) => sum + d.amount, 0)
-  const unallocated = deposits.reduce((sum, d) => sum + d.outstanding, 0)
+
+  /*
+   * Refunds come off what is left to refund, and this is load-bearing.
+   *
+   * jobDeposits reads doc_type = 'payment' only, so a refund — posted as a
+   * journal, see refundDeposit — is invisible to it. Without this the
+   * unallocated figure would still show the full deposit after it had been
+   * given back, and refundDeposit's own guard reads that figure: the same money
+   * could be handed over twice, and the ledger would be right while the screen
+   * and the guard were both wrong.
+   */
+  const refunded = await refundedTotal(siteId, jobId)
+  const unallocated = Math.max(
+    0,
+    deposits.reduce((sum, d) => sum + d.outstanding, 0) - refunded,
+  )
 
   let quoted: number | null = null
   try {
@@ -166,8 +189,40 @@ export async function depositSummary(siteId: number, jobId: number): Promise<Dep
     deposits,
     taken,
     unallocated,
+    refunded,
     quoted,
-    stillToPay: quoted === null ? null : quoted - taken,
+    /*
+     * Net of refunds: what the customer has actually left with the business is
+     * what counts against the quote. Ignoring refunds here would tell somebody
+     * a job was nearly paid for when the money had gone back.
+     */
+    stillToPay: quoted === null ? null : quoted - (taken - refunded),
+  }
+}
+
+/**
+ * What has already been given back on this job.
+ *
+ * Its own query because refunds are journals, and jobDeposits deliberately
+ * reads payments — see the note in depositSummary. Scoped by origin_site_id for
+ * the reason jobDeposits is: job ids are per-database, so a shared ledger
+ * holding ten branches' rows would otherwise credit job 42 here with job 42's
+ * refunds at another store.
+ */
+async function refundedTotal(siteId: number, jobId: number): Promise<number> {
+  try {
+    const rows = await customerQuery<Row>(
+      siteId,
+      `SELECT amount_gross FROM customer_transactions
+        WHERE source = 'job_deposit_refund' AND source_doc_id = ?
+          AND (origin_site_id IS NULL OR origin_site_id = ?)
+          AND doc_type = 'journal'`,
+      [jobId, siteId],
+    )
+    return rows.reduce((sum, r) => sum + Math.abs(toNum(r.amount_gross)), 0)
+  } catch {
+    // No ledger on this site. Not a reason a job card cannot open.
+    return 0
   }
 }
 
@@ -270,6 +325,179 @@ export async function takeDeposit(
 
   return { ok: true, transactionId: posted.customerTxnId }
 }
+
+/* ── Giving it back ───────────────────────────────────────────────────────── */
+
+export type RefundResult = { ok: true; transactionId: number } | { ok: false; error: string }
+
+/**
+ * Refund a deposit — the customer changed their mind, or the job was called off.
+ *
+ * ── WHY THIS IS A JOURNAL AND NOT A NEGATIVE PAYMENT ───────────────────────
+ *
+ * The obvious move is `docType: 'payment'` with a negative amount. It does not
+ * work, and it does not fail either: signedAmount() clamps a payment to a
+ * credit, so a negative one posts as another CREDIT. The refund would INCREASE
+ * the customer's credit balance while the money left the bank — the ledger
+ * saying they are owed more, precisely because we paid them.
+ *
+ * The other move is a new doc_type. customer_transactions is shared with the
+ * whole app — POS, invoicing, statements, aging, every report — so widening
+ * that enum gives every switch over DocType a silently unhandled case, and most
+ * of them read strings the compiler cannot check.
+ *
+ * `journal` is the type that keeps the sign it is given, and writeOffs.ts
+ * already uses it for exactly this shape of correction. POSITIVE here, because
+ * a refund is a DEBIT: it cancels the credit the deposit created.
+ *
+ * ── IT CANNOT REFUND MORE THAN IS STILL THERE ──────────────────────────────
+ *
+ * Measured against what is UNALLOCATED, never against what was taken. Once a
+ * deposit has been settled against an invoice the customer has had the value,
+ * and refunding it again hands back money already earned while leaving the
+ * invoice unpaid. That check is the difference between a refund and a giveaway.
+ *
+ * ── BOTH HALVES, AGAIN ─────────────────────────────────────────────────────
+ *
+ * The module header records what happened when the first takeDeposit wrote the
+ * debtors side only. A refund has the same two halves in the same order, and
+ * the bank row is the one allowed to fail alone: a missing bank row is a
+ * visible reconciliation item, whereas a rolled-back ledger with the cash
+ * already handed over is money nobody can find.
+ */
+export async function refundDeposit(
+  siteId: number,
+  actor: Actor,
+  jobId: number,
+  input: {
+    amount: number
+    /** Which account the money comes OUT of. */
+    bankAccountId: number
+    /** Why. Required — a refund with no reason is the one somebody has to explain. */
+    reason: string
+    docDate?: string
+    reference?: string | null
+  },
+): Promise<RefundResult> {
+  const job = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id, document_number, customer_id, title FROM job_cards WHERE id = ?`,
+    [jobId],
+  )
+  if (!job) return { ok: false, error: 'That job no longer exists.' }
+  if (job.customer_id === null) {
+    return { ok: false, error: 'This job has no customer account, so it has no deposit to refund.' }
+  }
+  if (!input.reason?.trim()) {
+    return {
+      ok: false,
+      error: 'Why is it being refunded? A refund with no reason is the one somebody has to explain later.',
+    }
+  }
+
+  const amount = Number(input.amount)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, error: 'A refund has to be an amount greater than zero.' }
+  }
+
+  /*
+   * NOT gated on the job being open, unlike takeDeposit.
+   *
+   * A cancelled job is the commonest reason to give a deposit back, and
+   * cancelling is what closed it. Refusing here would mean the only route to a
+   * refund is reopening a job everybody agrees is finished.
+   */
+  const summary = await depositSummary(siteId, jobId)
+  if (summary.unallocated <= 0) {
+    return {
+      ok: false,
+      error:
+        summary.taken > 0
+          ? 'Every deposit on this job has been settled against an invoice, so there is nothing left to give back.'
+          : 'No deposit has been taken on this job.',
+    }
+  }
+  /*
+   * Half a cent of tolerance, so a refund of the whole remaining balance is not
+   * refused by a rounding artefact the person on the screen cannot see.
+   */
+  if (amount > summary.unallocated + 0.004) {
+    return {
+      ok: false,
+      error:
+        `Only ${summary.unallocated.toFixed(2)} of the deposit is unspent. Refunding more than ` +
+        `that would hand back money the invoices have already used.`,
+    }
+  }
+
+  const label = String(job.document_number ?? `job ${jobId}`)
+  const { postTransaction } = await import('./customerLedger')
+
+  const posted = await postTransaction(siteId, actor, {
+    customerId: Number(job.customer_id),
+    docType: 'journal',
+    /*
+     * POSITIVE — a debit, cancelling the credit the deposit put on the account.
+     * A journal keeps the sign it is given; see signedAmount() in ledger.ts,
+     * and the header for why a negative payment does the opposite of this.
+     */
+    amount,
+    docDate: input.docDate,
+    reference: input.reference ?? null,
+    description: `Deposit refunded on ${label} — ${input.reason.trim()}`.slice(0, 190),
+    source: 'job_deposit_refund',
+    sourceDocId: jobId,
+    /*
+     * NOT auto-allocated, for the reason the deposit is not: which invoice this
+     * touches is a debtors decision. Allocating a DEBIT would be the wrong
+     * shape anyway — allocation settles debits WITH credits.
+     */
+    autoAllocate: false,
+  })
+  if (!posted.ok) return { ok: false, error: posted.error }
+
+  /*
+   * The bank half, whose failure is REPORTED rather than thrown.
+   *
+   * The same stance recordCustomerReceipt takes on its own second half:
+   * rethrowing would report "refund failed" for a customer whose account has
+   * already been debited, which is the worst of both.
+   *
+   * No categoryKey, deliberately. Where the contra posts is an accounting
+   * decision this module must not invent — the PRD is explicit that the job
+   * system does not invent postings — so the row stands uncategorised and the
+   * reconciliation screen shows the gap until somebody files it.
+   */
+  let bankOk = true
+  try {
+    const { captureTransaction } = await import('./cashbook')
+    const captured = await captureTransaction(siteId, actor, {
+      bankAccountId: input.bankAccountId,
+      // NEGATIVE: money out of the account.
+      amount: -amount,
+      txnDate: input.docDate,
+      description: `Deposit refund — ${label}`,
+      reference: input.reference ?? null,
+      source: 'job_deposit_refund',
+      sourceDocId: jobId,
+    })
+    bankOk = captured.ok
+  } catch {
+    bankOk = false
+  }
+
+  await logActivity(siteId, actor, {
+    entity: 'job_card',
+    entityId: jobId,
+    action: 'deposit_refunded',
+    detail:
+      `Refund of ${amount.toFixed(2)} — ${input.reason.trim()}` +
+      (bankOk ? '' : '. The bank entry could not be written; capture it on the cashbook.'),
+  }).catch(() => {})
+
+  return { ok: true, transactionId: posted.id }
+}
+
 
 export type DepositDrift = {
   /**

@@ -67,6 +67,12 @@ export type Quote = {
   outcome: QuoteOutcome
   outcomeAt: Date | null
   lostReason: string | null
+  /** When it was last emailed, and to whom (227). */
+  sentAt: Date | null
+  sentTo: string | null
+  /** When the customer first opened it, and how often since (227). */
+  viewedAt: Date | null
+  viewCount: number
   /** The invoice this quote became, if it was accepted. */
   convertedToId: number | null
   convertedToNumber: string | null
@@ -99,9 +105,26 @@ function mapQuote(r: Row, asAt: string): Quote {
     outcome,
     outcomeAt: (r.quote_outcome_at as Date | null) ?? null,
     lostReason: (r.quote_lost_reason as string | null) ?? null,
+    /*
+     * Read defensively. SELECT_QUOTE is `d.*`, so on a site that has not run
+     * 227 these columns are simply absent from the row rather than null — and
+     * a bare cast would hand undefined to quoteState, which reads it as falsy
+     * and correctly reports 'open'. Spelled out so that is a decision.
+     */
+    sentAt: (r.quote_sent_at as Date | null) ?? null,
+    sentTo: (r.quote_sent_to as string | null) ?? null,
+    viewedAt: (r.quote_viewed_at as Date | null) ?? null,
+    viewCount: r.quote_view_count === undefined ? 0 : Number(r.quote_view_count ?? 0),
     convertedToId: r.converted_to_id === null ? null : Number(r.converted_to_id),
     convertedToNumber: (r.converted_to_number as string | null) ?? null,
-    state: quoteState({ status, outcome, validUntil, asAt }),
+    state: quoteState({
+      status,
+      outcome,
+      validUntil,
+      sentAt: (r.quote_sent_at as Date | null) ?? null,
+      viewedAt: (r.quote_viewed_at as Date | null) ?? null,
+      asAt,
+    }),
     daysRemaining: validUntil ? daysBetween(asAt, validUntil) : null,
     userName: String(r.user_name ?? ''),
     createdAt: r.created_at as Date,

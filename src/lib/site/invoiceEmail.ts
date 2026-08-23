@@ -381,3 +381,262 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
+
+
+/* ── A quote says something different ─────────────────────────────────────── */
+
+/**
+ * The covering note for a quote.
+ *
+ * ── WHY NOT invoicePlainBody WITH A FLAG ────────────────────────────────────
+ *
+ * Almost every line differs, and the ones that differ are the ones that matter.
+ * An invoice says "amount due" and "please quote this number with your
+ * payment"; a quote asks for neither, because nothing is owed and nobody should
+ * be told to pay. Threading a `kind` through the invoice body would put a
+ * conditional on nearly every line, and the first person to add a line would
+ * have to decide what a quote does with it — which is how a customer eventually
+ * receives an offer telling them to settle it within thirty days.
+ *
+ * ── VALIDITY IS THE LINE THAT EARNS THIS ────────────────────────────────────
+ *
+ * "Valid for 30 days" is the sentence on every quote ever issued, and it is the
+ * one fact the attached PDF and the covering email must agree on. Where a quote
+ * carries no validity date the line is omitted rather than filled in with a
+ * guess — a business that chooses not to expire its quotes should not have this
+ * email inventing an expiry for it.
+ */
+export function quotePlainBody(
+  siteName: string,
+  customerName: string,
+  number: string,
+  document: { documentDate: string; validUntil: string | null; totalIncl: number },
+  message?: string | null,
+): string {
+  return [
+    `Good day${customerName ? ` ${customerName}` : ''},`,
+    '',
+    ...(message?.trim() ? [message.trim(), ''] : []),
+    `Please find attached quotation ${number} for ${formatMoney(document.totalIncl)}.`,
+    '',
+    `Quotation date: ${document.documentDate}`,
+    ...(document.validUntil ? [`Valid until: ${document.validUntil}`] : []),
+    '',
+    'Let us know if you would like to go ahead, or if anything needs changing.',
+    '',
+    'Kind regards,',
+    siteName,
+  ].join('\n')
+}
+
+export function quoteHtmlBody(
+  siteName: string,
+  customerName: string,
+  number: string,
+  document: { documentDate: string; validUntil: string | null; totalIncl: number },
+  message?: string | null,
+): string {
+  // Inline styles and a table, matching invoiceHtmlBody: email clients support
+  // almost nothing else, and the two should look like they came from one
+  // business. escapeHtml on every value somebody typed — this goes out under
+  // the business's name, so a note field must not be able to inject into it.
+  return `<div style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#16191d;line-height:1.5">
+  <p>Good day${customerName ? ` ${escapeHtml(customerName)}` : ''},</p>
+  ${message?.trim() ? `<p>${escapeHtml(message.trim())}</p>` : ''}
+  <p>Please find attached quotation <strong>${escapeHtml(number)}</strong> for <strong>${formatMoney(document.totalIncl)}</strong>.</p>
+  <table cellpadding="0" cellspacing="0" style="font-size:14px;margin:16px 0">
+    <tr><td style="padding:2px 16px 2px 0;color:#667085">Quotation date</td><td>${escapeHtml(document.documentDate)}</td></tr>
+    ${document.validUntil ? `<tr><td style="padding:2px 16px 2px 0;color:#667085">Valid until</td><td>${escapeHtml(document.validUntil)}</td></tr>` : ''}
+  </table>
+  <p>Let us know if you would like to go ahead, or if anything needs changing.</p>
+  <p>Kind regards,<br>${escapeHtml(siteName)}</p>
+</div>`
+}
+
+
+/* ── Quotes ───────────────────────────────────────────────────────────────── */
+
+export type EmailQuoteResult = { ok: true; to: string } | { ok: false; error: string }
+
+/**
+ * Email a quote to its customer.
+ *
+ * ── WHY THIS IS BESIDE emailInvoiceDocument AND NOT INSIDE IT ───────────────
+ *
+ * The two share the render, the transport and the audit row, and that shared
+ * machinery is used verbatim. What differs is every guard and the whole of what
+ * the customer is told:
+ *
+ *   · An invoice may only be sent once FINALISED, because a draft has no number
+ *     and no debtor entry. A quote has no such rule — an issued quote is the
+ *     normal thing to send, and it never posts at all (see 048).
+ *   · An invoice carries a pay link. A quote must not: nothing is owed yet, and
+ *     a button asking for money on an offer the customer has not accepted is
+ *     the single worst thing this feature could do.
+ *   · An invoice records nothing on the document. A quote records quote_sent_at,
+ *     which is what the follow-up worklist is built from.
+ *
+ * A `kind` parameter on the invoice sender would put a conditional on each of
+ * those, and the failure mode of getting one wrong is a customer being asked to
+ * pay for something they have not agreed to buy.
+ */
+export async function emailQuoteDocument(
+  siteId: number,
+  site: IssuingSite,
+  actor: Actor,
+  documentId: number,
+  opts: { to: string; message?: string | null },
+  deps: MailDeps = { send, configured: isConfigured },
+): Promise<EmailQuoteResult> {
+  if (!deps.configured()) return { ok: false, error: 'Email is not set up on this system.' }
+
+  const to = opts.to.trim()
+  if (!to) return { ok: false, error: 'Give an address to send it to.' }
+
+  const document = await getDocument(siteId, documentId)
+  if (!document) return { ok: false, error: 'That document no longer exists.' }
+  if (document.docType !== 'quote') {
+    return { ok: false, error: `A ${document.docLabel.toLowerCase()} is not emailed from here.` }
+  }
+  /*
+   * A DRAFT quote is refused, and this is the one guard shared with invoices.
+   *
+   * Not for the invoice's reason — a quote raises no debtor entry either way —
+   * but because a draft has no document number, and a customer cannot refer to
+   * an offer that has no name. It is also, in practice, still being written.
+   */
+  if (document.status === 'draft' || document.status === 'saved') {
+    return { ok: false, error: 'Issue the quote first — a draft has no number for the customer to quote back.' }
+  }
+  if (document.status === 'cancelled') {
+    return { ok: false, error: 'That quote has been cancelled.' }
+  }
+
+  const customer = document.customerId ? await getCustomer(siteId, document.customerId) : null
+
+  /*
+   * NO paymentUrl, and the null is passed explicitly rather than omitted.
+   *
+   * buildInvoice takes it as an option; leaving it out would work today and
+   * would be the sort of thing somebody later "tidies up" by copying the
+   * invoice call. Written out so the absence is visibly deliberate.
+   */
+  const data = await buildInvoice(siteId, site, documentId, { paymentUrl: null })
+  if (!data) return { ok: false, error: 'The document could not be built.' }
+
+  let pdf: Buffer
+  try {
+    // QUOTATION, not TAX INVOICE. printKindFor already knows; the heading and
+    // closing come from the same maps every other surface prints from, so the
+    // emailed PDF and the printed one cannot disagree.
+    pdf = await renderInvoicePdf(data, siteId, {
+      heading: HEADING[printKindFor(document)],
+      closing: CLOSING[printKindFor(document)],
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'The PDF could not be produced.',
+    }
+  }
+
+  const number = document.documentNumber ?? `#${documentId}`
+  /*
+   * The validity date, read straight from the row.
+   *
+   * SalesDocument does not carry valid_until — it is the shared shape for every
+   * document type, and widening it for the one caller that needs a quote-only
+   * column would put a field on invoices, credit notes and orders that is
+   * always null. One small query is the cheaper answer, and it fails soft:
+   * a quote with no validity simply omits the line.
+   */
+  const validityRow = await siteQueryOne<Row>(
+    siteId,
+    `SELECT valid_until FROM sales_documents WHERE id = ?`,
+    [documentId],
+  ).catch(() => null)
+  const validUntil =
+    validityRow?.valid_until == null ? null : String(validityRow.valid_until).slice(0, 10)
+
+  const result = await deps.send({
+    to,
+    subject: `Quotation ${number} from ${site.displayName}`,
+    text: quotePlainBody(
+      site.displayName,
+      customer?.name ?? '',
+      number,
+      { documentDate: document.documentDate, validUntil, totalIncl: document.totalIncl },
+      opts.message,
+    ),
+    html: quoteHtmlBody(
+      site.displayName,
+      customer?.name ?? '',
+      number,
+      { documentDate: document.documentDate, validUntil, totalIncl: document.totalIncl },
+      opts.message,
+    ),
+    attachments: [{ filename: `${number}.pdf`, content: pdf, contentType: 'application/pdf' }],
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  /*
+   * Stamped only AFTER the transport accepted it.
+   *
+   * quote_sent_at drives the follow-up worklist and the Sent state, so writing
+   * it before the send would mark a quote as sent that never left — and the
+   * salesperson would wait for a reply to an email nobody received.
+   */
+  await siteExecute(
+    siteId,
+    `UPDATE sales_documents SET quote_sent_at = NOW(), quote_sent_to = ? WHERE id = ?`,
+    [to.slice(0, 190), documentId],
+  ).catch(() => {})
+
+  await siteExecute(
+    siteId,
+    `INSERT INTO document_audit (document_id, action, detail, user_id, user_name)
+     VALUES (?, 'emailed', ?, ?, ?)`,
+    [documentId, `${number} to ${to} — ${formatMoney(document.totalIncl)}`, actor.userId, actor.userName.slice(0, 120)],
+  ).catch(() => {})
+
+  if (document.customerId) {
+    await logActivity(siteId, actor, {
+      entity: 'customer',
+      entityId: document.customerId,
+      action: 'quote_emailed',
+      detail: `${number} emailed to ${to} — ${formatMoney(document.totalIncl)}`,
+    }).catch(() => undefined)
+  }
+
+  return { ok: true, to }
+}
+
+/**
+ * The customer opened it.
+ *
+ * ── IT NEVER THROWS AND NEVER BLOCKS ────────────────────────────────────────
+ *
+ * Called from whatever surface shows a customer their quote. That surface's job
+ * is to show the quote; if this fails, the customer must still see it. A
+ * tracking write that can 500 a customer-facing page is a worse bug than no
+ * tracking at all.
+ *
+ * ── FIRST view is kept, not the last ────────────────────────────────────────
+ *
+ * quote_viewed_at is written only while it is NULL, so it records how long the
+ * customer took to look. The count increments every time. See 227.
+ */
+export async function recordQuoteView(siteId: number, documentId: number): Promise<void> {
+  try {
+    await siteExecute(
+      siteId,
+      `UPDATE sales_documents
+          SET quote_viewed_at = COALESCE(quote_viewed_at, NOW()),
+              quote_view_count = quote_view_count + 1
+        WHERE id = ? AND doc_type = 'quote'`,
+      [documentId],
+    )
+  } catch {
+    /* A site without 227, or a database blip. Never the reason a page fails. */
+  }
+}

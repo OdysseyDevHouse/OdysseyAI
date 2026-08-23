@@ -244,6 +244,7 @@ import { buildIcs, escapeIcsText, foldIcsLine, toIcsStamp } from '../src/lib/ics
 import { createCalendarToken, readCalendarToken } from '../src/lib/calendarToken'
 import {
   takeDeposit,
+  refundDeposit,
   jobDeposits,
   depositSummary,
   reconcileJobDeposits,
@@ -6687,6 +6688,84 @@ async function main() {
         afterClose.ok ? 'ACCEPTED' : afterClose.error,
       )
 
+      // ── Giving it back ───────────────────────────────────────────────
+      /*
+       * The job is CLOSED at this point, and that is the case being tested.
+       *
+       * A cancelled job is the commonest reason to refund a deposit, and
+       * cancelling is what closed it. A refund gated on the job being open
+       * would mean reopening a job everybody agrees is finished.
+       */
+      const noReason = await refundDeposit(SITE, actor, dJob.id, {
+        amount: 100, bankAccountId: Number(acct.id), reason: '   ',
+      })
+      ok('(J26) a refund with no reason is refused', !noReason.ok)
+
+      const tooMuch = await refundDeposit(SITE, actor, dJob.id, {
+        amount: 5000, bankAccountId: Number(acct.id), reason: 'Changed their mind',
+      })
+      ok(
+        '(J26) *** and one for more than is unspent — that is a giveaway, not a refund ***',
+        !tooMuch.ok && /unspent/.test(tooMuch.ok ? '' : tooMuch.error),
+        tooMuch.ok ? 'ACCEPTED' : tooMuch.error,
+      )
+
+      const custPre = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM customers WHERE id = ?`, [customerId])
+      const bankPre = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM bank_accounts WHERE id = ?`, [acct.id])
+
+      const gaveBack = await refundDeposit(SITE, actor, dJob.id, {
+        amount: 500, bankAccountId: Number(acct.id), reason: 'Job called off',
+      })
+      ok('(J26) a refund goes through on a closed job', gaveBack.ok,
+        gaveBack.ok ? '' : gaveBack.error)
+
+      const custPost = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM customers WHERE id = ?`, [customerId])
+      const bankPost = await siteQueryOne<any>(
+        SITE, `SELECT balance FROM bank_accounts WHERE id = ?`, [acct.id])
+      /*
+       * The SIGN is the whole point.
+       *
+       * A negative 'payment' would post as another credit — the customer would
+       * be owed MORE because we paid them. The refund is a positive journal, a
+       * debit, so the balance moves back up by what was handed over.
+       */
+      ok(
+        '(J26) *** the customer owes 500 MORE — a refund is a DEBIT, not a negative payment ***',
+        Math.abs(Number(custPost.balance) - Number(custPre.balance) - 500) < 0.01,
+        `${custPre.balance} -> ${custPost.balance}`,
+      )
+      ok(
+        '(J26) *** and the bank holds 500 LESS — both halves, again ***',
+        Math.abs(Number(bankPre.balance) - Number(bankPost.balance) - 500) < 0.01,
+        `${bankPre.balance} -> ${bankPost.balance}`,
+      )
+
+      const afterRefund = await depositSummary(SITE, dJob.id)
+      ok('(J26) the summary reports what went back', afterRefund.refunded === 500,
+        String(afterRefund.refunded))
+      /*
+       * And the unspent figure comes DOWN. jobDeposits reads payments only, so
+       * a refund is invisible to it — without netting here the same money could
+       * be handed back twice while the ledger stayed right.
+       */
+      ok(
+        '(J26) *** and what is left to refund falls to 700 ***',
+        Math.abs(afterRefund.unallocated - 700) < 0.01,
+        String(afterRefund.unallocated),
+      )
+
+      const twice = await refundDeposit(SITE, actor, dJob.id, {
+        amount: 701, bankAccountId: Number(acct.id), reason: 'Again',
+      })
+      ok(
+        '(J26) *** so refunding the same money twice is refused ***',
+        !twice.ok,
+        twice.ok ? 'ACCEPTED' : twice.error,
+      )
+
       // ── Drift ─────────────────────────────────────────────────────────
       const clean = await reconcileJobDeposits(SITE)
       ok(
@@ -6704,6 +6783,22 @@ async function main() {
         `DELETE FROM bank_transactions WHERE source_doc_id = ? AND source = 'receipt'`,
         [took.transactionId])
       await siteExecute(SITE, `DELETE FROM customer_transactions WHERE id = ?`, [took.transactionId])
+      /*
+       * The REFUND rows as well, and they are keyed differently.
+       *
+       * A refund is a journal with source 'job_deposit_refund' and its
+       * source_doc_id is the JOB, not the receipt — so the two deletes above
+       * miss it entirely. Left behind, it holds a foreign key onto the customer
+       * and the final sweep's `DELETE FROM customers` throws rather than
+       * failing an assertion: the suite dies with a raw SQL error and prints no
+       * FAIL line at all.
+       */
+      await siteExecute(SITE,
+        `DELETE FROM bank_transactions WHERE source = 'job_deposit_refund' AND source_doc_id = ?`,
+        [dJob.id])
+      await siteExecute(SITE,
+        `DELETE FROM customer_transactions WHERE source = 'job_deposit_refund' AND source_doc_id = ?`,
+        [dJob.id])
       await siteExecute(SITE, `UPDATE customers SET balance = ? WHERE id = ?`,
         [custBefore.balance, customerId])
       await siteExecute(SITE, `UPDATE bank_accounts SET balance = ? WHERE id = ?`,
@@ -8109,6 +8204,22 @@ async function main() {
     'orphaned job deposits',
     `SELECT id FROM customer_transactions
       WHERE source = 'job_deposit' AND source_doc_id NOT IN (SELECT id FROM job_cards)`,
+  )
+  /*
+   * And any refund this suite left, ORPHANED OR NOT.
+   *
+   * Deliberately stricter than the deposit check above. A refund holds a
+   * foreign key onto the customer, and this suite deletes its customers at the
+   * end — so a leaked refund does not fail an assertion, it makes
+   * `DELETE FROM customers` THROW. The suite then dies with a raw SQL error
+   * and prints no FAIL line at all, which is how it went unnoticed the first
+   * time: grepping the output for FAIL said everything passed.
+   */
+  await sweepCheck(
+    'job deposit refunds',
+    `SELECT t.id FROM customer_transactions t
+       JOIN customers c ON c.id = t.customer_id
+      WHERE t.source = 'job_deposit_refund' AND c.code LIKE 'JCT%'`,
   )
   /*
    * A party_documents row whose job is gone. The bytes were never written by this
