@@ -98,14 +98,14 @@ export default async function RecurringJobsPage() {
             <EmptyState
               icon={<Icons.CalendarClock size={22} />}
               title="No recurring work yet"
-              hint="Set one up for the work that comes round on its own — a six-monthly aircon service, an annual pressure-vessel certificate. The job appears when it is due, already carrying its checks."
+              hint="Set one up for the work that comes round on its own — a six-monthly aircon service, an annual pressure-vessel certificate. The job appears when it is due, already carrying its forms."
             />
           </Card>
         ) : null}
 
         <RecurringClient
           series={series}
-          headlines={headlines.map((h) => ({ id: h.id, name: h.name, itemCount: h.items.length }))}
+          headlines={headlines.map((h) => ({ id: h.id, name: h.name, formCount: h.formCount }))}
           customers={customers.items.map((c) => ({ id: c.id, name: c.name }))}
           canEdit={can(capabilities, 'jobs.edit')}
           canSetup={can(capabilities, 'jobs.setup')}

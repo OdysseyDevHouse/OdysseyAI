@@ -1,16 +1,11 @@
 import 'server-only'
-import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
+import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { getSetting } from './settings'
 import {
-  isFailedResponse,
-  itemBlocker,
-  mergeHeadlineItems,
-  responseIsEvidence,
   validateHeadline,
-  validateResponse,
   type ItemKind,
   type JobPriority,
   type ResponseType,
@@ -29,39 +24,19 @@ import {
  * difference between configuring a business once and every technician retyping the
  * same checklist.
  *
- * ── THE ITEMS ARE COPIED, NOT REFERENCED ───────────────────────────────────
+ * ── THE CHECKLIST IS GONE ──────────────────────────────────────────────────
  *
- * `job_card_items` holds its own name and response type. Editing "Check gas
- * pressure" to "Check refrigerant pressure" next March must not rewrite what
- * somebody signed off last week — the same argument the job lines make for
- * snapshotting product_code.
+ * A headline used to carry a list of tasks and checks of its own, copied onto
+ * every job that took it. Migration 224 retired that: forms do the asking now,
+ * and this file is back to what a headline has always actually been — a kind of
+ * work, with the parts it consumes and the defaults it suggests.
  *
- * The cost, stated plainly: correcting a typo in a template does not fix the jobs
- * already carrying it. That is the right trade. A completed check is a record of
- * what a person confirmed, and a record that changes underneath its author is not
- * a record.
- *
- * ── ONE ITEM TABLE FOR TASKS AND CHECKS ────────────────────────────────────
- *
- * The migration header argues this at length. In short: the only difference is
- * that a check captures a value, `kind` is a label for the screens, and two tables
- * would be two copies of the ordering and blocking rules.
+ * What survives here is the headline row, its parts, and the link from a job to
+ * the headlines it carries. Anything about answering a question on a job lives
+ * in jobForms.
  */
 
 type Row = RowDataPacket & Record<string, unknown>
-
-/** DATETIME columns arrive as driver Dates whose String() is a LOCALE string. */
-const wallClock = (value: unknown): string | null => {
-  if (value === null || value === undefined) return null
-  if (value instanceof Date) {
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return (
-      `${value.getUTCFullYear()}-${pad(value.getUTCMonth() + 1)}-${pad(value.getUTCDate())}` +
-      ` ${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}:${pad(value.getUTCSeconds())}`
-    )
-  }
-  return String(value)
-}
 
 const text = (value: unknown): string | null => {
   if (value === null || value === undefined) return null
@@ -70,20 +45,6 @@ const text = (value: unknown): string | null => {
 }
 
 /* ── Templates ─────────────────────────────────────────────────────────────── */
-
-export type HeadlineItem = {
-  id: number
-  kind: ItemKind
-  name: string
-  hint: string | null
-  responseType: ResponseType
-  unit: string | null
-  workPhase: WorkPhase
-  isRequired: boolean
-  /** Only meaningful for photo and signature items. See 119. */
-  evidenceRequired: boolean
-  sortOrder: number
-}
 
 export type HeadlinePart = {
   id: number
@@ -108,29 +69,17 @@ export type JobHeadline = {
   isActive: boolean
   /** How many jobs have used it. What makes deleting it a decision. */
   jobCount: number
-  items: HeadlineItem[]
   parts: HeadlinePart[]
+  /** Forms this headline attaches (222). Drives the picker on a job card. */
+  formCount: number
 }
 
-const mapItem = (r: Row): HeadlineItem => ({
-  id: Number(r.id),
-  kind: String(r.kind) as ItemKind,
-  name: String(r.name),
-  hint: text(r.hint),
-  responseType: String(r.response_type) as ResponseType,
-  unit: text(r.unit),
-  workPhase: String(r.work_phase) as WorkPhase,
-  isRequired: Number(r.is_required) === 1,
-  evidenceRequired: Number(r.evidence_required) === 1,
-  sortOrder: Number(r.sort_order),
-})
-
 /**
- * Every headline, with its items and parts.
+ * Every headline, with its parts.
  *
- * Three queries rather than one join: a headline with 12 items and 4 parts would
- * come back as 48 rows to be de-duplicated in JS, and the setup screen wants all
- * of them anyway. Cheap because a business has tens of headlines, not thousands.
+ * Two queries rather than one join: a headline with several parts would come back
+ * as a row per part to be de-duplicated in JS, and the setup screen wants all of
+ * them anyway. Cheap because a business has tens of headlines, not thousands.
  */
 export async function listHeadlines(
   siteId: number,
@@ -152,16 +101,7 @@ export async function listHeadlines(
   const ids = heads.map((h) => Number(h.id))
   const placeholders = ids.map(() => '?').join(',')
 
-  const [items, parts] = await Promise.all([
-    siteQuery<Row>(
-      siteId,
-      `SELECT id, headline_id, kind, name, hint, response_type, unit, work_phase,
-              is_required, evidence_required, sort_order
-         FROM job_headline_items
-        WHERE headline_id IN (${placeholders})
-        ORDER BY FIELD(work_phase,'before','during','after'), sort_order, id`,
-      ids,
-    ),
+  const [parts, formCounts] = await Promise.all([
     siteQuery<Row>(
       siteId,
       `SELECT hp.id, hp.headline_id, hp.product_id, hp.qty, hp.line_kind,
@@ -172,7 +112,31 @@ export async function listHeadlines(
         ORDER BY hp.sort_order, hp.id`,
       ids,
     ),
+    /*
+     * How many ACTIVE forms each headline attaches (222).
+     *
+     * Counted rather than listed: the job card's picker needs to say "ticking
+     * this asks for two forms", and the setup screen needs to say the same.
+     * Neither needs the forms themselves, and a retired form must not be
+     * counted — it is no longer asked for.
+     *
+     * Tolerant: a site that has not run 222 has no such table, and a headline
+     * picker must not fail to render because forms do not exist there yet.
+     */
+    siteQuery<Row>(
+      siteId,
+      `SELECT hf.headline_id, COUNT(*) AS n
+         FROM job_headline_forms hf
+         JOIN job_forms f ON f.id = hf.form_id AND f.is_active = 1
+        WHERE hf.headline_id IN (${placeholders})
+        GROUP BY hf.headline_id`,
+      ids,
+    ).catch(() => [] as Row[]),
   ])
+
+  const formsByHeadline = new Map(
+    formCounts.map((r) => [Number(r.headline_id), Number(r.n)]),
+  )
 
   return heads.map((h) => {
     const id = Number(h.id)
@@ -189,7 +153,7 @@ export async function listHeadlines(
       sortOrder: Number(h.sort_order),
       isActive: Number(h.is_active) === 1,
       jobCount: Number(h.job_count ?? 0),
-      items: items.filter((i) => Number(i.headline_id) === id).map(mapItem),
+      formCount: formsByHeadline.get(id) ?? 0,
       parts: parts
         .filter((p) => Number(p.headline_id) === id)
         .map((p) => ({
@@ -233,23 +197,11 @@ export type HeadlineResult = { ok: true; id: number } | { ok: false; error: stri
 export type ItemResult = { ok: true } | { ok: false; error: string }
 
 /**
- * Create or update a headline and its items.
+ * Create or update a headline and its parts.
  *
- * ── THE ITEMS ARE MATCHED BY ID, NOT DELETED AND RE-INSERTED ───────────────
- *
- * This used to replace them wholesale, on the grounds that a template is a short
- * list somebody edits as a whole and diffing bought nothing. That was wrong, and
- * the cost was invisible: every re-insert allocated fresh ids, and
- * `job_card_items.headline_item_id` is ON DELETE SET NULL — so EVERY prior job's
- * link back to the template item it came from was silently nulled on every save.
- *
- * 114_job_headlines.sql keeps that column for one stated purpose: reporting on
- * which kind of work generates the most unfinished tasks. A single typo
- * correction destroyed it, and nothing anywhere said so.
- *
- * So: an item that arrives with an id is UPDATED, one without is inserted, and
- * only ids the user actually removed are deleted. The copies already on job
- * cards keep their own snapshot either way — that part was always right.
+ * `input.items` is still accepted and still validated, because validateHeadline
+ * enforces the code and duration rules in the same pass, but nothing is written
+ * from it — 224 retired the checklist and forms carry the questions now.
  */
 export async function saveHeadline(
   siteId: number,
@@ -318,83 +270,9 @@ export async function saveHeadline(
           id,
         ],
       )
-      /*
-       * The items somebody actually REMOVED, and only those.
-       *
-       * Everything the form still carries an id for survives with that id, so
-       * the jobs pointing at it keep pointing at it. Parts have no such
-       * back-reference — nothing copies a part id onto a job — so they stay a
-       * wholesale replace.
-       */
-      const keptIds = input.items
-        .map((i) => i.id)
-        .filter((v): v is number => typeof v === 'number' && v > 0)
-
-      if (keptIds.length > 0) {
-        await tx.execute(
-          `DELETE FROM job_headline_items
-            WHERE headline_id = ? AND id NOT IN (${keptIds.map(() => '?').join(',')})`,
-          [id, ...keptIds],
-        )
-      } else {
-        await tx.execute(`DELETE FROM job_headline_items WHERE headline_id = ?`, [id])
-      }
+      // Parts are a wholesale replace: nothing copies a part id onto a job, so
+      // there is no back-reference to preserve across a save.
       await tx.execute(`DELETE FROM job_headline_parts WHERE headline_id = ?`, [id])
-    }
-
-    for (const [index, item] of input.items.entries()) {
-      // Forced to 0 for anything that cannot hold a file. validateHeadline
-      // already refuses the combination, so this is belt-and-braces against a
-      // caller that skipped validation — the flag must never be 1 on an item
-      // with no way to satisfy it, or the job becomes uncloseable.
-      const evidence = responseIsEvidence(item.responseType) && item.evidenceRequired ? 1 : 0
-
-      if (typeof item.id === 'number' && item.id > 0) {
-        /*
-         * UPDATE, and the `headline_id = ?` in the WHERE is not decoration: the
-         * id arrives from a form, and without it somebody could edit an item
-         * belonging to a different headline by changing a number.
-         */
-        await tx.execute(
-          `UPDATE job_headline_items
-              SET kind = ?, name = ?, hint = ?, response_type = ?, unit = ?,
-                  work_phase = ?, is_required = ?, evidence_required = ?, sort_order = ?
-            WHERE id = ? AND headline_id = ?`,
-          [
-            item.kind,
-            item.name.trim(),
-            text(item.hint),
-            item.responseType,
-            text(item.unit),
-            item.workPhase,
-            item.isRequired ? 1 : 0,
-            evidence,
-            index,
-            item.id,
-            id,
-          ],
-        )
-        continue
-      }
-
-      await tx.execute(
-        `INSERT INTO job_headline_items
-           (headline_id, kind, name, hint, response_type, unit, work_phase, is_required,
-            evidence_required, sort_order)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        [
-          id,
-          item.kind,
-          item.name.trim(),
-          text(item.hint),
-          item.responseType,
-          text(item.unit),
-          item.workPhase,
-          item.isRequired ? 1 : 0,
-          evidence,
-          index,
-        ],
-      )
     }
 
     for (const [index, part] of input.parts.entries()) {
@@ -412,7 +290,7 @@ export async function saveHeadline(
       entity: 'job_card',
       entityId: 0,
       action: input.id === null ? 'headline_created' : 'headline_updated',
-      detail: `${code} — ${input.name.trim()} (${input.items.length} items)`,
+      detail: `${code} — ${input.name.trim()} (${input.parts.length} part(s))`,
     })
 
     return { ok: true as const, id }
@@ -461,74 +339,6 @@ export async function deleteHeadline(
 
 /* ── Headlines on a job ────────────────────────────────────────────────────── */
 
-export type JobItem = {
-  id: number
-  headlineId: number | null
-  headlineName: string | null
-  kind: ItemKind
-  name: string
-  hint: string | null
-  responseType: ResponseType
-  unit: string | null
-  workPhase: WorkPhase
-  isRequired: boolean
-  sortOrder: number
-  response: string | null
-  completedAt: string | null
-  completedByName: string | null
-  isFailed: boolean
-  note: string | null
-  /** Set when a photo or signature has actually been captured. See 119. */
-  evidenceRequired: boolean
-  attachmentId: number | null
-  /**
-   * Joined so a list of 30 items renders its thumbnails without 30 more queries.
-   * Null whenever attachmentId is — the FK is SET NULL, so a deleted file
-   * un-answers its item rather than leaving a name pointing at nothing.
-   */
-  attachmentName: string | null
-  attachmentMime: string | null
-}
-
-export async function jobItems(siteId: number, jobId: number): Promise<JobItem[]> {
-  const rows = await siteQuery<Row>(
-    siteId,
-    `SELECT i.id, i.headline_id, i.kind, i.name, i.hint, i.response_type, i.unit,
-            i.work_phase, i.is_required, i.sort_order, i.response, i.completed_at,
-            i.completed_by_name, i.is_failed, i.note, h.name AS headline_name,
-            i.evidence_required, i.attachment_id,
-            d.filename AS attachment_filename, d.mime_type AS attachment_mime
-       FROM job_card_items i
-       LEFT JOIN job_headlines h ON h.id = i.headline_id
-       LEFT JOIN party_documents d ON d.id = i.attachment_id
-      WHERE i.job_card_id = ?
-      ORDER BY FIELD(i.work_phase,'before','during','after'), i.sort_order, i.id`,
-    [jobId],
-  )
-  return rows.map((r) => ({
-    id: Number(r.id),
-    headlineId: r.headline_id === null ? null : Number(r.headline_id),
-    headlineName: text(r.headline_name),
-    kind: String(r.kind) as ItemKind,
-    name: String(r.name),
-    hint: text(r.hint),
-    responseType: String(r.response_type) as ResponseType,
-    unit: text(r.unit),
-    workPhase: String(r.work_phase) as WorkPhase,
-    isRequired: Number(r.is_required) === 1,
-    sortOrder: Number(r.sort_order),
-    response: text(r.response),
-    completedAt: wallClock(r.completed_at),
-    completedByName: text(r.completed_by_name),
-    isFailed: Number(r.is_failed) === 1,
-    note: text(r.note),
-    evidenceRequired: Number(r.evidence_required) === 1,
-    attachmentId: r.attachment_id === null ? null : Number(r.attachment_id),
-    attachmentName: text(r.attachment_filename),
-    attachmentMime: text(r.attachment_mime),
-  }))
-}
-
 export async function jobHeadlineIds(siteId: number, jobId: number): Promise<number[]> {
   const rows = await siteQuery<Row>(
     siteId,
@@ -538,26 +348,15 @@ export async function jobHeadlineIds(siteId: number, jobId: number): Promise<num
   return rows.map((r) => Number(r.headline_id))
 }
 
-export type ApplyResult =
-  | { ok: true; added: number; merged: { name: string; from: string[] }[] }
-  | { ok: false; error: string }
+export type ApplyResult = { ok: true } | { ok: false; error: string }
 
 /**
- * Set which headlines a job carries, and copy their items onto it.
+ * Set which headlines a job carries.
  *
- * ── WHAT THIS DOES NOT DO ──────────────────────────────────────────────────
- *
- * It never removes an item somebody has already completed, even when the headline
- * that produced it is deselected. A signed-off check is a record of what happened;
- * deleting it because a category changed would destroy evidence. Untouched items
- * from a removed headline ARE cleared, because those are just clutter.
- *
- * ── MERGING ────────────────────────────────────────────────────────────────
- *
- * Two headlines that both require "Check gas pressure" produce ONE item, and the
- * caller is told which were merged so the screen can say so rather than leaving
- * somebody to wonder. `mergeHeadlineItems` is pure and tested; this function only
- * feeds it and writes the result.
+ * This used to copy each headline's checklist onto the job as well, which is why
+ * it once had something to report back. 224 retired that, so it now does the one
+ * thing its name says: replace the links and record who changed them. Nothing is
+ * merged or counted, because there is no longer anything to merge.
  */
 export async function applyHeadlines(
   siteId: number,
@@ -578,8 +377,8 @@ export async function applyHeadlines(
       return { ok: false as const, error: 'This job is closed, so its headlines cannot be changed.' }
     }
 
-    // The templates, with their items, in the order the caller chose them.
-    const heads: { id: number; name: string; items: Row[] }[] = []
+    // The templates, in the order the caller chose them.
+    const heads: { id: number; name: string }[] = []
     for (const id of wanted) {
       const [hRows] = await tx.query<Row[]>(
         `SELECT id, name, is_active FROM job_headlines WHERE id = ?`,
@@ -587,14 +386,7 @@ export async function applyHeadlines(
       )
       const head = hRows[0]
       if (!head) return { ok: false as const, error: 'One of those headlines no longer exists.' }
-      const [itemRows] = await tx.query<Row[]>(
-        `SELECT id, kind, name, hint, response_type, unit, work_phase, is_required,
-                evidence_required, sort_order
-           FROM job_headline_items WHERE headline_id = ?
-          ORDER BY FIELD(work_phase,'before','during','after'), sort_order, id`,
-        [id],
-      )
-      heads.push({ id: Number(head.id), name: String(head.name), items: itemRows })
+      heads.push({ id: Number(head.id), name: String(head.name) })
     }
 
     // Replace the links.
@@ -607,83 +399,12 @@ export async function applyHeadlines(
     }
 
     /*
-     * Clear only UNTOUCHED template items. An item somebody completed stays, and
-     * so does anything added by hand (headline_item_id IS NULL) — a technician who
-     * wrote their own task does not lose it because the office reclassified the job.
-     *
-     * `attachment_id IS NULL` joined that list in 119. A photo item carries its
-     * answer as a FILE and often no text at all, so without this clause a
-     * reclassification would delete the item and orphan the photograph — the one
-     * piece of evidence on the job that cannot be re-taken after the technician
-     * has driven away.
-     */
-    await tx.execute(
-      `DELETE FROM job_card_items
-        WHERE job_card_id = ? AND headline_item_id IS NOT NULL
-          AND completed_at IS NULL AND response IS NULL AND attachment_id IS NULL`,
-      [jobId],
-    )
-
-    // What survived, so a re-apply does not duplicate it.
-    const [survivingRows] = await tx.query<Row[]>(
-      `SELECT name FROM job_card_items WHERE job_card_id = ?`,
-      [jobId],
-    )
-    const surviving = new Set(survivingRows.map((r) => String(r.name).trim().toLowerCase()))
-
-    const { items, merged } = mergeHeadlineItems(
-      heads.map((h) => ({
-        headlineName: h.name,
-        items: h.items.map((i) => ({
-          headlineId: h.id,
-          templateId: Number(i.id),
-          kind: String(i.kind) as ItemKind,
-          name: String(i.name),
-          hint: text(i.hint),
-          responseType: String(i.response_type) as ResponseType,
-          unit: text(i.unit),
-          workPhase: String(i.work_phase) as WorkPhase,
-          isRequired: Number(i.is_required) === 1,
-          evidenceRequired: Number(i.evidence_required) === 1,
-        })),
-      })),
-    )
-
-    let added = 0
-    for (const [index, item] of items.entries()) {
-      if (surviving.has(item.name.trim().toLowerCase())) continue
-      await tx.execute(
-        `INSERT INTO job_card_items
-           (job_card_id, headline_item_id, headline_id, kind, name, hint, response_type,
-            unit, work_phase, is_required, evidence_required, sort_order)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [
-          jobId,
-          item.templateId,
-          item.headlineId,
-          item.kind,
-          item.name.trim(),
-          item.hint,
-          item.responseType,
-          item.unit,
-          item.workPhase,
-          item.isRequired ? 1 : 0,
-          // Snapshotted from the template, like every other column here: editing
-          // the template next year must not change what this job already asked for.
-          item.evidenceRequired ? 1 : 0,
-          index,
-        ],
-      )
-      added++
-    }
-
-    /*
      * The first headline that expresses a priority sets it, and only while the job
      * is still at its default. A headline must not overrule a dispatcher who
      * deliberately marked something urgent — the PRD says a manual choice should
      * not be silently overwritten by automation.
      */
-    const withPriority = heads.find((h) => h.items.length >= 0)
+    const withPriority = heads[0]
     if (withPriority && String(job.priority) === 'normal') {
       const [pRows] = await tx.query<Row[]>(
         `SELECT default_priority FROM job_headlines WHERE id = ? AND default_priority IS NOT NULL`,
@@ -702,302 +423,11 @@ export async function applyHeadlines(
       detail:
         heads.length === 0
           ? 'Headlines cleared'
-          : `${heads.map((h) => h.name).join(', ')} — ${added} item(s) added`,
+          : `Headlines set to ${heads.map((h) => h.name).join(', ')}`,
     })
 
-    return { ok: true as const, added, merged }
+    return { ok: true as const }
   })
-}
-
-/** Record an answer, or untick an item. Returns the refusal the screen shows. */
-export async function recordItem(
-  siteId: number,
-  actor: Actor,
-  itemId: number,
-  input: { response: string | null; note: string | null; complete: boolean },
-): Promise<ItemResult> {
-  const item = await siteQueryOne<Row>(
-    siteId,
-    `SELECT i.id, i.job_card_id, i.name, i.response_type, i.evidence_required,
-            i.attachment_id, j.status
-       FROM job_card_items i JOIN job_cards j ON j.id = i.job_card_id
-      WHERE i.id = ?`,
-    [itemId],
-  )
-  if (!item) return { ok: false, error: 'That item no longer exists.' }
-  if (String(item.status) !== 'open') {
-    return { ok: false, error: 'This job is closed, so its checks cannot be changed.' }
-  }
-
-  const responseType = String(item.response_type) as ResponseType
-  const response = text(input.response)
-  const refusal = validateResponse(responseType, response)
-  if (refusal) return { ok: false, error: refusal }
-
-  /*
-   * A check that captures a value cannot be complete without one. Otherwise
-   * "completed" would mean somebody pressed a button, which is exactly the
-   * box-ticking the checklist exists to prevent.
-   *
-   * itemBlocker() rather than a test on `response` here, because since 119 the
-   * value for a photo or signature is the FILE. Asking for text as well would
-   * make a signed item impossible to tick, and a hand-rolled second rule beside
-   * the close guard is how the two come to disagree about what "done" means.
-   */
-  if (input.complete) {
-    const blocker = itemBlocker({
-      responseType,
-      evidenceRequired: Number(item.evidence_required) === 1,
-      attachmentId: item.attachment_id === null ? null : Number(item.attachment_id),
-      response,
-    })
-    if (blocker) return { ok: false, error: `${item.name}: ${blocker}` }
-  }
-
-  const failed = isFailedResponse(responseType, response)
-
-  await siteExecute(
-    siteId,
-    `UPDATE job_card_items
-        SET response = ?, note = ?, is_failed = ?,
-            completed_at = ${input.complete ? 'NOW()' : 'NULL'},
-            completed_by_user_id = ${input.complete ? '?' : 'NULL'},
-            completed_by_name = ${input.complete ? '?' : 'NULL'}
-      WHERE id = ?`,
-    input.complete
-      ? [response, text(input.note), failed ? 1 : 0, actor.userId, actor.userName, itemId]
-      : [response, text(input.note), failed ? 1 : 0, itemId],
-  )
-
-  await logActivity(siteId, actor, {
-    entity: 'job_card',
-    entityId: Number(item.job_card_id),
-    action: input.complete ? 'item_completed' : 'item_reopened',
-    detail: `${item.name}${response ? `: ${response}` : ''}${failed ? ' (FAILED)' : ''}`,
-  })
-  return { ok: true }
-}
-
-/**
- * Attach a captured photo or signature to a check, and tick it off.
- *
- * ── WHY THE UPLOAD IS THE CALLER'S JOB ──────────────────────────────────────
- *
- * `storeUpload()` has already written the bytes by the time this runs, and its
- * header states the contract: if the metadata insert fails, the caller unlinks
- * the file or it is orphaned. So this function takes a StoredFile rather than a
- * File, and RETURNS the refusal instead of throwing, so the action layer can
- * clean up the disk on every path out of here.
- *
- * ── WHY THE TWO WRITES ARE ONE TRANSACTION ──────────────────────────────────
- *
- * A party_documents row with no item pointing at it is a stray file on the Files
- * tab. An item pointing at a row that was rolled back is worse — the FK would
- * refuse it, so the real risk is the reverse order. Both in one transaction
- * means the only two outcomes are "captured" and "nothing happened".
- */
-export async function captureEvidence(
-  siteId: number,
-  actor: Actor,
-  itemId: number,
-  file: { storedName: string; filename: string; mimeType: string | null; sizeBytes: number },
-  caption: string | null,
-): Promise<ItemResult & { attachmentId?: number }> {
-  const item = await siteQueryOne<Row>(
-    siteId,
-    `SELECT i.id, i.job_card_id, i.name, i.response_type, i.attachment_id, j.status
-       FROM job_card_items i JOIN job_cards j ON j.id = i.job_card_id
-      WHERE i.id = ?`,
-    [itemId],
-  )
-  if (!item) return { ok: false, error: 'That item no longer exists.' }
-  if (String(item.status) !== 'open') {
-    return { ok: false, error: 'This job is closed, so its checks cannot be changed.' }
-  }
-
-  const responseType = String(item.response_type) as ResponseType
-  if (!responseIsEvidence(responseType)) {
-    return { ok: false, error: `${item.name} does not take a photo or a signature.` }
-  }
-
-  const jobId = Number(item.job_card_id)
-
-  return siteTransaction(siteId, async (tx) => {
-    const [res] = await tx.execute<import('mysql2/promise').ResultSetHeader>(
-      `INSERT INTO party_documents
-         (entity, entity_id, filename, stored_name, mime_type, size_bytes,
-          description, uploaded_by, uploaded_name)
-       VALUES ('job_card',?,?,?,?,?,?,?,?)`,
-      [
-        jobId,
-        file.filename.slice(0, 255),
-        file.storedName.slice(0, 190),
-        file.mimeType?.slice(0, 120) ?? null,
-        Math.max(0, Math.trunc(file.sizeBytes)),
-        // The description says which question this answers, so the Files tab is
-        // readable on its own. Evidence IS a document on the job; the item link
-        // says what it is for, not where it lives.
-        `${String(item.name)}${caption?.trim() ? ` — ${caption.trim()}` : ''}`.slice(0, 400),
-        actor.userId,
-        actor.userName.slice(0, 120),
-      ],
-    )
-    const attachmentId = Number(res.insertId)
-
-    /*
-     * The caption goes in `response` and the file in `attachment_id`. Recapturing
-     * REPLACES the link: the previous party_documents row stays on the Files tab
-     * rather than being deleted, because a technician who took a better photo has
-     * not made the first one untrue, and silently destroying evidence on a second
-     * upload is the wrong default for the one table where evidence lives.
-     */
-    await tx.execute(
-      `UPDATE job_card_items
-          SET attachment_id = ?, response = ?, is_failed = 0,
-              completed_at = NOW(), completed_by_user_id = ?, completed_by_name = ?
-        WHERE id = ?`,
-      [attachmentId, text(caption), actor.userId, actor.userName, itemId],
-    )
-
-    await logActivityTx(tx, actor, {
-      entity: 'job_card',
-      entityId: jobId,
-      action: responseType === 'signature' ? 'signature_captured' : 'photo_captured',
-      detail: `${String(item.name)} — ${file.filename}`,
-    })
-
-    return { ok: true as const, attachmentId }
-  })
-}
-
-/** Add a one-off task or check nobody templated. */
-export async function addJobItem(
-  siteId: number,
-  actor: Actor,
-  jobId: number,
-  input: {
-    kind: ItemKind
-    name: string
-    responseType: ResponseType
-    unit: string | null
-    workPhase: WorkPhase
-    isRequired: boolean
-  },
-): Promise<ItemResult> {
-  if (!input.name.trim()) return { ok: false, error: 'Give it a name.' }
-  if (input.name.trim().length > 190) return { ok: false, error: 'That name is too long.' }
-
-  const job = await siteQueryOne<Row>(siteId, `SELECT id, status FROM job_cards WHERE id = ?`, [jobId])
-  if (!job) return { ok: false, error: 'That job no longer exists.' }
-  if (String(job.status) !== 'open') {
-    return { ok: false, error: 'This job is closed.' }
-  }
-
-  const next = await siteQueryOne<Row>(
-    siteId,
-    `SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM job_card_items WHERE job_card_id = ?`,
-    [jobId],
-  )
-
-  // headline_item_id stays NULL, which is what protects it from being cleared
-  // when the job's headlines change. See applyHeadlines.
-  await siteExecute(
-    siteId,
-    `INSERT INTO job_card_items
-       (job_card_id, kind, name, response_type, unit, work_phase, is_required,
-        evidence_required, sort_order)
-     VALUES (?,?,?,?,?,?,?,?,?)`,
-    [
-      jobId,
-      input.kind,
-      input.name.trim(),
-      input.responseType,
-      text(input.unit),
-      input.workPhase,
-      input.isRequired ? 1 : 0,
-      // A one-off photo or signature holds itself to the same rule as a templated
-      // one. There is no reason a check somebody added on site should be satisfiable
-      // by typing when the identical templated check is not.
-      responseIsEvidence(input.responseType) ? 1 : 0,
-      Number(next?.n ?? 1),
-    ],
-  )
-  await logActivity(siteId, actor, {
-    entity: 'job_card',
-    entityId: jobId,
-    action: 'item_added',
-    detail: input.name.trim(),
-  })
-  return { ok: true }
-}
-
-export async function deleteJobItem(
-  siteId: number,
-  actor: Actor,
-  itemId: number,
-): Promise<ItemResult> {
-  const item = await siteQueryOne<Row>(
-    siteId,
-    `SELECT i.id, i.job_card_id, i.name, i.completed_at, j.status
-       FROM job_card_items i JOIN job_cards j ON j.id = i.job_card_id
-      WHERE i.id = ?`,
-    [itemId],
-  )
-  if (!item) return { ok: false, error: 'That item no longer exists.' }
-  if (String(item.status) !== 'open') return { ok: false, error: 'This job is closed.' }
-  if (item.completed_at !== null) {
-    return {
-      ok: false,
-      error: `${item.name} has already been signed off, so it cannot be removed. Untick it first if it was recorded in error.`,
-    }
-  }
-
-  await siteExecute(siteId, `DELETE FROM job_card_items WHERE id = ?`, [itemId])
-  await logActivity(siteId, actor, {
-    entity: 'job_card',
-    entityId: Number(item.job_card_id),
-    action: 'item_removed',
-    detail: String(item.name),
-  })
-  return { ok: true }
-}
-
-/**
- * Required items still unanswered on a job.
- *
- * Used by the close guard inside setStatus. Its own tolerant function rather than
- * inline SQL there, so a site without migration 114 can still close a job.
- */
-export async function outstandingRequiredTx(
-  tx: PoolConnection,
-  jobId: number,
-): Promise<string[]> {
-  try {
-    const [rows] = await tx.query<Row[]>(
-      // The second clause is not redundant with the first. recordItem cannot set
-      // completed_at on an evidence item without a file, but DELETING the
-      // attachment afterwards nulls attachment_id via the FK and leaves
-      // completed_at standing. Without this the job would close on the strength of
-      // a photograph nobody has. An item in that state reads as outstanding, which
-      // is recoverable; closing over it is not.
-      `SELECT name FROM job_card_items
-        WHERE job_card_id = ? AND is_required = 1
-          AND (completed_at IS NULL OR (evidence_required = 1 AND attachment_id IS NULL))
-        ORDER BY FIELD(work_phase,'before','during','after'), sort_order LIMIT 20`,
-      [jobId],
-    )
-    return rows.map((r) => String(r.name))
-  } catch {
-    // The table does not exist on this site yet. A missing feature must not stop
-    // somebody closing a job — the same stance reservedQtyFor takes on online holds.
-    return []
-  }
-}
-
-/** Whether the block-on-close rule is switched on. */
-export async function itemsBlockClose(siteId: number): Promise<boolean> {
-  const value = await getSetting(siteId, 'job_items_block_close').catch(() => '1')
-  return value !== '0'
 }
 
 /** Whether a job must carry at least one headline. */
@@ -1006,60 +436,23 @@ export async function headlineRequired(siteId: number): Promise<boolean> {
   return value === '1'
 }
 
+/**
+ * Drift a headline can still be in.
+ *
+ * Most of what this used to report was about answers: a check ticked with no
+ * value, a signature with no file, a stored is_failed disagreeing with the
+ * response beside it. All of that went with the checklist in 224, and the
+ * equivalent checks for forms live in jobForms. What is left is the one question
+ * that is genuinely about headlines.
+ */
 export type HeadlineDrift = {
-  /**
-   * Items completed with no answer, on a type that needs one.
-   *
-   * recordItem refuses this, so a row here means the database was edited directly
-   * — or an older build wrote it before the guard existed.
-   */
-  completedWithoutAnswer: { itemId: number; jobId: number; name: string; responseType: string }[]
-  /**
-   * A photo or signature item marked complete with no file behind it.
-   *
-   * The serious one. Every other shape here is a figure disagreeing with itself;
-   * this is a job that LOOKS signed off and has nothing to show. It happens if the
-   * attachment row is deleted — the FK sets attachment_id to NULL and leaves
-   * completed_at standing, which is the right trade (better an item that reports
-   * itself than a pointer to bytes that are gone) but must be visible.
-   */
-  completedWithoutEvidence: { itemId: number; jobId: number; name: string; responseType: string }[]
-  /**
-   * A stored is_failed that disagrees with the response beside it. is_failed is
-   * derived on write and stored for the indexed exception query; if the two ever
-   * diverge, the exception report is lying.
-   */
-  failedFlagWrong: { itemId: number; jobId: number; name: string; response: string | null; isFailed: boolean }[]
   /** Open jobs carrying no headline while the setting demands one. */
   missingHeadline: { jobId: number; documentNumber: string | null }[]
 }
 
 /** Drift between what was recorded and what the rules allow. Reports, never repairs. */
 export async function reconcileJobHeadlines(siteId: number): Promise<HeadlineDrift> {
-  const [noAnswer, noEvidence, flags, missing, required] = await Promise.all([
-    siteQuery<Row>(
-      siteId,
-      // Photo and signature excluded: since 119 their answer is the FILE, and a
-      // signature with no typed caption is complete. Leaving them in would report
-      // every correctly captured signature as drift, and a reconciliation screen
-      // that cries wolf is one nobody reads.
-      `SELECT id, job_card_id, name, response_type FROM job_card_items
-        WHERE completed_at IS NOT NULL
-          AND response_type NOT IN ('none','photo','signature')
-          AND (response IS NULL OR TRIM(response) = '')`,
-    ),
-    siteQuery<Row>(
-      siteId,
-      `SELECT id, job_card_id, name, response_type FROM job_card_items
-        WHERE completed_at IS NOT NULL AND evidence_required = 1
-          AND attachment_id IS NULL`,
-    ),
-    siteQuery<Row>(
-      siteId,
-      `SELECT id, job_card_id, name, response, is_failed, response_type
-         FROM job_card_items
-        WHERE response_type IN ('yesno','passfail')`,
-    ),
+  const [missing, required] = await Promise.all([
     siteQuery<Row>(
       siteId,
       `SELECT j.id, j.document_number FROM job_cards j
@@ -1070,32 +463,6 @@ export async function reconcileJobHeadlines(siteId: number): Promise<HeadlineDri
   ])
 
   return {
-    completedWithoutAnswer: noAnswer.map((r) => ({
-      itemId: Number(r.id),
-      jobId: Number(r.job_card_id),
-      name: String(r.name),
-      responseType: String(r.response_type),
-    })),
-    completedWithoutEvidence: noEvidence.map((r) => ({
-      itemId: Number(r.id),
-      jobId: Number(r.job_card_id),
-      name: String(r.name),
-      responseType: String(r.response_type),
-    })),
-    // Recomputed with the SAME pure function that wrote it, so the check cannot
-    // drift from the rule by reimplementing it in SQL.
-    failedFlagWrong: flags
-      .filter((r) => {
-        const expected = isFailedResponse(String(r.response_type) as ResponseType, text(r.response))
-        return expected !== (Number(r.is_failed) === 1)
-      })
-      .map((r) => ({
-        itemId: Number(r.id),
-        jobId: Number(r.job_card_id),
-        name: String(r.name),
-        response: text(r.response),
-        isFailed: Number(r.is_failed) === 1,
-      })),
     // Only drift when the setting demands a headline. Otherwise a job without one
     // is a normal job, and reporting it would be noise.
     missingHeadline: required

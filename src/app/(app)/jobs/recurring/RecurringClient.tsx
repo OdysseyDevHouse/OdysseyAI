@@ -60,7 +60,7 @@ export default function RecurringClient({
   canSetup,
 }: {
   series: JobSeries[]
-  headlines: { id: number; name: string; itemCount: number }[]
+  headlines: { id: number; name: string; formCount: number }[]
   customers: { id: number; name: string }[]
   canEdit: boolean
   canSetup: boolean
@@ -602,7 +602,7 @@ export default function RecurringClient({
                         e.target.checked ? [...prev, h.id] : prev.filter((id) => id !== h.id),
                       )
                     }
-                    label={`${h.name}${h.itemCount > 0 ? ` — ${h.itemCount} task${h.itemCount === 1 ? '' : 's'}` : ''}`}
+                    label={`${h.name}${h.formCount > 0 ? ` — ${h.formCount} form${h.formCount === 1 ? '' : 's'}` : ''}`}
                   />
                 ))}
               </div>

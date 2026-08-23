@@ -1085,45 +1085,6 @@ export function JobStrandedStatusTable({ rows }: { rows: StrandedStatusRow[] }) 
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.statusId} />
 }
 
-/* ── JOB TASKS AND CHECKS ───────────────────────────────────────────────────
- *
- * Two shapes. A completed item with no answer, and a stored failure flag that
- * disagrees with the response beside it — both impossible through the app, so both
- * mean somebody edited the database or an older build wrote the row.
- */
-
-type ItemDriftRow = {
-  itemId: number
-  jobId: number
-  name: string
-  detail: string
-}
-
-export function JobItemDriftTable({ rows }: { rows: ItemDriftRow[] }) {
-  const columns: Column<ItemDriftRow>[] = [
-    {
-      key: 'job',
-      header: 'Job',
-      sortable: true,
-      sortValue: (r) => r.jobId,
-      cell: (r) => <TextLink href={`/jobs/${r.jobId}?tab=checks`}>#{r.jobId}</TextLink>,
-    },
-    {
-      key: 'name',
-      header: 'Task or check',
-      sortable: true,
-      sortValue: (r) => r.name,
-      cell: (r) => <span className="text-ink-2">{r.name}</span>,
-    },
-    {
-      key: 'detail',
-      header: 'What is wrong',
-      cell: (r) => <Badge tone="danger">{r.detail}</Badge>,
-    },
-  ]
-  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.itemId} />
-}
-
 type UnclassifiedJobRow = { jobId: number; documentNumber: string | null }
 
 /**

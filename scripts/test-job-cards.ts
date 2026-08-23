@@ -58,12 +58,14 @@
  *  (J17) The suite leaves NOTHING behind, asserted per table rather than by
  *        checking job_cards alone — which passed while four orphaned activity rows
  *        sat behind it. Litter from one suite is how another suite fails.
- *  (J18) A kind of work brings its tasks and checks with it. Two kinds sharing an
- *        item produce ONE (matched past case and spacing) and a later REQUIRED
- *        duplicate promotes the survivor; a required item unanswered blocks closing
- *        and the refusal NAMES it; a check that records a value cannot be ticked off
- *        empty; and dropping a kind of work keeps anything signed off or added by
- *        hand, because neither is the system's to delete.
+ *  (J18) A headline is a KIND OF WORK, not a category. 224 retired the checklist
+ *        it used to carry — forms ask the questions now — so what is asserted is
+ *        what remains: the code is frozen at creation so a rename cannot strand
+ *        the jobs logged under it; a duplicate code is refused; applying REPLACES
+ *        the links rather than adding to them; a default priority is suggested but
+ *        never overrules one a dispatcher chose by hand; a kind of work a job has
+ *        used cannot be deleted; and a job carrying no headline is drift only
+ *        while the setting demands one.
  *  (J19) Customer equipment is what we look after for somebody else — not
  *        fixed_assets, which we own and depreciate, and not product_serials, which
  *        we bought or sold. A generated serial_key means spacing and capitals
@@ -217,11 +219,7 @@ import {
   deleteHeadline,
   listHeadlines,
   applyHeadlines,
-  jobItems,
-  recordItem,
-  captureEvidence,
-  addJobItem,
-  deleteJobItem,
+  jobHeadlineIds,
   reconcileJobHeadlines,
 } from '../src/lib/site/jobHeadlines'
 import { listUsers } from '../src/lib/site/users'
@@ -354,13 +352,7 @@ import {
   parseClock,
   slaState,
   tradingWeekIsUsable,
-  isFailedResponse,
-  itemBlocker,
-  responseIsEvidence,
-  mergeHeadlineItems,
   validateHeadline,
-  validateResponse,
-  type ResponseType,
 } from '../src/lib/jobStatusModel'
 
 const SITE = 1
@@ -390,17 +382,6 @@ const ASSET_PATTERN = '^AS[0-9]{6} '
 const ASSET_TYPE_PATTERN = '^AS[0-9]{6}[A-Z]$'
 /** (J20) fixtures: every schedule this suite creates is named "JCT recurring". */
 const SERIES_PATTERN = '^JCT recurring'
-/**
- * (J21) evidence fixtures: a headline coded JCE<stamp>H, its job titled
- * "JCE<stamp> evidence job", and the party_documents rows the capture created.
- *
- * The attachments matter most. An orphaned party_documents row pointing at a
- * stored_name that was never written is exactly the drift the reconciliation
- * screen now reports, and leaving one behind would have the NEXT run open with a
- * failure it did not cause.
- */
-const EVIDENCE_HEADLINE_PATTERN = '^JCE[0-9]{6}H$'
-const EVIDENCE_JOB_PATTERN = '^JCE[0-9]{6} '
 /**
  * (J22) fixtures: a job titled "JCT<stamp> people job".
  *
@@ -463,39 +444,6 @@ async function sweepStrays() {
    * be blamed on whichever suite ran next.
    */
   await siteExecute(SITE, `DELETE FROM job_series WHERE name REGEXP ?`, [SERIES_PATTERN])
-
-  /*
-   * (J21) evidence. The attachments go first: job_card_items.attachment_id is
-   * ON DELETE SET NULL, so removing the documents cannot fail on a reference, and
-   * the items themselves CASCADE from the job below.
-   */
-  await siteExecute(
-    SITE,
-    `DELETE FROM party_documents
-      WHERE entity = 'job_card'
-        AND entity_id IN (SELECT id FROM job_cards WHERE title REGEXP ?)`,
-    [EVIDENCE_JOB_PATTERN],
-  )
-  await siteExecute(
-    SITE,
-    `DELETE FROM job_card_headlines
-      WHERE job_card_id IN (SELECT id FROM job_cards WHERE title REGEXP ?)`,
-    [EVIDENCE_JOB_PATTERN],
-  )
-  await siteExecute(
-    SITE,
-    `DELETE FROM job_card_items
-      WHERE job_card_id IN (SELECT id FROM job_cards WHERE title REGEXP ?)`,
-    [EVIDENCE_JOB_PATTERN],
-  )
-  await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [EVIDENCE_JOB_PATTERN])
-  await siteExecute(
-    SITE,
-    `DELETE FROM job_headline_items
-      WHERE headline_id IN (SELECT id FROM job_headlines WHERE code REGEXP ?)`,
-    [EVIDENCE_HEADLINE_PATTERN],
-  )
-  await siteExecute(SITE, `DELETE FROM job_headlines WHERE code REGEXP ?`, [EVIDENCE_HEADLINE_PATTERN])
 
   // (J22) people. job_card_people CASCADEs, so the job is the only thing to delete.
   await siteExecute(SITE, `DELETE FROM job_cards WHERE title REGEXP ?`, [PEOPLE_JOB_PATTERN])
@@ -610,16 +558,9 @@ async function sweepStrays() {
   await siteExecute(SITE, `DELETE FROM asset_types WHERE code REGEXP ?`, [ASSET_TYPE_PATTERN])
 
   /*
-   * (J18) items and headlines. Items first — job_card_items CASCADEs from the job,
-   * but a headline is RESTRICTed by job_card_headlines, so the links have to go
-   * before the templates or the delete fails silently and leaves a stray.
+   * Headlines. A headline is RESTRICTed by job_card_headlines, so the links have
+   * to go before the templates or the delete fails silently and leaves a stray.
    */
-  await siteExecute(
-    SITE,
-    `DELETE i FROM job_card_items i JOIN job_cards j ON j.id = i.job_card_id
-      WHERE j.title LIKE ?`,
-    [TITLE_PATTERN],
-  )
   await siteExecute(
     SITE,
     `DELETE h FROM job_card_headlines h JOIN job_cards j ON j.id = h.job_card_id
@@ -4017,105 +3958,43 @@ async function main() {
     )
   }
 
-  // ── 24. (J18) Headlines, tasks and checks ─────────────────────────────
+  // ── 24. (J18) Headlines: the kind of work, and what it brings ─────────
   //
-  // The pure logic first — merging is where this phase could be silently wrong,
-  // because a duplicate that slips through produces two identical checks on one
-  // job and nobody notices until a technician ticks the same box twice.
+  // 224 retired the checklist a headline used to carry, so what is left is what a
+  // headline has always actually been: a kind of work with a code that is frozen,
+  // parts it consumes, defaults it suggests, and forms it asks for. The checks
+  // that matter are the REFUSALS — a duplicate code, and deleting a kind of work
+  // a job has already been logged under, which would erase what that job WAS.
   {
-    const item = (name: string, isRequired = false) => ({ name, isRequired })
-
-    const merged = mergeHeadlineItems([
-      { headlineName: 'Service', items: [item('Check gas pressure'), item('Replace filter')] },
-      { headlineName: 'Repair', items: [item('  check GAS pressure  ', true), item('Test run')] },
-    ])
-    ok(
-      '(J18) *** two kinds of work sharing an item produce ONE, matched past case and spacing ***',
-      merged.items.length === 3,
-      String(merged.items.length),
-    )
-    ok(
-      '(J18) and the caller is told which was combined, so the screen can say so',
-      merged.merged.length === 1 && merged.merged[0].from.length === 2,
-      JSON.stringify(merged.merged),
-    )
-    /*
-     * The subtle one. If EITHER kind of work insists on an item, the job insists.
-     * Keeping the optional copy would silently drop a requirement somebody
-     * configured, and the job would then close with the check unanswered.
-     */
-    ok(
-      '(J18) *** a later REQUIRED duplicate promotes the survivor ***',
-      merged.items.find((i) => i.name.trim().toLowerCase() === 'check gas pressure')?.isRequired ===
-        true,
-    )
-
-    // Failure detection: only an explicit no or fail. An EMPTY answer is
-    // unanswered, and treating it as failing would put every untouched job on the
-    // exception report.
-    ok('(J18) no is a failure', isFailedResponse('yesno', 'no'))
-    ok('(J18) so is a padded, capitalised Fail', isFailedResponse('passfail', ' Fail '))
-    ok('(J18) yes is not', !isFailedResponse('yesno', 'yes'))
-    ok('(J18) *** an unanswered check is NOT a failure ***', !isFailedResponse('yesno', null))
-    ok('(J18) and a number cannot fail — no threshold exists to judge it', !isFailedResponse('number', '0'))
-
-    ok('(J18) a non-numeric measurement is refused', validateResponse('measure', 'quite high') !== null)
-    ok('(J18) a numeric one passes', validateResponse('measure', '12.4') === null)
-    ok('(J18) an answer outside the options is refused', validateResponse('yesno', 'maybe') !== null)
-    ok('(J18) a blank answer is not an error — required-ness is what forces one', validateResponse('number', '') === null)
-
-    const base = { code: 'J18CODE', name: 'J18', suggestedMinutes: 60 }
-    const draft = (
-      name: string,
-      responseType: ResponseType = 'none',
-      unit: string | null = null,
-      evidenceRequired = false,
-    ) => ({
-      kind: 'check' as const, name, hint: null, responseType, unit,
-      workPhase: 'during' as const, isRequired: false, evidenceRequired,
-    })
-    ok('(J18) a headline duplicating its OWN item is refused', validateHeadline({ ...base, items: [draft('A'), draft(' a ')] }) !== null)
-    ok('(J18) a lower-case code is refused', validateHeadline({ ...base, code: 'lower', items: [] }) !== null)
-    ok('(J18) a measurement with no unit is refused', validateHeadline({ ...base, items: [draft('P', 'measure')] }) !== null)
-    ok('(J18) and a unit on something that is not a measurement', validateHeadline({ ...base, items: [draft('P', 'yesno', 'bar')] }) !== null)
-
-    // ── Evidence (119) ──────────────────────────────────────────────────
-    ok('(J18) a photo may require a file', validateHeadline({ ...base, items: [draft('Pic', 'photo', null, true)] }) === null)
-    ok('(J18) a signature may too', validateHeadline({ ...base, items: [draft('Sig', 'signature', null, true)] }) === null)
-    ok(
-      '(J18) *** a yes/no CANNOT require a file — it could never be satisfied ***',
-      validateHeadline({ ...base, items: [draft('Q', 'yesno', null, true)] }) !== null,
-    )
-    ok('(J18) photo and signature are the evidence types', responseIsEvidence('photo') && responseIsEvidence('signature'))
-    ok('(J18) and nothing else is', !responseIsEvidence('text') && !responseIsEvidence('yesno') && !responseIsEvidence('none'))
-
-    // ── Against the database ────────────────────────────────────────────
     const hlTag = `JCT${stamp}`
 
+    // The pure rules first. saveHeadline delegates to these, so a refusal here is
+    // a refusal there.
+    const base = { code: 'J18CODE', name: 'J18', suggestedMinutes: 60, items: [] }
+    ok('(J18) a lower-case code is refused', validateHeadline({ ...base, code: 'lower' }) !== null)
+    ok('(J18) a blank name is refused', validateHeadline({ ...base, name: '  ' }) !== null)
+    ok('(J18) a zero duration is refused', validateHeadline({ ...base, suggestedMinutes: 0 }) !== null)
+    ok(
+      '(J18) and one longer than ten working days — that is a project, not an appointment',
+      validateHeadline({ ...base, suggestedMinutes: 4801 }) !== null,
+    )
+    ok('(J18) a sound one passes', validateHeadline(base) === null)
+
+    // ── Against the database ────────────────────────────────────────────
     const serv = await saveHeadline(SITE, actor, {
       id: null, code: `${hlTag}S`, name: 'JCT annual service', description: null,
       defaultPriority: 'high', defaultBoardId: null, suggestedMinutes: 120,
       requiredSkills: 'Gas licence', sortOrder: 0, isActive: true,
-      items: [
-        { id: null, kind: 'check', name: 'JCT isolate power', hint: null, responseType: 'yesno', unit: null, workPhase: 'before', isRequired: true, evidenceRequired: false },
-        { id: null, kind: 'check', name: 'JCT gas pressure', hint: null, responseType: 'measure', unit: 'bar', workPhase: 'during', isRequired: false, evidenceRequired: false },
-        { id: null, kind: 'task', name: 'JCT replace filter', hint: null, responseType: 'none', unit: null, workPhase: 'during', isRequired: false, evidenceRequired: false },
-      ],
-      parts: [],
+      items: [], parts: [],
     })
-    ok('(J18) a kind of work saves with its items', serv.ok, serv.ok ? '' : serv.error)
+    ok('(J18) a kind of work saves', serv.ok, serv.ok ? '' : serv.error)
     if (!serv.ok) throw new Error('headline fixture failed')
 
     const rep = await saveHeadline(SITE, actor, {
       id: null, code: `${hlTag}R`, name: 'JCT repair', description: null,
       defaultPriority: null, defaultBoardId: null, suggestedMinutes: 60,
       requiredSkills: null, sortOrder: 1, isActive: true,
-      items: [
-        { id: null, kind: 'check', name: '  jct GAS pressure  ', hint: null, responseType: 'measure', unit: 'bar', workPhase: 'during', isRequired: true, evidenceRequired: false },
-        // Required AND evidence-required: the fixture the 119 checks below use.
-        { id: null, kind: 'check', name: 'JCT customer signature', hint: null, responseType: 'signature', unit: null, workPhase: 'after', isRequired: true, evidenceRequired: true },
-      ],
-      parts: [],
+      items: [], parts: [],
     })
     if (!rep.ok) throw new Error('second headline fixture failed')
 
@@ -4125,6 +4004,30 @@ async function main() {
       requiredSkills: null, sortOrder: 0, isActive: true, items: [], parts: [],
     })
     ok('(J18) a duplicate code is refused', !clash.ok, clash.ok ? '' : clash.error)
+
+    /*
+     * The code is FROZEN at creation, deliberately: renaming a kind of work must
+     * relabel every job that used it rather than stranding them under a code that
+     * no longer means anything.
+     */
+    const renamed = await saveHeadline(SITE, actor, {
+      id: serv.id, code: 'JCTRENAMED', name: 'JCT annual service (renamed)', description: null,
+      defaultPriority: 'high', defaultBoardId: null, suggestedMinutes: 120,
+      requiredSkills: 'Gas licence', sortOrder: 0, isActive: true, items: [], parts: [],
+    })
+    ok('(J18) renaming saves', renamed.ok, renamed.ok ? '' : renamed.error)
+    const afterRename = (await listHeadlines(SITE)).find((h) => h.id === serv.id)
+    ok(
+      '(J18) *** but the CODE is frozen — a rename must not strand the jobs under it ***',
+      afterRename?.code === `${hlTag}S`,
+      String(afterRename?.code),
+    )
+    ok('(J18) while the name did change', afterRename?.name === 'JCT annual service (renamed)')
+    ok(
+      '(J18) a headline with no forms attached counts zero rather than reporting nothing',
+      afterRename?.formCount === 0,
+      String(afterRename?.formCount),
+    )
 
     const hlJob = await saveJobCard(SITE, actor, {
       id: null, customerId: customer.id, customerName: null, customerPhone: null,
@@ -4139,162 +4042,80 @@ async function main() {
     const applied = await applyHeadlines(SITE, actor, hJob, [serv.id, rep.id])
     ok('(J18) both kinds of work apply', applied.ok, applied.ok ? '' : applied.error)
     ok(
-      '(J18) *** 3 + 2 items become 4 on the job, the shared one merged ***',
-      applied.ok && applied.added === 4,
-      applied.ok ? String(applied.added) : '',
+      '(J18) and the job carries both, in the order they were chosen',
+      (await jobHeadlineIds(SITE, hJob)).join(',') === `${serv.id},${rep.id}`,
+      (await jobHeadlineIds(SITE, hJob)).join(','),
     )
-    ok('(J18) and the merge is reported back', applied.ok && applied.merged.length === 1)
 
-    let jItems = await jobItems(SITE, hJob)
-    ok('(J18) the job carries four', jItems.length === 4, String(jItems.length))
     /*
-     * Ordered by PHASE, not by insertion. A safety check buried between two
-     * readings is a safety check somebody skips.
+     * The first headline that expresses one sets the priority, and only while the
+     * job is still at its default — a template must never overrule a dispatcher
+     * who deliberately marked something urgent.
      */
-    ok(
-      '(J18) ordered before / during / after, which is the order they are done in',
-      jItems[0].workPhase === 'before' && jItems[jItems.length - 1].workPhase === 'after',
-      jItems.map((i) => i.workPhase).join(','),
-    )
-    const gasItem = jItems.find((i) => i.name.toLowerCase() === 'jct gas pressure')
-    ok('(J18) the merged item is required, promoted by the second kind', gasItem?.isRequired === true)
-
-    // The headline sets the priority, but only while the job is at its default.
     const afterApply = await siteQueryOne<any>(SITE, `SELECT priority FROM job_cards WHERE id=?`, [hJob])
     ok('(J18) a kind of work sets the priority', String(afterApply?.priority) === 'high', String(afterApply?.priority))
 
-    // ── The close guard, which is what makes "required" mean anything ────
-    const blocked = await closeJob(SITE, actor, hJob)
+    await siteExecute(SITE, `UPDATE job_cards SET priority = 'urgent' WHERE id = ?`, [hJob])
+    await applyHeadlines(SITE, actor, hJob, [serv.id, rep.id])
+    const afterManual = await siteQueryOne<any>(SITE, `SELECT priority FROM job_cards WHERE id=?`, [hJob])
     ok(
-      '(J18) *** a job with unanswered REQUIRED checks cannot be closed ***',
-      !blocked.ok,
-      blocked.ok ? '' : blocked.error,
-    )
-    ok(
-      '(J18) and the refusal NAMES them rather than counting them',
-      !blocked.ok && blocked.error.includes('JCT isolate power'),
-      blocked.ok ? '' : blocked.error,
+      '(J18) *** but it does NOT overrule a priority somebody chose by hand ***',
+      String(afterManual?.priority) === 'urgent',
+      String(afterManual?.priority),
     )
 
-    const wrongType = await recordItem(SITE, actor, gasItem!.id, { response: 'quite high', note: null, complete: true })
-    ok('(J18) a measurement refuses a non-number', !wrongType.ok, wrongType.ok ? '' : wrongType.error)
-
-    /*
-     * A check that captures a value cannot be completed without one, or
-     * "completed" would only mean somebody pressed a button — which is the
-     * box-ticking a checklist exists to prevent.
-     */
-    const noAnswer = await recordItem(SITE, actor, gasItem!.id, { response: null, note: null, complete: true })
-    ok('(J18) *** and cannot be ticked off with nothing recorded ***', !noAnswer.ok, noAnswer.ok ? '' : noAnswer.error)
-
-    for (const it of jItems.filter((i) => i.isRequired)) {
-      // Since 119 a signature is satisfied by a FILE, not by typing a name — so it
-      // is captured rather than answered. (J21) exercises that path properly; here
-      // it is only being cleared so the close can be tested.
-      if (it.evidenceRequired) {
-        const cap = await captureEvidence(
-          SITE, actor, it.id,
-          { storedName: `${hlTag}-${it.id}.png`, filename: 'signed.png', mimeType: 'image/png', sizeBytes: 512 },
-          'A Nkosi',
-        )
-        ok(`(J18) capturing ${it.name} works`, cap.ok, cap.ok ? '' : cap.error)
-        continue
-      }
-      const answer = it.responseType === 'measure' ? '12.4'
-        : it.responseType === 'yesno' ? 'yes'
-        : null
-      const done = await recordItem(SITE, actor, it.id, { response: answer, note: null, complete: true })
-      ok(`(J18) answering ${it.name} works`, done.ok, done.ok ? '' : done.error)
-    }
-
-    const nowCloses = await closeJob(SITE, actor, hJob)
-    ok('(J18) once answered, the job closes', nowCloses.ok, nowCloses.ok ? '' : nowCloses.error)
-
-    // Reopen to exercise the rest.
-    const backOpen = await statusForRole(SITE, 'in_progress')
-    if (backOpen) await setStatus(SITE, actor, hJob, backOpen.id)
-
-    // A failing answer, and the stored flag that makes the exception list one read.
-    const isolate = (await jobItems(SITE, hJob)).find((i) => i.name === 'JCT isolate power')!
-    await recordItem(SITE, actor, isolate.id, { response: 'no', note: 'breaker seized', complete: true })
+    // Applying is a REPLACE, not an add: the links are the whole answer.
+    const narrowed = await applyHeadlines(SITE, actor, hJob, [rep.id])
+    ok('(J18) narrowing to one applies', narrowed.ok, narrowed.ok ? '' : narrowed.error)
     ok(
-      '(J18) an answer of no flags the check as failed',
-      (await jobItems(SITE, hJob)).find((i) => i.id === isolate.id)?.isFailed === true,
+      '(J18) and replaces the links rather than adding to them',
+      (await jobHeadlineIds(SITE, hJob)).join(',') === String(rep.id),
+      (await jobHeadlineIds(SITE, hJob)).join(','),
     )
 
-    // ── What survives a reclassification ────────────────────────────────
-    const adhoc = await addJobItem(SITE, actor, hJob, {
-      kind: 'task', name: 'JCT fetch the long ladder', responseType: 'none',
-      unit: null, workPhase: 'before', isRequired: false,
-    })
-    ok('(J18) a one-off task can be added by hand', adhoc.ok, adhoc.ok ? '' : adhoc.error)
+    const gone = await applyHeadlines(SITE, actor, hJob, [999999999])
+    ok('(J18) a headline that does not exist is refused', !gone.ok, gone.ok ? '' : gone.error)
 
-    await applyHeadlines(SITE, actor, hJob, [serv.id])
-    jItems = await jobItems(SITE, hJob)
-    /*
-     * Dropping a kind of work clears only its UNTOUCHED items. A signed-off check
-     * is evidence, and a hand-added task belongs to whoever wrote it — neither is
-     * the system's to delete because a category changed.
-     */
+    const delUsed = await deleteHeadline(SITE, actor, rep.id)
     ok(
-      '(J18) *** a hand-added task survives dropping a kind of work ***',
-      jItems.some((i) => i.name === 'JCT fetch the long ladder'),
-    )
-    ok(
-      '(J18) *** and so does a check that was already signed off ***',
-      jItems.some((i) => i.name === 'JCT customer signature'),
-    )
-
-    const signed = jItems.find((i) => i.name === 'JCT customer signature')
-    if (signed) {
-      const delSigned = await deleteJobItem(SITE, actor, signed.id)
-      ok('(J18) a signed-off item cannot be deleted', !delSigned.ok, delSigned.ok ? '' : delSigned.error)
-    }
-
-    const delUsed = await deleteHeadline(SITE, actor, serv.id)
-    ok(
-      '(J18) a kind of work a job has used cannot be deleted — that history names what was done',
+      '(J18) *** a kind of work a job has used cannot be deleted — that history names what was done ***',
       !delUsed.ok,
       delUsed.ok ? '' : delUsed.error,
     )
-
-    // ── Drift ───────────────────────────────────────────────────────────
-    const itemDrift = await reconcileJobHeadlines(SITE)
     ok(
-      '(J18) a correctly recorded job reports no item drift',
-      itemDrift.completedWithoutAnswer.length === 0 && itemDrift.failedFlagWrong.length === 0,
-      JSON.stringify({
-        noAnswer: itemDrift.completedWithoutAnswer.length,
-        flags: itemDrift.failedFlagWrong.length,
-      }),
+      '(J18) an unused one can be, so a typo is not permanent',
+      (await deleteHeadline(SITE, actor, serv.id)).ok,
     )
 
     /*
-     * Break it the only way the app cannot: flip the stored failure flag away from
-     * the answer beside it. If those diverge, every report of which checks failed
-     * is wrong, and only this check can see it.
+     * Drift. What survives 224 is the one question that is genuinely about
+     * headlines: an open job carrying none while the setting demands one. It is
+     * drift ONLY while the setting demands it — otherwise a job without a
+     * headline is a normal job, and reporting it would be noise nobody reads.
      */
-    await siteExecute(SITE, `UPDATE job_card_items SET is_failed = 0 WHERE id = ?`, [isolate.id])
-    const brokenFlag = await reconcileJobHeadlines(SITE)
-    ok(
-      '(J18) *** a failure flag that disagrees with its answer is CAUGHT ***',
-      brokenFlag.failedFlagWrong.some((r) => r.itemId === isolate.id),
-    )
-    await siteExecute(SITE, `UPDATE job_card_items SET is_failed = 1 WHERE id = ?`, [isolate.id])
+    const requiredWas = await getSetting(SITE, 'job_headline_required').catch(() => '0')
+    await applyHeadlines(SITE, actor, hJob, [])
 
-    await siteExecute(SITE, `UPDATE job_card_items SET response = NULL WHERE id = ?`, [gasItem!.id])
-    const brokenAnswer = await reconcileJobHeadlines(SITE)
+    await setSetting(SITE, 'job_headline_required', '0')
+    const quiet = await reconcileJobHeadlines(SITE)
     ok(
-      '(J18) a check signed off with nothing recorded is CAUGHT',
-      brokenAnswer.completedWithoutAnswer.some((r) => r.itemId === gasItem!.id),
+      '(J18) a job with no headline is not drift while none is demanded',
+      !quiet.missingHeadline.some((r) => r.jobId === hJob),
+      `${quiet.missingHeadline.length} reported`,
     )
+
+    await setSetting(SITE, 'job_headline_required', '1')
+    const demanded = await reconcileJobHeadlines(SITE)
+    ok(
+      '(J18) *** and IS once the setting demands one ***',
+      demanded.missingHeadline.some((r) => r.jobId === hJob),
+      `${demanded.missingHeadline.length} reported`,
+    )
+    // Restored to the DEFAULT rather than to what was read — putting back a
+    // previous crash's pollution is how a suite inherits a failure it did not cause.
+    await setSetting(SITE, 'job_headline_required', requiredWas === '1' ? '1' : '0')
 
     // Teardown, in FK order.
-    // The attachments first. This block's signature check is satisfied by capturing a
-    // file since 119, so it now creates party_documents rows that the job's own
-    // delete cannot cascade — the entity pair is loose and carries no FK.
-    await siteExecute(SITE, `DELETE FROM party_documents WHERE entity = 'job_card' AND entity_id = ?`, [hJob])
-    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [hJob])
     await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id = ?`, [hJob])
     await siteExecute(SITE, `DELETE FROM job_card_lines WHERE job_card_id = ?`, [hJob])
     await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [hJob])
@@ -4763,169 +4584,8 @@ async function main() {
     )
 
     // Teardown.
-    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id IN (SELECT id FROM job_cards WHERE title = 'JCT quarterly service')`)
     await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id IN (SELECT id FROM job_cards WHERE title = 'JCT quarterly service')`)
     await siteExecute(SITE, `DELETE FROM job_cards WHERE title = 'JCT quarterly service'`)
-  }
-
-  /*
-   * ── (J21) Evidence: the artefact IS the answer ────────────────────────────
-   *
-   * 114 shipped photo and signature response types that stored TEXT — a
-   * technician typing that they had taken a photo. 119 made the file the answer.
-   *
-   * The checks that matter are the ones about DELETING the file afterwards. The
-   * happy path is easy; the failure that loses a business a dispute is a job that
-   * still reads "signed off" once the attachment is gone.
-   */
-  {
-    const evTag = `JCE${stamp}`
-
-    // The suite's OWN customer, not a borrowed live one: a fixture that reaches into
-    // real data is a fixture that leaves litter somebody else has to find.
-    const head = await saveHeadline(SITE, actor, {
-      id: null, code: `${evTag}H`, name: `${evTag} sign-off`, description: null,
-      defaultPriority: null, defaultBoardId: null, suggestedMinutes: 30,
-      requiredSkills: null, sortOrder: 90, isActive: true,
-      items: [
-        { id: null, kind: 'check', name: `${evTag} photo of the flue`, hint: null, responseType: 'photo', unit: null, workPhase: 'after', isRequired: true, evidenceRequired: true },
-        { id: null, kind: 'check', name: `${evTag} customer signs`, hint: null, responseType: 'signature', unit: null, workPhase: 'after', isRequired: true, evidenceRequired: true },
-        { id: null, kind: 'check', name: `${evTag} pressure`, hint: null, responseType: 'measure', unit: 'bar', workPhase: 'during', isRequired: false, evidenceRequired: false },
-      ],
-      parts: [],
-    })
-    ok('(J21) a headline with evidence checks saves', head.ok, head.ok ? '' : head.error)
-    if (!head.ok) throw new Error('evidence headline fixture failed')
-
-    const saved = (await listHeadlines(SITE, false)).find((h) => h.id === head.id)
-    ok(
-      '(J21) the flag is stored per item, not inferred',
-      saved?.items.filter((i) => i.evidenceRequired).length === 2,
-      `${saved?.items.filter((i) => i.evidenceRequired).length} of ${saved?.items.length}`,
-    )
-
-    const jobRes = await saveJobCard(SITE, actor, {
-      id: null, customerId, customerName: null, customerPhone: null,
-      customerEmail: null, serviceAddressId: null, locationId: null,
-      statusId: null, priority: 'normal', ownerUserId: null, ownerName: '',
-      title: `${evTag} evidence job`, description: null, dueAt: null, source: 'manual',
-      reference: null, internalNote: null,
-    })
-    if (!jobRes.ok) throw new Error('evidence job fixture failed')
-    const evJobId = jobRes.id
-
-    await applyHeadlines(SITE, actor, evJobId, [head.id])
-    const fresh = await jobItems(SITE, evJobId)
-    const photo = fresh.find((i) => i.responseType === 'photo')!
-    const sig = fresh.find((i) => i.responseType === 'signature')!
-
-    ok('(J21) the job copied the flag from the template', photo.evidenceRequired && sig.evidenceRequired)
-    ok('(J21) and nothing is attached yet', photo.attachmentId === null && sig.attachmentId === null)
-
-    // ── The rule ──────────────────────────────────────────────────────────
-    const typed = await recordItem(SITE, actor, photo.id, {
-      response: 'I took one, honest', note: null, complete: true,
-    })
-    ok(
-      '(J21) *** typing a reference does NOT complete a photo check ***',
-      !typed.ok,
-      typed.ok ? 'IT WAS ACCEPTED' : typed.error,
-    )
-
-    const stillOpen = (await jobItems(SITE, evJobId)).find((i) => i.id === photo.id)!
-    ok('(J21) so it is still outstanding', stillOpen.completedAt === null)
-
-    // A required evidence item with no file blocks the close, which is the whole
-    // point of the flag.
-    const earlyClose = await closeJob(SITE, actor, evJobId)
-    ok(
-      '(J21) *** and the job cannot be closed over it ***',
-      !earlyClose.ok,
-      earlyClose.ok ? 'IT CLOSED' : earlyClose.error,
-    )
-
-    // ── Capture ───────────────────────────────────────────────────────────
-    const cap = await captureEvidence(
-      SITE, actor, photo.id,
-      { storedName: `${evTag}-photo.png`, filename: 'flue.png', mimeType: 'image/png', sizeBytes: 2048 },
-      'north side',
-    )
-    ok('(J21) attaching a file completes it', cap.ok, cap.ok ? '' : cap.error)
-
-    const done = (await jobItems(SITE, evJobId)).find((i) => i.id === photo.id)!
-    ok('(J21) the item now names its file', done.attachmentId !== null && done.attachmentName === 'flue.png')
-    ok('(J21) completed, by the person who captured it', done.completedAt !== null && done.completedByName === actor.userName)
-    ok('(J21) and the caption is the response, not the answer', done.response === 'north side')
-
-    const wrongType = await captureEvidence(
-      SITE, actor, fresh.find((i) => i.responseType === 'measure')!.id,
-      { storedName: `${evTag}-x.png`, filename: 'x.png', mimeType: 'image/png', sizeBytes: 10 },
-      null,
-    )
-    ok(
-      '(J21) a measurement refuses a photo — the types are not interchangeable',
-      !wrongType.ok,
-      wrongType.ok ? 'ACCEPTED' : wrongType.error,
-    )
-
-    // ── Deleting the file is the interesting case ──────────────────────────
-    await siteExecute(SITE, `DELETE FROM party_documents WHERE id = ?`, [cap.attachmentId])
-    const orphaned = (await jobItems(SITE, evJobId)).find((i) => i.id === photo.id)!
-    ok(
-      '(J21) *** deleting the file un-answers the item via ON DELETE SET NULL ***',
-      orphaned.attachmentId === null,
-    )
-    ok(
-      '(J21) but the tick is still standing — which is why the guard re-checks',
-      orphaned.completedAt !== null,
-    )
-
-    const drift = await reconcileJobHeadlines(SITE)
-    ok(
-      '(J21) *** reconcile CATCHES a sign-off with no file behind it ***',
-      drift.completedWithoutEvidence.some((r) => r.itemId === photo.id),
-      `${drift.completedWithoutEvidence.length} reported`,
-    )
-    ok(
-      '(J21) and it is NOT double-reported as an unanswered check',
-      !drift.completedWithoutAnswer.some((r) => r.itemId === photo.id),
-    )
-
-    const closeAgain = await closeJob(SITE, actor, evJobId)
-    ok(
-      '(J21) *** the job STILL cannot close: a tick with no file is outstanding ***',
-      !closeAgain.ok,
-      closeAgain.ok ? 'IT CLOSED WITH NO EVIDENCE' : closeAgain.error,
-    )
-
-    // ── Reclassification must not orphan a photograph ─────────────────────
-    const recap = await captureEvidence(
-      SITE, actor, photo.id,
-      { storedName: `${evTag}-photo2.png`, filename: 'flue-again.png', mimeType: 'image/png', sizeBytes: 3072 },
-      null,
-    )
-    ok('(J21) it can be re-captured', recap.ok)
-
-    await applyHeadlines(SITE, actor, evJobId, [])
-    const afterClear = await jobItems(SITE, evJobId)
-    ok(
-      '(J21) *** clearing the headlines KEEPS the item holding a photo ***',
-      afterClear.some((i) => i.id === photo.id && i.attachmentId !== null),
-      `${afterClear.length} items left`,
-    )
-    ok(
-      '(J21) while the untouched measurement was cleared as normal',
-      !afterClear.some((i) => i.responseType === 'measure'),
-    )
-
-    // Teardown.
-    await siteExecute(SITE, `DELETE FROM party_documents WHERE entity = 'job_card' AND entity_id = ?`, [evJobId])
-    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [evJobId])
-    await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id = ?`, [evJobId])
-    await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [evJobId])
-    await siteExecute(SITE, `DELETE FROM job_headline_items WHERE headline_id = ?`, [head.id])
-    await siteExecute(SITE, `DELETE FROM job_headlines WHERE id = ?`, [head.id])
-    await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [evJobId])
   }
 
   /*
@@ -5508,10 +5168,33 @@ async function main() {
     const gateNow = await siteTransaction(SITE, (tx) => outstandingFormsTx(tx, jobForm.id))
     ok('(J42) and with no response at all, it blocks', gateNow.length === 1, JSON.stringify(gateNow))
 
-    // Teardown, in FK order: responses, then the form, then the headline.
+    /*
+     * Teardown, in FK order — and the RESPONSES have to go first.
+     *
+     * job_form_responses.form_id is ON DELETE RESTRICT, deliberately: a
+     * submitted response is evidence, and 222 refuses to let a form take
+     * somebody's answers with it. So deleting the form while a response points
+     * at it does not cascade, it FAILS — and because siteExecute does not throw
+     * here, it failed silently and left two forms and two jobs behind on every
+     * run of this suite.
+     *
+     * A test that cannot clean up after itself is the one case where deleting a
+     * response is right, because these were never anybody's evidence.
+     */
     await siteExecute(SITE, `DELETE FROM job_card_headlines WHERE job_card_id = ?`, [jobForm.id])
     await siteExecute(SITE, `DELETE FROM job_headline_forms WHERE headline_id = ?`, [headline.insertId])
     await siteExecute(SITE, `DELETE FROM job_headlines WHERE id = ?`, [headline.insertId])
+    await siteExecute(
+      SITE,
+      `DELETE a FROM job_form_answers a
+         JOIN job_form_responses r ON r.id = a.response_id
+        WHERE r.form_id = ?`,
+      [formId],
+    )
+    await siteExecute(SITE, `DELETE FROM job_form_responses WHERE form_id = ?`, [formId])
+    await siteExecute(SITE, `DELETE FROM job_form_fields WHERE version_id IN
+      (SELECT id FROM job_form_versions WHERE form_id = ?)`, [formId])
+    await siteExecute(SITE, `DELETE FROM job_form_versions WHERE form_id = ?`, [formId])
     await siteExecute(SITE, `DELETE FROM job_forms WHERE id = ?`, [formId])
     await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_form'`, [])
     await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [jobForm.id])
@@ -5976,7 +5659,6 @@ async function main() {
     )
 
     // Teardown.
-    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [rJob.id])
     await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [rJob.id])
     await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [rJob.id])
     await setSetting(SITE, 'job_notify_enabled', rulesNotifyWas)
@@ -6118,7 +5800,6 @@ async function main() {
       )
     }
 
-    await siteExecute(SITE, `DELETE FROM job_card_items WHERE job_card_id = ?`, [dJob.id])
     await siteExecute(SITE, `DELETE FROM job_cards WHERE id = ?`, [dJob.id])
     await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'job_card' AND entity_id = ?`, [dJob.id])
   }
@@ -7396,10 +7077,6 @@ async function main() {
     HEADLINE_PATTERN,
   ])
   await sweepCheck(
-    'orphaned job items',
-    'SELECT id FROM job_card_items WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
-  )
-  await sweepCheck(
     'orphaned headline links',
     'SELECT job_card_id FROM job_card_headlines WHERE job_card_id NOT IN (SELECT id FROM job_cards)',
   )
@@ -7418,12 +7095,6 @@ async function main() {
     'jobs left pointing at a gone schedule',
     'SELECT id FROM job_cards WHERE series_id IS NOT NULL AND series_id NOT IN (SELECT id FROM job_series)',
   )
-  await sweepCheck('evidence jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
-    EVIDENCE_JOB_PATTERN,
-  ])
-  await sweepCheck('evidence headlines', 'SELECT id FROM job_headlines WHERE code REGEXP ?', [
-    EVIDENCE_HEADLINE_PATTERN,
-  ])
   await sweepCheck('people jobs', 'SELECT id FROM job_cards WHERE title REGEXP ?', [
     PEOPLE_JOB_PATTERN,
   ])
@@ -7531,6 +7202,25 @@ async function main() {
     'orphaned job attachments',
     `SELECT id FROM party_documents
       WHERE entity = 'job_card' AND entity_id NOT IN (SELECT id FROM job_cards)`,
+  )
+
+  /*
+   * Forms this suite built (222).
+   *
+   * Added after the forms block was found leaving two behind on every run. The
+   * teardown deleted the form while a submitted response still pointed at it,
+   * and job_form_responses.form_id is ON DELETE RESTRICT by design — so the
+   * delete failed, silently, and nothing noticed for as long as nothing looked.
+   *
+   * Matched on the JCF prefix rather than on "every form", because a real one a
+   * shop built is not this suite's litter to report.
+   */
+  await sweepCheck('job forms', `SELECT id FROM job_forms WHERE name LIKE 'JCF%'`)
+  await sweepCheck(
+    'job form responses',
+    `SELECT r.id FROM job_form_responses r
+       JOIN job_forms f ON f.id = r.form_id
+      WHERE f.name LIKE 'JCF%'`,
   )
 
   ok(

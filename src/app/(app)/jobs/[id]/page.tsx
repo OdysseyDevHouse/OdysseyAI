@@ -12,7 +12,7 @@ import { jobTime } from '@/lib/site/jobTime'
 import { jobTravel } from '@/lib/site/jobTravel'
 import { jobParts, vanHoldings } from '@/lib/site/jobParts'
 import { jobStanding, tradingHours } from '@/lib/site/jobSla'
-import { jobItems, jobHeadlineIds, listHeadlines } from '@/lib/site/jobHeadlines'
+import { jobHeadlineIds, listHeadlines } from '@/lib/site/jobHeadlines'
 import { jobAssetFor, otherJobAssets } from '@/lib/site/jobAssets'
 import { requestsForJob } from '@/lib/site/jobPartRequests'
 import { serialsForLine } from '@/lib/site/jobSerials'
@@ -47,8 +47,8 @@ import JobPartsPanel from './JobPartsPanel'
 import JobPartRequests from './JobPartRequests'
 import JobSerialsPanel from './JobSerialsPanel'
 import JobFormsPanel from './JobFormsPanel'
+import JobHeadlinesCard from './JobHeadlinesCard'
 import JobSlaCard from './JobSlaCard'
-import JobChecks from './JobChecks'
 import JobSignoffCard from './JobSignoffCard'
 import JobPeoplePanel from './JobPeoplePanel'
 import CustomFieldsPanel from '@/components/CustomFieldsPanel'
@@ -170,7 +170,6 @@ export default async function JobPage({
     holdings,
     standing,
     week,
-    items,
     headlines,
     jobHeadlines,
     jobAsset,
@@ -211,8 +210,7 @@ export default async function JobPage({
       // Tolerant: a site without 113 must still be able to open a job card.
       jobStanding(siteId, jobId).catch(() => null),
       tradingHours(siteId).catch(() => null),
-      // All three tolerant: a site without migration 114 must still open a job.
-      jobItems(siteId, jobId).catch(() => []),
+      // Both tolerant: a site without migration 114 must still open a job.
       listHeadlines(siteId, false).catch(() => []),
       jobHeadlineIds(siteId, jobId).catch(() => []),
       // Tolerant: a site without migration 115 must still open a job card.
@@ -396,10 +394,15 @@ export default async function JobPage({
               value: 'checks',
               label: 'Checks',
               icon: <Icons.Check size={15} />,
-              // Outstanding REQUIRED items, not the total: the count on a tab is
+              // Outstanding REQUIRED forms, not the total: the count on a tab is
               // there to pull somebody towards work they have to do, and "12" on a
-              // finished checklist pulls them towards nothing.
-              count: items.filter((i) => i.isRequired && i.completedAt === null).length || undefined,
+              // finished list pulls them towards nothing.
+              //
+              // Counted off forms since 224 retired the checklist. The intent is
+              // unchanged — what is left to do before this job can close — and it
+              // is the same set the close gate refuses on.
+              count:
+                jobForms.filter((f) => f.isRequired && f.submittedAt === null).length || undefined,
               href: `/jobs/${job.id}?tab=checks`,
             },
             {
@@ -559,28 +562,23 @@ export default async function JobPage({
                 signatureStatement?.trim() || SETTING_DEFAULTS.job_signature_statement
               }
             />
-            <JobChecks
+            {/* What kind of work this is, which is what DECIDES the forms
+                below. It used to live inside JobChecks; 224 deleted that screen
+                with the checklist, and dropping the picker with it would have
+                left a job unable to acquire a headline and therefore unable to
+                acquire a form. */}
+            <JobHeadlinesCard
               jobId={job.id}
               jobClosed={job.isClosed}
-              items={items}
+              canEdit={can(capabilities, 'jobs.edit')}
               headlines={headlines.map((h) => ({
                 id: h.id,
                 name: h.name,
-                itemCount: h.items.length,
+                formCount: h.formCount,
               }))}
-              selectedHeadlineIds={jobHeadlines}
-              canEdit={can(capabilities, 'jobs.edit')}
-              // getSetting already falls back to the registered default; this covers
-              // only the catch above, where the settings row could not be read at all.
-              signatureStatement={
-                signatureStatement?.trim() || SETTING_DEFAULTS.job_signature_statement
-              }
+              selectedIds={jobHeadlines}
             />
-            {/* Directly under the checklist, because the two answer the same
-                question — what has to be recorded before this job is done — and
-                the close gate reads them as one list. Forms on their own tab
-                would mean a technician checking they are finished has two
-                places to look. */}
+            {/* Directly under the headlines that ask for them. */}
             {jobForms.length > 0 && (
               <JobFormsPanel
                 jobId={job.id}

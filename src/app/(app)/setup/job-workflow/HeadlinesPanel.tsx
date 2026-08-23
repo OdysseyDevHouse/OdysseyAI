@@ -20,51 +20,26 @@ import {
   useToast,
 } from '@/components/ui'
 import { TABLE, TABLE_HEAD_ROW, TABLE_NUMERIC, TABLE_TD, TABLE_TH } from '@/components/ui/styles'
-import {
-  ITEM_KIND_LABEL,
-  ITEM_KINDS,
-  RESPONSE_TYPE_LABEL,
-  RESPONSE_TYPES,
-  WORK_PHASE_LABEL,
-  WORK_PHASES,
-  responseHasUnit,
-  responseIsEvidence,
-  type ItemKind,
-  type ResponseType,
-  type WorkPhase,
-} from '@/lib/jobStatusModel'
 import type { JobHeadline } from '@/lib/site/jobHeadlines'
 import { saveHeadlineAction, deleteHeadlineAction } from '../../jobs/actions'
-
-type Draft = {
-  id: number | null
-  kind: ItemKind
-  name: string
-  hint: string | null
-  responseType: ResponseType
-  unit: string | null
-  workPhase: WorkPhase
-  isRequired: boolean
-  evidenceRequired: boolean
-}
 
 /**
  * What kind of work this business does, and what each kind requires.
  *
- * ── WHY THE ITEM EDITOR IS A FLAT LIST AND NOT THREE SECTIONS ──────────────
+ * ── THE QUESTIONS ARE NOT EDITED HERE ──────────────────────────────────────
  *
- * Items belong to a work phase — before, during, after — and the technician's list
- * IS grouped by phase. Here they stay in one list with the phase as a field,
- * because editing a template means adding a row and picking where it goes, and
- * three drop zones would make moving an item between phases a drag rather than a
- * dropdown. The grouping is a reading concern, not an editing one.
+ * This panel used to carry a checklist editor: a row per task or check, with its
+ * response type, its phase and its arrows. 224 retired that. What a kind of work
+ * ASKS is now a form, forms are built and attached on /setup/job-forms, and this
+ * screen only reports how many a headline brings.
  *
- * ── NO DRAG TO REORDER ─────────────────────────────────────────────────────
+ * The split is deliberate rather than a move. A form is reused across several
+ * kinds of work, so it cannot belong to any one of them — editing it inside this
+ * modal would mean editing every other headline that shares it, from a dialog
+ * that gives no hint that is happening.
  *
- * Order is the row order, and the arrows move a row. dnd-kit is installed and the
- * board uses it, but a checklist is edited rarely and read constantly: arrows work
- * on a phone, need no hydration gate, and cannot leave a row mid-flight. The board
- * earns its DnD because dragging a job between columns IS the gesture.
+ * What is left here is what a headline has always been on its own: its code and
+ * name, the defaults it suggests, and the standard parts it consumes.
  */
 export default function HeadlinesPanel({
   headlines,
@@ -86,7 +61,6 @@ export default function HeadlinesPanel({
   const [minutes, setMinutes] = useState(0)
   const [skills, setSkills] = useState('')
   const [isActive, setIsActive] = useState(true)
-  const [items, setItems] = useState<Draft[]>([])
 
   function open(headline: JobHeadline | 'new') {
     setEditing(headline)
@@ -99,7 +73,6 @@ export default function HeadlinesPanel({
       setMinutes(0)
       setSkills('')
       setIsActive(true)
-      setItems([])
       return
     }
     setCode(headline.code)
@@ -110,63 +83,6 @@ export default function HeadlinesPanel({
     setMinutes(headline.suggestedMinutes ?? 0)
     setSkills(headline.requiredSkills ?? '')
     setIsActive(headline.isActive)
-    setItems(
-      headline.items.map((i) => ({
-        id: i.id,
-        kind: i.kind,
-        name: i.name,
-        hint: i.hint,
-        responseType: i.responseType,
-        unit: i.unit,
-        workPhase: i.workPhase,
-        isRequired: i.isRequired,
-        evidenceRequired: i.evidenceRequired,
-      })),
-    )
-  }
-
-  function addRow() {
-    setItems((prev) => [
-      ...prev,
-      {
-        id: null,
-        kind: 'check',
-        name: '',
-        hint: null,
-        responseType: 'none',
-        unit: null,
-        workPhase: 'during',
-        isRequired: false,
-        evidenceRequired: false,
-      },
-    ])
-  }
-
-  function patch(index: number, change: Partial<Draft>) {
-    setItems((prev) =>
-      prev.map((item, i) => {
-        if (i !== index) return item
-        const next = { ...item, ...change }
-        // A unit only belongs on a measurement. Clearing it here means the save
-        // cannot be refused for a leftover unit the user cannot see any more.
-        if (!responseHasUnit(next.responseType)) next.unit = null
-        // The same rule for the evidence flag, in the same place, for the same
-        // reason: validateHeadline refuses "must attach" on a yes/no, and a refusal
-        // naming a switch that is no longer on screen reads as a broken dialog.
-        if (!responseIsEvidence(next.responseType)) next.evidenceRequired = false
-        return next
-      }),
-    )
-  }
-
-  function move(index: number, by: -1 | 1) {
-    setItems((prev) => {
-      const next = [...prev]
-      const to = index + by
-      if (to < 0 || to >= next.length) return prev
-      ;[next[index], next[to]] = [next[to], next[index]]
-      return next
-    })
   }
 
   function save() {
@@ -183,7 +99,11 @@ export default function HeadlinesPanel({
         requiredSkills: skills.trim() || null,
         sortOrder: editing === 'new' ? headlines.length : editing.sortOrder,
         isActive,
-        items: items.map((i) => ({ ...i, name: i.name.trim() })),
+        // Always empty since 224. saveHeadline still ACCEPTS items — it runs them
+        // through validateHeadline in the same pass as the code and duration
+        // rules — but writes nothing from them, and there is no longer any way to
+        // author one.
+        items: [],
         // Standard parts are edited on the product side, not here: a picker over
         // 40,000 products inside a modal that is already editing a list is two
         // jobs in one dialog. The table below reports what is linked.
@@ -220,7 +140,7 @@ export default function HeadlinesPanel({
       <Card>
         <CardHeader
           title="Kinds of work"
-          description="What a job can be. Each kind brings its own tasks, checks and standard parts, so nobody retypes them."
+          description="What a job can be. Each kind brings its own forms and standard parts, so nobody retypes them."
           action={
             <Button variant="primary" onClick={() => open('new')} disabled={pending}>
               <Icons.Plus size={15} />
@@ -255,7 +175,6 @@ export default function HeadlinesPanel({
               </thead>
               <tbody>
                 {headlines.map((h) => {
-                  const required = h.items.filter((i) => i.isRequired).length
                   return (
                     <tr key={h.id}>
                       <td className={TABLE_TD}>
@@ -271,20 +190,18 @@ export default function HeadlinesPanel({
                           <span className="text-xs text-muted">{h.code}</span>
                         </div>
                       </td>
+                      {/* A count rather than a list, because neither is attached
+                          here: forms come from /setup/job-forms and parts from the
+                          product side. This column says what a job of this kind
+                          picks up, and where to go if that is wrong. */}
                       <td className={TABLE_TD}>
-                        {h.items.length === 0 && h.parts.length === 0 ? (
+                        {h.formCount === 0 && h.parts.length === 0 ? (
                           <span className="text-muted">Nothing yet</span>
                         ) : (
                           <span className="text-ink-2">
-                            {h.items.length > 0 &&
-                              `${h.items.length} task${h.items.length === 1 ? '' : 's'} and check${h.items.length === 1 ? '' : 's'}`}
-                            {required > 0 && (
-                              <span className="ml-2 text-xs text-warning-ink">
-                                {required} required
-                              </span>
-                            )}
+                            {h.formCount > 0 && `${h.formCount} form${h.formCount === 1 ? '' : 's'}`}
                             {h.parts.length > 0 && (
-                              <span className="ml-2 text-xs text-muted">
+                              <span className={h.formCount > 0 ? 'ml-2 text-xs text-muted' : 'text-xs text-muted'}>
                                 {h.parts.length} standard part{h.parts.length === 1 ? '' : 's'}
                               </span>
                             )}
@@ -454,169 +371,19 @@ export default function HeadlinesPanel({
             hint="A retired kind of work stops appearing when logging a job. Jobs already using it keep it."
           />
 
-          {/* ── The items ──────────────────────────────────────────────── */}
+          {/* ── What it asks ───────────────────────────────────────────── */}
           <div className="border-t border-border pt-4">
-            <div className="mb-2 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-ink">Tasks and checks</p>
-                <p className="text-xs text-muted">
-                  A task is ticked off. A check records something — a reading, a yes or no, a
-                  photograph. Required ones stop the job being closed.
-                </p>
-              </div>
-              <Button variant="secondary" size="sm" onClick={addRow} disabled={pending}>
-                <Icons.Plus size={15} />
-                Add a row
-              </Button>
-            </div>
-
-            {items.length === 0 ? (
-              <p className="py-3 text-sm text-muted">
-                Nothing yet. A kind of work with no tasks is still useful — it categorises the job
-                and sets the defaults above.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {items.map((item, index) => (
-                  <div
-                    key={index}
-                    className="flex flex-wrap items-end gap-2 rounded-card border border-border p-2"
-                  >
-                    <div className="w-28">
-                      <Field label={index === 0 ? 'Kind' : ''}>
-                        <Select
-                          value={item.kind}
-                          onChange={(e) => patch(index, { kind: e.target.value as ItemKind })}
-                        >
-                          {ITEM_KINDS.map((k) => (
-                            <option key={k} value={k}>
-                              {ITEM_KIND_LABEL[k]}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                    </div>
-
-                    <div className="min-w-48 flex-1">
-                      <Field label={index === 0 ? 'What' : ''}>
-                        <Input
-                          value={item.name}
-                          onChange={(e) => patch(index, { name: e.target.value })}
-                          placeholder="Check gas pressure"
-                          maxLength={190}
-                        />
-                      </Field>
-                    </div>
-
-                    <div className="w-44">
-                      <Field label={index === 0 ? 'Records' : ''}>
-                        <Select
-                          value={item.responseType}
-                          onChange={(e) => {
-                            const next = e.target.value as ResponseType
-                            // Switching TO a photo or signature turns the flag on, so
-                            // the strict reading is the default and relaxing it is
-                            // the deliberate act. patch() handles the reverse.
-                            patch(index, {
-                              responseType: next,
-                              evidenceRequired: responseIsEvidence(next),
-                            })
-                          }}
-                        >
-                          {RESPONSE_TYPES.map((t) => (
-                            <option key={t} value={t}>
-                              {RESPONSE_TYPE_LABEL[t]}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                    </div>
-
-                    {/* Only a measurement carries a unit, and the model refuses a
-                        unit on anything else — so the field appears exactly when
-                        it is legal. */}
-                    {responseHasUnit(item.responseType) && (
-                      <div className="w-20">
-                        <Field label={index === 0 ? 'Unit' : ''}>
-                          <Input
-                            value={item.unit ?? ''}
-                            onChange={(e) => patch(index, { unit: e.target.value })}
-                            placeholder="bar"
-                            maxLength={20}
-                          />
-                        </Field>
-                      </div>
-                    )}
-
-                    <div className="w-40">
-                      <Field label={index === 0 ? 'When' : ''}>
-                        <Select
-                          value={item.workPhase}
-                          onChange={(e) => patch(index, { workPhase: e.target.value as WorkPhase })}
-                        >
-                          {WORK_PHASES.map((p) => (
-                            <option key={p} value={p}>
-                              {WORK_PHASE_LABEL[p]}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                    </div>
-
-                    {/* Same rule as the unit field above: the switch appears exactly
-                        when it is legal, because the model refuses it on any other
-                        type. Default on — a photo check whose photo is optional is
-                        a note, and the point of asking for one is having it. */}
-                    {responseIsEvidence(item.responseType) && (
-                      <div className="flex items-center pb-1">
-                        <Switch
-                          checked={item.evidenceRequired}
-                          onChange={(v) => patch(index, { evidenceRequired: v })}
-                          label={item.responseType === 'signature' ? 'Must sign' : 'Must attach'}
-                        />
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-1.5 pb-1">
-                      <Switch
-                        checked={item.isRequired}
-                        onChange={(v) => patch(index, { isRequired: v })}
-                        label="Required"
-                      />
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label="Move up"
-                        disabled={index === 0}
-                        onClick={() => move(index, -1)}
-                      >
-                        <Icons.ChevronUp size={15} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label="Move down"
-                        disabled={index === items.length - 1}
-                        onClick={() => move(index, 1)}
-                      >
-                        <Icons.ChevronDown size={15} />
-                      </Button>
-                      <Button
-                        variant="danger-ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label="Remove row"
-                        onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
-                      >
-                        <Icons.Trash size={15} />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <p className="text-sm font-medium text-ink">Forms</p>
+            <p className="text-xs text-muted">
+              {editing !== null && editing !== 'new' && editing.formCount > 0
+                ? `This kind of work brings ${editing.formCount} form${editing.formCount === 1 ? '' : 's'}. A technician fills them in on the job.`
+                : 'This kind of work brings no forms yet. A form is what a job of this kind asks — the readings, the yes or no answers, the photographs.'}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Forms are built and attached under Setup › Job forms, not here: the same form is
+              usually asked by several kinds of work, so editing it inside one of them would
+              silently change the rest.
+            </p>
           </div>
         </div>
       </Modal>

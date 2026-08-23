@@ -1,7 +1,7 @@
 import 'server-only'
 import { siteQuery } from '../siteDb'
 import { getJobCard } from '../site/jobCards'
-import { jobItems } from '../site/jobHeadlines'
+import { answeredFieldsFor } from '../site/jobForms'
 import { getServiceAddress } from '../site/serviceAddresses'
 import { jobAppointments } from '../site/jobAppointments'
 import { getSetting } from '../site/settings'
@@ -56,14 +56,32 @@ export type ReportLine = {
   productCode: string | null
 }
 
+/**
+ * One answered question on the sheet.
+ *
+ * ── WHAT CHANGED WHEN THE CHECKLIST WENT ───────────────────────────────────
+ *
+ * 224 retired the checklist and these come from submitted forms now. Three
+ * fields went with it and their absence is deliberate rather than pending:
+ *
+ *   `phase` — before/during/after was a property of a checklist item. A form
+ *             orders itself, and its own headings say where the reader is.
+ *   `isFailed` — a check could be marked failed. A form field cannot: what
+ *             counts as a failure is the question's own wording, and inventing
+ *             a threshold to judge "250 kPa" by would be the system deciding
+ *             something the business never told it.
+ *   `note` — a caption beside an answer. A form asks a second question instead,
+ *             which is the same information somewhere it can be reported on.
+ *
+ * `formName` is new and groups the sheet: a job with a commissioning report and
+ * a safety check prints two sections rather than one undifferentiated list.
+ */
 export type ReportCheck = {
+  formName: string
   name: string
   hint: string | null
-  phase: WorkPhase
   /** 'Yes', '12.4 bar', 'Pass' — already formatted for a reader. */
   answer: string
-  isFailed: boolean
-  note: string | null
   completedByName: string | null
   /**
    * The stored file, for the pdf module to embed. Only ever a photo or a
@@ -145,31 +163,13 @@ function humanStamp(value: string | null, withTime = true): string | null {
   return withTime && hour && minute ? `${date}, ${hour}:${minute}` : date
 }
 
-/** How a stored checklist response reads to a person. */
-function formatAnswer(
-  responseType: string,
-  response: string | null,
-  unit: string | null,
-): string {
-  if (response === null || response.trim() === '') return 'Not recorded'
-  const v = response.trim()
-  switch (responseType) {
-    case 'yesno':
-      return v === 'yes' ? 'Yes' : v === 'no' ? 'No' : v
-    case 'passfail':
-      return v === 'pass' ? 'Pass' : v === 'fail' ? 'Fail' : v
-    case 'measure':
-      return unit ? `${v} ${unit}` : v
-    case 'photo':
-      return 'Photograph attached'
-    case 'signature':
-      return 'Signed'
-    case 'none':
-      return 'Done'
-    default:
-      return v
-  }
-}
+/*
+ * `formatAnswer` used to live here, turning a stored checklist response into
+ * something a person reads. It moved with the data: `answeredFieldsFor` in
+ * jobForms formats its own answers, because the formatting depends on the FIELD
+ * — a measurement carries its unit, a boolean reads Yes or No — and that
+ * knowledge belongs where the field is, not in the module that draws it.
+ */
 
 /**
  * Everything the report shows, or null when the job does not exist.
@@ -188,7 +188,7 @@ export async function buildJobReport(
   if (!job) return null
 
   const [items, address, visits, statement, signoff] = await Promise.all([
-    jobItems(siteId, jobId).catch(() => []),
+    answeredFieldsFor(siteId, jobId),
     job.serviceAddressId === null
       ? Promise.resolve(null)
       : getServiceAddress(siteId, job.serviceAddressId).catch(() => null),
@@ -257,20 +257,20 @@ export async function buildJobReport(
     }
   }
 
-  const checks: ReportCheck[] = items
-    // An unanswered check is not evidence of anything, so it is left off a
-    // document that says what was done. The job screen still shows it.
-    .filter((i) => i.completedAt !== null)
-    .map((i) => ({
-      name: i.name,
-      hint: i.hint,
-      phase: i.workPhase,
-      answer: formatAnswer(i.responseType, i.response, i.unit),
-      isFailed: i.isFailed,
-      note: i.note,
-      completedByName: i.completedByName,
-      attachment: i.attachmentId === null ? null : storedNames.get(i.attachmentId) ?? null,
-    }))
+  /*
+   * Already filtered to SUBMITTED responses by answeredFieldsFor, which is the
+   * same rule the checklist applied when it filtered on completedAt: an
+   * unanswered question is not evidence of anything, and this document says what
+   * was done.
+   */
+  const checks: ReportCheck[] = items.map((i) => ({
+    formName: i.formName,
+    name: i.label,
+    hint: i.hint,
+    answer: i.answer,
+    completedByName: i.respondentName || null,
+    attachment: i.attachmentId === null ? null : (storedNames.get(i.attachmentId) ?? null),
+  }))
 
   return {
     site: { name: siteName, vatNumber: siteVatNumber },

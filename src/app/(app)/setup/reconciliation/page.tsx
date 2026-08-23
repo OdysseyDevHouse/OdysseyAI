@@ -52,7 +52,6 @@ import {
   JobLineDriftTable,
   JobStateDriftTable,
   JobStrandedStatusTable,
-  JobItemDriftTable,
   JobNoHeadlineTable,
   AssetDriftTable,
   AssetJobDriftTable,
@@ -263,22 +262,6 @@ export default async function ReconciliationPage() {
     : 0
 
   /*
-   * Both item checks are bugs. recordItem refuses to complete a value-capturing
-   * check without an answer, and is_failed is derived by the same pure function
-   * the reconcile re-runs — so a mismatch means the flag and the response have
-   * diverged, and the exception report is lying about which checks failed.
-   *
-   * missingHeadline is NOT counted: the reconcile only fills it when the setting
-   * demands a headline, and even then an unclassified job is a configuration
-   * gap rather than a wrong figure.
-   */
-  const itemDrift = jobItems
-    ? jobItems.completedWithoutAnswer.length +
-      jobItems.completedWithoutEvidence.length +
-      jobItems.failedFlagWrong.length
-    : 0
-
-  /*
    * noAddress is counted as drift, which is arguable — a user with no email is a
    * setup gap rather than a broken figure. It is here because the failure it
    * causes is SILENT: assignment mail is swallowed by design so a mail problem
@@ -366,7 +349,6 @@ export default async function ReconciliationPage() {
     partsDrift === 0 &&
     slaDrift === 0 &&
     jobDrift === 0 &&
-    itemDrift === 0 &&
     assetDrift === 0 &&
     seriesDrift === 0 &&
     (batches === null || batches.length === 0)
@@ -722,74 +704,18 @@ export default async function ReconciliationPage() {
           </Card>
         )}
 
-        {jobItems !== null &&
-          (itemDrift === 0 ? (
-            <Callout tone="success" title="Job tasks and checks">
-              Every completed check carries the answer it asked for, and every failure flag agrees
-              with the answer beside it.
-            </Callout>
-          ) : (
-            <>
-              {jobItems.completedWithoutAnswer.length > 0 && (
-                <Card>
-                  <CardHeader
-                    title="Signed off with nothing recorded"
-                    description="A check that captures a reading, cannot be completed without one — recordItem refuses it. A row here means the value was written directly to the database, so what the technician actually measured is not known."
-                  />
-                  <JobItemDriftTable
-                    rows={jobItems.completedWithoutAnswer.map((r) => ({
-                      itemId: r.itemId,
-                      jobId: r.jobId,
-                      name: r.name,
-                      detail: `expects ${r.responseType}`,
-                    }))}
-                  />
-                </Card>
-              )}
-
-              {jobItems.completedWithoutEvidence.length > 0 && (
-                <Card>
-                  <CardHeader
-                    title="Signed off with no photo or signature"
-                    description="The serious one. A check that needs a file cannot be ticked without one, so a row here means the attachment was deleted afterwards — the foreign key nulls the link and leaves the tick standing. The job looks signed off and there is nothing to show. These items read as outstanding again, so the job cannot be closed over them."
-                  />
-                  <JobItemDriftTable
-                    rows={jobItems.completedWithoutEvidence.map((r) => ({
-                      itemId: r.itemId,
-                      jobId: r.jobId,
-                      name: r.name,
-                      detail: `${r.responseType} missing`,
-                    }))}
-                  />
-                </Card>
-              )}
-
-              {jobItems.failedFlagWrong.length > 0 && (
-                <Card>
-                  <CardHeader
-                    title="Failure flag disagrees with the answer"
-                    description="is_failed is derived from the response when it is written, and stored so the exception list is one indexed read. If the two diverge, every report of which checks failed is wrong."
-                  />
-                  <JobItemDriftTable
-                    rows={jobItems.failedFlagWrong.map((r) => ({
-                      itemId: r.itemId,
-                      jobId: r.jobId,
-                      name: r.name,
-                      detail: `answered ${r.response ?? 'nothing'}, flagged ${r.isFailed ? 'failed' : 'passed'}`,
-                    }))}
-                  />
-                </Card>
-              )}
-            </>
-          ))}
-
-        {/* Configuration, not drift — and only listed at all when the setting
-            demands a headline. */}
+        {/*
+            Configuration, not drift — and only listed at all when the setting
+            demands a headline. It is now the ONLY thing the headline reconcile
+            reports: the three checks that used to sit above it were about
+            answers on a checklist, which 224 retired. The equivalent questions
+            about a form's answers are asked by the forms reconcile.
+        */}
         {jobItems !== null && jobItems.missingHeadline.length > 0 && (
           <Card>
             <CardHeader
               title="Open jobs with no kind of work"
-              description="This site requires every job to name a kind of work, and these do not — so they bring none of the tasks and checks that kind would attach. Set one on each, or switch the requirement off under Job workflow."
+              description="This site requires every job to name a kind of work, and these do not — so they bring none of the forms and parts that kind would attach. Set one on each, or switch the requirement off under Job workflow."
             />
             <JobNoHeadlineTable rows={jobItems.missingHeadline} />
           </Card>

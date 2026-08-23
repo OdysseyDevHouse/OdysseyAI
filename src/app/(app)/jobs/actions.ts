@@ -51,10 +51,6 @@ import {
   saveHeadline,
   deleteHeadline,
   applyHeadlines,
-  recordItem,
-  captureEvidence,
-  addJobItem,
-  deleteJobItem,
   type HeadlineInput,
   type HeadlineResult,
   type ItemResult,
@@ -115,9 +111,6 @@ import {
   isDayMask,
   parseClock,
   isStockWarnMode,
-  type ItemKind,
-  type ResponseType,
-  type WorkPhase,
 } from '@/lib/jobStatusModel'
 import {
   saveJobBoard,
@@ -1091,14 +1084,15 @@ export async function customerAssetsAction(customerId: number | null): Promise<
   }))
 }
 
-/* ── Headlines, tasks and checks ──────────────────────────────────────────── */
+/* ── Headlines ────────────────────────────────────────────────────────────── */
 
 /**
- * Configuring what kinds of work exist is setup; recording a check is the work.
+ * Configuring what kinds of work exist is setup; saying which kinds a job is, is
+ * the work.
  *
- * So these two are `jobs.setup` and everything below is `jobs.edit`. A technician
- * must be able to tick off a task without being able to rewrite the template every
- * other technician follows.
+ * So these two are `jobs.setup` and applyHeadlinesAction below is `jobs.edit`. A
+ * technician must be able to say what a job turned out to be without being able
+ * to rewrite the template every other technician follows.
  */
 export async function saveHeadlineAction(input: HeadlineInput): Promise<HeadlineResult> {
   const ctx = await actorForModule('job_cards', 'jobs.setup')
@@ -1121,7 +1115,14 @@ export async function deleteHeadlineAction(id: number): Promise<ItemResult> {
   return result
 }
 
-/** Which kinds of work a job is, which copies their tasks and checks onto it. */
+/**
+ * Which kinds of work a job is.
+ *
+ * It used to copy each headline's checklist onto the job as well, which is why
+ * the actions that recorded a check sat beside it here. 224 retired that — forms
+ * ask the questions now, and they are answered through jobForms — so this simply
+ * sets the links.
+ */
 export async function applyHeadlinesAction(
   jobId: number,
   headlineIds: number[],
@@ -1133,86 +1134,6 @@ export async function applyHeadlinesAction(
   if (!result.ok) return result
   revalidateJobs(jobId)
   return result
-}
-
-export async function recordItemAction(
-  jobId: number,
-  itemId: number,
-  input: { response: string | null; note: string | null; complete: boolean },
-): Promise<ItemResult> {
-  const ctx = await actorForModule('job_cards', 'jobs.edit')
-  if ('ok' in ctx) return ctx
-
-  const result = await recordItem(ctx.siteId, ctx.actor, itemId, input)
-  if (!result.ok) return result
-  revalidateJobs(jobId)
-  return result
-}
-
-export async function addJobItemAction(
-  jobId: number,
-  input: {
-    kind: ItemKind
-    name: string
-    responseType: ResponseType
-    unit: string | null
-    workPhase: WorkPhase
-    isRequired: boolean
-  },
-): Promise<ItemResult> {
-  const ctx = await actorForModule('job_cards', 'jobs.edit')
-  if ('ok' in ctx) return ctx
-
-  const result = await addJobItem(ctx.siteId, ctx.actor, jobId, input)
-  if (!result.ok) return result
-  revalidateJobs(jobId)
-  return result
-}
-
-/**
- * Attach a captured photo or signature to a check.
- *
- * Takes FormData because a File cannot cross a server-action boundary any other
- * way. The two cleanup paths are the point: storeUpload has already written
- * bytes to disk by the time captureEvidence runs, and its contract says the
- * caller unlinks them if the insert does not land. Both a returned refusal and a
- * thrown error leave the same orphan, so both are handled — the pattern
- * attachmentActions.ts established.
- */
-export async function captureEvidenceAction(
-  jobId: number,
-  itemId: number,
-  form: FormData,
-): Promise<ItemResult> {
-  const ctx = await actorForModule('job_cards', 'jobs.edit')
-  if ('ok' in ctx) return ctx
-
-  const file = form.get('file')
-  if (!(file instanceof File)) return { ok: false, error: 'No file was received.' }
-
-  const caption = form.get('caption')
-  const stored = await storeUpload(file)
-  if (!stored.ok) return { ok: false, error: stored.error }
-
-  try {
-    const result = await captureEvidence(
-      ctx.siteId,
-      ctx.actor,
-      itemId,
-      stored.file,
-      typeof caption === 'string' && caption.trim() ? caption.trim() : null,
-    )
-    if (!result.ok) {
-      await deleteStoredFile(stored.file.storedName)
-      return result
-    }
-  } catch (error) {
-    await deleteStoredFile(stored.file.storedName)
-    throw error
-  }
-
-  revalidateJobs(jobId)
-  return { ok: true }
 }
 
 /* ── Asking for a part the shop does not have (162, §28) ──────────────────── */
@@ -1539,16 +1460,6 @@ export async function toggleFollowAction(
   if ('ok' in ctx) return ctx
 
   const result = await toggleFollow(ctx.siteId, ctx.actor, jobId)
-  if (!result.ok) return result
-  revalidateJobs(jobId)
-  return result
-}
-
-export async function deleteJobItemAction(jobId: number, itemId: number): Promise<ItemResult> {
-  const ctx = await actorForModule('job_cards', 'jobs.edit')
-  if ('ok' in ctx) return ctx
-
-  const result = await deleteJobItem(ctx.siteId, ctx.actor, itemId)
   if (!result.ok) return result
   revalidateJobs(jobId)
   return result

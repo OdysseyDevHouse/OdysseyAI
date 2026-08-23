@@ -1,0 +1,60 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- Retiring the checklist. Forms do this now.
+--
+-- ── WHAT IS BEING REMOVED, AND WHY IT CAN BE ─────────────────────────────
+--
+-- job_headline_items (the template) and job_card_items (the answers), added by
+-- 114. They were a good checklist and most of what they learned is in 222: the
+-- response types, the before/during/after grouping, the required flag, the
+-- evidence link from 119 and the asset link from 161 all survive as form fields
+-- and answers.
+--
+-- What they could not do is version. The checklist versions by COPY-ON-ATTACH --
+-- every item duplicated onto the job the moment a headline lands, so a template
+-- edit cannot rewrite signed-off history. That works, and it is why
+-- job_card_items repeats every template column. But a copied row cannot say
+-- WHICH version it came from, and 24 requires exactly that: a response records
+-- the form version, and template edits must not alter historical submissions.
+--
+-- Two systems answering the same question -- what must be recorded before this
+-- job is done -- is worse than either alone. The close gate had to read both;
+-- the setup screen offered both; and a shop had to be told which one to use.
+--
+-- ── WHY THIS IS SAFE HERE AND WOULD NOT BE ELSEWHERE ─────────────────────
+--
+-- Measured before writing this file: ZERO rows in both tables across all
+-- twenty-two site databases. Nothing is being destroyed, because nothing was
+-- ever recorded -- the checklist shipped, and no shop has used it.
+--
+-- On a database that HAD answers this file would be wrong as written. Signed-off
+-- checklist results are evidence, and the honest migration would move them into
+-- job_form_responses rather than drop them. That path is not built, because
+-- building a migration for data that does not exist is how a migration nobody
+-- can test ships.
+--
+-- ── THE COLUMNS 119 AND 161 ADDED ────────────────────────────────────────
+--
+-- Both already have homes in 222 and neither is lost:
+--
+--   job_card_items.attachment_id -> job_form_answers.attachment_id, same
+--     BIGINT UNSIGNED, same party_documents reference, same ON DELETE SET NULL
+--     so removing a file un-answers the field rather than leaving it pointing
+--     at bytes that are gone.
+--
+--   job_card_items.asset_id -> job_form_responses.asset_id, and deliberately at
+--     the RESPONSE rather than the answer. A form is filled in about one piece
+--     of equipment; per-field asset links were an option the checklist needed
+--     because it had no response row to hang one on.
+--
+-- Their ALTER statements in 119 and 161 are left in place. They are guarded with
+-- IF NOT EXISTS against a table this file drops afterwards, so on a fresh build
+-- they alter a table that exists and is then removed -- wasteful by three
+-- statements, and far safer than editing two applied migrations whose comments
+-- explain reasoning that is still true of the columns they moved.
+--
+-- Order matters: job_card_items references job_headline_items, so the child
+-- goes first.
+-- ─────────────────────────────────────────────────────────────────────────
+
+DROP TABLE IF EXISTS job_card_items;
+DROP TABLE IF EXISTS job_headline_items;

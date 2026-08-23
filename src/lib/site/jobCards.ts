@@ -9,8 +9,7 @@ import { statusForRole, listJobStatuses } from './jobStatuses'
 // One-directional: jobSla reads settings and holidays, never jobCards.
 import { applyDeadlinesTx } from './jobSla'
 // Likewise jobHeadlines — it reads settings and its own tables, never jobCards.
-import { itemsBlockClose, outstandingRequiredTx } from './jobHeadlines'
-import { outstandingFormsTx } from './jobForms'
+import { outstandingFormsTx, formsBlockClose } from './jobForms'
 import { missingSignoffTx, signoffRule } from './jobSignoff'
 // And jobAssets, which reads its own tables plus job_cards but never imports back.
 import { recordServiceOnClose } from './jobAssets'
@@ -1172,25 +1171,21 @@ export async function setStatus(
         status.blocks_on_incomplete === null || status.blocks_on_incomplete === undefined
           ? null
           : Number(status.blocks_on_incomplete) === 1
-      const blocking = stageRule ?? (await itemsBlockClose(siteId))
+      const blocking = stageRule ?? (await formsBlockClose(siteId))
 
       if (blocking) {
         /*
-         * Checks and FORMS, in one list (222).
+         * The required forms this job has not submitted (222).
          *
-         * The same rule governs both because they answer the same question —
-         * has the work been recorded — and a job blocked by one while silently
-         * ignoring the other would be a gate people learn to distrust.
+         * Read inside this transaction so the check and the close see the same
+         * state: a form submitted in the moment between them must not let a job
+         * through that should have been held.
          *
-         * Both reads run inside this transaction so the check and the close see
-         * the same state: a form submitted in the moment between them must not
-         * let a job through that should have been held.
+         * This used to take the union of checklist items and forms. 224 retired
+         * the checklist — forms answer the same question and version properly —
+         * so there is one list again.
          */
-        const [items, forms] = await Promise.all([
-          outstandingRequiredTx(tx, jobId),
-          outstandingFormsTx(tx, jobId),
-        ])
-        const outstanding = [...items, ...forms]
+        const outstanding = await outstandingFormsTx(tx, jobId)
         if (outstanding.length > 0) {
           const listed = outstanding.slice(0, 3).join(', ')
           const more = outstanding.length > 3 ? ` and ${outstanding.length - 3} more` : ''

@@ -41,18 +41,12 @@ const PAGE_BREAK = 700
 const INK = '#16191d'
 const MUTED = '#667085'
 const LINE = '#d0d5dd'
-const DANGER = '#b42318'
 
 /** Photos are boxed so a 4000px phone picture cannot run off the page. */
 const PHOTO_BOX = { width: 150, height: 110 }
 /** A signature is wider than tall; 600px wide as captured (job_signature_width). */
 const SIGNATURE_BOX = { width: 200, height: 60 }
 
-const PHASE_LABEL: Record<string, string> = {
-  before: 'Before the work',
-  during: 'During the work',
-  after: 'After the work',
-}
 
 /**
  * The report, as bytes.
@@ -269,11 +263,23 @@ function draw(
     y += 6
   }
 
-  // ── What was done, grouped the way the technician worked it
+  // ── What was done, grouped by the form that asked
   if (data.checks.length > 0) {
     y = heading(doc, y, 'What was done')
-    for (const phase of ['before', 'during', 'after'] as const) {
-      const inPhase = data.checks.filter((c) => c.phase === phase)
+    /*
+     * Grouped by FORM since 224 retired the checklist. It used to group by
+     * before/during/after, which was a property of a checklist item and has no
+     * equivalent on a form — a form orders itself and its own headings say
+     * where the reader is.
+     *
+     * The grouping is derived from the order the rows arrive in rather than
+     * sorted, because answeredFieldsFor already returns them by response and
+     * then by field position. Re-sorting here would put a form's questions in
+     * an order nobody chose.
+     */
+    const formNames = [...new Set(data.checks.map((c) => c.formName))]
+    for (const formName of formNames) {
+      const inPhase = data.checks.filter((c) => c.formName === formName)
       if (inPhase.length === 0) continue
 
       /*
@@ -295,7 +301,7 @@ function draw(
         .font('Helvetica-Bold')
         .fontSize(8)
         .fillColor(MUTED)
-        .text(PHASE_LABEL[phase].toUpperCase(), MARGIN, y)
+        .text(formName.toUpperCase(), MARGIN, y)
       y += 13
 
       for (const check of inPhase) {
@@ -422,22 +428,23 @@ function drawCheck(
    * seen — the image was in the file, below the page. Every path through this
    * function must therefore be measured before any of it is drawn.
    */
-  const needed = 13 + (check.note ? 18 : 0) + (bytes ? box.height + 8 : check.attachment ? 14 : 0)
+  /*
+   * The note line and the failure styling went with the checklist (224).
+   *
+   * A form field cannot be "failed": what counts as a failure is the question's
+   * own wording, and drawing "250 kPa" in red would mean this module deciding
+   * something the business never told it. A form asks a second question instead,
+   * which prints as its own row — and reads better than a caption did.
+   */
+  const needed = 13 + (bytes ? box.height + 8 : check.attachment ? 14 : 0)
   let y = pageBreak(doc, yIn, needed)
 
   doc.font('Helvetica').fontSize(9).fillColor(INK).text(check.name, MARGIN, y, { width: 300 })
   doc
-    .font(check.isFailed ? 'Helvetica-Bold' : 'Helvetica')
-    .fillColor(check.isFailed ? DANGER : INK)
+    .font('Helvetica')
+    .fillColor(INK)
     .text(check.answer, MARGIN + 300, y, { width: 199, align: 'right' })
   y += 13
-
-  if (check.note) {
-    doc.font('Helvetica').fontSize(8).fillColor(MUTED).text(check.note, MARGIN + 12, y, {
-      width: CONTENT_WIDTH - 12,
-    })
-    y = doc.y + 4
-  }
 
   if (bytes) {
     /*

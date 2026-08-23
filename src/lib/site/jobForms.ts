@@ -2,6 +2,7 @@ import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { logActivity, type Actor } from './activityLog'
+import { getSetting } from './settings'
 import { toNum } from '../decimals'
 import {
   isFormFieldType,
@@ -856,6 +857,105 @@ export async function outstandingFormsTx(
     // A site without 222 has no forms to be outstanding.
     return []
   }
+}
+
+/** One answered field, flattened for the printed job sheet. */
+export type AnsweredField = {
+  formName: string
+  label: string
+  hint: string | null
+  answer: string
+  respondentName: string
+  attachmentId: number | null
+}
+
+/**
+ * Every SUBMITTED answer on a job, for the job sheet (§35).
+ *
+ * ── WHY SUBMITTED ONLY ─────────────────────────────────────────────────────
+ *
+ * The same rule the portal applies, for a stronger reason: this document is
+ * handed to a customer or filed as the record of what was done. A draft is a
+ * technician's working notes — readings still being taken — and printing one as
+ * though it were the finding is how a document says something nobody stood
+ * behind.
+ *
+ * The checklist this replaces filtered on `completedAt !== null` for exactly the
+ * same reason, and its comment said so: an unanswered check is not evidence of
+ * anything.
+ *
+ * Structure fields are dropped and unanswered ones with them. A heading on a
+ * printed sheet with nothing under it is a heading about nothing.
+ */
+export async function answeredFieldsFor(
+  siteId: number,
+  jobId: number,
+): Promise<AnsweredField[]> {
+  try {
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT f.name AS form_name, fl.label, fl.hint, fl.field_type, fl.unit,
+              r.respondent_name,
+              a.value_text, a.value_number, a.value_date, a.value_bool, a.attachment_id
+         FROM job_form_responses r
+         JOIN job_forms f        ON f.id = r.form_id
+         JOIN job_form_fields fl ON fl.version_id = r.version_id
+         JOIN job_form_answers a ON a.response_id = r.id AND a.field_id = fl.id
+        WHERE r.job_card_id = ?
+          AND r.submitted_at IS NOT NULL
+          AND fl.field_type NOT IN ('heading','page_break')
+        ORDER BY r.submitted_at, r.id, fl.sort_order, fl.id`,
+      [jobId],
+    )
+
+    const out: AnsweredField[] = []
+    for (const r of rows) {
+      /*
+       * Already formatted for a reader, because the pdf module renders what it
+       * is given. "Yes" not 1, and a measurement carries its unit — a sheet
+       * saying "Gas pressure: 250" is a number somebody has to remember the
+       * meaning of.
+       */
+      let answer = ''
+      if (r.value_bool !== null && r.value_bool !== undefined) {
+        answer = Number(r.value_bool) === 1 ? 'Yes' : 'No'
+      } else if (r.value_number !== null && r.value_number !== undefined) {
+        answer = `${Number(r.value_number)}${r.unit ? ` ${String(r.unit)}` : ''}`
+      } else if (r.value_date !== null && r.value_date !== undefined) {
+        answer = String(r.value_date)
+      } else if (r.value_text !== null && r.value_text !== undefined) {
+        answer = String(r.value_text)
+      }
+
+      const hasFile = r.attachment_id !== null && r.attachment_id !== undefined
+      if (answer.trim() === '' && !hasFile) continue
+
+      out.push({
+        formName: String(r.form_name),
+        label: String(r.label),
+        hint: r.hint === null ? null : String(r.hint),
+        answer,
+        respondentName: String(r.respondent_name ?? ''),
+        attachmentId: hasFile ? Number(r.attachment_id) : null,
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Whether the block-on-close rule is switched on.
+ *
+ * Moved here from jobHeadlines when 224 retired the checklist. The SETTING keeps
+ * its name — `job_items_block_close` — because renaming it would silently reset
+ * every site that had turned it off, and a schema key is not worth that. What it
+ * governs is now required forms.
+ */
+export async function formsBlockClose(siteId: number): Promise<boolean> {
+  const value = await getSetting(siteId, 'job_items_block_close').catch(() => '1')
+  return value !== '0'
 }
 
 /* ── Drift ────────────────────────────────────────────────────────────────── */
