@@ -3,6 +3,8 @@ import { can, type Capability } from '@/lib/site/permissions'
 import { holder } from '@/lib/control/modules'
 import { PageHeader, PageBody, Badge, Card, Icons } from '@/components/ui'
 import { SalesDashboard } from './SalesDashboard'
+import { MobileDashboard } from './MobileDashboard'
+import { isMobileShell } from '@/lib/mobileShell'
 import { WIDGETS } from './widgets'
 
 /**
@@ -44,6 +46,36 @@ export default async function DashboardPage() {
          dashboard for ever showing zero. */
       (!w.module || bought(w.module)),
   ).map((w) => w.id)
+
+  /* The phone stacks instead of gridding — see MobileDashboard for why that is
+     a different component rather than a breakpoint. No PageHeader: the mobile
+     top bar already carries the store's name, and repeating it would spend a
+     fifth of a 390px screen saying the same thing twice. */
+  if (await isMobileShell()) {
+    return allowed ? (
+      <MobileDashboard visibleWidgets={visibleWidgets} />
+    ) : (
+      <div className="p-4">
+        <Card>
+          <div className="flex items-start gap-3 px-4 py-4">
+            <Icons.Info size={20} className="mt-0.5 shrink-0 text-muted" />
+            <div>
+              <p className="font-medium text-ink">
+                {user.roleName
+                  ? `Your role (${user.roleName}) does not include the trading figures.`
+                  : 'You have not been given a role yet.'}
+              </p>
+              <p className="text-sm text-muted">
+                {user.roleName
+                  ? 'Use the menu for the screens you do have.'
+                  : 'An owner can give you one in Setup → Users.'}
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    )
+  }
 
   return (
     <>

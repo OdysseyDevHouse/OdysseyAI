@@ -4,6 +4,8 @@ import { listSitesForUser } from '@/lib/sites'
 import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
+import { MobileTopBar } from '@/components/MobileTopBar'
+import { isMobileShell } from '@/lib/mobileShell'
 import { ToastProvider } from '@/components/ui'
 import DesktopLicenceGate from './DesktopLicenceGate'
 import LeaseLockScreen from './LeaseLockScreen'
@@ -59,6 +61,42 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // The bell's starting figure. One indexed COUNT; the client keeps itself
   // fresh from there, and a failure here must not take down every page.
   const unread = await unreadCount(site.id, user.id, capabilities).catch(() => 0)
+
+  /*
+   * ── THE PHONE GETS DIFFERENT CHROME, NOT DIFFERENT RULES ─────────────────
+   *
+   * Read AFTER every guard above, deliberately. The session check, the
+   * must-change-password redirect, the site-access re-read and the lease lock
+   * all run first and all run identically, so the mobile app cannot reach a
+   * screen the browser could not — this branch only decides what is drawn
+   * AROUND the page.
+   *
+   * Why a branch here rather than a second route group: everything above this
+   * line is the expensive, security-carrying half — three database reads and
+   * four redirects. A parallel `(mobile)` layout would have to repeat all of
+   * it, and the copy that drifts is the one that forgets a guard.
+   */
+  if (await isMobileShell()) {
+    return (
+      <div className="flex h-screen flex-col overflow-hidden">
+        <MobileTopBar
+          granted={[...capabilities.granted]}
+          isOwner={capabilities.isOwner}
+          modules={[...modules.held]}
+          userName={user.name}
+          siteName={site.displayName}
+          unreadNotifications={unread}
+        />
+        {/* min-h-0 so the pane scrolls instead of the children being crushed —
+            a flex column hands its children infinite height otherwise. */}
+        <main className="min-h-0 flex-1 overflow-y-auto bg-canvas">
+          <ToastProvider>
+            {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+          </ToastProvider>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">

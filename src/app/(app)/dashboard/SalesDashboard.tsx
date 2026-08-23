@@ -50,6 +50,7 @@ import {
   JobStat,
   JobSplit,
 } from './OverviewWidgets'
+import { widgetBody as bodyFor, widgetNote as noteFor } from './WidgetBody'
 import { WidgetPanel } from './WidgetPanel'
 import { DetailModal } from './DetailModal'
 
@@ -123,35 +124,6 @@ const EMPTY: SalesDashboardData = {
  * for a request still in flight is how a dashboard trains people to distrust
  * it.
  */
-function notAllowed(error: string | null, loaded: boolean) {
-  if (error) {
-    return (
-      <EmptyState
-        icon={<Icons.StatusWarning size={22} />}
-        title="Couldn't load this"
-        hint={error}
-      />
-    )
-  }
-  // Still in flight. A skeleton rather than a message, so the box does not
-  // flash "not available" at every reader for the first few hundred ms.
-  if (!loaded) {
-    return (
-      <div className="flex flex-col gap-2 p-4">
-        <Skeleton className="h-4 w-2/3" />
-        <Skeleton className="h-4 w-1/2" />
-        <Skeleton className="h-4 w-3/5" />
-      </div>
-    )
-  }
-  return (
-    <EmptyState
-      icon={<Icons.Lock size={22} />}
-      title="Not available"
-      hint="Your role does not include this information."
-    />
-  )
-}
 
 /** This month to date — the period a store owner checks most. */
 function thisMonth(): DateRange {
@@ -354,150 +326,14 @@ export function SalesDashboard({
     [layout, shown],
   )
 
+  /* Both widget bodies and the phone's stacked view read ONE implementation —
+     see WidgetBody.tsx for why that matters more than the stacking does. */
   function widgetBody(id: WidgetId) {
-    switch (id) {
-      case 'perHour':
-        return <SalesPerHourChart data={data.perHour} />
-      case 'perDay':
-        return <TurnoverPerDayChart data={data.perDay} />
-      case 'countPerDay':
-        return <SalesCountPerDayChart data={data.perDay} />
-      case 'tenderTypes':
-        return <TenderMixChart data={data.tenderTypes} />
-      case 'topProducts':
-        return <RankedTable rows={data.topProducts} config={TABLE_CONFIG.products} />
-      case 'topDepartments':
-        return <RankedTable rows={data.topDepartments} config={TABLE_CONFIG.departments} />
-      case 'topCashiers':
-        return <RankedTable rows={data.topCashiers} config={TABLE_CONFIG.cashiers} />
-      case 'voidsAndReturns':
-        return <ExceptionsTable rows={data.exceptions} />
-
-      /* The as-at half. A null section means the user may not see it — the
-         server never put it on the wire — so the widget says so rather than
-         rendering an empty box that looks like a zero. */
-      case 'attention':
-        return overview ? <AttentionList items={overview.attention} /> : notAllowed(overviewError, overview !== null)
-      case 'debtorsAgeing':
-        return overview?.debtors ? (
-          <div className="p-4">
-            <AgeingStrip
-              aging={overview.debtors}
-              hrefFor={(bucket) => `/customers/age-analysis?bucket=${bucket}`}
-            />
-          </div>
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'creditorsAgeing':
-        return overview?.creditors ? (
-          <div className="p-4">
-            <AgeingStrip
-              aging={overview.creditors}
-              hrefFor={(bucket) => `/suppliers/age-analysis?bucket=${bucket}`}
-            />
-          </div>
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'cashPosition':
-        return overview?.cash ? (
-          <CashPositionPanel cash={overview.cash} />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'pipeline':
-        return overview?.pipeline ? (
-          <PipelinePanel pipeline={overview.pipeline} />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'reorder':
-        return overview?.reorder ? (
-          <ReorderTable reorder={overview.reorder} />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-
-      /* ── Job cards ────────────────────────────────────────────────────────
-         Every figure links to the list filtered to itself — the PRD requires
-         it, and a count nobody can open is a count nobody reads. */
-      case 'jobsOpen':
-        return overview?.jobs ? (
-          <JobStat label="jobs open now" value={overview.jobs.open} href="/jobs?state=open" />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'jobsUnassigned':
-        return overview?.jobs ? (
-          <JobStat
-            label="waiting for an owner"
-            value={overview.jobs.unassigned}
-            href="/jobs?state=open"
-            tone="warning"
-          />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'jobsInProgress':
-        return overview?.jobs ? (
-          <JobStat label="being worked on" value={overview.jobs.inProgress} href="/jobs?state=open" />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'jobsAwaitingParts':
-        return overview?.jobs ? (
-          <JobStat
-            label="blocked on a part"
-            value={overview.jobs.awaitingParts}
-            href="/jobs?state=open"
-            tone="warning"
-          />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'jobsNotInvoiced':
-        return overview?.jobs ? (
-          <JobStat
-            label="closed with work unbilled"
-            value={overview.jobs.notInvoiced}
-            href="/jobs?state=closed"
-            // Danger rather than warning: this one is money already earned and
-            // not yet asked for.
-            tone="danger"
-          />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'jobsByStatus':
-        return overview?.jobs ? (
-          <JobSplit
-            rows={overview.jobs.byStatus}
-            emptyHint="Nothing is open. Every job has been closed or cancelled."
-          />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      case 'jobsByTechnician':
-        return overview?.jobs ? (
-          <JobSplit
-            rows={overview.jobs.byTechnician}
-            emptyHint="Nothing is open, so nobody is carrying anything."
-          />
-        ) : (
-          notAllowed(overviewError, overview !== null)
-        )
-      default:
-        return null
-    }
+    return bodyFor(id, { data, overview, overviewError })
   }
 
-  /** The header suffix for a widget: its scope marker, and where relevant, which location. */
   function widgetNote(id: WidgetId): string | null {
-    if (id === 'reorder' && overview?.reorder?.multipleLocations) {
-      return overview.reorder.locationName
-    }
-    return null
+    return noteFor(id, overview)
   }
 
   return (

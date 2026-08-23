@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { SESSION_COOKIE } from '@/lib/session'
+import { MOBILE_SHELL_COOKIE, MOBILE_SHELL_HEADER } from '@/lib/mobileShellKeys'
 
 // Next 16 renamed the `middleware` convention to `proxy`; same signature, same
 // place in the request lifecycle.
@@ -256,7 +257,45 @@ const PUBLIC_PREFIXES = [
 const POS_PATHS = ['/pos']
 const POS_UNLOCK = '/pos-unlock'
 
+/**
+ * Remember that this browser is the mobile app's WebView.
+ *
+ * The native shell sets `x-odyssey-shell: mobile` on the requests IT makes, but
+ * a WebView does not attach custom headers to navigations the PAGE starts — a
+ * tapped link, a redirect, a form post. So the header arrives on the first load
+ * and never again, and without this the app would render its first screen bare
+ * and grow a desktop sidebar on the second.
+ *
+ * Presentation only, and deliberately not signed or verified: setting it by
+ * hand in a browser gets you the phone layout on a desktop, which is a
+ * curiosity rather than an escalation. Every real check runs regardless — see
+ * `src/lib/mobileShell.ts`.
+ *
+ * Wrapping the handler rather than editing its seven return points, because the
+ * one that gets forgotten is the one that breaks a screen nobody tests.
+ */
+function rememberShell(req: NextRequest, res: NextResponse): NextResponse {
+  if (req.headers.get(MOBILE_SHELL_HEADER)?.toLowerCase() !== 'mobile') return res
+  if (req.cookies.get(MOBILE_SHELL_COOKIE)?.value === 'mobile') return res
+
+  res.cookies.set(MOBILE_SHELL_COOKIE, 'mobile', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production' && process.env.APP_MODE !== 'desktop',
+    path: '/',
+    /* A year: the shell re-asserts the header on every cold start anyway, so
+       this only has to outlive a session, and an expiry short enough to lapse
+       mid-use would show up as the sidebar appearing for no reason. */
+    maxAge: 60 * 60 * 24 * 365,
+  })
+  return res
+}
+
 export default function proxy(req: NextRequest) {
+  return rememberShell(req, route(req))
+}
+
+function route(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   if (PUBLIC_EXACT.includes(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) {

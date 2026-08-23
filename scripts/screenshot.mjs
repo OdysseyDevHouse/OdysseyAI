@@ -290,6 +290,34 @@ await applyTheme()
 // Session-level, so it survives every navigation below — set once.
 await applyMedia()
 
+/**
+ * SHOT_HEADERS='{"x-odyssey-shell":"mobile"}' sends extra headers on every
+ * request from here on, navigations included.
+ *
+ * The mobile shell is why this exists. Which chrome the app renders is chosen
+ * by a header the native WebView sets, and a probe cannot stand in for one: a
+ * `fetch` from the page only proves what the server WOULD return, and reloading
+ * to apply the resulting cookie tears down the evaluation context mid-call,
+ * ending the run with "Inspected target navigated or closed". Setting it at the
+ * network layer means the screenshot is of the real screen rather than of a
+ * reconstruction of it.
+ *
+ * After sign-in, deliberately: the login POST has no use for these, and the
+ * navigations that get photographed all happen below.
+ */
+const HEADERS = process.env.SHOT_HEADERS
+if (HEADERS) {
+  let parsed
+  try {
+    parsed = JSON.parse(HEADERS)
+  } catch {
+    console.error(`SHOT_HEADERS must be JSON, got: ${HEADERS}`)
+    process.exit(1)
+  }
+  await send('Network.enable', {}, sessionId)
+  await send('Network.setExtraHTTPHeaders', { headers: parsed }, sessionId)
+}
+
 /*
  * SHOT_VIEWPORT="1366x768" drives the page at a specific screen size.
  *
