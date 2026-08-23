@@ -15,6 +15,7 @@ import { jobStanding, tradingHours } from '@/lib/site/jobSla'
 import { jobItems, jobHeadlineIds, listHeadlines } from '@/lib/site/jobHeadlines'
 import { jobAssetFor, otherJobAssets } from '@/lib/site/jobAssets'
 import { requestsForJob } from '@/lib/site/jobPartRequests'
+import { serialsForLine } from '@/lib/site/jobSerials'
 import { jobSeriesFor } from '@/lib/site/jobSeries'
 import { getServiceAddress, formatAddress, mapsHref } from '@/lib/site/serviceAddresses'
 import { formatMoney } from '@/lib/decimals'
@@ -43,6 +44,7 @@ import JobDetail from './JobDetail'
 import JobVisits from './JobVisits'
 import JobPartsPanel from './JobPartsPanel'
 import JobPartRequests from './JobPartRequests'
+import JobSerialsPanel from './JobSerialsPanel'
 import JobSlaCard from './JobSlaCard'
 import JobChecks from './JobChecks'
 import JobSignoffCard from './JobSignoffCard'
@@ -293,6 +295,31 @@ export default async function JobPage({
       // tolerant — a site without the table shows no card rather than failing.
       requestsForJob(siteId, jobId).catch(() => []),
     ])
+
+  /*
+   * Which units are already named on each serial-tracked line (§31).
+   *
+   * A SECOND round trip, after the block above, because it cannot be part of it:
+   * which lines are serial-tracked is not known until `parts` has resolved, and
+   * a query for every line on every job would read a table that is empty for the
+   * vast majority of them.
+   *
+   * A shop with no serial-tracked parts does no work here at all — the filter is
+   * empty, so nothing is asked.
+   */
+  const serialLines = parts.filter((p) => p.isSerial && p.productId !== null)
+  const serialsByLine = new Map<number, string[]>()
+  if (serialLines.length > 0) {
+    const allocations = await Promise.all(
+      serialLines.map((p) => serialsForLine(siteId, p.lineId)),
+    )
+    serialLines.forEach((p, i) => {
+      serialsByLine.set(
+        p.lineId,
+        allocations[i]!.map((a) => a.serial),
+      )
+    })
+  }
 
   const overdue = !job.isClosed && job.dueAt !== null && storedMillis(job.dueAt) < Date.now()
 
@@ -592,6 +619,24 @@ export default async function JobPage({
                 parts={parts}
                 vanHoldings={holdings}
                 canIssue={can(capabilities, 'stock.transfer')}
+              />
+            )}
+            {/* Between the parts panel and the request queue, because that is
+                the order the questions arrive in: how many, which ones, and
+                what is missing. Renders nothing at all when no line on the job
+                is serial-tracked. */}
+            {tab === 'costs' && serialLines.length > 0 && (
+              <JobSerialsPanel
+                jobId={job.id}
+                jobClosed={job.isClosed}
+                canEdit={can(capabilities, 'jobs.edit')}
+                lines={serialLines.map((p) => ({
+                  lineId: p.lineId,
+                  productId: p.productId as number,
+                  description: p.description,
+                  qty: p.qty,
+                  serials: serialsByLine.get(p.lineId) ?? [],
+                }))}
               />
             )}
             {/* Directly under the parts panel (162), because the two are one
