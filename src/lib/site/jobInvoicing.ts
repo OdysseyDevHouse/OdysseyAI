@@ -6,6 +6,7 @@ import { round, toNum } from '../decimals'
 import { lineTotals } from '../documentMath'
 import { logActivityTx, type Actor } from './activityLog'
 import { BILLABLE_STATES, isBillable, type BillingState } from '../jobStatusModel'
+import { releaseLine, reserveForQuote, acceptedQuoteFor } from './jobReservations'
 
 /**
  * Billing a job.
@@ -299,6 +300,18 @@ export async function invoiceJob(
         [qty.toFixed(3), invoiceId, line.id] as never,
       )
 
+      /*
+       * Whatever is being billed stops being merely claimed (220).
+       *
+       * A part on a draft invoice is on its way out of the building, and holding
+       * a reservation for it as well would deduct it twice from what the till
+       * may sell. Released by the exact quantity, so a line billed three of ten
+       * keeps its claim on the other seven.
+       *
+       * In THIS transaction, so the claim and the billing commit together.
+       */
+      await releaseLine(tx, line.id, qty)
+
       totalIncl += totals.lineTotalIncl
     }
 
@@ -388,6 +401,24 @@ export async function releaseJobLines(
           WHERE id = ?`,
         [toNum(row.qty).toFixed(3), invoiceId, Number(row.job_card_line_id)] as never,
       )
+    }
+
+    /*
+     * The claim comes back with the quantity (220).
+     *
+     * Discarding a draft returns these lines to the worklist, so the parts are
+     * promised to this customer again and must stop being sellable to somebody
+     * else. Re-derived from the job's ACCEPTED QUOTE rather than by adding back
+     * what was released: if the quote was superseded while the draft sat there,
+     * the old claim is no longer what the customer agreed to, and reinstating it
+     * would hold stock against a version nobody accepted.
+     *
+     * A job with no accepted quote reserves nothing, which is the honest answer
+     * — an invoice raised without one was never backed by a promise.
+     */
+    const acceptedQuoteId = doc.job_card_id === null ? null : await acceptedQuoteFor(tx, Number(doc.job_card_id))
+    if (acceptedQuoteId !== null) {
+      await reserveForQuote(tx, Number(doc.job_card_id), acceptedQuoteId)
     }
 
     await logActivityTx(tx, actor, {

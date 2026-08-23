@@ -9,6 +9,7 @@ import { reconcileBalances } from '@/lib/site/customerLedger'
 import { reconcileSupplierBalances } from '@/lib/site/supplierLedger'
 import { reconcileAging } from '@/lib/site/aging'
 import { reconcileJobParts } from '@/lib/site/jobParts'
+import { reconcileJobReservations } from '@/lib/site/jobReservations'
 import { reconcileJobSla } from '@/lib/site/jobSla'
 import { reconcileJobCards } from '@/lib/site/jobCards'
 import { reconcileJobHeadlines } from '@/lib/site/jobHeadlines'
@@ -38,6 +39,8 @@ import {
   JobIssuedDriftTable,
   JobInvoicedOutTable,
   JobWrongPileTable,
+  JobOverClaimedTable,
+  JobClosedClaimTable,
   JobStrandedTable,
   JobAlsoOnOrderTable,
   JobSlaStaleTable,
@@ -120,6 +123,7 @@ export default async function ReconciliationPage() {
     suppliers,
     aging,
     jobParts,
+    jobReservations,
     jobSla,
     jobCards,
     jobItems,
@@ -151,6 +155,8 @@ export default async function ReconciliationPage() {
      * take down the screen somebody opens BECAUSE something is wrong.
      */
     reconcileJobParts(siteId).catch(() => null),
+    // Tolerant for the same reason: 220 may not have run on this site yet.
+    reconcileJobReservations(siteId).catch(() => null),
     // Tolerant for the same reason: 113 may not have run on this site yet.
     reconcileJobSla(siteId).catch(() => null),
     reconcileJobCards(siteId).catch(() => null),
@@ -561,6 +567,26 @@ export default async function ReconciliationPage() {
               )}
             </>
           ))}
+
+        {jobReservations !== null && jobReservations.overClaimed.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Set aside for more than is needed"
+              description="These jobs are holding stock the line no longer needs — the signature of a claim that was not released when the parts were issued or billed. Every unit of the excess is stock the till will refuse to sell while nothing is waiting for it, and no stock check can see it, because nothing about the stock is wrong."
+            />
+            <JobOverClaimedTable rows={jobReservations.overClaimed} />
+          </Card>
+        )}
+
+        {jobReservations !== null && jobReservations.onClosedJobs.length > 0 && (
+          <Card>
+            <CardHeader
+              title="Set aside for a job that is finished"
+              description="Nothing more is going to be issued against these jobs, so the stock is being held for work that is over. Usually means the closing path missed a release."
+            />
+            <JobClosedClaimTable rows={jobReservations.onClosedJobs} />
+          </Card>
+        )}
 
         {/* Informational, like "still on the road": the pile and the movements
             agree, so neither is a figure being wrong right now. */}

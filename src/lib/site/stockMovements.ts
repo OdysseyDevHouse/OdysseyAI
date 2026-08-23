@@ -601,8 +601,18 @@ export async function reservedQty(siteId: number, productId: number): Promise<nu
            FROM layby_lines ll
            JOIN laybys lb ON lb.id = ll.layby_id
           WHERE ll.product_id = ? AND lb.status = 'open'
+       ), 0)
+       +
+       /* Parts on an accepted job quote (220). Kept in step with the same branch
+          in reservedQtyFor below — two functions answering one question must not
+          be able to disagree, and a claim counted by one and not the other is
+          exactly the drift nobody would think to look for. */
+       COALESCE((
+         SELECT SUM(jr.qty)
+           FROM job_stock_reservations jr
+          WHERE jr.product_id = ?
        ), 0) AS reserved`,
-    [productId, productId],
+    [productId, productId, productId],
   )
   // Online holds are added separately and tolerantly — see the note in
   // reservedQtyFor for why they are not in the query above.
@@ -648,9 +658,30 @@ export async function reservedQtyFor(
         WHERE ll.product_id IN (${placeholders})
           AND lb.status = 'open'
         GROUP BY ll.product_id
+       UNION ALL
+       /*
+        * Parts on an accepted job quote (220).
+        *
+        * The one STORED claim among the three derived ones, and the reason is in
+        * jobReservations' header: a job line means four different things across
+        * its life, so its claim is an event rather than a property of the row.
+        *
+        * It still belongs in this UNION rather than beside it, because the
+        * question is the same — how much of this product is promised to somebody
+        * — and a caller should not have to know which claims are stored.
+        *
+        * No status filter is needed: setStatus deletes every claim the moment a
+        * job stops being open, and issuing or invoicing releases by exactly what
+        * moved. A row here IS a live claim, which is what the unique key and
+        * reconcileJobReservations exist to keep true.
+        */
+       SELECT jr.product_id, SUM(jr.qty) AS reserved
+         FROM job_stock_reservations jr
+        WHERE jr.product_id IN (${placeholders})
+        GROUP BY jr.product_id
      ) AS claims
      GROUP BY product_id`,
-    [...ids, ...ids],
+    [...ids, ...ids, ...ids],
   )
 
   const reserved = new Map(rows.map((r) => [Number(r.product_id), toNum(r.reserved)]))

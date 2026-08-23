@@ -618,6 +618,103 @@ export function JobWrongPileTable({ rows }: { rows: WrongPileRow[] }) {
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
 }
 
+type OverClaimedRow = {
+  lineId: number
+  jobId: number
+  description: string
+  reserved: number
+  outstanding: number
+}
+
+/**
+ * A job holding more stock than its line still needs.
+ *
+ * Both figures are shown because the DIFFERENCE is the phantom: the excess is
+ * stock the till will refuse to sell that nothing is actually waiting for.
+ */
+export function JobOverClaimedTable({ rows }: { rows: OverClaimedRow[] }) {
+  const columns: Column<OverClaimedRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobId,
+      cell: (r) => <TextLink href={`/jobs/${r.jobId}?tab=costs`}>{`#${r.jobId}`}</TextLink>,
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'reserved',
+      header: 'Set aside',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.reserved,
+      cell: (r) => <span className="numeric">{formatQty(r.reserved)}</span>,
+    },
+    {
+      key: 'outstanding',
+      header: 'Still needed',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.outstanding,
+      cell: (r) => <span className="numeric">{formatQty(r.outstanding)}</span>,
+    },
+    {
+      key: 'excess',
+      header: 'Held for nothing',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.reserved - r.outstanding,
+      cell: (r) => <Badge tone="danger">{formatQty(r.reserved - r.outstanding)}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
+type ClosedClaimRow = {
+  lineId: number
+  jobId: number
+  jobNumber: string | null
+  description: string
+  qty: number
+}
+
+/** Stock still set aside for work that has finished. */
+export function JobClosedClaimTable({ rows }: { rows: ClosedClaimRow[] }) {
+  const columns: Column<ClosedClaimRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}?tab=costs`}>{r.jobNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'qty',
+      header: 'Still set aside',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.qty,
+      cell: (r) => <Badge tone="warning">{formatQty(r.qty)}</Badge>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
 type StrandedRow = {
   locationName: string
   productCode: string

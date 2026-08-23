@@ -87,6 +87,12 @@
  *   npm run test:job-cards
  */
 import { siteExecute, siteQuery, siteQueryOne, siteTransaction } from '../src/lib/siteDb'
+import { reservedQty, availableToSell } from '../src/lib/site/stockMovements'
+import {
+  reserveForQuote,
+  releaseLine,
+  reconcileJobReservations,
+} from '../src/lib/site/jobReservations'
 import {
   saveJobCard,
   getJobCard,
@@ -2749,6 +2755,140 @@ async function main() {
     const afterReturn = await jobParts(SITE, pJob)
     ok('(J13) issued falls to four', afterReturn[0]?.issuedQty === 4)
     ok('(J13) so six are outstanding again', afterReturn[0]?.outstandingQty === 6)
+
+    /* ══ (J37) A reservation is released the moment the stock moves ══════
+     *
+     * The rule 110 refused to build this table without. availableToSell is
+     * `MAIN pile − site-wide reservation`, and issuing has ALREADY dropped the
+     * MAIN pile — so a claim that survives the issue deducts the same unit
+     * twice, permanently, for every part in every van. That is a phantom
+     * shortage no stock reconciliation could ever explain, because nothing
+     * about the stock is wrong.
+     *
+     * Asserted against the real reservedQty, not against the table, because the
+     * table being right is not the point — the till's answer is.
+     */
+    {
+      const line = (await jobParts(SITE, pJob)).find((p) => p.productId === part)!
+      const reservedBefore = await reservedQty(SITE, part)
+
+      await siteTransaction(SITE, (tx) => reserveForQuote(tx, pJob, 0))
+      ok(
+        '(J37) a quote that covers no line claims nothing',
+        (await reservedQty(SITE, part)) === reservedBefore,
+      )
+
+      // Claim four directly: the acceptance path is covered by the quote tests,
+      // and what this block is about is what happens to a claim afterwards.
+      await siteTransaction(SITE, async (tx) => {
+        await tx.execute(
+          `INSERT INTO job_stock_reservations (job_card_line_id, job_card_id, product_id, location_id, qty)
+                VALUES (?,?,?,?,4)
+           ON DUPLICATE KEY UPDATE qty = 4`,
+          [line.lineId, pJob, part, mainId] as never,
+        )
+      })
+      ok(
+        '(J37) *** the claim reaches the till read, beside orders and lay-bys ***',
+        (await reservedQty(SITE, part)) === reservedBefore + 4,
+        String(await reservedQty(SITE, part)),
+      )
+
+      const availBefore = (await availableToSell(SITE, [part])).get(part)!
+      ok(
+        '(J37) so available is the shelf less what is promised',
+        availBefore.available === availBefore.onHand - (reservedBefore + 4),
+        `${availBefore.onHand} on hand, ${availBefore.reserved} reserved`,
+      )
+
+      /*
+       * Issue two. The shelf drops by two, and the claim must drop by two in
+       * the same breath.
+       *
+       * `available` is what proves it, and the expected answer is that it does
+       * NOT MOVE. Those two units were already spoken for: they were subtracted
+       * as a claim before the transfer and are subtracted as a missing pile
+       * after it. Nothing changed about what the shop may sell to somebody else,
+       * because nothing about that promise changed — only where the goods sit.
+       *
+       * A release that did not happen shows up here as available falling by two
+       * for a movement that cost the shop nothing, and it would keep falling
+       * with every issue — the permanent double deduction 110 refused to risk.
+       */
+      const shelfBefore = await pileAt(mainId)
+      const issuedTwo = await issueParts(SITE, actor, pJob, van.id, [
+        { jobCardLineId: line.lineId, productId: part, qty: 2 },
+      ])
+      ok('(J37) two more go onto the bakkie', issuedTwo.ok, issuedTwo.ok ? '' : issuedTwo.error)
+
+      ok('(J37) the shelf drops by two', (await pileAt(mainId)) === shelfBefore - 2)
+      ok(
+        '(J37) *** and the claim drops by two WITH it ***',
+        (await reservedQty(SITE, part)) === reservedBefore + 2,
+        String(await reservedQty(SITE, part)),
+      )
+
+      const availAfter = (await availableToSell(SITE, [part])).get(part)!
+      ok(
+        '(J37) *** so available does not move — the promise did not change ***',
+        availAfter.available === availBefore.available,
+        `${availBefore.available} -> ${availAfter.available}`,
+      )
+
+      /*
+       * Prove that assertion is not vacuous: put the released two back, as a
+       * lost release would have left them, and watch available fall for stock
+       * that never moved.
+       */
+      await siteExecute(
+        SITE,
+        `UPDATE job_stock_reservations SET qty = qty + 2 WHERE job_card_line_id = ?`,
+        [line.lineId],
+      )
+      const availLost = (await availableToSell(SITE, [part])).get(part)!
+      ok(
+        '(J37) *** a release that did NOT happen deducts the same units twice ***',
+        availBefore.available - availLost.available === 2,
+        `${availBefore.available} -> ${availLost.available}`,
+      )
+      await siteExecute(
+        SITE,
+        `UPDATE job_stock_reservations SET qty = GREATEST(0, qty - 2) WHERE job_card_line_id = ?`,
+        [line.lineId],
+      )
+
+      /*
+       * And the check that makes a stored claim as trustworthy as a derived one.
+       * A claim larger than the line still needs is the shape every lost release
+       * takes, and it is invisible everywhere else.
+       */
+      const resClean = await reconcileJobReservations(SITE)
+      ok(
+        '(J37) a correctly released claim reports no drift',
+        !resClean.overClaimed.some((d) => d.lineId === line.lineId),
+        JSON.stringify(resClean.overClaimed),
+      )
+
+      await siteExecute(SITE, `UPDATE job_stock_reservations SET qty = 99 WHERE job_card_line_id = ?`, [
+        line.lineId,
+      ])
+      const resBroken = await reconcileJobReservations(SITE)
+      ok(
+        '(J37) *** but a claim bigger than the line needs IS caught ***',
+        resBroken.overClaimed.some((d) => d.lineId === line.lineId),
+        `${resBroken.overClaimed.length} reported`,
+      )
+
+      // Put the two back and drop the claim, so the block leaves what it found.
+      await returnParts(SITE, actor, pJob, van.id, [
+        { jobCardLineId: line.lineId, productId: part, qty: 2 },
+      ])
+      await siteTransaction(SITE, (tx) => releaseLine(tx, line.lineId))
+      ok(
+        '(J37) the claim is gone and the shelf is whole again',
+        (await reservedQty(SITE, part)) === reservedBefore && (await pileAt(mainId)) === shelfBefore,
+      )
+    }
 
     // ── Drift ───────────────────────────────────────────────────────────
     const cleanDrift = await reconcileJobParts(SITE)

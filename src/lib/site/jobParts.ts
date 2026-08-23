@@ -5,6 +5,7 @@ import { round, toNum } from '../decimals'
 import { postTransfer, todayIso } from './stockTransfers'
 import { logActivity, type Actor } from './activityLog'
 import { BILLABLE_STATES } from '../jobStatusModel'
+import { releaseLineFor } from './jobReservations'
 
 /**
  * Parts on a job, and getting them onto a van.
@@ -20,39 +21,36 @@ import { BILLABLE_STATES } from '../jobStatusModel'
  * So the rule the whole job module has kept holds here too: `recordMovement` is
  * the only legal writer of stock, and this file does not call it.
  *
- * ── WHAT WAS DELIBERATELY CUT FROM THIS PHASE ──────────────────────────────
+ * ── TWO THINGS THIS FILE ONCE REFUSED, AND NOW DOES ────────────────────────
  *
- * A job reservation folded into `reservedQtyFor()`. It was designed and dropped,
- * and the reason is worth keeping because it is not obvious:
+ * Both were cut deliberately, and both are now built. The original arguments are
+ * kept because they name what can still go wrong.
  *
- * `availableToSell()` reads the MAIN pile and subtracts a SITE-WIDE reservation.
- * Once a part is issued, MAIN has already dropped by the transfer — so a
- * reservation that survives issuing deducts the same unit twice, permanently, for
- * every part in every van. Fixing that needs `issued_qty` (added by 110) to exist
- * and be trusted first.
+ * RESERVATIONS (now 220, jobReservations.ts). The objection was that
+ * `availableToSell()` reads the MAIN pile and subtracts a site-wide reservation,
+ * so a claim surviving an issue deducts the same unit twice — permanently, for
+ * every part in every van. That is still exactly true, which is why release
+ * happens by the same quantity, immediately below the issued_qty increment that
+ * mirrors it, and why reconcileJobReservations() exists to report the case where
+ * it did not. The precondition the old note named — issued_qty existing and
+ * being trusted — is what 110 built and what made the table safe to add.
  *
- * There is also a double-count nothing can detect: a part on an accepted quote AND
- * on a reserving sales order is one physical unit reserved by two branches of the
- * UNION, and no column links a sales-order line to a job line.
- * reconcileJobParts() REPORTS that pair rather than pretending to fix it.
+ * The double-count it also named is still undetectable and still reported rather
+ * than fixed: a part on an accepted quote AND on a reserving sales order is one
+ * physical unit claimed by two branches of the UNION, and no column links a
+ * sales-order line to a job line. See `alsoOnOrder` below.
  *
- * And the value was small: `availableToSell` has exactly one reader — the sales
- * order detail screen — so the risk bought almost nothing. `partsPromised()` below
- * answers the same question on the job side, where it is safe.
+ * CONSUMING OFF A VAN. The objection was that `salesPosting.ts` passed no
+ * locationId, so a part fitted off a bakkie debited MAIN while every invariant
+ * held — because each is about sums matching, and a wrongly-located movement
+ * agrees with the pile it wrongly debited. It now resolves the pile per line
+ * from `issued_qty`, and `invoicedOffWrongPile` below is the check that catches
+ * it if that resolution is ever wrong, because only the job holds a second
+ * independent record of where the goods went.
  *
- * ── CONSUMING OFF A VAN IS NOT AUTOMATIC, ON PURPOSE ───────────────────────
- *
- * `salesPosting.ts` passes no locationId to recordMovement, so every sale movement
- * lands in MAIN. A part consumed off a van by an invoice would therefore debit the
- * WRONG pile — and invariants (A), (B) and (C) all still hold, because each is
- * about sums matching, so reconcileStock() would report nothing at all. The van
- * pile would stay permanently high and MAIN permanently low, silently.
- *
- * Rather than thread a location through the one posting engine, a part fitted off
- * a van is returned to MAIN by an ordinary transfer BEFORE the job is invoiced.
- * That is a human step and it is visible; reconcileJobParts() reports the jobs
- * where it has not happened. Annoying and correct beats automatic and silently
- * wrong in the pile ledger.
+ * `partsPromised()` remains what it was: the job-side answer, safe because a
+ * wrong number there misleads one screen rather than changing what a shop can
+ * sell.
  */
 
 export type JobPartLine = {
@@ -346,6 +344,29 @@ export async function issueParts(
       `UPDATE job_card_lines SET issued_qty = issued_qty + ? WHERE id = ?`,
       [qty.toFixed(3), part.lineId],
     )
+    /*
+     * ── Release the claim, by exactly what moved (220) ───────────────────
+     *
+     * The rule jobReservations is built around: the MAIN pile has just dropped
+     * by this transfer, so a claim that survives it deducts the same unit twice
+     * from availableToSell — permanently, and invisibly, because nothing about
+     * the stock is wrong. That double deduction is the reason 110 refused to
+     * build the table at all.
+     *
+     * Written here, immediately after the issued_qty increment it mirrors,
+     * rather than inside postTransfer's transaction. That is the same trade the
+     * increment above already makes, and the same argument holds: forking the
+     * transfer engine's transaction to carry job state would be a far larger
+     * risk than a narrow window that is REPORTED. If this write is lost, the
+     * line's claim exceeds what it still needs, and
+     * reconcileJobReservations().overClaimed names it.
+     *
+     * Note this is the SECOND statement, not the first: releasing before the
+     * increment would leave a window where the stock has moved, the claim is
+     * gone, and issued_qty does not yet say so — briefly overstating what is
+     * available. Understating is the safer way to be wrong.
+     */
+    await releaseLineFor(siteId, part.lineId, qty)
     await siteExecute(
       siteId,
       `UPDATE stock_transfer_lines SET job_card_line_id = ?

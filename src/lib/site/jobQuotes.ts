@@ -7,6 +7,7 @@ import { lineTotals } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
 import { getSetting } from './settings'
 import { logActivityTx, type Actor } from './activityLog'
+import { reserveForQuote } from './jobReservations'
 import {
   ACCEPT_METHODS,
   ACCEPT_METHOD_LABEL,
@@ -500,6 +501,16 @@ export async function acceptQuote(
     const label = quote.document_number ? String(quote.document_number) : `Quote #${quoteId}`
     const rebased = (moved as { affectedRows: number }).affectedRows
 
+    /*
+     * The parts on an accepted quote are now claimed (§46.6: "Reserved = when it
+     * is on an accepted quote").
+     *
+     * Inside this transaction, so a quote is never accepted without its claim or
+     * vice versa. The claim is released the instant the stock actually moves —
+     * see the header of jobReservations, where that rule is the whole design.
+     */
+    const claimed = await reserveForQuote(tx, jobId, quoteId)
+
     await logActivityTx(tx, actor, {
       entity: 'job_card',
       entityId: jobId,
@@ -508,7 +519,8 @@ export async function acceptQuote(
         `${label} accepted by ${input.acceptedBy.trim()} — ${ACCEPT_METHOD_LABEL[input.method].toLowerCase()}` +
         (input.reference ? ` (${input.reference.trim()})` : '') +
         (late ? '. Accepted after the quote had expired.' : '') +
-        (rebased > 0 ? ` ${rebased} ${rebased === 1 ? 'line is' : 'lines are'} now the quoted baseline.` : ''),
+        (rebased > 0 ? ` ${rebased} ${rebased === 1 ? 'line is' : 'lines are'} now the quoted baseline.` : '') +
+        (claimed > 0 ? ` ${claimed} ${claimed === 1 ? 'part is' : 'parts are'} now set aside.` : ''),
     })
 
     return { ok: true as const }

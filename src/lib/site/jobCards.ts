@@ -18,6 +18,7 @@ import { recordServiceOnClose } from './jobAssets'
 import { notifyAssigned, notifyClosed, notifyStatusChanged } from './jobPeople'
 import { requestFeedback } from './jobFeedback'
 import { logActivity, logActivityTx, diffFields, type Actor } from './activityLog'
+import { releaseJob } from './jobReservations'
 import {
   BILLABLE_STATES,
   BILLING_STATE_LABEL,
@@ -1228,6 +1229,23 @@ export async function setStatus(
         jobId,
       ],
     )
+
+    /*
+     * A job that is no longer open holds no stock (220).
+     *
+     * Nothing more is going to be issued against it, so a surviving claim is
+     * stock held for work that is finished — a phantom shortage at the till that
+     * only reconcileJobReservations could ever explain. Cancelling matters most:
+     * the parts were promised and now never will be, and that promise must not
+     * outlive the job that made it.
+     *
+     * Not restored on reopen. What a reopened job needs is decided by its quote,
+     * and re-accepting is what makes a promise again — silently reinstating one
+     * here would claim stock nobody agreed to.
+     */
+    if (recordState !== 'open') {
+      await releaseJob(tx, jobId)
+    }
 
     await logActivityTx(tx, actor, {
       entity: 'job_card',
