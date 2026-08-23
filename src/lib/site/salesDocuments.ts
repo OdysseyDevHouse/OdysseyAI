@@ -77,6 +77,14 @@ export type SalesLine = {
   description: string
   productType: ProductTypeId
   departmentId: number | null
+  /**
+   * The job line this was billed from (104), when the invoice came off a job.
+   *
+   * Read so that posting can debit the pile the goods are ACTUALLY on: a part
+   * fitted off a technician's van must not come off the shelf in the shop. See
+   * the location resolution in salesPosting.
+   */
+  jobCardLineId: number | null
   /** Who sold this line. Null on most: a till sale is not a commission event. */
   salesRepId: number | null
   salesRepName: string | null
@@ -259,6 +267,10 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
     description: String(r.description),
     productType: String(r.product_type) as ProductTypeId,
     departmentId: r.department_id === null ? null : Number(r.department_id),
+    jobCardLineId:
+      r.job_card_line_id === null || r.job_card_line_id === undefined
+        ? null
+        : Number(r.job_card_line_id),
     salesRepId: r.sales_rep_id === null || r.sales_rep_id === undefined ? null : Number(r.sales_rep_id),
     salesRepName: (r.sales_rep_name as string | null) ?? null,
     salesRepUserId:

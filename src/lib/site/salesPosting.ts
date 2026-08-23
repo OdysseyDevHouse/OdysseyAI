@@ -769,6 +769,83 @@ export async function finaliseDocument(
    */
   const saleLocationId = await terminalStockLocationId(siteId, document.terminalId)
 
+  /*
+   * ── Where a JOB line's goods actually are ─────────────────────────────────
+   *
+   * A part fitted off a technician's van was transferred there when it was
+   * issued; the shelf in the shop no longer holds it. Billing it off MAIN would
+   * debit a pile that does not contain the goods and leave the van's pile
+   * permanently high — and NOTHING would report it, because both stock
+   * invariants compare the ledger against itself and a wrongly-located movement
+   * is perfectly self-consistent. That is why this used to be a human step.
+   *
+   * It is now resolved per line, and the deciding fact is `issued_qty` — what
+   * the job says is STILL OUT — not the line's transfer history.
+   *
+   * The history alone cannot answer it. A part issued six to a van and returned
+   * two has two posted transfers, the most recent one heading back to MAIN, and
+   * reading "the latest transfer" would conclude the goods are on the shelf
+   * while four of them are demonstrably on a bakkie. Summing the transfers is no
+   * better: it cannot distinguish a completed round trip from a partial return.
+   * `issued_qty` is the figure the job maintains for exactly this question, and
+   * reconcileJobParts already checks it against the transfers that moved it.
+   *
+   * So: a line with nothing still issued bills off the till's room, as it always
+   * did. A line with stock still out bills off the MOBILE location those
+   * transfers went to. A transfer between two rooms in the shop is not a
+   * technician holding stock and is ignored.
+   *
+   * Read BEFORE the transaction, like the numbering and the till room above,
+   * and for the same reason: it has no business running while the stock rows
+   * are locked. A line with no job, or a job whose parts never left the shelf,
+   * is absent from the map and falls back to `saleLocationId` exactly as before.
+   */
+  const jobLineIds = document.lines
+    .map((l) => l.jobCardLineId)
+    .filter((id): id is number => id !== null)
+
+  const jobLineLocation = new Map<number, number>()
+  if (jobLineIds.length > 0) {
+    const placeholders = jobLineIds.map(() => '?').join(',')
+    const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
+      siteId,
+      /*
+       * The most recent MOBILE destination for a line that still has stock out.
+       *
+       * MAX(t.id) over mobile transfers only — the return leg heads to a room
+       * and is filtered out here, so it cannot mask the van the goods are on.
+       * `issued_qty > 0` on the job line is what says any are still out at all.
+       */
+      `SELECT tl.job_card_line_id, t.to_location_id
+         FROM stock_transfer_lines tl
+         JOIN stock_transfers t   ON t.id = tl.transfer_id
+         JOIN stock_locations loc ON loc.id = t.to_location_id
+         JOIN job_card_lines jl   ON jl.id = tl.job_card_line_id
+        WHERE tl.job_card_line_id IN (${placeholders})
+          AND t.status = 'posted'
+          AND loc.is_mobile = 1
+          AND jl.issued_qty > 0
+          AND t.id = (
+            SELECT MAX(t2.id)
+              FROM stock_transfer_lines tl2
+              JOIN stock_transfers t2   ON t2.id = tl2.transfer_id
+              JOIN stock_locations loc2 ON loc2.id = t2.to_location_id
+             WHERE tl2.job_card_line_id = tl.job_card_line_id
+               AND t2.status = 'posted'
+               AND loc2.is_mobile = 1
+          )`,
+      jobLineIds,
+    )
+    for (const r of rows) {
+      jobLineLocation.set(Number(r.job_card_line_id), Number(r.to_location_id))
+    }
+  }
+
+  /** The pile a line's goods come off: its van if it has one, else the till's room. */
+  const locationForLine = (line: { jobCardLineId: number | null }): number | null =>
+    (line.jobCardLineId !== null ? jobLineLocation.get(line.jobCardLineId) : undefined) ??
+    saleLocationId
+
   // Rand of this basket paid for by a value voucher. Set inside the
   // transaction, read after it commits to keep that slice out of the earn
   // basis. Declared out here because a closure cannot return it and the
@@ -907,7 +984,16 @@ export async function finaliseDocument(
           sourceDocId: document.id,
           sourceLineId: line.id,
           terminalId: document.terminalId,
-          locationId: saleLocationId,
+          /*
+           * The line's OWN pile, which is its technician's van when the part was
+           * issued to one. Every other movement in this function stays on
+           * `saleLocationId` deliberately — see the note where it is resolved.
+           *
+           * A credit note takes the same answer, and must: putting stock back
+           * anywhere other than where it came off would create exactly the drift
+           * this change removes, in the opposite direction.
+           */
+          locationId: locationForLine(line),
           shiftId,
           note: line.productCode ?? undefined,
         })

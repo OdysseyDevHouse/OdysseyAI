@@ -558,6 +558,66 @@ export function JobInvoicedOutTable({ rows }: { rows: InvoicedOutRow[] }) {
   return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
 }
 
+type WrongPileRow = {
+  lineId: number
+  jobId: number
+  jobNumber: string | null
+  description: string
+  issuedFrom: string
+  debited: string
+  qty: number
+}
+
+/**
+ * A part billed off one pile and issued from another.
+ *
+ * Both locations are shown side by side because the pair IS the finding — one
+ * of them on its own says nothing. The arrow between them reads as "should have
+ * been / actually was", which is the sentence somebody needs in order to know
+ * which transfer to correct.
+ */
+export function JobWrongPileTable({ rows }: { rows: WrongPileRow[] }) {
+  const columns: Column<WrongPileRow>[] = [
+    {
+      key: 'job',
+      header: 'Job',
+      sortable: true,
+      sortValue: (r) => r.jobNumber ?? '',
+      cell: (r) => (
+        <TextLink href={`/jobs/${r.jobId}?tab=costs`}>{r.jobNumber ?? `#${r.jobId}`}</TextLink>
+      ),
+    },
+    {
+      key: 'line',
+      header: 'Part',
+      sortable: true,
+      sortValue: (r) => r.description,
+      cell: (r) => <span className="text-ink-2">{r.description}</span>,
+    },
+    {
+      key: 'where',
+      header: 'Issued from → billed off',
+      sortable: true,
+      sortValue: (r) => r.issuedFrom,
+      cell: (r) => (
+        <span className="text-ink-2">
+          {r.issuedFrom} <span className="text-muted">→</span>{' '}
+          <Badge tone="danger">{r.debited}</Badge>
+        </span>
+      ),
+    },
+    {
+      key: 'qty',
+      header: 'Invoiced',
+      numeric: true,
+      sortable: true,
+      sortValue: (r) => r.qty,
+      cell: (r) => <span className="numeric">{formatQty(r.qty)}</span>,
+    },
+  ]
+  return <DataTable columns={columns} rows={rows} getRowKey={(r) => r.lineId} />
+}
+
 type StrandedRow = {
   locationName: string
   productCode: string

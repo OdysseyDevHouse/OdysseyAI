@@ -37,6 +37,7 @@ import {
   SequenceTable,
   JobIssuedDriftTable,
   JobInvoicedOutTable,
+  JobWrongPileTable,
   JobStrandedTable,
   JobAlsoOnOrderTable,
   JobSlaStaleTable,
@@ -209,7 +210,10 @@ export default async function ReconciliationPage() {
    * people to ignore the red.
    */
   const partsDrift = jobParts
-    ? jobParts.issuedMismatch.length + jobParts.overIssued.length + jobParts.invoicedWhileOut.length
+    ? jobParts.issuedMismatch.length +
+      jobParts.overIssued.length +
+      jobParts.invoicedWhileOut.length +
+      jobParts.invoicedOffWrongPile.length
     : 0
 
   /*
@@ -543,6 +547,16 @@ export default async function ReconciliationPage() {
                     description="The invoice took these units off the main location; the goods are on a bakkie. Every stock invariant still holds, so the stock check above cannot see this — only the job link can. Return them to the shelf, or transfer them back and re-issue."
                   />
                   <JobInvoicedOutTable rows={jobParts.invoicedWhileOut} />
+                </Card>
+              )}
+
+              {jobParts.invoicedOffWrongPile.length > 0 && (
+                <Card>
+                  <CardHeader
+                    title="Billed off the wrong pile"
+                    description="The job issued these parts from one location and the invoice took them off another. Both stock checks above compare the ledger against itself, so neither can see this — only the job knows where the goods actually were. The pile it debited is now short and the one it should have debited is long, by the same amount, permanently."
+                  />
+                  <JobWrongPileTable rows={jobParts.invoicedOffWrongPile} />
                 </Card>
               )}
             </>

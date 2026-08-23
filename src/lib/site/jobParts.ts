@@ -487,6 +487,36 @@ export type PartsDrift = {
    * for the same customer. Reported rather than pretended away.
    */
   alsoOnOrder: { lineId: number; jobId: number; description: string; orderNumber: string | null }[]
+  /**
+   * A part invoiced off one pile and issued from another.
+   *
+   * ── WHY THIS CANNOT BE reconcileStock()'S JOB ───────────────────────────
+   *
+   * Both stock invariants compare a STORED figure against THE MOVEMENTS
+   * THEMSELVES: (B) is each pile versus the movements recorded in it, (C) is the
+   * product total versus the sum of its piles. A movement that names the wrong
+   * location is therefore perfectly self-consistent — the pile it debited agrees
+   * with it, and the sum still matches. The ledger is coherent and wrong, and no
+   * amount of reconciling it against itself can tell.
+   *
+   * The only thing that knows better is the JOB, which recorded where the part
+   * actually went when it was issued. This compares those two independent facts:
+   * where the goods were, and where the invoice took them from.
+   *
+   * It is the safety net for threading a location through the sale path. Before
+   * that change the answer was always MAIN and this reported every van-fitted
+   * part; after it, a row here means the threading is wrong for that line, which
+   * is exactly the failure that would otherwise be silent forever.
+   */
+  invoicedOffWrongPile: {
+    lineId: number
+    jobId: number
+    jobNumber: string | null
+    description: string
+    issuedFrom: string
+    debited: string
+    qty: number
+  }[]
 }
 
 /**
@@ -498,7 +528,7 @@ export type PartsDrift = {
  * needs it most.
  */
 export async function reconcileJobParts(siteId: number): Promise<PartsDrift> {
-  const [mismatch, over, invoicedOut, stranded, onOrder] = await Promise.all([
+  const [mismatch, over, invoicedOut, stranded, onOrder, wrongPile] = await Promise.all([
     /*
      * issued_qty against the transfers that carry the line link. Signed: a line
      * issued 5 and returned 2 has moved 3, and both transfers name it.
@@ -565,6 +595,58 @@ export async function reconcileJobParts(siteId: number): Promise<PartsDrift> {
           AND o.reserves_stock = 1
         GROUP BY l.id, l.job_card_id, l.description, d.document_number`,
     ).catch(() => []),
+    /*
+     * ── Invoiced off a different pile than it was issued from ─────────────
+     *
+     * Two independent records of where one part was, compared:
+     *
+     *   the JOB says     — the last transfer carrying this line put it on VAN2
+     *   the INVOICE says — the sale movement debited MAIN
+     *
+     * Neither stock invariant can notice the disagreement, because both are
+     * about a ledger agreeing with itself. Only the job link is outside it.
+     *
+     * `issued_qty > 0` is what decides the goods are still out — the same rule
+     * salesPosting uses to pick the pile, and deliberately so: a check that
+     * asked a different question from the writer would either miss real drift
+     * or invent it. The subquery then takes the latest MOBILE destination,
+     * ignoring the return leg, so a partial return still names the van the
+     * remainder sits on rather than the room two of them came back to.
+     *
+     * A line with nothing still issued is correctly billed off the shelf and
+     * produces no row, which keeps this quiet on sites that never use a van.
+     */
+    siteQuery<Row>(
+      siteId,
+      `SELECT l.id, l.job_card_id, l.description, j.document_number,
+              issued_loc.name AS issued_from,
+              COALESCE(debit_loc.name, 'Main') AS debited,
+              l.invoiced_qty AS qty
+         FROM job_card_lines l
+         JOIN job_cards j ON j.id = l.job_card_id
+         /* Where the job last put the goods. */
+         JOIN stock_locations issued_loc ON issued_loc.id = (
+              SELECT t.to_location_id
+                FROM stock_transfer_lines tl
+                JOIN stock_transfers t    ON t.id = tl.transfer_id
+                JOIN stock_locations loc2 ON loc2.id = t.to_location_id
+               WHERE tl.job_card_line_id = l.id
+                 AND t.status = 'posted'
+                 AND loc2.is_mobile = 1
+               ORDER BY t.id DESC LIMIT 1
+         )
+         /* Where the invoice took them from. */
+         JOIN sales_document_lines sl ON sl.job_card_line_id = l.id
+         JOIN stock_movements m       ON m.source_line_id = sl.id
+                                     AND m.movement_type IN ('sale','sale_return')
+         LEFT JOIN stock_locations debit_loc ON debit_loc.id = m.location_id
+        WHERE l.invoiced_qty > 0
+          AND l.issued_qty > 0
+          AND issued_loc.is_mobile = 1
+          AND m.location_id <> issued_loc.id
+        GROUP BY l.id, l.job_card_id, l.description, j.document_number,
+                 issued_loc.name, debit_loc.name, l.invoiced_qty`,
+    ).catch(() => []),
   ])
 
   return {
@@ -600,6 +682,15 @@ export async function reconcileJobParts(siteId: number): Promise<PartsDrift> {
       jobId: Number(r.job_card_id),
       description: String(r.description),
       orderNumber: r.document_number === null ? null : String(r.document_number),
+    })),
+    invoicedOffWrongPile: wrongPile.map((r) => ({
+      lineId: Number(r.id),
+      jobId: Number(r.job_card_id),
+      jobNumber: r.document_number === null ? null : String(r.document_number),
+      description: String(r.description),
+      issuedFrom: String(r.issued_from),
+      debited: String(r.debited),
+      qty: toNum(r.qty),
     })),
   }
 }

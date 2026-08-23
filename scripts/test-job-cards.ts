@@ -297,6 +297,7 @@ import {
   validatePolicy,
 } from '../src/lib/site/jobSla'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
+import { getTenderByCode } from '../src/lib/site/tenderTypes'
 import { verifySequence } from '../src/lib/site/sequences'
 import { createCustomer } from '../src/lib/site/customers'
 import { round, toNum } from '../src/lib/decimals'
@@ -2778,10 +2779,11 @@ async function main() {
     ])
 
     /*
-     * The case that defeats every other check on the reconciliation screen.
-     * finaliseDocument consumes from MAIN, so invoicing a part still on a bakkie
-     * debits the wrong pile — and all three stock invariants still hold, because
-     * the totals are right and only the attribution is wrong.
+     * Still worth reporting, and still not visible to any stock check: a part
+     * that has been billed while it physically sits on a bakkie. What changed is
+     * WHY it matters — the pile is now debited correctly (J36 below), so this is
+     * an operational warning about goods nobody has brought back rather than a
+     * ledger that is quietly wrong.
      */
     await siteExecute(SITE, 'UPDATE job_card_lines SET invoiced_qty = 1 WHERE id = ?', [
       afterReturn[0]!.lineId,
@@ -2794,6 +2796,121 @@ async function main() {
     await siteExecute(SITE, 'UPDATE job_card_lines SET invoiced_qty = 0 WHERE id = ?', [
       afterReturn[0]!.lineId,
     ])
+
+    /* ══ (J36) A part fitted off a van is billed off THAT VAN ═════════════
+     *
+     * The whole point of threading a location through the sale path. Before it,
+     * finaliseDocument passed no location and every sale landed on MAIN — so
+     * invoicing a part sitting on a bakkie debited the shelf, left the van's
+     * pile permanently high, and broke NO invariant: both stock checks compare
+     * the ledger against itself, and a wrongly-located movement agrees with the
+     * pile it wrongly debited.
+     *
+     * This is asserted end to end, through invoiceJob and the real posting
+     * engine, because the bug lived in the seam between them. Four are on the
+     * van and thirty-six on the shelf when this starts.
+     */
+    {
+      const beforeMain = await pileAt(mainId)
+      const beforeVan = await pileAt(van.id)
+      const beforeTotal = await siteTotal()
+
+      const bill = await invoiceJob(SITE, actor, pJob, [
+        { lineId: afterReturn[0]!.lineId, qty: 2 },
+      ])
+      ok('(J36) the job raises its draft invoice', bill.ok, JSON.stringify(bill))
+
+      const cash = await getTenderByCode(SITE, 'CASH')
+      if (bill.ok && cash) {
+        // Tendered against the draft's own total: an under-tender is refused,
+        // and hardcoding a figure would break the moment a price moves.
+        const draftTotal = await siteQueryOne<any>(
+          SITE,
+          'SELECT total_incl FROM sales_documents WHERE id = ?',
+          [bill.invoiceId],
+        )
+        const posted = await finaliseDocument(SITE, actor, {
+          documentId: bill.invoiceId,
+          tenders: [{ tenderTypeId: cash.id, amount: Number(draftTotal?.total_incl ?? 0) }],
+        })
+        ok('(J36) and it posts through the ONE engine', posted.ok, posted.ok ? '' : posted.error)
+
+        ok(
+          '(J36) *** the VAN is debited for the two that were fitted off it ***',
+          (await pileAt(van.id)) === beforeVan - 2,
+          `van ${beforeVan} -> ${await pileAt(van.id)}`,
+        )
+        ok(
+          '(J36) *** and the shelf is untouched — it never held those units ***',
+          (await pileAt(mainId)) === beforeMain,
+          `main ${beforeMain} -> ${await pileAt(mainId)}`,
+        )
+        ok(
+          '(J36) the site total drops by exactly what was sold',
+          (await siteTotal()) === beforeTotal - 2,
+        )
+
+        /*
+         * And the check that would have caught the old behaviour. It compares
+         * two INDEPENDENT records — where the job put the goods, and where the
+         * invoice took them from — which is the only pair of facts that can
+         * disagree without breaking an invariant.
+         */
+        const pileDrift = await reconcileJobParts(SITE)
+        ok(
+          '(J36) *** so the wrong-pile check finds nothing to report ***',
+          !pileDrift.invoicedOffWrongPile.some((d) => d.lineId === afterReturn[0]!.lineId),
+          JSON.stringify(pileDrift.invoicedOffWrongPile),
+        )
+
+        /*
+         * Now prove the check is not vacuous. Rewrite the movement's location to
+         * MAIN — exactly what the engine used to do — and it must be caught.
+         */
+        await siteExecute(
+          SITE,
+          `UPDATE stock_movements m
+             JOIN sales_document_lines sl ON sl.id = m.source_line_id
+              SET m.location_id = ?
+            WHERE sl.job_card_line_id = ? AND m.movement_type = 'sale'`,
+          [mainId, afterReturn[0]!.lineId],
+        )
+        const nowBroken = await reconcileJobParts(SITE)
+        const found = nowBroken.invoicedOffWrongPile.find(
+          (d) => d.lineId === afterReturn[0]!.lineId,
+        )
+        ok(
+          '(J36) *** and the OLD behaviour would have been caught by it ***',
+          found !== undefined,
+          `${nowBroken.invoicedOffWrongPile.length} reported`,
+        )
+        ok(
+          '(J36) naming both piles, which is what makes it actionable',
+          found !== undefined && found.debited !== found.issuedFrom,
+          found ? `${found.issuedFrom} -> ${found.debited}` : 'not found',
+        )
+
+        /*
+         * Put the movement back on the van, exactly as every other tamper in
+         * this file restores what it broke.
+         *
+         * Not tidiness: reconcileStock() below compares each pile against the
+         * movements recorded in it, so a movement left pointing at the wrong
+         * location IS drift — main reads two high against its movements and the
+         * van two low. Leaving it would fail the whole-system invariant at the
+         * end of this block with a figure that has nothing to do with what the
+         * block was testing.
+         */
+        await siteExecute(
+          SITE,
+          `UPDATE stock_movements m
+             JOIN sales_document_lines sl ON sl.id = m.source_line_id
+              SET m.location_id = ?
+            WHERE sl.job_card_line_id = ? AND m.movement_type = 'sale'`,
+          [van.id, afterReturn[0]!.lineId],
+        )
+      }
+    }
 
     // Closing the job leaves the four with nobody expecting them.
     ok('(J13) promised ignores a line already out', (await partsPromised(SITE, [part])).get(part) === 6)
@@ -2845,13 +2962,26 @@ async function main() {
       !serialIssue.ok && /serial/i.test(serialIssue.error),
     )
 
-    // Bring the van back to empty so the fixture teardown leaves no stock behind.
+    /*
+     * Bring the van back to empty so the fixture teardown leaves no stock behind.
+     *
+     * What is returnable is what is PHYSICALLY on the van, not what the line
+     * says is issued. (J36) sold two units off it, and invoicing deliberately
+     * does not decrement issued_qty — that figure tracks what left the shelf for
+     * the technician, and reconcileJobParts checks it against the transfers.
+     * Returning the issued figure would ask for four units when two are there.
+     */
     const finalOut = (await jobParts(SITE, pJob)).find((p) => p.productId === part)
+    const onBoard = await pileAt(van.id)
     const emptied = await returnParts(SITE, actor, pJob, van.id, [
-      { jobCardLineId: finalOut!.lineId, productId: part, qty: finalOut!.issuedQty },
+      { jobCardLineId: finalOut!.lineId, productId: part, qty: onBoard },
     ])
     ok('(J13) the bakkie can be emptied', emptied.ok, emptied.ok ? '' : emptied.error)
-    ok('(J13) every unit is back on the shelf', (await pileAt(mainId)) === 40 && (await pileAt(van.id)) === 0)
+    ok(
+      '(J13) every unit is back on the shelf — less the two that were sold off it',
+      (await pileAt(mainId)) === 38 && (await pileAt(van.id)) === 0,
+      `main ${await pileAt(mainId)}, van ${await pileAt(van.id)}`,
+    )
 
     /*
      * The whole-system invariant, last: after issuing, over-issuing, returning,
@@ -2862,7 +2992,9 @@ async function main() {
     ok(
       '(J13) *** stock still reconciles after all of that ***',
       stockNow.length === stockDriftBefore,
-      `${stockNow.length} rows, was ${stockDriftBefore}`,
+      // The rows themselves, not just a count: a drift figure with no idea WHICH
+      // pile drifted is the hardest kind of failure to chase.
+      `${stockNow.length} rows, was ${stockDriftBefore} :: ${JSON.stringify(stockNow.slice(0, 4))}`,
     )
 
     // Teardown, in FK order.
