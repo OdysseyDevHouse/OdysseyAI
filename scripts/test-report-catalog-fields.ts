@@ -55,7 +55,7 @@ function joinSqlFor(source: CatalogSource, field: CatalogField): string {
 /* The shared-file tokens are replaced at runtime by run.ts with a database
    prefix. A site that owns its own files gets the empty string, which is what
    this checks against — the same SQL the majority of sites run. */
-const detokenise = (sql: string) => sql.replace(/\{[CBSL]\}/g, '')
+const detokenise = (sql: string) => sql.replace(/\{[CBSLG]\}/g, '')
 
 async function main() {
   let checked = 0

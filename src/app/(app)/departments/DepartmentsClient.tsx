@@ -22,6 +22,7 @@ import {
   TABLE_NUMERIC,
   TABLE_TD,
   TABLE_TH,
+  tileClass,
   ToolbarSearch,
   useToast,
 } from '@/components/ui'
@@ -75,13 +76,21 @@ type Row = { department: Department; depth: number }
  */
 export function DepartmentsClient({
   departments,
+  pictureIds,
   canEdit,
 }: {
   departments: Department[]
+  /**
+   * The ids whose till picture actually resolved server-side. A department
+   * pointing at a picture since deleted from the library is simply absent, so
+   * the row draws its colour tile rather than a broken-image glyph.
+   */
+  pictureIds: number[]
   canEdit: boolean
 }) {
   const router = useRouter()
   const toast = useToast()
+  const hasPicture = useMemo(() => new Set(pictureIds), [pictureIds])
 
   // The server list is the source of truth; this mirrors it so a drag or a
   // switch paints immediately and can be rolled back if the write is refused.
@@ -305,11 +314,19 @@ export function DepartmentsClient({
             <table className={TABLE}>
               <thead>
                 <tr className={TABLE_HEAD_ROW}>
+                  {/* The name column carries the drag handle, the disclosure,
+                      the picture and the whole indent, so it is given the room
+                      and every other column is sized to its content. */}
                   <th className={TABLE_TH}>Department</th>
-                  <th className={TABLE_TH}>Code</th>
-                  <th className={`${TABLE_TH} text-right`}>Products</th>
-                  <th className={`${TABLE_TH} text-center`}>Colour</th>
-                  <th className={`${TABLE_TH} text-center`}>Active</th>
+                  {/* w-px on the narrow columns: with no width set they split the
+                      table's slack and grow far wider than the control inside
+                      them, which leaves each heading centred over empty space
+                      rather than over its switch or swatch. Sized to content,
+                      the column IS the control, so centring lands on it. The
+                      name column has no cap and takes the remaining room. */}
+                  <th className={`${TABLE_TH} w-px whitespace-nowrap text-right`}>Products</th>
+                  <th className={`${TABLE_TH} w-px whitespace-nowrap text-center`}>Visible</th>
+                  <th className={`${TABLE_TH} w-px whitespace-nowrap text-center`}>Colour</th>
                   <th className={`${TABLE_TH} w-px text-right`}>
                     {busy ? 'Saving…' : 'Actions'}
                   </th>
@@ -321,6 +338,9 @@ export function DepartmentsClient({
                     key={d.id}
                     department={d}
                     depth={depth}
+                    pictureId={
+                      d.posImageId !== null && hasPicture.has(d.posImageId) ? d.posImageId : null
+                    }
                     canEdit={canEdit}
                     expanded={searching || expanded.has(d.id)}
                     draggable={canEdit && !searching}
@@ -444,9 +464,22 @@ export function DepartmentsClient({
 
 /* ── one row ─────────────────────────────────────────────────────────────── */
 
+/**
+ * The word for a row's depth, as the badge beside its name.
+ *
+ * Top level gets nothing — a badge on every row would mark the rule rather than
+ * the exception, and the leftmost column is already unambiguous. Depth 1 and 2
+ * are named because that is the vocabulary shops actually use ("sub 1"); past
+ * that it keeps counting rather than inventing "sub-sub-sub".
+ */
+function levelLabel(depth: number): string | null {
+  return depth === 0 ? null : `Sub ${depth}`
+}
+
 function DepartmentRow({
   department: d,
   depth,
+  pictureId,
   canEdit,
   expanded,
   draggable,
@@ -465,6 +498,8 @@ function DepartmentRow({
 }: {
   department: Department
   depth: number
+  /** The till picture to draw, or null to fall back to the colour tile. */
+  pictureId: number | null
   canEdit: boolean
   expanded: boolean
   draggable: boolean
@@ -482,6 +517,7 @@ function DepartmentRow({
   onDragEnd: () => void
 }) {
   const hasChildren = d.childCount > 0
+  const level = levelLabel(depth)
 
   return (
     <tr
@@ -490,16 +526,39 @@ function DepartmentRow({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      className={`group border-b border-border transition last:border-b-0 ${
-        isDragOver ? 'bg-brand-soft' : 'hover:bg-surface-2'
+      // A height set here rather than more padding in TABLE_TD: that constant is
+      // the kit's measured 36px row (see styles.ts) and is shared by 73 tables.
+      // This list carries a 34px picture, which at 36px sets the row height
+      // itself and leaves the tile touching both borders — the extra room is
+      // what a department list needs, not what every table needs.
+      className={`group h-[53px] border-b border-border transition last:border-b-0 ${
+        isDragOver ? 'bg-brand-soft' : depth > 0 ? 'bg-surface-2/40 hover:bg-surface-2' : 'hover:bg-surface-2'
       } ${isDragging ? 'opacity-40' : ''}`}
     >
-      <td className={TABLE_TD}>
+      <td className={`${TABLE_TD} relative`}>
         {/* data-kit-ok: the indent IS the hierarchy — computed per row, so it
-            cannot be a class. */}
+            cannot be a class.
+
+            One rule per ancestor level, each sitting in the middle of the 20px
+            that level indents by. Drawn full-bleed top to bottom so consecutive
+            siblings join into one unbroken line down the branch — the run of
+            rows under a parent reads as a group without needing a box around
+            it. They are behind the content and non-interactive, so they never
+            take a click meant for the drag handle. */}
+        {Array.from({ length: depth }, (_, level) => (
+          <span
+            key={level}
+            data-kit-ok
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 w-px bg-border"
+            style={{ left: `${level * INDENT + INDENT / 2}px` }}
+          />
+        ))}
+
+        {/* data-kit-ok: see above. */}
         <span
           data-kit-ok
-          className="flex items-center gap-2"
+          className="relative flex items-center gap-2"
           style={{ paddingLeft: `${depth * INDENT}px` }}
         >
           {canEdit && (
@@ -507,32 +566,36 @@ function DepartmentRow({
               aria-hidden
               title={draggable ? 'Drag to reorder' : 'Clear the search to reorder'}
               className={`text-faint transition-opacity ${
-                draggable ? 'cursor-grab opacity-0 group-hover:opacity-100' : 'opacity-20'
+                draggable ? 'cursor-grab opacity-40 group-hover:opacity-100' : 'opacity-20'
               }`}
             >
               <Icons.DragHandle size={14} />
             </span>
           )}
 
-          {/* The disclosure toggle keeps its slot on childless rows so every
-              name in a branch starts at the same x. */}
+          {/* The disclosure keeps its slot on childless rows so every name in a
+              branch starts at the same x. */}
           {hasChildren ? (
             <Button
-              variant="bare"
+              variant="ghost"
               size="sm"
               iconOnly
               aria-label={expanded ? `Collapse ${d.name}` : `Expand ${d.name}`}
               aria-expanded={expanded}
               onClick={onToggle}
-              className="size-6"
             >
               {expanded ? <Icons.ChevronDown size={15} /> : <Icons.ChevronRight size={15} />}
             </Button>
           ) : (
-            <span aria-hidden className="size-6 shrink-0" />
+            <span aria-hidden className="size-control-sm shrink-0" />
           )}
 
-          <RowTile label={d.name} token={d.color} />
+          <DepartmentGlyph name={d.name} color={d.color} pictureId={pictureId} />
+
+          {/* The level badge sits BEFORE the name, so the eye reads the depth on
+              the way to the word rather than travelling past a name of unknown
+              length to find it. */}
+          {level && <Badge>{level}</Badge>}
 
           <a
             href={`/departments/${d.id}`}
@@ -543,15 +606,15 @@ function DepartmentRow({
             {d.name}
           </a>
 
-          {hasChildren && (
-            <Badge>{d.childCount}</Badge>
-          )}
+          {hasChildren && <Badge>{d.childCount}</Badge>}
+
+          {/* Hidden is the exception, so it is said in words on the row itself
+              — the switch three columns right is the control, not the label. */}
+          {!d.isActive && <Badge tone="warning">Hidden</Badge>}
         </span>
       </td>
 
-      <td className={`${TABLE_TD} text-muted`}>{d.code ?? '—'}</td>
-
-      <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
+      <td className={`${TABLE_TD} ${TABLE_NUMERIC} w-px`}>
         {d.productCount > 0 ? (
           <a
             href={`/products?department=${d.id}`}
@@ -564,55 +627,47 @@ function DepartmentRow({
         )}
       </td>
 
-      <td className={TABLE_TD}>
-        <div className="flex justify-center">
-          {/* data-kit-ok: a colour swatch is the value itself, not a control
-              wearing a label — a kit Button would hide the colour it sets. */}
-          <button
-            data-kit-ok
-            type="button"
-            onClick={onOpenColor}
-            disabled={!canEdit}
-            aria-label={`Colour for ${d.name}`}
-            title="Set colour"
-            className="rounded-pill transition hover:ring-2 hover:ring-brand/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <RowTile label={d.name} token={d.color} className="rounded-pill" />
-          </button>
-        </div>
-      </td>
-
-      <td className={TABLE_TD}>
+      <td className={`${TABLE_TD} w-px`}>
         <div className="flex justify-center">
           {canEdit ? (
             <Switch
               checked={d.isActive}
               onChange={onToggleActive}
-              ariaLabel={`${d.name} is ${d.isActive ? 'active' : 'inactive'}`}
+              ariaLabel={`${d.name} is ${d.isActive ? 'visible' : 'hidden'}`}
             />
-          ) : d.isActive ? (
-            <span className="text-faint">—</span>
           ) : (
-            <Badge tone="warning">Inactive</Badge>
+            <span className="text-faint">{d.isActive ? '—' : 'Hidden'}</span>
           )}
         </div>
       </td>
 
       <td className={`${TABLE_TD} w-px`}>
-        {/* Actions reveal on hover: a visible button on every row is 50 buttons
-            competing with the data. focus-within keeps them reachable by tab. */}
-        <div className="flex justify-end gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+        <div className="flex justify-center">
+          <ColourSwatchButton name={d.name} color={d.color} disabled={!canEdit} onClick={onOpenColor} />
+        </div>
+      </td>
+
+      <td className={`${TABLE_TD} w-px`}>
+        {/*
+          These stay visible rather than revealing on hover.
+
+          "Add Sub N" is the action this screen exists for — a shop building its
+          tree does it dozens of times in a sitting — and an action you have to
+          discover by hovering is one that gets done through the slower New
+          Department form instead. Edit and delete follow it so the group reads
+          as one set rather than one button plus two secrets.
+        */}
+        <div className="flex items-center justify-end gap-1">
           {canEdit && (
             <>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
-                iconOnly
-                aria-label={`Add a sub-department under ${d.name}`}
-                title="Add sub-department"
                 onClick={onAddChild}
+                title={`Add a sub-department under ${d.name}`}
               >
                 <Icons.Plus size={14} />
+                Add {levelLabel(depth + 1)}
               </Button>
               <Button
                 variant="ghost"
@@ -652,6 +707,107 @@ function DepartmentRow({
   )
 }
 
+/**
+ * A stored colour that is a raw hex string rather than a swatch token.
+ *
+ * Departments predating the token palette hold values like `#c2410c` — see the
+ * note in tiles.ts — and `tileClass` deliberately does not resolve them, so it
+ * returns the FIRST swatch for every one of them.
+ *
+ * Behind initials that was survivable: the tile still read as "a colour". In a
+ * bare swatch whose whole job is to show the colour, it is a lie — a shop with
+ * nine differently-coloured departments sees nine identical blue squares and
+ * concludes the screen is broken, which it would be. So a hex value is painted
+ * as itself.
+ */
+function hexColour(color: string | null): string | null {
+  return color && /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : null
+}
+
+/**
+ * The colour cell: the department's swatch, and the button that changes it.
+ *
+ * The swatch IS the value, so it is drawn rather than labelled — which is also
+ * why it cannot be a kit Button: one would put its own fill over the colour it
+ * exists to show.
+ */
+function ColourSwatchButton({
+  name,
+  color,
+  disabled,
+  onClick,
+}: {
+  name: string
+  color: string | null
+  disabled: boolean
+  onClick: () => void
+}) {
+  const hex = hexColour(color)
+  const shared =
+    'size-6 rounded-control transition hover:ring-2 hover:ring-brand/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50'
+
+  /* data-kit-ok on both arms: see the note above. The hex arm additionally
+     needs an inline background, because the value comes from a database row —
+     there is no class that can be written for a colour nobody authored, and
+     Tailwind could not emit one anyway. */
+  return hex ? (
+    <button
+      data-kit-ok
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={`Colour for ${name}`}
+      title={color ? 'Change colour' : 'No colour set — click to choose one'}
+      className={shared}
+      style={{ backgroundColor: hex }}
+    />
+  ) : (
+    <button
+      data-kit-ok
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={`Colour for ${name}`}
+      title={color ? 'Change colour' : 'No colour set — click to choose one'}
+      className={`${shared} ${color ? tileClass(color) : 'border border-dashed border-border-strong bg-surface-2'}`}
+    />
+  )
+}
+
+/**
+ * The leading identity mark: the department's till picture if it has one, and
+ * the kit's initials tile if it has not.
+ *
+ * The picture is the same one that paints this department's tile at the till, so
+ * the list shows what the shop floor actually sees — a wrong or missing icon
+ * becomes visible here instead of only being discovered on the till. `RowTile`
+ * is the fallback rather than a blank, so a row stays findable by shape.
+ */
+function DepartmentGlyph({
+  name,
+  color,
+  pictureId,
+}: {
+  name: string
+  color: string | null
+  pictureId: number | null
+}) {
+  if (pictureId === null) return <RowTile label={name} token={color} className="size-[34px]" />
+
+  return (
+    /* data-kit-ok: a stored picture at row scale. RowTile draws initials on a
+       token fill and has no image form; the box around the picture is what keeps
+       a non-square upload from being stretched into one. */
+    <span
+      data-kit-ok
+      aria-hidden
+      className="flex size-[34px] shrink-0 items-center justify-center overflow-hidden rounded-control bg-surface-2"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={`/api/storefront-images/${pictureId}`} alt="" className="size-full object-contain" />
+    </span>
+  )
+}
 /* ── modals ──────────────────────────────────────────────────────────────── */
 
 function ColorModal({

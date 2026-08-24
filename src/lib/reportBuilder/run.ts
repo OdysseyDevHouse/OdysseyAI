@@ -8,6 +8,7 @@ import {
   supplierBranchDbPrefix,
 } from '../site/customerDb'
 import { loyaltyDbPrefix, loyaltyBranchDbPrefix } from '../site/loyaltyDb'
+import { giftCardDbPrefix, giftCardBranchDbPrefix } from '../site/giftCardDb'
 import type { Capability } from '../site/permissions'
 // The grand total and a band subtotal have to be the same arithmetic, so the
 // function lives with the banding rather than here. See shape.ts.
@@ -194,16 +195,37 @@ export async function runBuilderSpec(
    * MariaDB resolves the same way it resolves two.
    */
   const ownerSide =
-    source.ownedBy === 'customer' || source.ownedBy === 'supplier' || source.ownedBy === 'loyalty'
-  const [customerPrefix, supplierPrefix, loyaltyPrefix, customerBranch, supplierBranch, loyaltyBranch] =
-    await Promise.all([
-      customerDbPrefix(siteId),
-      supplierDbPrefix(siteId),
-      loyaltyDbPrefix(siteId),
-      branchDbPrefix(siteId),
-      supplierBranchDbPrefix(siteId),
-      loyaltyBranchDbPrefix(siteId),
-    ])
+    source.ownedBy === 'customer' ||
+    source.ownedBy === 'supplier' ||
+    source.ownedBy === 'loyalty' ||
+    source.ownedBy === 'giftcard'
+  const [
+    customerPrefix,
+    supplierPrefix,
+    loyaltyPrefix,
+    giftCardPrefix,
+    customerBranch,
+    supplierBranch,
+    loyaltyBranch,
+    giftCardBranch,
+  ] = await Promise.all([
+    customerDbPrefix(siteId),
+    supplierDbPrefix(siteId),
+    loyaltyDbPrefix(siteId),
+    /*
+     * A FOURTH file, not an alias for the loyalty one. Gift cards follow
+     * `shares_gift_cards`, and giftCardOwnerSite deliberately differs from
+     * loyaltyOwnerSite: points cost nothing to honour, but a gift card is cash
+     * the shopper handed over, so a group of separate companies that shares a
+     * programme may still keep its stored value apart. Resolving these against
+     * {L} would read another company's money.
+     */
+    giftCardDbPrefix(siteId),
+    branchDbPrefix(siteId),
+    supplierBranchDbPrefix(siteId),
+    loyaltyBranchDbPrefix(siteId),
+    giftCardBranchDbPrefix(siteId),
+  ])
 
   /*
    * `{B}` means "this branch's own database", but WHICH resolver answers that
@@ -217,7 +239,9 @@ export async function runBuilderSpec(
       ? supplierBranch
       : source.ownedBy === 'loyalty'
         ? loyaltyBranch
-        : customerBranch
+        : source.ownedBy === 'giftcard'
+          ? giftCardBranch
+          : customerBranch
 
   /*
    * The query always runs on the CALLER's connection — a report is a read, and
@@ -237,6 +261,8 @@ export async function runBuilderSpec(
       .join(supplierPrefix)
       .split('{L}')
       .join(loyaltyPrefix)
+      .split('{G}')
+      .join(giftCardPrefix)
       .split('{B}')
       .join(ownerSide ? branchPrefix : '')
 
@@ -248,9 +274,11 @@ export async function runBuilderSpec(
         ? supplierPrefix
         : source.ownedBy === 'loyalty'
           ? loyaltyPrefix
-          : source.ownedBy === 'customer'
-            ? customerPrefix
-            : ''
+          : source.ownedBy === 'giftcard'
+            ? giftCardPrefix
+            : source.ownedBy === 'customer'
+              ? customerPrefix
+              : ''
     }\`${source.table}\` t`,
     ...joins.map(qualify),
     where.sql ? `WHERE ${where.sql}` : '',

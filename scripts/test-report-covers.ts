@@ -18,7 +18,7 @@
  */
 import { siteQuery } from '../src/lib/siteDb'
 import { runBuilderSpec } from '../src/lib/reportBuilder/run'
-import { DEFAULT_ROWS } from '../src/lib/reportBuilder/spec'
+import { DEFAULT_ROWS, emptySpec } from '../src/lib/reportBuilder/spec'
 import type { CustomReportSpec } from '../src/lib/reportBuilder/spec'
 import { getSource, getField } from '../src/lib/reportBuilder/catalog'
 
@@ -27,17 +27,15 @@ const SITE = Number(process.env.PROBE_SITE ?? 1)
 const canAll = () => true
 
 function spec(over: Partial<CustomReportSpec>): CustomReportSpec {
+  /* From the catalog's own constructor, so a probe starts where the builder
+     does — default filters included. */
   return {
+    ...emptySpec('sales'),
     name: 'probe',
-    source: 'sales',
-    period: { kind: 'all' },
-    columns: [],
-    filters: [],
-    groupFields: [],
-    totalFilters: [],
+    period: { key: 'last5Years' },
     limit: DEFAULT_ROWS,
     ...over,
-  } as CustomReportSpec
+  }
 }
 
 let failed = false
@@ -60,7 +58,7 @@ async function main() {
         { field: 'spendPerHead' },
       ],
       groupFields: ['visitType'],
-    } as Partial<CustomReportSpec>),
+    }),
     canAll,
   )
   check(
@@ -99,7 +97,7 @@ async function main() {
         { field: 'origin' },
       ],
       limit: 3,
-    } as Partial<CustomReportSpec>),
+    }),
     canAll,
     { limit: 3 },
   )
@@ -115,7 +113,7 @@ async function main() {
       ],
       filters: [{ field: 'docType', op: 'eq', value: 'quote' }],
       groupFields: ['quoteOutcome'],
-    } as Partial<CustomReportSpec>),
+    }),
     canAll,
   )
   check('quote funnel by outcome runs', true, `${quotes.rows.length} row(s) (no quotes on this site)`)

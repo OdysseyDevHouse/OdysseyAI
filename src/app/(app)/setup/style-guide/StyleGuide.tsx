@@ -109,6 +109,7 @@ import {
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_TH,
+  TABLE_TH_CAPTION,
   TABLE_TD,
   TABLE_NUMERIC,
   TABLE_ROW,
@@ -185,6 +186,7 @@ export default function StyleGuidePage() {
         <WeekHoursSection />
         <AccordionSection />
         <RowDisclosureSection />
+        <TableCaptionSection />
         <SelectableCardSection />
         <ReasonPickerSection />
         <TileSwatchSection />
@@ -684,6 +686,38 @@ function RowDisclosureSection() {
                 <RowDisclosure label="Card" open={false} onToggle={() => {}} disabled />
               </td>
               <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>550.00</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
+function TableCaptionSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Captioned column heading"
+        description="TABLE_TH_CAPTION — a second line under a heading whose one word is not the whole answer. A switch headed “Visible” does not say visible where; a swatch headed “Colour” does not say what the colour is for. Use it sparingly: captions on every column is a table explaining itself instead of a table, and the ones that need saying stop standing out."
+      />
+      <div className="overflow-x-auto">
+        <table className={TABLE}>
+          <thead>
+            <tr className={TABLE_HEAD_ROW}>
+              <th className={TABLE_TH}>Department</th>
+              <th className={`${TABLE_TH} text-center`}>
+                Visible
+                <span className={TABLE_TH_CAPTION}>Shown in pickers</span>
+              </th>
+              <th className={`${TABLE_TH} text-right`}>Products</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr className={TABLE_ROW}>
+              <td className={TABLE_TD}>Bakery</td>
+              <td className={`${TABLE_TD} text-center`}>Yes</td>
+              <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>19</td>
             </tr>
           </tbody>
         </table>

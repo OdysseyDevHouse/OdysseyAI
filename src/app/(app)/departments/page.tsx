@@ -1,6 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listDepartments } from '@/lib/site/departments'
+import { storefrontImagesByIds } from '@/lib/site/storefrontImages'
 import { PageHeader, PageBody, Callout } from '@/components/ui'
 import { DepartmentsClient } from './DepartmentsClient'
 
@@ -21,6 +22,22 @@ export default async function DepartmentsPage({
   // offers the switch that reactivates one.
   const departments = await listDepartments(siteId, true)
 
+  /*
+   * Which departments actually have a till picture, resolved in ONE query for
+   * the whole tree rather than a request per row.
+   *
+   * Only the ids that resolve are shipped: a picture deleted from the library
+   * leaves the department pointing at nothing, and an <img> onto a 404 is a
+   * broken-image glyph where the initials tile should be. Sending the set of
+   * LIVE ids lets the row decide between a picture and its fallback without
+   * having to discover the failure in the browser.
+   */
+  const pictures = await storefrontImagesByIds(
+    siteId,
+    departments.map((d) => d.posImageId).filter((id): id is number => id !== null),
+  )
+  const withPicture = [...pictures.keys()]
+
   const topLevel = departments.filter((d) => d.parentId === null).length
 
   return (
@@ -35,7 +52,11 @@ export default async function DepartmentsPage({
           <Callout tone="success" title={saved ? 'Department saved.' : 'Department deleted.'} />
         )}
 
-        <DepartmentsClient departments={departments} canEdit={canEdit} />
+        <DepartmentsClient
+          departments={departments}
+          pictureIds={withPicture}
+          canEdit={canEdit}
+        />
       </PageBody>
     </>
   )

@@ -171,6 +171,8 @@
     "test:adjustments": "tsx --conditions=react-server --env-file=.env scripts/test-adjustments.ts",
     "test:report-catalog": "tsx --conditions=react-server --env-file=.env scripts/test-report-catalog-fields.ts",
     "test:report-covers": "tsx --conditions=react-server --env-file=.env scripts/test-report-covers.ts",
+    "test:report-sources": "tsx --conditions=react-server --env-file=.env scripts/test-report-sources.ts",
+    "test:report-shared-files": "tsx --conditions=react-server --env-file=.env scripts/test-report-shared-files.ts",
     "audit:report-catalog": "tsx --conditions=react-server --env-file=.env scripts/audit-report-catalog.ts",
     "audit:report-sources": "tsx --conditions=react-server --env-file=.env scripts/audit-report-sources.ts",
     "test:report-columns": "tsx --conditions=react-server --env-file=.env scripts/test-report-columns.ts",

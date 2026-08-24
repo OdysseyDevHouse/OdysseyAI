@@ -220,22 +220,32 @@ export interface DefaultFilter {
  *
  * The report engine composes its joins into ONE SQL string, so it cannot route
  * a query the way lib/site modules do — half of it belongs to the branch and
- * half to the owner. It qualifies instead, and these two tokens are how a
+ * half to the owner. It qualifies instead, and these tokens are how a
  * catalogue entry says which side a table is on:
  *
- *   {C}  a customer-owned table — customers, customer_groups, the ledger,
- *        loyalty balances, gift cards
- *   {B}  a branch-owned table reached FROM a customer-owned source —
- *        loyalty_tiers, products, tender_types
+ *   {C}  a customer-owned table — customers, customer_groups, the ledger
+ *   {S}  a supplier-owned table — suppliers and the creditors book
+ *   {L}  a loyalty-owned table — members, the points ledger, the tier ladder
+ *   {G}  a gift-card-owned table — gift_cards and gift_card_events
+ *   {B}  a branch-owned table reached FROM an owner-side source —
+ *        products, tender_types, terminals
  *
- * run.ts replaces both with a database prefix (or with nothing, for a store
- * that owns its own customers, so the SQL is byte-for-byte what it was).
+ * FOUR files, not one: a group may share any combination of them, and gift
+ * cards in particular follow their own switch rather than the loyalty one (see
+ * `ownedBy` below). A table listed under the wrong token reads the wrong shop's
+ * data on exactly the groups these tokens exist for.
+ *
+ * run.ts replaces each with a database prefix (or with nothing, for a store
+ * that owns its own files, so the SQL is byte-for-byte what it was).
  *
  * A token rather than a per-join flag because the same JoinUnit is reused
  * across sources — CUSTOMER_GROUP_JOIN is on four — and the answer belongs to
  * the TABLE, not to the join that happens to reach it.
  */
 export const CUSTOMER_DB = '{C}'
+export const SUPPLIER_DB = '{S}'
+export const LOYALTY_DB = '{L}'
+export const GIFT_CARD_DB = '{G}'
 export const BRANCH_DB = '{B}'
 
 /** One queryable dataset offered in the builder's first step. */
@@ -254,19 +264,27 @@ export interface CatalogSource {
   /**
    * Which shared file the primary table belongs to. Omitted means the caller's
    * own database, which is every source but those built on the debtors book,
-   * the creditors book, and the loyalty programme.
+   * the creditors book, the loyalty programme and the gift card scheme.
    *
-   * This decides WHERE the query runs. The {C} / {S} / {L} / {B} tokens above
+   * This decides WHERE the query runs. The {C} / {S} / {L} / {G} / {B} tokens
    * decide how the tables on the other side are named once it is running.
    *
-   * THREE, not two, and each answered separately — a group may share any
-   * combination (015, 017). 'loyalty' is the newest and the least like the
-   * others: it is exempt from the legal-entity gate, so a group of separately
-   * owned shops can run one programme while keeping three separate debtors
-   * books. A loyalty source marked 'customer' would read the wrong database
-   * for exactly that group.
+   * FOUR, not two, and each answered separately — a group may share any
+   * combination (015, 017). 'loyalty' is exempt from the legal-entity gate, so
+   * a group of separately owned shops can run one programme while keeping
+   * separate debtors books. A loyalty source marked 'customer' would read the
+   * wrong database for exactly that group.
+   *
+   * 'giftcard' is NOT an alias for 'loyalty', and the gap is the point. Points
+   * cost nothing to honour and were never anybody's money; a gift card is cash
+   * the shopper handed over, so a card sold at store 3 and spent at store 7
+   * leaves store 3 holding money store 7 gave goods for. A group of separate
+   * companies that shares its programme may therefore still keep stored value
+   * apart — giftCardOwnerSite answers that separately from loyaltyOwnerSite,
+   * and a gift card source marked 'loyalty' would report another company's
+   * money as its own. See sql/tickets/018_share_gift_cards.sql.
    */
-  ownedBy?: 'customer' | 'supplier' | 'loyalty'
+  ownedBy?: 'customer' | 'supplier' | 'loyalty' | 'giftcard'
   /** TIMELINE only: the column the date range filters on. */
   dateColumn?: string
   /**
@@ -2300,6 +2318,18 @@ const CUSTOMERS_SOURCE: CatalogSource = {
     enumField('statementCycle', 'Statement cycle', 't.statement_cycle', ['monthly', '14day', '7day'], {
       group: FIELD_GROUPS.ACCOUNT,
     }),
+    {
+      key: 'statementAnchorDay',
+      label: 'Statement day',
+      type: 'number',
+      expr: 't.statement_anchor_day',
+      numeric: true,
+      /* A day-of-month. Never a total. */
+      noTotal: true,
+      group: FIELD_GROUPS.ACCOUNT,
+      hint: 'The day of the month the account is statemented on.',
+    },
+    { key: 'statementAnchorDate', label: 'Statement anchor date', type: 'date', expr: 't.statement_anchor_date', group: FIELD_GROUPS.ACCOUNT },
     { key: 'interestRatePct', label: 'Interest rate %', type: 'percent', expr: 't.interest_rate_pct', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
     yesNo('interestEnabled', 'Charges interest', 't.interest_enabled'),
     { key: 'interestGraceDays', label: 'Interest grace (days)', type: 'number', expr: 't.interest_grace_days', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
@@ -3935,6 +3965,21 @@ const TIPS_SOURCE: CatalogSource = {
     { key: 'reassignedByName', label: 'Reassigned by', type: 'text', expr: 't.reassigned_by_name', group: FIELD_GROUPS.PEOPLE },
     { key: 'reassignedAt', label: 'Reassigned at', type: 'datetime', expr: 't.reassigned_at', group: FIELD_GROUPS.DATES },
     { key: 'reassignReason', label: 'Reassign reason', type: 'text', expr: 't.reassign_reason', group: FIELD_GROUPS.OTHER },
+    {
+      key: 'wasReassigned',
+      label: 'Reassigned',
+      type: 'text',
+      /* Derived rather than exposing the raw user id beside the name that is
+         already offered: "which tips were moved" is the question, and an
+         integer column cannot be filtered to it. */
+      expr: "(CASE WHEN t.reassigned_by IS NULL THEN 'No' ELSE 'Yes' END)",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+      hint: 'Whether the tip was moved from the person who originally took it.',
+    },
     ...timeBuckets('created_at', { hours: true }),
   ],
 }
@@ -4381,6 +4426,7 @@ const BATCHES_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.COST,
     },
     { key: 'receivedAt', label: 'Received', type: 'datetime', expr: 't.received_at', group: FIELD_GROUPS.DATES },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
     { key: 'grvNumber', label: 'GRV number', type: 'text', expr: 'bpd.document_number', needs: ['grv'], group: FIELD_GROUPS.IDENTITY },
   ],
 }
@@ -5180,6 +5226,14 @@ const SUPPLIER_TXN_SOURCE: CatalogSource = {
     { key: 'reference', label: 'Reference', type: 'text', expr: 't.reference', group: FIELD_GROUPS.OTHER },
     { key: 'description', label: 'Description', type: 'text', expr: 't.description', group: FIELD_GROUPS.OTHER },
     { key: 'userName', label: 'Captured by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    {
+      key: 'sourceModule',
+      label: 'Raised by',
+      type: 'text',
+      expr: 't.source',
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'Which part of the system wrote the entry — a GRV, a payment run, an opening balance.',
+    },
     { key: 'supplierBalance', label: 'Account balance now', type: 'currency', expr: 's.balance', numeric: true, noTotal: true, needs: ['supplier'], group: FIELD_GROUPS.AGEING },
     ...agedBucketFields(),
     ...timeBuckets('doc_date'),
@@ -5312,6 +5366,14 @@ const LOYALTY_MEMBERS_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.DATES,
     },
     { key: 'tierSince', label: 'In tier since', type: 'datetime', expr: 't.tier_since', group: FIELD_GROUPS.DATES },
+    {
+      key: 'tierReviewDate',
+      label: 'Tier reviewed on',
+      type: 'date',
+      expr: 't.tier_review_date',
+      group: FIELD_GROUPS.DATES,
+      hint: 'When the member is next assessed for promotion or demotion.',
+    },
     yesNo('isActive', 'Active', 't.is_active'),
   ],
 }
@@ -5457,8 +5519,1059 @@ const GL_ACCOUNTS_SOURCE: CatalogSource = {
 
 /* ── the catalog ───────────────────────────────────────────────────────────── */
 
+/* ── gift cards ────────────────────────────────────────────────────────────── */
+
+/*
+ * Two sources, because a card and its movements answer different questions and
+ * neither substitutes for the other.
+ *
+ *   giftCards   what is OUTSTANDING right now — the liability on the books.
+ *   giftCardEvents  what HAPPENED — sold, redeemed, reloaded, expired.
+ *
+ * A shop closing its year needs the first; a shop asking whether the scheme is
+ * working needs the second. Summing events to derive a balance would drift from
+ * the card's own balance the first time an adjustment was posted, so the
+ * snapshot is read where it is stored.
+ *
+ * Both are ownedBy 'giftcard' — NOT 'loyalty'. See the note on `ownedBy`: a
+ * group may share its programme while keeping stored value apart, and getting
+ * this wrong reports another company's money.
+ */
+const GIFT_CARD_STATUSES = ['pending', 'active', 'redeemed', 'expired', 'void']
+
+const GIFT_CARDS_SOURCE: CatalogSource = {
+  key: 'giftCards',
+  label: 'Gift cards',
+  description:
+    'One row per card — what is still loaded on it, who holds it, and when it expires. The outstanding liability.',
+  category: 'Money',
+  permission: 'giftcards.view',
+  /* A SNAPSHOT: "what do we owe in gift cards" has no date range. The dates on
+     it (issued, expires) stay filterable as ordinary fields. */
+  shape: 'snapshot',
+  table: 'gift_cards',
+  ownedBy: 'giftcard',
+  joins: [
+    /* The holder, where there is one. LEFT because a card sold over the counter
+       to a walk-in has no customer, and those are the ones most likely to be
+       outstanding — an INNER join would hide exactly the liability this source
+       exists to total. */
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' },
+  ],
+  fields: [
+    { key: 'code', label: 'Card number', type: 'text', expr: 't.code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('status', 'Status', 't.status', GIFT_CARD_STATUSES, { starter: true }),
+    {
+      key: 'balance',
+      label: 'Balance',
+      type: 'currency',
+      expr: 't.balance',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What is still loaded. Summed across active cards this is the outstanding liability.',
+    },
+    {
+      key: 'initialValue',
+      label: 'Loaded value',
+      type: 'currency',
+      expr: 't.initial_value',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What the card was originally sold for, before anything was spent off it.',
+    },
+    {
+      key: 'spent',
+      label: 'Spent',
+      type: 'currency',
+      /* Derived rather than stored, and clamped at zero: a reload raises the
+         balance above the initial value, and a negative "spent" reads as a bug
+         to whoever is looking at the column. */
+      expr: '(GREATEST(t.initial_value - t.balance, 0))',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    { key: 'expiresOn', label: 'Expires on', type: 'date', expr: 't.expires_on', group: FIELD_GROUPS.DATES },
+    { key: 'activatedAt', label: 'Sold at', type: 'datetime', expr: 't.activated_at', starter: true, group: FIELD_GROUPS.DATES },
+    {
+      key: 'activatedDocNumber',
+      label: 'Sold on document',
+      type: 'document',
+      expr: 't.activated_doc_number',
+      /* No `link`: the document may live in another branch's database on a
+         shared scheme, and a link that opens the wrong shop's invoice — or
+         nothing — is worse than plain text. */
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
+    { key: 'userName', label: 'Sold by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    { key: 'createdAt', label: 'Issued', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'isExpiring',
+      label: 'Expiring within 90 days',
+      type: 'text',
+      expr:
+        "(CASE WHEN t.expires_on IS NULL THEN 'No expiry' " +
+        "WHEN t.expires_on < CURDATE() THEN 'Already expired' " +
+        "WHEN DATEDIFF(t.expires_on, CURDATE()) <= 90 THEN 'Yes' ELSE 'No' END)",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+        { value: 'Already expired', label: 'Already expired' },
+        { value: 'No expiry', label: 'No expiry' },
+      ],
+      hint: 'Cards about to lapse — money the shop is about to stop owing, and a customer about to be disappointed.',
+    },
+  ],
+}
+
+const GIFT_CARD_EVENT_TYPES = ['activation', 'redeem', 'reload', 'refund', 'expire', 'adjust']
+
+const GIFT_CARD_EVENTS_SOURCE: CatalogSource = {
+  key: 'giftCardEvents',
+  label: 'Gift card activity',
+  description: 'Every load, redemption, refund and expiry against a card — what the scheme is actually doing.',
+  category: 'Money',
+  permission: 'giftcards.view',
+  shape: 'timeline',
+  table: 'gift_card_events',
+  ownedBy: 'giftcard',
+  dateColumn: 'created_at',
+  joins: [{ name: 'card', sql: 'LEFT JOIN {G}gift_cards gc ON gc.id = t.card_id' }],
+  fields: [
+    { key: 'happenedAt', label: 'When', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'cardCode', label: 'Card number', type: 'text', expr: 'gc.code', needs: ['card'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('entryType', 'Movement', 't.entry_type', GIFT_CARD_EVENT_TYPES, { starter: true }),
+    {
+      key: 'amount',
+      label: 'Amount',
+      type: 'currency',
+      expr: 't.amount',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Signed by the movement: a load adds, a redemption takes away. Summing every movement gives the net change in liability.',
+    },
+    { key: 'documentNumber', label: 'Document', type: 'document', expr: 't.document_number', group: FIELD_GROUPS.IDENTITY },
+    { key: 'userName', label: 'Done by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    ...timeBuckets('created_at', { hours: true }),
+  ],
+}
+
+/* ── laybys ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Customer money the shop is holding against goods it has not handed over. Two
+ * sources for the same reason gift cards get two: the agreement and its
+ * payments are different questions.
+ *
+ * The laybys table lives in the BRANCH (it carries customer_id into the shared
+ * file, but the agreement itself is the branch's), so no ownedBy — only the
+ * customer join crosses.
+ */
+const LAYBY_STATUSES = ['open', 'completed', 'cancelled', 'expired']
+
+const LAYBYS_SOURCE: CatalogSource = {
+  key: 'laybys',
+  label: 'Laybys',
+  description: 'One row per layby — what was put aside, what has been paid, and what is still owing.',
+  category: 'Sales',
+  permission: 'sales.view',
+  shape: 'timeline',
+  table: 'laybys',
+  dateColumn: 'created_at',
+  joins: [{ name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' }],
+  fields: [
+    { key: 'documentNumber', label: 'Layby number', type: 'text', expr: 't.document_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('status', 'Status', 't.status', LAYBY_STATUSES, { starter: true }),
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'totalIncl', label: 'Total', type: 'currency', expr: 't.total_incl', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'paidTotal',
+      label: 'Paid',
+      type: 'currency',
+      expr: 't.paid_total',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Customer money the shop is holding against goods not yet handed over.',
+    },
+    {
+      key: 'outstanding',
+      label: 'Still owing',
+      type: 'currency',
+      expr: '(t.total_incl - t.paid_total)',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'paidPct',
+      label: 'Paid off %',
+      type: 'percent',
+      expr: '(CASE WHEN t.total_incl = 0 THEN 0 ELSE (t.paid_total / t.total_incl) * 100 END)',
+      numeric: true,
+      noTotal: true,
+      /* Weighted when summarised — a R50 layby at 90% and a R5,000 one at 10%
+         do not average to half paid off. */
+      ratio: { numerator: 'paidTotal', denominator: 'totalIncl' },
+      group: FIELD_GROUPS.MONEY,
+    },
+    { key: 'dueDate', label: 'Due date', type: 'date', expr: 't.due_date', group: FIELD_GROUPS.DATES },
+    {
+      key: 'isOverdue',
+      label: 'Overdue',
+      type: 'text',
+      expr:
+        "(CASE WHEN t.status <> 'open' THEN 'Not open' " +
+        "WHEN t.due_date IS NULL THEN 'No due date' " +
+        "WHEN t.due_date < CURDATE() THEN 'Yes' ELSE 'No' END)",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+        { value: 'Not open', label: 'Not open' },
+        { value: 'No due date', label: 'No due date' },
+      ],
+      hint: 'An open layby past its date — goods held for somebody who has stopped paying.',
+    },
+    { key: 'completedAt', label: 'Completed at', type: 'datetime', expr: 't.completed_at', group: FIELD_GROUPS.DATES },
+    { key: 'cancelledAt', label: 'Cancelled at', type: 'datetime', expr: 't.cancelled_at', group: FIELD_GROUPS.DATES },
+    { key: 'cancelReason', label: 'Cancel reason', type: 'text', expr: 't.cancel_reason', group: FIELD_GROUPS.OTHER },
+    {
+      key: 'cancellationFee',
+      label: 'Cancellation fee',
+      type: 'currency',
+      expr: 't.cancellation_fee',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Kept from a cancelled layby. What was NOT kept is the waiver reason beside it.',
+    },
+    { key: 'cancellationFeePct', label: 'Cancellation fee %', type: 'percent', expr: 't.cancellation_fee_pct', numeric: true, noTotal: true, group: FIELD_GROUPS.MONEY },
+    { key: 'feeWaivedReason', label: 'Fee waived because', type: 'text', expr: 't.fee_waived_reason', group: FIELD_GROUPS.OTHER },
+    { key: 'remindedAt', label: 'Last reminded', type: 'datetime', expr: 't.reminded_at', group: FIELD_GROUPS.DATES },
+    { key: 'userName', label: 'Taken by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    { key: 'createdAt', label: 'Started', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
+    ...timeBuckets('created_at', { hours: true }),
+  ],
+}
+
+const LAYBY_PAYMENT_KINDS = ['deposit', 'instalment', 'refund', 'forfeit']
+
+const LAYBY_PAYMENTS_SOURCE: CatalogSource = {
+  key: 'laybyPayments',
+  label: 'Layby payments',
+  description: 'Every deposit, instalment, refund and forfeit taken against a layby.',
+  category: 'Sales',
+  permission: 'sales.view',
+  shape: 'timeline',
+  table: 'layby_payments',
+  dateColumn: 'paid_on',
+  joins: [
+    { name: 'layby', sql: 'INNER JOIN laybys l ON l.id = t.layby_id', always: true },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = l.customer_id', needs: ['layby'] },
+  ],
+  fields: [
+    { key: 'paidOn', label: 'Paid on', type: 'date', expr: 't.paid_on', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'laybyNumber', label: 'Layby number', type: 'text', expr: 'l.document_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
+    enumField('kind', 'Kind', 't.kind', LAYBY_PAYMENT_KINDS, { starter: true }),
+    { key: 'amount', label: 'Amount', type: 'currency', expr: 't.amount', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    { key: 'tenderName', label: 'Paid by', type: 'text', expr: 't.tender_name', group: FIELD_GROUPS.TENDER },
+    { key: 'reference', label: 'Reference', type: 'text', expr: 't.reference', group: FIELD_GROUPS.IDENTITY },
+    { key: 'userName', label: 'Taken by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    ...timeBuckets('paid_on'),
+  ],
+}
+
+/* ── commission ────────────────────────────────────────────────────────────── */
+
+/*
+ * What staff have earned, line by line. The RUN is the period and its lock; the
+ * ENTRY is the money. Only entries get a source: a run with no entries is an
+ * empty page, and every question worth asking ("what did Johan earn in March",
+ * "which rule is costing us most") is an entry question grouped differently.
+ *
+ * Dated by the DOCUMENT's date, not the run's. A run calculated in April for
+ * March must report as March, or every commission report lands in the wrong
+ * month the moment a run is late.
+ */
+const COMMISSION_SOURCE: CatalogSource = {
+  key: 'commissionEntries',
+  label: 'Commission',
+  description: 'One row per commissionable line — who earned it, on what rule, and how much.',
+  category: 'Money',
+  permission: 'commission.edit',
+  shape: 'timeline',
+  table: 'commission_entries',
+  dateColumn: 'document_date',
+  joins: [{ name: 'run', sql: 'LEFT JOIN commission_runs cr ON cr.id = t.run_id' }],
+  fields: [
+    { key: 'documentDate', label: 'Document date', type: 'date', expr: 't.document_date', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'userName', label: 'Earned by', type: 'text', expr: 't.user_name', starter: true, group: FIELD_GROUPS.PEOPLE },
+    {
+      key: 'amount',
+      label: 'Commission',
+      type: 'currency',
+      expr: 't.amount',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    { key: 'documentNumber', label: 'Document', type: 'document', expr: 't.document_number', link: { kind: 'sale', idExpr: 't.document_id' }, group: FIELD_GROUPS.IDENTITY },
+    { key: 'ruleName', label: 'Rule', type: 'text', expr: 't.rule_name', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
+    enumField('basis', 'Calculated on', 't.basis', ['gross_profit', 'turnover'], {
+      hint: 'Whether the rule paid on profit or on turnover — two rules on one report are not comparable without this.',
+    }),
+    {
+      key: 'baseAmount',
+      label: 'Base amount',
+      type: 'currency',
+      expr: 't.base_amount',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'The profit or turnover the rate was applied to.',
+    },
+    {
+      key: 'ratePct',
+      label: 'Rate %',
+      type: 'percent',
+      expr: 't.rate_pct',
+      numeric: true,
+      noTotal: true,
+      /* Weighted: a 10% rule on R100 and a 2% rule on R100,000 do not average
+         to 6%. Summing commission over base is the rate actually paid. */
+      ratio: { numerator: 'amount', denominator: 'baseAmount' },
+      group: FIELD_GROUPS.MONEY,
+    },
+    { key: 'productCode', label: 'Product code', type: 'text', expr: 't.product_code', group: FIELD_GROUPS.PRODUCT },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', group: FIELD_GROUPS.PRODUCT },
+    { key: 'docType', label: 'Document type', type: 'text', expr: 't.doc_type', group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'runPeriodStart', label: 'Run period from', type: 'date', expr: 'cr.period_start', needs: ['run'], group: FIELD_GROUPS.DATES },
+    { key: 'runPeriodEnd', label: 'Run period to', type: 'date', expr: 'cr.period_end', needs: ['run'], group: FIELD_GROUPS.DATES },
+    {
+      key: 'runStatus',
+      label: 'Run status',
+      type: 'text',
+      /* Labelled rather than blank: an entry whose run was deleted is still
+         money somebody earned, and an unnamed group reads as a broken report. */
+      expr: "COALESCE(cr.status, 'No run')",
+      needs: ['run'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+      options: [
+        { value: 'open', label: 'Open' },
+        { value: 'locked', label: 'Locked' },
+        { value: 'No run', label: 'No run' },
+      ],
+      hint: 'A locked run is settled. An open one can still change.',
+    },
+    ...timeBuckets('document_date'),
+  ],
+}
+
+/* ── stock transfers ───────────────────────────────────────────────────────── */
+
+/*
+ * Stock in motion, between locations or between stores. Two sources: the
+ * document says what left and whether it arrived; the LINE says what was in it,
+ * and that is where "what did we actually receive" lives.
+ */
+const TRANSFER_STATUSES = ['draft', 'posted', 'in_transit', 'received', 'cancelled']
+
+const STOCK_TRANSFERS_SOURCE: CatalogSource = {
+  key: 'stockTransfers',
+  label: 'Stock transfers',
+  description: 'One row per transfer — what moved, between where, and whether it has landed.',
+  category: 'Stock',
+  permission: 'stock.view',
+  shape: 'timeline',
+  table: 'stock_transfers',
+  dateColumn: 'document_date',
+  joins: [
+    { name: 'fromLoc', sql: 'LEFT JOIN stock_locations sfl ON sfl.id = t.from_location_id' },
+    { name: 'toLoc', sql: 'LEFT JOIN stock_locations stl ON stl.id = t.to_location_id' },
+  ],
+  fields: [
+    { key: 'documentNumber', label: 'Transfer number', type: 'text', expr: 't.document_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'documentDate', label: 'Date', type: 'date', expr: 't.document_date', starter: true, group: FIELD_GROUPS.DATES },
+    enumField('status', 'Status', 't.status', TRANSFER_STATUSES, { starter: true }),
+    enumField('direction', 'Direction', 't.direction', ['internal', 'out', 'in'], {
+      hint: 'Between our own locations, or to and from another store.',
+    }),
+    { key: 'fromLocation', label: 'From', type: 'text', expr: 'sfl.name', needs: ['fromLoc'], starter: true, group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'toLocation', label: 'To', type: 'text', expr: 'stl.name', needs: ['toLoc'], starter: true, group: FIELD_GROUPS.CLASSIFICATION },
+    {
+      key: 'peerDocumentNumber',
+      label: 'Their transfer number',
+      type: 'text',
+      expr: 't.peer_document_number',
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'What the other store calls the same movement — the number to quote when chasing it.',
+    },
+    { key: 'postedAt', label: 'Posted at', type: 'datetime', expr: 't.posted_at', group: FIELD_GROUPS.DATES },
+    { key: 'peerSiteName', label: 'Other store', type: 'text', expr: 't.peer_site_name', group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'dispatchedAt', label: 'Dispatched at', type: 'datetime', expr: 't.dispatched_at', group: FIELD_GROUPS.DATES },
+    { key: 'receivedAt', label: 'Received at', type: 'datetime', expr: 't.received_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'daysInTransit',
+      label: 'Days in transit',
+      type: 'number',
+      /* Open-ended on purpose: a transfer that never arrived is the one worth
+         finding, so an un-received one measures to TODAY rather than reading
+         blank and dropping out of the report. */
+      expr:
+        '(CASE WHEN t.dispatched_at IS NULL THEN NULL ' +
+        'ELSE DATEDIFF(COALESCE(t.received_at, NOW()), t.dispatched_at) END)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Still counting on a transfer that has not been received.',
+    },
+    { key: 'reference', label: 'Reference', type: 'text', expr: 't.reference', group: FIELD_GROUPS.IDENTITY },
+    { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
+    { key: 'cancelReason', label: 'Cancel reason', type: 'text', expr: 't.cancel_reason', group: FIELD_GROUPS.OTHER },
+    { key: 'cancelledAt', label: 'Cancelled at', type: 'datetime', expr: 't.cancelled_at', group: FIELD_GROUPS.DATES },
+    { key: 'userName', label: 'Raised by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    ...timeBuckets('document_date'),
+  ],
+}
+
+const TRANSFER_LINES_SOURCE: CatalogSource = {
+  key: 'stockTransferLines',
+  label: 'Stock transfer lines',
+  description: 'One row per product moved — what was sent, what arrived, and the difference.',
+  category: 'Stock',
+  permission: 'stock.view',
+  shape: 'timeline',
+  table: 'stock_transfer_lines',
+  dateColumn: 'document_date',
+  dateJoin: 'transfer',
+  joins: [
+    { name: 'transfer', sql: 'INNER JOIN stock_transfers tr ON tr.id = t.transfer_id', always: true },
+    PRODUCT_JOIN,
+    PRODUCT_DEPT_JOIN,
+    PRODUCT_BRAND_JOIN,
+    /* PRODUCT_LOOKUP_FIELDS carries reorder-level fields that read this join —
+       spreading those fields without it leaves them unresolvable. */
+    PRODUCT_LEVELS_JOIN,
+  ],
+  fields: [
+    { key: 'transferNumber', label: 'Transfer number', type: 'text', expr: 'tr.document_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'documentDate', label: 'Date', type: 'date', expr: 'tr.document_date', starter: true, group: FIELD_GROUPS.DATES },
+    enumField('status', 'Transfer status', 'tr.status', TRANSFER_STATUSES),
+    { key: 'productCode', label: 'Product code', type: 'text', expr: 't.product_code', starter: true, group: FIELD_GROUPS.PRODUCT },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', starter: true, group: FIELD_GROUPS.PRODUCT },
+    { key: 'qty', label: 'Qty sent', type: 'number', expr: 't.qty', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    { key: 'qtyReceived', label: 'Qty received', type: 'number', expr: 't.qty_received', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    {
+      key: 'qtyShort',
+      label: 'Short',
+      type: 'number',
+      /* What went missing between the two stores. Clamped: receiving MORE than
+         was sent is a counting error at the far end, not a negative shortage,
+         and letting it net off would hide a real loss on another line. */
+      expr: '(GREATEST(t.qty - t.qty_received, 0))',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'Sent but not received. Only meaningful once the transfer has been received.',
+    },
+    {
+      key: 'valueSent',
+      label: 'Value sent',
+      type: 'currency',
+      expr: '(t.qty * t.unit_cost_excl)',
+      numeric: true,
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    {
+      key: 'valueShort',
+      label: 'Value short',
+      type: 'currency',
+      expr: '(GREATEST(t.qty - t.qty_received, 0) * t.unit_cost_excl)',
+      numeric: true,
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+      hint: 'What the shortfall cost — the number that decides whether it is worth chasing.',
+    },
+    { key: 'unitCostExcl', label: 'Unit cost', type: 'currency', expr: 't.unit_cost_excl', numeric: true, noTotal: true, permission: 'products.cost', group: FIELD_GROUPS.COST },
+    ...PRODUCT_LOOKUP_FIELDS,
+    ...timeBuckets('document_date').map((f) => ({
+      ...f,
+      expr: f.expr.replace(/t\.`document_date`/g, 'tr.`document_date`'),
+    })),
+  ],
+}
+
+/* ── online orders ─────────────────────────────────────────────────────────── */
+
+/*
+ * A whole sales channel that had no source. An online order becomes a sales
+ * document once accepted, so turnover is already reportable through `sales` —
+ * what is NOT is everything the channel knows and the invoice does not: which
+ * orders were declined and why, how long they waited, collect versus deliver,
+ * and what delivery is costing.
+ */
+const ONLINE_ORDERS_SOURCE: CatalogSource = {
+  key: 'onlineOrders',
+  label: 'Online orders',
+  description: 'One row per web order — what was asked for, how it was fulfilled, and whether it was accepted.',
+  category: 'Sales',
+  permission: 'online.view',
+  shape: 'timeline',
+  table: 'online_orders',
+  dateColumn: 'placed_at',
+  joins: [
+    { name: 'status', sql: 'LEFT JOIN online_order_statuses oos ON oos.id = t.status_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' },
+    { name: 'zone', sql: 'LEFT JOIN online_delivery_zones odz ON odz.id = t.zone_id' },
+  ],
+  fields: [
+    { key: 'orderNumber', label: 'Order number', type: 'text', expr: 't.order_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'placedAt', label: 'Placed at', type: 'datetime', expr: 't.placed_at', starter: true, group: FIELD_GROUPS.DATES },
+    {
+      key: 'statusName',
+      label: 'Status',
+      type: 'text',
+      /* Labelled rather than blank — a status row can be retired while the
+         orders that used it remain, and those orders still count. */
+      expr: "COALESCE(oos.name, 'Not set')",
+      needs: ['status'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    enumField('fulfilment', 'Fulfilment', 't.fulfilment', ['collect', 'deliver'], { starter: true }),
+    { key: 'totalIncl', label: 'Total', type: 'currency', expr: 't.total_incl', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'deliveryFeeIncl',
+      label: 'Delivery fee',
+      type: 'currency',
+      expr: 't.delivery_fee_incl',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What was charged for delivery — not what it cost to deliver.',
+    },
+    { key: 'discountIncl', label: 'Discount', type: 'currency', expr: 't.discount_incl', numeric: true, group: FIELD_GROUPS.MONEY },
+    { key: 'discountCode', label: 'Discount code', type: 'text', expr: 't.discount_code', group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'voucherCode', label: 'Voucher code', type: 'text', expr: 't.voucher_code', group: FIELD_GROUPS.CLASSIFICATION },
+    enumField('paymentStatus', 'Payment', 't.payment_status', ['unpaid', 'pending', 'paid'], { starter: true }),
+    yesNo('payOnAccount', 'On account', 't.pay_on_account'),
+    { key: 'paidAt', label: 'Paid at', type: 'datetime', expr: 't.paid_at', group: FIELD_GROUPS.DATES },
+    { key: 'requestedFor', label: 'Wanted for', type: 'datetime', expr: 't.requested_for', group: FIELD_GROUPS.DATES },
+    {
+      key: 'declineReason',
+      label: 'Declined because',
+      type: 'text',
+      expr: 't.decline_reason',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Why an order was turned away. A pattern here is lost revenue with a cause attached.',
+    },
+    { key: 'contactName', label: 'Ordered by', type: 'text', expr: 't.contact_name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'contactPhone', label: 'Phone', type: 'text', expr: 't.contact_phone', group: FIELD_GROUPS.IDENTITY },
+    { key: 'contactEmail', label: 'Email', type: 'text', expr: 't.contact_email', group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerName', label: 'Account', type: 'text', expr: 'c.name', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
+    { key: 'deliveryLine1', label: 'Delivery address 1', type: 'text', expr: 't.delivery_line1', group: FIELD_GROUPS.IDENTITY },
+    { key: 'deliveryLine2', label: 'Delivery address 2', type: 'text', expr: 't.delivery_line2', group: FIELD_GROUPS.IDENTITY },
+    { key: 'deliverySuburb', label: 'Suburb', type: 'text', expr: 't.delivery_suburb', group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'deliveryPostcode', label: 'Postal code', type: 'text', expr: 't.delivery_postcode', group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'zoneName', label: 'Delivery zone', type: 'text', expr: 'odz.name', needs: ['zone'], group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'customerNote', label: 'Customer note', type: 'text', expr: 't.customer_note', group: FIELD_GROUPS.OTHER },
+    { key: 'internalNote', label: 'Internal note', type: 'text', expr: 't.internal_note', group: FIELD_GROUPS.OTHER },
+    { key: 'deliveryNotes', label: 'Delivery instructions', type: 'text', expr: 't.delivery_notes', group: FIELD_GROUPS.OTHER },
+    yesNo('isArchived', 'Archived', 't.is_archived'),
+    ...timeBuckets('placed_at', { hours: true }),
+  ],
+}
+
+const ONLINE_ORDER_LINES_SOURCE: CatalogSource = {
+  key: 'onlineOrderLines',
+  label: 'Online order lines',
+  description: 'One row per product ordered online — what the web channel actually sells.',
+  category: 'Sales',
+  permission: 'online.view',
+  shape: 'timeline',
+  table: 'online_order_lines',
+  dateColumn: 'placed_at',
+  dateJoin: 'order',
+  joins: [
+    { name: 'order', sql: 'INNER JOIN online_orders oo ON oo.id = t.order_id', always: true },
+    PRODUCT_JOIN,
+    PRODUCT_DEPT_JOIN,
+    PRODUCT_BRAND_JOIN,
+    PRODUCT_LEVELS_JOIN,
+  ],
+  fields: [
+    { key: 'orderNumber', label: 'Order number', type: 'text', expr: 'oo.order_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'placedAt', label: 'Placed at', type: 'datetime', expr: 'oo.placed_at', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'productCode', label: 'Product code', type: 'text', expr: 't.product_code', starter: true, group: FIELD_GROUPS.PRODUCT },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', starter: true, group: FIELD_GROUPS.PRODUCT },
+    { key: 'qty', label: 'Qty', type: 'number', expr: 't.qty', numeric: true, starter: true, group: FIELD_GROUPS.QUANTITIES },
+    { key: 'unitPriceIncl', label: 'Unit price', type: 'currency', expr: 't.unit_price_incl', numeric: true, noTotal: true, group: FIELD_GROUPS.MONEY },
+    { key: 'lineTotalIncl', label: 'Line total', type: 'currency', expr: 't.line_total_incl', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    { key: 'lineNote', label: 'Line note', type: 'text', expr: 't.line_note', group: FIELD_GROUPS.OTHER },
+    enumField('fulfilment', 'Fulfilment', 'oo.fulfilment', ['collect', 'deliver']),
+    ...PRODUCT_LOOKUP_FIELDS,
+    ...timeBuckets('placed_at', { hours: true }).map((f) => ({
+      ...f,
+      expr: f.expr.replace(/t\.`placed_at`/g, 'oo.`placed_at`'),
+    })),
+  ],
+}
+
+/* ── specials ──────────────────────────────────────────────────────────────── */
+
+/*
+ * "Did the promotion work" — the question a shop asks after every campaign and
+ * could not answer. The redemption row is thin by design (056); everything worth
+ * grouping by comes off the special it points at.
+ */
+const SPECIAL_REDEMPTIONS_SOURCE: CatalogSource = {
+  key: 'specialRedemptions',
+  label: 'Promotion redemptions',
+  description: 'Every time a special was taken up — what it was given away on, and what it cost.',
+  category: 'Sales',
+  permission: 'sales.view',
+  shape: 'timeline',
+  table: 'special_redemptions',
+  dateColumn: 'used_at',
+  joins: [
+    { name: 'special', sql: 'LEFT JOIN specials sp ON sp.id = t.special_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' },
+  ],
+  fields: [
+    { key: 'usedAt', label: 'When', type: 'datetime', expr: 't.used_at', starter: true, group: FIELD_GROUPS.DATES },
+    {
+      key: 'specialName',
+      label: 'Promotion',
+      type: 'text',
+      expr: "COALESCE(sp.name, 'Deleted promotion')",
+      needs: ['special'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'amountIncl',
+      label: 'Given away',
+      type: 'currency',
+      expr: 't.amount_incl',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What the discount came to — summed, this is what the promotion cost.',
+    },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], group: FIELD_GROUPS.IDENTITY },
+    ...timeBuckets('used_at', { hours: true }),
+  ],
+}
+
+/* ── loyalty vouchers ──────────────────────────────────────────────────────── */
+
+const LOYALTY_VOUCHERS_SOURCE: CatalogSource = {
+  key: 'loyaltyVouchers',
+  label: 'Loyalty vouchers',
+  description: 'Rewards issued to members — what is still outstanding and what has been spent.',
+  category: 'Customers',
+  permission: 'loyalty.view',
+  shape: 'snapshot',
+  table: 'loyalty_vouchers',
+  ownedBy: 'loyalty',
+  joins: [{ name: 'member', sql: 'LEFT JOIN {L}loyalty_members m ON m.id = t.member_id' }],
+  fields: [
+    { key: 'code', label: 'Voucher code', type: 'text', expr: 't.code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('status', 'Status', 't.status', ['issued', 'redeemed', 'expired', 'void'], { starter: true }),
+    { key: 'memberName', label: 'Member', type: 'text', expr: 'm.name', needs: ['member'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('rewardType', 'Reward', 't.reward_type', ['free_item', 'value'], { starter: true }),
+    {
+      key: 'rewardValue',
+      label: 'Value',
+      type: 'currency',
+      expr: 't.reward_value',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Zero on a free-item voucher, whose cost is the item rather than an amount.',
+    },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', group: FIELD_GROUPS.IDENTITY },
+    enumField('issuedBy', 'Issued by', 't.issued_by', ['card', 'manual', 'birthday', 'tier'], {
+      hint: 'Which mechanism produced it — a full card, a birthday, a tier promotion, or somebody deciding.',
+    }),
+    {
+      key: 'rewardProductCode',
+      label: 'Free item',
+      type: 'text',
+      expr: 't.reward_product_code',
+      group: FIELD_GROUPS.PRODUCT,
+      hint: 'Which product a free-item voucher is good for. Blank on a value voucher.',
+    },
+    { key: 'expiresOn', label: 'Expires on', type: 'date', expr: 't.expires_on', group: FIELD_GROUPS.DATES },
+    { key: 'redeemedAt', label: 'Redeemed at', type: 'datetime', expr: 't.redeemed_at', group: FIELD_GROUPS.DATES },
+    { key: 'redeemedDocNumber', label: 'Redeemed on', type: 'document', expr: 't.redeemed_doc_number', group: FIELD_GROUPS.IDENTITY },
+    { key: 'issuedAt', label: 'Issued at', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
+    { key: 'userName', label: 'Issued by (person)', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+  ],
+}
+
+/* ── reservations ──────────────────────────────────────────────────────────── */
+
+/*
+ * Bookings, and — the point of reporting on them — the ones that did not turn
+ * up. `party_size` is the covers figure BEFORE the table is opened, so a
+ * restaurant can compare what it booked against what it seated.
+ */
+const RESERVATIONS_SOURCE: CatalogSource = {
+  key: 'reservations',
+  label: 'Reservations',
+  description: 'Bookings taken — party size, where they came from, and who never arrived.',
+  category: 'Sales',
+  permission: 'reservations.view',
+  shape: 'timeline',
+  table: 'reservations',
+  dateColumn: 'reserved_for',
+  fields: [
+    { key: 'reference', label: 'Reference', type: 'text', expr: 't.reference', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'reservedFor', label: 'Booked for', type: 'datetime', expr: 't.reserved_for', starter: true, group: FIELD_GROUPS.DATES },
+    enumField('status', 'Status', 't.status', ['pending', 'confirmed', 'seated', 'completed', 'no_show', 'cancelled'], { starter: true }),
+    enumField('source', 'Booked via', 't.source', ['online', 'phone', 'walk_in'], { starter: true }),
+    {
+      key: 'partySize',
+      label: 'Party size',
+      type: 'number',
+      expr: 't.party_size',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'Covers BOOKED. What was actually seated is the covers figure on the sale.',
+    },
+    { key: 'contactName', label: 'Name', type: 'text', expr: 't.contact_name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'contactPhone', label: 'Phone', type: 'text', expr: 't.contact_phone', group: FIELD_GROUPS.IDENTITY },
+    { key: 'contactEmail', label: 'Email', type: 'text', expr: 't.contact_email', group: FIELD_GROUPS.IDENTITY },
+    { key: 'tableName', label: 'Table', type: 'text', expr: 't.table_name', group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'durationMinutes', label: 'Booked for (minutes)', type: 'number', expr: 't.duration_minutes', numeric: true, noTotal: true, group: FIELD_GROUPS.OTHER },
+    { key: 'seatedAt', label: 'Seated at', type: 'datetime', expr: 't.seated_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'minutesLate',
+      label: 'Minutes late',
+      type: 'number',
+      /* Signed: arriving EARLY is as much a fact as arriving late, and clamping
+         it at zero would make the average meaningless. */
+      expr: '(CASE WHEN t.seated_at IS NULL THEN NULL ELSE TIMESTAMPDIFF(MINUTE, t.reserved_for, t.seated_at) END)',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Negative where the party arrived early. Blank where they were never seated.',
+    },
+    { key: 'customerNote', label: 'Customer note', type: 'text', expr: 't.customer_note', group: FIELD_GROUPS.OTHER },
+    { key: 'cancelReason', label: 'Cancel reason', type: 'text', expr: 't.cancel_reason', group: FIELD_GROUPS.OTHER },
+    { key: 'userName', label: 'Taken by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'createdAt', label: 'Booked at', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
+    ...timeBuckets('reserved_for', { hours: true }),
+  ],
+}
+
+/* ── kitchen ───────────────────────────────────────────────────────────────── */
+
+/*
+ * When food was fired, to which printer, and by whom — the restaurant
+ * counterpart to covers. The SEND is the docket; the SEND LINE is what was on
+ * it. Only the send gets a source: a docket's lines are already reportable
+ * through sales lines, and `ordered_at` there answers "when was this fired".
+ *
+ * The value here is the DOCKET: how many go to each section, at what hour, and
+ * how long after the table was opened. That is a staffing question and it had
+ * no source at all.
+ */
+const KITCHEN_SENDS_SOURCE: CatalogSource = {
+  key: 'kitchenSends',
+  label: 'Kitchen dockets',
+  description: 'Every docket fired to a kitchen printer — when, to which section, and from which till.',
+  category: 'Operations',
+  permission: 'sales.view',
+  shape: 'timeline',
+  table: 'kitchen_sends',
+  dateColumn: 'sent_at',
+  joins: [
+    { name: 'printer', sql: 'LEFT JOIN kitchen_printers kp ON kp.id = t.printer_id' },
+    /* NOT named 'doc'. run.ts treats a join called 'doc' as the parent that
+       carries the date range's column (dateColumnExpr), so naming it that made
+       every kitchen report filter on 'd.sent_at' — a column sales_documents
+       does not have. This source dates from its OWN table; the bill is just a
+       lookup. */
+    { name: 'sale', sql: 'LEFT JOIN sales_documents d ON d.id = t.document_id' },
+    { name: 'terminal', sql: 'LEFT JOIN terminals ktrm ON ktrm.id = t.terminal_id' },
+  ],
+  fields: [
+    { key: 'sentAt', label: 'Fired at', type: 'datetime', expr: 't.sent_at', starter: true, group: FIELD_GROUPS.DATES },
+    {
+      key: 'printerName',
+      label: 'Kitchen section',
+      type: 'text',
+      /* Labelled rather than blank: a printer can be decommissioned while its
+         dockets remain, and those dockets are still work the kitchen did. */
+      expr: "COALESCE(kp.name, 'Removed printer')",
+      needs: ['printer'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'documentNumber',
+      label: 'Bill',
+      type: 'document',
+      expr: 'd.document_number',
+      link: { kind: 'sale', idExpr: 't.document_id' },
+      needs: ['sale'],
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    { key: 'sentByName', label: 'Fired by', type: 'text', expr: 't.sent_by_name', starter: true, group: FIELD_GROUPS.PEOPLE },
+    { key: 'terminalName', label: 'Till', type: 'text', expr: 'ktrm.name', needs: ['terminal'], group: FIELD_GROUPS.PEOPLE },
+    {
+      key: 'source',
+      label: 'Fired from',
+      type: 'text',
+      expr: 't.source',
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'Which action sent the docket — a course being fired, a bill being parked, a re-send.',
+    },
+    {
+      key: 'personCount',
+      label: 'Covers on the bill',
+      type: 'number',
+      expr: 'd.person_count',
+      numeric: true,
+      needs: ['sale'],
+      /* Repeated on every docket for the same bill, so it must NOT be totalled:
+         a table of four fired three courses would report twelve covers. */
+      noTotal: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    ...timeBuckets('sent_at', { hours: true }),
+  ],
+}
+
+/* ── fixed assets ──────────────────────────────────────────────────────────── */
+
+const FIXED_ASSETS_SOURCE: CatalogSource = {
+  key: 'fixedAssets',
+  label: 'Fixed assets',
+  description: 'The asset register — what was bought, what it is worth now, and what has been written off.',
+  category: 'Money',
+  permission: 'reports.financial',
+  /* A SNAPSHOT: "what is on the register" has no date range. Acquisition and
+     disposal dates stay filterable as ordinary fields. */
+  shape: 'snapshot',
+  table: 'fixed_assets',
+  joins: [
+    { name: 'category', sql: 'LEFT JOIN asset_categories ac ON ac.id = t.category_id' },
+    { name: 'supplier', sql: 'LEFT JOIN {S}suppliers s ON s.id = t.supplier_id' },
+  ],
+  fields: [
+    { key: 'assetCode', label: 'Asset code', type: 'text', expr: 't.asset_code', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'name', label: 'Asset', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('status', 'Status', 't.status', ['pending', 'active', 'disposed'], { starter: true }),
+    {
+      key: 'categoryName',
+      label: 'Category',
+      type: 'text',
+      expr: "COALESCE(ac.name, 'Uncategorised')",
+      needs: ['category'],
+      starter: true,
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    { key: 'cost', label: 'Cost', type: 'currency', expr: 't.cost', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'accumulatedDepreciation',
+      label: 'Depreciation to date',
+      type: 'currency',
+      expr: 't.accumulated_depreciation',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'bookValue',
+      label: 'Book value',
+      type: 'currency',
+      /* Derived, because the register stores cost and accumulated depreciation
+         separately and the figure everyone actually wants is the difference. */
+      expr: '(t.cost - t.accumulated_depreciation)',
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Cost less depreciation to date — what the asset still stands at on the books.',
+    },
+    { key: 'residualValue', label: 'Residual value', type: 'currency', expr: 't.residual_value', numeric: true, group: FIELD_GROUPS.MONEY },
+    { key: 'acquiredOn', label: 'Acquired on', type: 'date', expr: 't.acquired_on', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'lifeMonths', label: 'Life (months)', type: 'number', expr: 't.life_months', numeric: true, noTotal: true, group: FIELD_GROUPS.OTHER },
+    { key: 'depreciationStart', label: 'Depreciation from', type: 'date', expr: 't.depreciation_start', group: FIELD_GROUPS.DATES },
+    { key: 'lastDepreciatedTo', label: 'Depreciated to', type: 'date', expr: 't.last_depreciated_to', group: FIELD_GROUPS.DATES },
+    { key: 'disposedOn', label: 'Disposed on', type: 'date', expr: 't.disposed_on', group: FIELD_GROUPS.DATES },
+    { key: 'disposalProceeds', label: 'Disposal proceeds', type: 'currency', expr: 't.disposal_proceeds', numeric: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'disposalResult',
+      label: 'Profit / loss on disposal',
+      type: 'currency',
+      expr: 't.disposal_result',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Negative where the asset was sold for less than it stood at.',
+    },
+    { key: 'userName', label: 'Added by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'disposalReason', label: 'Disposal reason', type: 'text', expr: 't.disposal_reason', group: FIELD_GROUPS.OTHER },
+    { key: 'serialNumber', label: 'Serial number', type: 'text', expr: 't.serial_number', group: FIELD_GROUPS.IDENTITY },
+    { key: 'location', label: 'Location', type: 'text', expr: 't.location', group: FIELD_GROUPS.CLASSIFICATION },
+    { key: 'supplierName', label: 'Bought from', type: 'text', expr: 's.name', needs: ['supplier'], group: FIELD_GROUPS.IDENTITY },
+    { key: 'invoiceNumber', label: 'Their invoice', type: 'text', expr: 't.invoice_number', group: FIELD_GROUPS.IDENTITY },
+    { key: 'description', label: 'Description', type: 'text', expr: 't.description', group: FIELD_GROUPS.OTHER },
+    { key: 'notes', label: 'Notes', type: 'text', expr: 't.notes', group: FIELD_GROUPS.OTHER },
+  ],
+}
+
+/* ── contracts ─────────────────────────────────────────────────────────────── */
+
+/*
+ * Recurring billing agreements. Two sources: the AGREEMENT is what is on the
+ * books and what it escalates by; the INVOICE RUN is what actually went out and
+ * whether the email landed. The second is the one that catches a contract
+ * quietly failing to bill.
+ */
+const CONTRACTS_SOURCE: CatalogSource = {
+  key: 'contracts',
+  label: 'Contracts',
+  description: 'Recurring billing agreements — who is on one, how often they bill, and what they escalate by.',
+  category: 'Customers',
+  permission: 'contracts.view',
+  shape: 'snapshot',
+  table: 'contracts',
+  joins: [{ name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = t.customer_id' }],
+  fields: [
+    { key: 'contractNumber', label: 'Contract number', type: 'text', expr: 't.contract_number', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'name', label: 'Contract', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('frequency', 'Bills', 't.frequency', ['monthly', 'quarterly', 'annually'], { starter: true }),
+    yesNo('isActive', 'Active', 't.is_active'),
+    { key: 'startsOn', label: 'Starts on', type: 'date', expr: 't.starts_on', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'endsOn', label: 'Ends on', type: 'date', expr: 't.ends_on', group: FIELD_GROUPS.DATES },
+    {
+      key: 'lastGeneratedFor',
+      label: 'Last billed for',
+      type: 'date',
+      expr: 't.last_generated_for',
+      group: FIELD_GROUPS.DATES,
+      hint: 'The period last invoiced. A date well in the past on an active contract is one that has stopped billing.',
+    },
+    {
+      key: 'escalationPct',
+      label: 'Escalation %',
+      type: 'percent',
+      expr: 't.escalation_pct',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'billingDay',
+      label: 'Bills on day',
+      type: 'number',
+      expr: 't.billing_day',
+      numeric: true,
+      /* A day-of-month, not a quantity: summing the 1st and the 15th is not a
+         number anybody wants. */
+      noTotal: true,
+      group: FIELD_GROUPS.ACCOUNT,
+    },
+    {
+      key: 'escalationMonth',
+      label: 'Escalates in month',
+      type: 'number',
+      expr: 't.escalation_month',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.ACCOUNT,
+      hint: 'The month number the annual increase falls in. Blank where the contract never escalates.',
+    },
+    { key: 'lastEscalatedFor', label: 'Last escalated', type: 'date', expr: 't.last_escalated_for', group: FIELD_GROUPS.DATES },
+    { key: 'paymentTermsDays', label: 'Payment terms (days)', type: 'number', expr: 't.payment_terms_days', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
+    yesNo('autoSend', 'Emails automatically', 't.auto_send'),
+    yesNo('offerPaymentLink', 'Offers a payment link', 't.offer_payment_link'),
+    { key: 'reference', label: 'Their reference', type: 'text', expr: 't.reference', group: FIELD_GROUPS.IDENTITY },
+    { key: 'notes', label: 'Notes', type: 'text', expr: 't.notes', group: FIELD_GROUPS.OTHER },
+    { key: 'internalNote', label: 'Internal note', type: 'text', expr: 't.internal_note', group: FIELD_GROUPS.OTHER },
+    { key: 'userName', label: 'Set up by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'createdAt', label: 'Created', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
+  ],
+}
+
+const CONTRACT_INVOICES_SOURCE: CatalogSource = {
+  key: 'contractInvoices',
+  label: 'Contract billing runs',
+  description: 'Every invoice a contract raised — and every one that failed to raise or failed to send.',
+  category: 'Customers',
+  permission: 'contracts.view',
+  shape: 'timeline',
+  table: 'contract_invoices',
+  dateColumn: 'for_date',
+  joins: [
+    { name: 'contract', sql: 'LEFT JOIN contracts ct ON ct.id = t.contract_id' },
+    { name: 'customer', sql: 'LEFT JOIN {C}customers c ON c.id = ct.customer_id', needs: ['contract'] },
+    /* NOT 'doc' — see the note on the kitchen source. This dates from its own
+       for_date; the invoice is a lookup. */
+    { name: 'sale', sql: 'LEFT JOIN sales_documents d ON d.id = t.document_id' },
+  ],
+  fields: [
+    { key: 'forDate', label: 'Billing period', type: 'date', expr: 't.for_date', starter: true, group: FIELD_GROUPS.DATES },
+    { key: 'contractName', label: 'Contract', type: 'text', expr: 'ct.name', needs: ['contract'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerName', label: 'Customer', type: 'text', expr: 'c.name', needs: ['customer'], starter: true, group: FIELD_GROUPS.IDENTITY },
+    enumField('status', 'Status', 't.status', ['draft', 'posted', 'failed'], { starter: true }),
+    enumField('emailStatus', 'Email', 't.email_status', ['pending', 'sent', 'failed', 'skipped'], { starter: true }),
+    {
+      key: 'documentNumber',
+      label: 'Invoice',
+      type: 'document',
+      expr: 'd.document_number',
+      link: { kind: 'sale', idExpr: 't.document_id' },
+      needs: ['sale'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    { key: 'totalIncl', label: 'Invoiced', type: 'currency', expr: 'd.total_incl', numeric: true, needs: ['sale'], group: FIELD_GROUPS.MONEY },
+    { key: 'emailedTo', label: 'Emailed to', type: 'text', expr: 't.emailed_to', group: FIELD_GROUPS.IDENTITY },
+    { key: 'emailedAt', label: 'Emailed at', type: 'datetime', expr: 't.emailed_at', group: FIELD_GROUPS.DATES },
+    { key: 'emailAttempts', label: 'Email attempts', type: 'number', expr: 't.email_attempts', numeric: true, noTotal: true, group: FIELD_GROUPS.OTHER },
+    {
+      key: 'error',
+      label: 'Error',
+      type: 'text',
+      expr: 't.error',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Why a run failed. The reason a contract silently stopped billing is usually here.',
+    },
+    ...timeBuckets('for_date'),
+  ],
+}
+
 export const SOURCES: CatalogSource[] = [
   SALES_SOURCE,
+  GIFT_CARDS_SOURCE,
+  GIFT_CARD_EVENTS_SOURCE,
+  LAYBYS_SOURCE,
+  LAYBY_PAYMENTS_SOURCE,
+  COMMISSION_SOURCE,
+  STOCK_TRANSFERS_SOURCE,
+  TRANSFER_LINES_SOURCE,
+  ONLINE_ORDERS_SOURCE,
+  ONLINE_ORDER_LINES_SOURCE,
+  SPECIAL_REDEMPTIONS_SOURCE,
+  LOYALTY_VOUCHERS_SOURCE,
+  RESERVATIONS_SOURCE,
+  KITCHEN_SENDS_SOURCE,
+  FIXED_ASSETS_SOURCE,
+  CONTRACTS_SOURCE,
+  CONTRACT_INVOICES_SOURCE,
   SALE_LINES_SOURCE,
   SALE_MODIFIERS_SOURCE,
   TENDERS_SOURCE,

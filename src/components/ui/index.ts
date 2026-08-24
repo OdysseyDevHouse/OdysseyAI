@@ -39,6 +39,7 @@ export {
 export {
   TABLE,
   TABLE_HEAD_ROW,
+  TABLE_FRAME,
   TABLE_HEAD_STICKY,
   TABLE_HEAD_STICKY_INSET,
   TABLE_NUMERIC,
@@ -47,6 +48,7 @@ export {
   TABLE_TD,
   TABLE_TD_INPUT,
   TABLE_TH,
+  TABLE_TH_CAPTION,
   TABLE_TOTAL_ROW,
 } from './styles'
 export { TableScroller } from './TableScroller'

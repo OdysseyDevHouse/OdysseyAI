@@ -5,7 +5,7 @@ import {
   EmptyState,
   Icons,
   TABLE_HEAD_ROW,
-  TABLE_HEAD_STICKY_INSET,
+  TABLE_HEAD_STICKY,
   TABLE_NUMERIC,
   TABLE_TD,
   TABLE_TH,
@@ -131,27 +131,15 @@ export default function ReportGrid({
   }
 
   /*
-   * A gutter around the whole grid — even on all four sides.
-   *
-   * The table used to run flush to the card's edge, which put the first column's
-   * text hard against the border and the header row's fill into the card's
-   * rounded corner. A report is a document — it wants a margin — and this is the
-   * one place to set it, so the band washes and the totals rows all stop at the
-   * same line.
-   *
-   * `p-3`, not `px-3 pb-3`: the header row had no gutter above it and so sat
-   * hard against the toolbar, which made the top the one edge that did not match
-   * the other three.
-   *
-   * That gutter scrolls WITH the content, which is why the sticky header below
-   * sits at `-top-3` rather than `top-0`: at top-0 the 12px gap would stay open
-   * above it, showing rows sliding past in the margin. Pulling it up by exactly
-   * the gutter parks the header flush against the toolbar.
+   * The gutter this grid used to set for itself now lives on TableScroller's
+   * frame, so every table in the app keeps the same margin rather than the
+   * reports being the one screen that had one. Hence no `p-3` here — passing it
+   * again would double the gap on this screen alone.
    */
   return (
-    <TableScroller className="p-3">
+    <TableScroller>
       <table className="w-full text-sm">
-        <thead className={TABLE_HEAD_STICKY_INSET}>
+        <thead className={TABLE_HEAD_STICKY}>
           <tr className={TABLE_HEAD_ROW}>
             {columns.map((col) => (
               <th
