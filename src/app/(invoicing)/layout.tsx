@@ -7,6 +7,7 @@ import { ToastProvider } from '@/components/ui'
 import WindowSessionMarker from '@/components/WindowSessionMarker'
 import InvoicingChrome from './InvoicingChrome'
 import InvoicingGate from './InvoicingGate'
+import InvoicingLicenceGate from './InvoicingLicenceGate'
 
 /**
  * The invoicing window — deliberately NOT (app)/layout.tsx.
@@ -110,17 +111,25 @@ export default async function InvoicingLayout({ children }: { children: React.Re
           lives — a browser restart can drop the cookie while restoring the tab. */}
       <WindowSessionMarker />
       <ToastProvider>
-        <InvoicingChrome
-          siteName={site.displayName}
-          /* The BROWSER session's rights still decide which of the four screens
-             the menu offers — they are the same reads the back office allows. */
-          capabilities={[...capabilities.granted]}
-          /* The counter clerk, for the status strip and the shift. */
-          operatorName={till.name}
-          canCashup={can(operatorCapabilities, 'sales.cashup')}
-        >
-          {children}
-        </InvoicingChrome>
+        {/* IS THIS MACHINE LICENSED?
+            After the PIN gate above, not before — a clerk who cannot sign in
+            learns nothing useful from a licensing message, which is the order
+            the till uses too. Client-side because the device id is not a server
+            fact; see InvoicingLicenceGate. */}
+        <InvoicingLicenceGate>
+          <InvoicingChrome
+            siteName={site.displayName}
+            /* The BROWSER session's rights still decide which of the four
+               screens the menu offers — they are the same reads the back office
+               allows. */
+            capabilities={[...capabilities.granted]}
+            /* The counter clerk, for the status strip and the shift. */
+            operatorName={till.name}
+            canCashup={can(operatorCapabilities, 'sales.cashup')}
+          >
+            {children}
+          </InvoicingChrome>
+        </InvoicingLicenceGate>
       </ToastProvider>
     </div>
   )

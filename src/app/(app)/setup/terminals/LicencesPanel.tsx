@@ -16,25 +16,29 @@ import {
   useToast,
 } from '@/components/ui'
 import { deviceId, deviceLabel } from '@/lib/deviceId'
-import type { LicenceSpot } from '@/lib/control/devices'
+import type { LicenceSpot, PaidSlots } from '@/lib/control/devices'
 import type { Terminal } from '@/lib/site/terminals'
 import { releaseLicenceAction, linkDeviceAction } from './actions'
 
 /**
  * The shop's till licences, and which machine uses each.
  *
- * ── THIS IS WHERE A TILL IS SET UP ──────────────────────────────────────────
+ * ── THIS IS WHERE A TILL IS RE-ARRANGED ─────────────────────────────────────
  *
- * The till screen itself no longer offers to register anything. An unlicensed
- * machine is simply blocked and told to fetch a supervisor, who comes here.
- * Two reasons that is the right shape:
+ * Not the only place one is set up, any more. A machine at the refusal screen
+ * can now put ITSELF into service, but only within what the shop already has: a
+ * paid licence that is free, or one thirty-day trial per machine. That covers
+ * the shop starting out, which used to arrive here to find an empty panel.
  *
- *   1. Consuming a licence costs the shop money. A cashier should not be able to
- *      spend one by tapping a button on the screen in front of them.
- *   2. It is one flow instead of two. A desktop till could never register itself
- *      anyway, so the old browser-only "claim a spot" screen meant the two
- *      platforms behaved differently at exactly the moment somebody is trying to
- *      work out how the system fits together.
+ * What still belongs here is everything that COSTS something or takes something
+ * away — unlinking a machine that is trading, deciding which of two tills keeps
+ * the last licence, reading which spot has not been seen for a month. A cashier
+ * must not be able to do any of that from the counter, which is why the panel is
+ * behind `setup.edit` and the door is not.
+ *
+ * The counts at the top are the part a manager actually comes for: when every
+ * paid licence is in use, the till that will not start is waiting on somebody
+ * unlinking one here.
  *
  * ── A LICENCE AND A TILL ARE DIFFERENT THINGS ───────────────────────────────
  *
@@ -49,9 +53,19 @@ import { releaseLicenceAction, linkDeviceAction } from './actions'
  */
 export default function LicencesPanel({
   licences,
+  slots,
   terminals,
 }: {
   licences: LicenceSpot[]
+  /**
+   * What the shop pays for, and how much of it is spoken for.
+   *
+   * The list below cannot answer this on its own: a trial row and a paid row sit
+   * in it looking alike, and the question a manager arrives with — "why will
+   * this machine not start" — is usually answered by the count rather than by
+   * any single row. Trials are deliberately outside it; they are not billed.
+   */
+  slots: PaidSlots
   /** The shop's registered tills, for the picker when linking. */
   terminals: Terminal[]
 }) {
@@ -108,6 +122,10 @@ export default function LicencesPanel({
   }
 
   const entitled = (s: LicenceSpot) => s.status === 'active' && (s.isPaid || trialLive(s))
+  /* Live trials only. A lapsed one is not "on trial", it is a row waiting to be
+     retired, and counting it would inflate a figure whose whole job is to say
+     how much is trading right now. */
+  const trialCount = licences.filter((s) => s.status === 'active' && !s.isPaid && trialLive(s)).length
 
   return (
     <Card>
@@ -116,6 +134,37 @@ export default function LicencesPanel({
         title="Till licences"
         description="What this shop is licensed for, and which machine uses each one."
       />
+
+      {/* WHAT THIS SHOP IS ENTITLED TO, in the two numbers that decide it.
+
+          Paid and trial are counted SEPARATELY and never added up, because they
+          answer different questions. The paid figure is the cap: nothing new can
+          be put into service until it has room, and the fix for that is an
+          Unlink on this screen. A trial is outside the cap entirely — it costs
+          nothing, so it can never be the reason a paid licence is unavailable,
+          and totalling the two would make it look as though it were. */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-border px-4 py-3 text-[13px]">
+        <span className="text-ink-2">
+          <span className="numeric font-semibold text-ink">
+            {slots.inUse} of {slots.paidFor}
+          </span>{' '}
+          {slots.paidFor === 1 ? 'licence' : 'licences'} you pay for
+          {slots.free > 0 && (
+            <span className="text-success-ink"> · {slots.free} free</span>
+          )}
+        </span>
+        {trialCount > 0 && (
+          <span className="text-muted">
+            <span className="numeric font-semibold text-ink">{trialCount}</span> on trial, not
+            billed
+          </span>
+        )}
+        {slots.paidFor > 0 && slots.free === 0 && (
+          <span className="text-warning-ink">
+            All in use — unlink one below to free it for another machine.
+          </span>
+        )}
+      </div>
 
       {/* WHICH MACHINE AM I? The number support asks for, and the thing the
           buttons below are about — "use this machine" is meaningless if you
@@ -155,7 +204,7 @@ export default function LicencesPanel({
         <EmptyState
           icon={<Icons.StatusWarning size={26} />}
           title="No till licences"
-          hint="This shop has no POS licences yet. Contact Odyssey with how many tills you need, and they will appear here."
+          hint="Nothing has been registered yet. Open the till on the machine you want to use and it can start a 30-day trial itself, or contact Odyssey to buy licences."
         />
       ) : (
         <div className="flex flex-col divide-y divide-border">

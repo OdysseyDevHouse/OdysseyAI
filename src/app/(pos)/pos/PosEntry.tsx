@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { offlineSession, type OfflineSession } from '@/lib/posOffline/signInOffline'
 import { POS_MODE_WORDMARKS } from '@/lib/posMode'
 import { deviceId } from '@/lib/deviceId'
-import { checkDeviceAction, type DeviceState } from './deviceActions'
+import { checkDeviceAction } from './deviceActions'
+import type { DeviceState } from '@/lib/control/deviceMessages'
 import PosGate from './PosGate'
 import PosNotLicensed from './PosNotLicensed'
 import PosShell from './PosShell'
@@ -196,7 +197,28 @@ export default function PosEntry({
 
     void checkDeviceAction(id)
       .then((state) => {
-        if (!cancelled) setLicence(state)
+        if (cancelled) return
+        /* ── A RE-CHECK THAT SUCCEEDS HAS TO RELOAD ────────────────────────
+           `licenceNonce` re-asks the licence question and nothing else, but
+           everything ELSE this page rendered was resolved on the old answer —
+           `terminals` above all, which is fetched once by the server page.
+
+           So a machine that was blocked a moment ago and is licensed now (a
+           supervisor linked it next door and somebody tapped "Check again", or
+           it just registered itself at the door) would mount PosShell against a
+           terminal list that predates its own till: the shift gate says "this
+           machine is not set up as a till yet", and `posMode` falls back to
+           retail, which seeds PosShell's useState initialisers and cannot be
+           corrected a tick later.
+
+           Only on the TRANSITION, and only once the first answer is in. A
+           re-check that is still blocked stays cheap, which is the whole point
+           of the button. */
+        if (licence?.status === 'blocked' && state.status === 'licensed') {
+          window.location.reload()
+          return
+        }
+        setLicence(state)
       })
       .catch(() => {
         /* The control database is unreachable. Trade on — the same trade
@@ -211,6 +233,11 @@ export default function PosEntry({
     return () => {
       cancelled = true
     }
+    /* `licence` is READ above but deliberately not a dependency: it is the
+       PREVIOUS answer, and listing it would re-run this effect every time an
+       answer arrives — asking the server again on every load, forever. The nonce
+       is the only thing that should re-ask. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [siteId, licenceNonce])
 
   /* The server's answer wins whenever it has one: it knows about a PIN changed five
@@ -251,7 +278,13 @@ export default function PosEntry({
 
   if (licence.status === 'blocked') {
     return (
-      <PosNotLicensed message={licence.message} serial={serial} onRetry={recheckLicence} />
+      <PosNotLicensed
+        reason={licence.reason}
+        message={licence.message}
+        offer={licence.offer}
+        serial={serial}
+        onRetry={recheckLicence}
+      />
     )
   }
 

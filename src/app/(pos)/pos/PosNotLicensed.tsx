@@ -1,128 +1,65 @@
 'use client'
 
 import Image from 'next/image'
-import { Button, Card, Icons } from '@/components/ui'
-import { isPosBuild } from '@/lib/appRole'
+import DeviceNotLicensed from '@/components/DeviceNotLicensed'
+import { deviceId, deviceLabel } from '@/lib/deviceId'
+import { startTillAction } from './deviceActions'
+import type { DeviceState } from '@/lib/control/deviceMessages'
 
 /**
  * The till, refused.
  *
- * ── WHY THIS IS A WHOLE SCREEN AND NOT A BANNER ────────────────────────────
- *
- * Because nothing on the till works without a licence, and a banner over a
- * working-looking till invites somebody to try ringing a sale up anyway — which
- * fails at the tender pad, in front of a customer, with a basket already built.
- * Refusing at the door costs one screen and saves that.
- *
- * ── WHAT IT HAS TO CONTAIN ─────────────────────────────────────────────────
- *
- * Whoever reads this cannot fix it. They are usually mid-service. So the screen
- * has exactly three jobs: say what is wrong in a sentence, show the device
- * number support will ask for, and offer the one door that is still open — the
- * back office, on this same machine, where a manager can release a licence or
- * find the phone number.
- *
- * ── EXCEPT ON A TILL BUILD, WHERE THAT DOOR DOES NOT EXIST ─────────────────
- *
- * Odyssey Point of Sale ships without a back office at all, so the button would
- * navigate to a screen this machine cannot show — and the will-navigate guard
- * in electron/main.js refuses it anyway. A button that visibly does nothing is
- * worse than no button: it reads as a broken app rather than a locked-down one.
- *
- * The numbered instructions above already say what to do instead — ask a
- * supervisor to sign in to the back office — which on a till is the correct
- * advice regardless, because the back office is on a different machine.
+ * The screen itself is `DeviceNotLicensed`, shared with the invoicing counter
+ * because both windows spend the same `cp2_devices` licence and must therefore
+ * refuse for the same reasons in the same words. What is left here is the till's
+ * own wordmark, and the till's own door — `startTillAction` is guarded on
+ * `sales.till`, which the counter's reader does not necessarily hold.
  */
 export default function PosNotLicensed({
+  reason,
   message,
+  offer,
   serial,
   onRetry,
 }: {
+  /** Which refusal this is, for the heading. */
+  reason: Extract<DeviceState, { status: 'blocked' }>['reason']
   /** The specific refusal, from `deviceLabelFor`. */
   message: string
+  /** What this machine may do about it, from `deviceOffer`. */
+  offer?: Extract<DeviceState, { status: 'blocked' }>['offer']
   /** This machine's id. The one thing support needs to find the licence. */
   serial: string | null
   /** Re-ask the server — for the case where somebody just freed a licence. */
   onRetry: () => void
 }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
-      <Image
-        src="/logo-full.png"
-        alt="Odyssey Point of Sale"
-        width={1109}
-        height={304}
-        className="h-16 w-auto object-contain dark:rounded-card dark:bg-white dark:px-3 dark:py-2"
-        priority
-        unoptimized
-      />
-
-      <Card>
-        <div className="flex max-w-lg flex-col items-center gap-4 p-6 text-center">
-          <span className="flex h-14 w-14 items-center justify-center rounded-pill bg-warning-soft text-warning-ink">
-            <Icons.StatusWarning size={28} />
-          </span>
-
-          <div>
-            <h1 className="text-lg font-bold text-ink">This device is not set up as a till</h1>
-            <p className="mt-2 text-sm text-muted">{message}</p>
-          </div>
-
-          {/* WHAT HAPPENS NEXT, in the order it happens.
-              The person reading this cannot fix it — they need a supervisor —
-              so the screen's job is to make the request precise enough that the
-              supervisor can act on it without a second trip. */}
-          <ol className="w-full list-decimal space-y-1 rounded-control border border-border bg-surface-2 py-3 pl-8 pr-4 text-left text-[13px] text-ink-2">
-            <li>Ask a supervisor to sign in to the back office.</li>
-            <li>
-              Open <span className="font-semibold text-ink">Setup → Tills</span>, on{' '}
-              <span className="font-semibold text-ink">this machine</span>.
-            </li>
-            <li>
-              Under <span className="font-semibold text-ink">Till licences</span>, choose{' '}
-              <span className="font-semibold text-ink">Use this machine</span>.
-            </li>
-          </ol>
-
-          {/* The device number, in a shape somebody can read down a phone line.
-              Selectable rather than a button: a till with no licence may also
-              have no clipboard permission, and "tap to copy" that silently does
-              nothing is worse than plain text. */}
-          {serial && (
-            <div className="w-full rounded-control border border-border bg-surface-2 px-4 py-3">
-              <span className="block text-xs font-semibold uppercase tracking-wide text-muted">
-                Device number
-              </span>
-              <code className="mt-1 block select-all break-all text-[13px] text-ink">{serial}</code>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {/* Somebody may have just released a licence in the back office on
-                another machine. Re-asking is cheaper than explaining a reload. */}
-            <Button variant="secondary" size="touch" onClick={onRetry}>
-              <Icons.Refresh size={18} />
-              Check again
-            </Button>
-            {/* The back office still works on this machine — deliberately. It is
-                where a manager releases a spot, and locking them out of it would
-                make this screen a dead end.
-
-                Hidden on the till build, which has no back office to open. See
-                the note at the top of this file. */}
-            {!isPosBuild() && (
-              <Button
-                variant="ghost"
-                size="touch"
-                onClick={() => (window.location.href = '/dashboard')}
-              >
-                <Icons.ArrowRight size={18} />
-                Back office
-              </Button>
-            )}
-          </div>
-        </div>
-      </Card>
-    </div>
+    <DeviceNotLicensed
+      wordmark={
+        /* `.logo-plate` rather than a `dark:` variant: this app has no such
+           variant registered — it themes by swapping custom properties under
+           [data-theme] — so `dark:bg-white` fired off the OS preference alone
+           and put a white plate behind the wordmark on a LIGHT screen. The class
+           uses the same three-way selector the tokens do. See globals.css. */
+        <Image
+          src="/logo-full.png"
+          alt="Odyssey Point of Sale"
+          width={1109}
+          height={304}
+          className="logo-plate h-20 w-auto object-contain"
+          priority
+          unoptimized
+        />
+      }
+      reason={reason}
+      message={message}
+      offer={offer}
+      serial={serial}
+      onRetry={onRetry}
+      /* The id is read HERE rather than taken from the `serial` prop, which is
+         only for display and may be null while the browser is still being asked.
+         Registering against a stale null would silently do nothing. */
+      onStart={() => startTillAction(deviceId() ?? '', deviceLabel())}
+    />
   )
 }

@@ -594,7 +594,12 @@ export async function setRequestedDevices(
   requested: number,
   actor: ChangeActor,
 ): Promise<ModuleChange> {
-  const want = Math.max(1, Math.min(99, Math.floor(requested)))
+  /* ZERO IS LEGAL, and 009's floor of 1 is gone. That floor assumed every
+     customer has a POS — some buy jobs, or invoicing, or stock, and never ring
+     up a sale. Telling one of those they are entitled to a till they never
+     bought is how a shop trades on a licence nobody sold; the door offers those
+     shops a trial instead. See sql/tickets/020_device_trials.sql. */
+  const want = Math.max(0, Math.min(99, Math.floor(requested)))
   const today = todayIso()
 
   return transaction(async (tx) => {
@@ -649,10 +654,17 @@ export async function provisionDevices(
 
     const want = Number(order.requested)
 
+    /* PAID ROWS ONLY, and that is a change from the original.
+       It used to count anything entitled, trials included, back when a trial row
+       could only be typed in by somebody at Odyssey. A machine can now take one
+       itself at the door, and counting those here would mean a shop that ordered
+       two tills and evaluated one got a single paid licence provisioned — the
+       trial having silently eaten the other. A trial is not billed, so it sits
+       outside the paid cap everywhere; `paidSlots()` in devices.ts draws the
+       same line for the same reason. */
     const [liveRows] = await tx.execute(
       `SELECT id, serial_number FROM cp2_devices
-        WHERE site_id = ? AND status = 'active'
-          AND (is_paid = 1 OR (expiry_date IS NOT NULL AND expiry_date >= CURDATE()))
+        WHERE site_id = ? AND status = 'active' AND is_paid = 1
         ORDER BY serial_number IS NULL DESC, id DESC`,
       [siteId],
     )
@@ -686,6 +698,18 @@ export async function provisionDevices(
     await tx.execute('UPDATE cp2_site_device_orders SET pending_from = NULL WHERE site_id = ?', [
       siteId,
     ])
+
+    /* ── THE SUBSCRIPTION NUMBER, KEPT IN STEP ──────────────────────────────
+       `cp2_sites.paid_device_count` is what the v2 backend records as the
+       customer's till subscription. It and `requested` disagreed before 020 —
+       009 seeded `requested` from an empty register and every site landed on the
+       floor of 1, including one subscribed for two — and a shop being offered
+       one till while paying for two is the visible half of that.
+       Written HERE, in the same transaction as the licences, because this is the
+       moment the two become true together: payment is confirmed, the rows exist,
+       and the subscription says the same number. Anywhere else and there is a
+       window where they differ with nothing to say which is right. */
+    await tx.execute('UPDATE cp2_sites SET paid_device_count = ? WHERE id = ?', [want, siteId])
 
     await logChange(tx, {
       accountId: null,

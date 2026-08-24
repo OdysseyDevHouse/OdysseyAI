@@ -26,3 +26,7 @@ uploads/
 
 .DS_Store
 Thumbs.db
+
+# Baked cloud credentials for a packaged desktop build — never commit.
+electron/buildDefaults.json
+build/app-package.json

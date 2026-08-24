@@ -4,7 +4,8 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { Button, Card, Icons } from '@/components/ui'
 import { deviceId } from '@/lib/deviceId'
-import { checkDeviceAction, type DeviceState } from '@/app/(pos)/pos/deviceActions'
+import { checkDeviceAction } from '@/app/(pos)/pos/deviceActions'
+import type { DeviceState } from '@/lib/control/deviceMessages'
 
 /**
  * On the DESKTOP build, the licence gates the whole application.

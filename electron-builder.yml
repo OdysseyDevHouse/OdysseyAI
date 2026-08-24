@@ -51,13 +51,44 @@ files:
   - package.json
 
 extraResources:
+  # ── ONLY THE PRODUCTION BUILD, NOT THE WHOLE .next DIRECTORY ──────────────
+  #
+  # `next dev` and `next build` write into the SAME .next folder, and the dev
+  # artefacts are the larger by an order of magnitude: on a machine that has
+  # run the desktop dev server, .next/dev reaches 7GB and .next/cache another
+  # 700MB, against ~200MB of actual server + static output.
+  #
+  # Shipped unfiltered that is a nine-gigabyte install and an installer no
+  # customer on a South African line will ever finish downloading. Neither
+  # folder is read at runtime — `dev` exists for the dev server's HMR and
+  # `cache` for incremental rebuilds — so both are dropped here rather than by
+  # cleaning .next before a build, which would throw away the incremental
+  # cache every developer depends on.
   - from: .next
     to: app/.next
+    filter:
+      - '**/*'
+      - '!dev{,/**/*}'
+      - '!cache{,/**/*}'
   - from: public
     to: app/public
   - from: node_modules
     to: app/node_modules
-  - from: package.json
+  # ── A COPY, NOT THE FILE ITSELF ────────────────────────────────────────────
+  #
+  # Every `from` listed here is added to the app copier's EXCLUDE list — see
+  # platformPackager.ts, which feeds extraResources through
+  # computeParsedPatterns into `excludePatterns`. That is right for .next and
+  # node_modules, which belong beside the asar and not inside it.
+  #
+  # It is fatal for package.json. Naming the real one here removed it from the
+  # asar ROOT, where Electron requires it to find `main` — and the build then
+  # died on its own sanity check, before ever reaching the installer step.
+  #
+  # So the Next app dir gets a COPY, written by scripts/make-build-defaults.mjs
+  # into the buildResources directory (already excluded from `files`). The real
+  # package.json is left unnamed here, and therefore stays in the asar.
+  - from: build/app-package.json
     to: app/package.json
   - from: next.config.mjs
     to: app/next.config.mjs

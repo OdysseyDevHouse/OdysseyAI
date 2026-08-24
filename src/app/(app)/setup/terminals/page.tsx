@@ -1,7 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listLocations } from '@/lib/site/stockLocations'
-import { listLicences } from '@/lib/control/devices'
+import { listLicences, paidSlots } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
 import { getNumericSetting, getSetting } from '@/lib/site/settings'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
@@ -35,6 +35,11 @@ export default async function TerminalsPage() {
      rather than in the client so a manager sees them on first paint — this is
      the screen somebody opens when a till will not start. */
   const licences = await listLicences(siteId)
+  /* How many of those the shop actually PAYS for, which the list alone cannot
+     say: a trial row and a paid row look alike in it, and the question a manager
+     arrives with is "why can this machine not start" — whose answer is usually
+     that every paid licence is spoken for. */
+  const slots = await paidSlots(siteId)
   /* A shop-wide till rule rather than a per-register one — see setUndoLimitAction.
      Absent or unreadable means no limit, matching what the POS itself does with a
      setting it cannot read: fail open rather than start refusing corrections. */
@@ -91,7 +96,7 @@ export default async function TerminalsPage() {
           {/* BELOW the tills, because a manager comes here to add a till far
               more often than to release a licence — and the licence list is the
               one they need when something is already wrong. */}
-          <LicencesPanel licences={licences} terminals={terminals} />
+          <LicencesPanel licences={licences} slots={slots} terminals={terminals} />
           {/* Last, and only where it applies: this is the panel somebody opens
               with a customer already on the phone, not one they browse. */}
           {hasLocalBackend && <UnlockPanel />}
