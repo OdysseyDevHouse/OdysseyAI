@@ -14,6 +14,8 @@ export type BatchTraceEvent = {
   userName: string
   note: string | null
   at: Date
+  /** Whether the lot was READ off the pack, or inferred by expiry date (234). */
+  observed: boolean
 }
 
 export async function batchTraceAction(

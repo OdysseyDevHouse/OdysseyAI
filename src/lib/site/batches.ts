@@ -951,6 +951,19 @@ export async function batchTrace(
     userName: string
     note: string | null
     at: Date
+    /**
+     * Whether somebody actually READ this lot number off the pack (234).
+     *
+     * The distinction a recall turns on. `false` means the server inferred the
+     * lot by earliest expiry — a good guess about which pack left the shelf and
+     * not a record of it, because a customer reaching past the front carton
+     * leaves no trace at the till.
+     *
+     * Only ever true on an outbound SALE line that carried a lot. A receipt is
+     * always observed (somebody typed it at the receiving door) and an
+     * adjustment names its lot explicitly, so both are reported as observed.
+     */
+    observed: boolean
   }[]
 } | null> {
   const rows = await siteQuery<Row>(
@@ -966,10 +979,16 @@ export async function batchTrace(
             CASE
               WHEN bm.source IN ('grv','purchase') THEN pd.document_number
               ELSE sd.document_number
-            END AS document_number
+            END AS document_number,
+            sl.batch_no AS line_batch_no
        FROM batch_movements bm
        LEFT JOIN sales_documents sd ON sd.id = bm.document_id AND bm.source NOT IN ('grv','purchase','stock_take','adjustment','transfer')
        LEFT JOIN purchase_documents pd ON pd.id = bm.document_id AND bm.source IN ('grv','purchase')
+       /* The sale LINE, for whether its lot was observed or inferred (234).
+          Joined on the line rather than the document because a basket can hold
+          a scanned lot and an unscanned one at once, and the answer differs
+          per line. */
+       LEFT JOIN sales_document_lines sl ON sl.id = bm.document_line_id
       WHERE bm.batch_id = ?
       ORDER BY bm.id`,
     [batchId],
@@ -986,6 +1005,15 @@ export async function batchTrace(
       userName: String(e.user_name ?? ''),
       note: (e.note as string | null) ?? null,
       at: e.created_at as Date,
+      /*
+       * A sale is observed only when its line recorded a lot. Everything else
+       * — receipts, adjustments, transfers, voids — reached its lot by being
+       * told which one, so it is observed by construction.
+       */
+      observed:
+        String(e.action) === 'sale' || String(e.action) === 'sale_return'
+          ? String(e.line_batch_no ?? '').trim() !== ''
+          : true,
     })),
   }
 }

@@ -333,6 +333,14 @@ function BatchDrawer({
                     <span className="ml-2 text-xs text-muted">
                       {event.documentNumber ?? event.note ?? event.userName}
                     </span>
+                    {/* A sale whose lot nobody read off the pack (234). Said on
+                        the line rather than in a footnote, because this is the
+                        row somebody would otherwise phone a customer about. */}
+                    {!event.observed && (
+                      <span className="ml-2 align-middle">
+                        <Badge tone="warning">Inferred</Badge>
+                      </span>
+                    )}
                   </span>
                   <span
                     className={`numeric shrink-0 ${event.qty < 0 ? 'text-danger-ink' : 'text-success-ink'}`}
@@ -343,6 +351,18 @@ function BatchDrawer({
                 </li>
               ))}
             </ul>
+          )}
+
+          {/* Only when at least one line actually is inferred — a permanent
+              caveat about a shop that scans every lot is noise, and noise is
+              what stops the next caveat being read. */}
+          {events !== null && events.some((event) => !event.observed) && (
+            <p className="text-xs text-muted">
+              A sale marked <strong className="text-ink-2">Inferred</strong> was booked against
+              this lot because it was the one expiring soonest — nobody recorded which pack left
+              the shelf. Treat those as a strong lead rather than proof. Setup → Stock tracking
+              turns lot capture on.
+            </p>
           )}
         </div>
       )}

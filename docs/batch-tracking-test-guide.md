@@ -168,6 +168,21 @@ A panel opens showing:
 sent it, and which sales documents did it go out on?"* That is the question a
 recall notice asks.
 
+### Read the "Inferred" badge before you trust the answer
+
+A sale marked **Inferred** was booked against this lot because it was the one
+expiring soonest — **nobody recorded which pack actually left the shelf.**
+
+That is not a fault. Out of the box the till captures no lot at all, which is
+what a grocer wants: milk is sold on a plain barcode, and a recall there means
+clearing the shelf and putting up a notice rather than phoning buyers. But it
+means an inferred line is a strong lead, not proof — a customer who reached
+past the front carton for a fresher one leaves no trace at the till.
+
+A sale with no badge was **observed**: somebody scanned or typed the lot at the
+counter. To get those, turn lot capture on at **Setup → Stock tracking**
+(see step 11).
+
 ---
 
 ## 8. Write a lot off — the recall action
@@ -239,13 +254,62 @@ Void a GRV that brought in a batch line.
 
 ---
 
+## 11. Lot capture at the till
+
+**Setup → Stock tracking.** This is what decides whether a trace is an
+observation or a guess. Three modes:
+
+| Mode | What the clerk does | Who it is for |
+|---|---|---|
+| **Earliest expiry, automatically** | Nothing. The server picks. | The default, and right for a grocer |
+| **Read it from the barcode** | Nothing — the scan carries the lot | Where the supplier prints GS1 |
+| **Ask the clerk** | Picks a lot, one tap in the usual case | Where a lot must be answered for |
+
+Beside them is **Refuse a sale with no lot**, which is disabled under the first
+mode — nothing is being captured there, so nothing can fail to be captured.
+
+### Testing "Ask the clerk"
+
+Set the mode, then ring up a batch-tracked product at the till. A dialog lists
+the lots at that till's location, **earliest expiry first with the top one
+already selected** — so confirming the obvious answer is one tap, and picking a
+different carton is two. Expired lots are listed and flagged rather than hidden,
+because they may genuinely be on the shelf.
+
+Then check **Stock → Batches → that lot → trace**: the sale should have **no
+Inferred badge**, and the quantity should have come off the lot you picked
+rather than the one expiring soonest. That is the whole feature in one check.
+
+**"Another lot — type it"** exists for a delivery that skipped the receiving
+desk. The number is recorded either way; if it matches nothing on file, the
+sale still posts against the earliest expiry and an entry appears in the
+activity log saying the lot could not be placed. Switch **Refuse a sale with no
+lot** on and the same scan is refused outright instead.
+
+### Testing "Read it from the barcode"
+
+Needs a pack with a GS1-128 or DataBar barcode — the kind that encodes the
+batch and expiry in the code itself. An ordinary EAN-13 carries neither, so
+those items simply fall back to the earliest expiry.
+
+### Two things that will look like bugs and are not
+
+- **Two of the same product on two separate lines.** Deliberate. Two cartons
+  from different lots are two facts; merging them into a quantity of two would
+  keep one lot number and silently discard the other.
+- **Offline, the dialog has no list — only a box to type in.** The till holds
+  the product file offline, not the lot file. What is typed still reaches the
+  server and is still matched at sync.
+
+---
+
 ## What is *not* in scope
 
 So the tester does not go hunting for things that were never built:
 
-- **The till never asks about lots.** No lot picker at point of sale. FEFO is
-  fully automatic. The only manual lot entry in the whole system is at goods
-  receipt, and on a deliberate write-off.
+- **The till asks about lots only if the shop turns that on.** Out of the box it
+  does not — FEFO is automatic and the only manual lot entry is at goods receipt
+  and on a deliberate write-off. See step 11 for the two modes that change it.
 - **A product cannot be both batch-tracked and serialised.** Product type is a
   single choice.
 - **There is no expiry blocking at the till.** Selling expired stock is allowed
@@ -266,6 +330,8 @@ So the tester does not go hunting for things that were never built:
 | Write a lot off | Stock → Batches → click the row → Write this lot off |
 | Confirm the write-off posted | Stock → Adjustments |
 | Confirm expired stock was sold | Activity log — "expired stock sold" |
+| Turn lot capture on at the till | Setup → Stock tracking |
+| Confirm a typed lot could not be placed | Activity log — "lot not found" |
 
 ## The one-line summary for the tester
 

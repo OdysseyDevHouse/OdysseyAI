@@ -19,7 +19,7 @@
 import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { receiveGoods } from '../src/lib/site/purchasePosting'
-import { reconcileBatches } from '../src/lib/site/batches'
+import { reconcileBatches, batchTrace } from '../src/lib/site/batches'
 import { reconcileStock } from '../src/lib/site/stockMovements'
 import { saveDraft } from '../src/lib/site/salesDocuments'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
@@ -442,7 +442,44 @@ async function main() {
     overdraw.ok ? `B=${await lotQty(milk, 'LATER-B')}` : overdraw.error,
   )
 
-  /* ── 5. The invariants survive all of it ───────────────────────────────── */
+  /* ── 5. The trace tells an observation from an inference ───────────────── */
+
+  const lotRow = await siteQueryOne<any>(
+    SITE,
+    'SELECT id FROM product_batches WHERE product_id=? AND batch_no=?',
+    [milk, 'SOON-A'],
+  )
+  const trace = await batchTrace(SITE, Number(lotRow?.id))
+  const sales = (trace?.events ?? []).filter((e) => e.action === 'sale')
+  ok(
+    'the trace returns this lot’s sales',
+    sales.length > 0,
+    `${sales.length} sale event(s)`,
+  )
+  ok(
+    '*** a FEFO sale is marked INFERRED — nobody read the pack ***',
+    sales.some((e) => !e.observed),
+    sales.map((e) => (e.observed ? 'observed' : 'inferred')).join(','),
+  )
+
+  const namedLot = await siteQueryOne<any>(
+    SITE,
+    'SELECT id FROM product_batches WHERE product_id=? AND batch_no=?',
+    [milk, 'LATER-B'],
+  )
+  const namedTrace = await batchTrace(SITE, Number(namedLot?.id))
+  const namedSales = (namedTrace?.events ?? []).filter((e) => e.action === 'sale')
+  ok(
+    '*** a NAMED sale is marked observed — somebody read it ***',
+    namedSales.length > 0 && namedSales.every((e) => e.observed),
+    namedSales.map((e) => (e.observed ? 'observed' : 'inferred')).join(','),
+  )
+  ok(
+    '  the receipt that created the lot is observed too',
+    (namedTrace?.events ?? []).filter((e) => e.action === 'receipt').every((e) => e.observed),
+  )
+
+  /* ── 6. The invariants survive all of it ───────────────────────────────── */
 
   const driftAfter = (await reconcileStock(SITE)).length
   const batchDriftAfter = (await reconcileBatches(SITE)).length
