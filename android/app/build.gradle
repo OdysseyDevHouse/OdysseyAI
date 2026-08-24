@@ -35,6 +35,13 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    // The refresh token is the app's only long-lived credential, so it is sealed
+    // with a key held in the Android Keystore rather than left in plain XML that
+    // a rooted device or an ADB backup can read. See OdysseyAuth.prefs().
+    implementation "androidx.security:security-crypto:1.1.0"
+    // The unlock in front of the stored token. Handles the fingerprint/face
+    // sheet and the device-PIN fallback on every version we support.
+    implementation "androidx.biometric:biometric:1.1.0"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

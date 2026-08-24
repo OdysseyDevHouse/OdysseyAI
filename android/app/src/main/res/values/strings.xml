@@ -4,4 +4,11 @@
     <string name="title_activity_main">Odyssey</string>
     <string name="package_name">za.co.odyssey.backoffice</string>
     <string name="custom_url_scheme">za.co.odyssey.backoffice</string>
+    <string name="login_subtitle">Sign in to your back office</string>
+    <string name="login_email">Email</string>
+    <string name="login_email_hint">you@company.com</string>
+    <string name="login_password">Password</string>
+    <string name="login_button">Sign in</string>
+    <string name="login_working">Signing in…</string>
+    <string name="login_need_both">Enter your email and password.</string>
 </resources>

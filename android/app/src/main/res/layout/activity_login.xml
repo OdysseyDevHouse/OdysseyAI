@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The one screen the app draws itself.
+
+  It exists so the WebView never has to show a login page — the single thing
+  that would give away that this is a web app in a shell. After this runs once,
+  the refresh token means it is never seen again on this device.
+
+  Deliberately plain: an email, a password, one button. The web login carries a
+  logo, a "forgot password" link, a store picker and a 2FA step, none of which
+  belong on a first-run screen that has no session to work with. Anything this
+  screen cannot do — 2FA, a forced password change — is refused with the
+  server's own sentence pointing the person at the web.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0b0f14"
+    android:fillViewport="true">
+
+  <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:orientation="vertical"
+      android:gravity="center_vertical"
+      android:paddingStart="28dp"
+      android:paddingEnd="28dp"
+      android:paddingTop="48dp"
+      android:paddingBottom="48dp"
+      android:minHeight="600dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/app_name"
+        android:textColor="#e6edf3"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:letterSpacing="0.02" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="@string/login_subtitle"
+        android:textColor="#8b98a5"
+        android:textSize="15sp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="36dp"
+        android:text="@string/login_email"
+        android:textColor="#8b98a5"
+        android:textSize="13sp" />
+
+    <EditText
+        android:id="@+id/email"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/field"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:inputType="textEmailAddress"
+        android:imeOptions="actionNext"
+        android:textColor="#e6edf3"
+        android:textColorHint="#5c6773"
+        android:textSize="16sp"
+        android:hint="@string/login_email_hint"
+        android:autofillHints="emailAddress"
+        android:importantForAutofill="yes" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:text="@string/login_password"
+        android:textColor="#8b98a5"
+        android:textSize="13sp" />
+
+    <EditText
+        android:id="@+id/password"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/field"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:inputType="textPassword"
+        android:imeOptions="actionDone"
+        android:textColor="#e6edf3"
+        android:textColorHint="#5c6773"
+        android:textSize="16sp"
+        android:autofillHints="password"
+        android:importantForAutofill="yes" />
+
+    <!-- Reserved above the button rather than inserted on failure, so the
+         layout does not jump under the finger that is about to press it. -->
+    <TextView
+        android:id="@+id/error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:textColor="#ff7b72"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/signIn"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="24dp"
+        android:background="@drawable/button"
+        android:text="@string/login_button"
+        android:textAllCaps="false"
+        android:textColor="#ffffff"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+  </LinearLayout>
+</ScrollView>

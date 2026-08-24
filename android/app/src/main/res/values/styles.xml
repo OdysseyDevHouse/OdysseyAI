@@ -19,4 +19,25 @@
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
     </style>
+
+    <!--
+      The login screen's theme.
+
+      It MUST descend from Theme.AppCompat: LoginActivity is an
+      AppCompatActivity (BiometricPrompt requires one) and setContentView throws
+      "You need to use a Theme.AppCompat theme" under anything else. Pointing it
+      at NoActionBarLaunch — the splash theme, which is not AppCompat — crashed
+      the app on launch before a single pixel rendered.
+
+      The window background is the app's canvas rather than the splash drawable,
+      so the moment between splash and form is one flat colour instead of a logo
+      that jumps.
+    -->
+    <style name="AppTheme.Login" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/odysseyCanvas</item>
+        <item name="android:statusBarColor">@color/odysseyCanvas</item>
+        <item name="android:navigationBarColor">@color/odysseyCanvas</item>
+    </style>
 </resources>

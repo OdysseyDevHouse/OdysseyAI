@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The few colours the NATIVE screens need.
+
+  Copies of the web kit's tokens rather than imports, because a theme attribute
+  cannot read a CSS variable — so they are listed here once and referenced by
+  name, instead of hex codes scattered through layouts and Java.
+
+  Keep in step with the canvas colour in src/app/globals.css. Only the native
+  login and the offline screen use these; every other pixel in the app belongs
+  to the web layer.
+-->
+<resources>
+    <color name="odysseyCanvas">#0b0f14</color>
+</resources>

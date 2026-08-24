@@ -26,17 +26,46 @@ it never meets a login form after the first run.
 | Phone chrome | `src/components/MobileTopBar.tsx` | Title bar and drawer, filtered by the real capabilities |
 | Stacked dashboard | `src/app/(app)/dashboard/MobileDashboard.tsx` | The same widgets, one column, no drag |
 | Revoke list | Setup → Users → the phone icon | Cuts a lost device off |
-| Native shell | `capacitor.config.ts`, `mobile/src/` | Unlock, session exchange, WebView |
+| Contract test | `scripts/test-mobile-auth-contract.ts` | Locks the three endpoints two apps depend on |
+| Native shell | `capacitor.config.ts`, `android/app/src/main/java/…/` | Login, unlock, session exchange, WebView |
+
+### Why the native half is written twice
+
+`LoginActivity` and `OdysseyAuth` are Java, and iOS will need the same thing in
+Swift. A shared TypeScript implementation was tried and removed, because it
+cannot work:
+
+- **The exchange has to finish before any web content loads.** A JavaScript
+  shell is itself a loaded WebView, so it could only hide one login screen
+  behind another.
+- **A bundled shell runs at its own origin** (`https://localhost`), so a session
+  cookie set from a fetch there is a THIRD-PARTY cookie relative to the page
+  that needs it — increasingly blocked on Android, blocked by default under iOS
+  ITP. The shell could authenticate perfectly and the WebView still not be
+  signed in. `CookieManager` writes to the jar directly and has no origin
+  problem at all.
+- **Biometric unlock belongs before the web layer exists.** If somebody picks up
+  an unlocked phone, nothing should render until a face or fingerprint clears.
+
+What IS shared is the contract — three endpoints with fixed field names, and
+`npm run test:mobile-auth-contract` asserting them, so a rename fails on the
+machine of whoever renamed it rather than in an app-store review queue. The
+rules that matter (who may sign in, lockout, 2FA, what a token buys, when it is
+revoked) all live on the server and are shared already. What gets duplicated is
+an HTTP client with a test behind it.
 
 ## How a launch works
 
 ```
-tap  →  biometric unlock  →  POST /api/mobile/auth/session  →  WebView at /dashboard
-             (device)              (refresh token → cookie)         (already signed in)
+first run:  tap → native login form → POST /login → token in the Keystore → ↓
+every run:  tap → biometric unlock  → POST /session → cookie → WebView at /dashboard
+                       (device)         (token → session)      (already signed in)
 ```
 
-Every step happens before anything is rendered. The WebView must never see the
-login page — that is the single thing that would give the wrapper away.
+`LoginActivity` is the launcher, not `MainActivity`. That is the whole
+arrangement in one line: the WebView is only ever started once a session exists.
+A returning device never sees the form — straight from the biometric prompt to
+the dashboard.
 
 The exchange runs on **every cold start**, not as a fallback. WKWebView's cookie
 store is not reliable across restarts and ITP can evict on its own schedule, so
@@ -162,7 +191,8 @@ Two traps when writing such a probe:
 
 ## Still to do
 
-- iOS project (`npx cap add ios`) — needs a Mac.
+- iOS project (`npx cap add ios`) — needs a Mac, plus a Swift port of
+  OdysseyAuth/LoginActivity against the same contract.
 - Reports and stock lookups in the mobile shell.
 - Push notifications. Worth doing before App Store review: Guideline 4.2 rejects
   "repackaged websites", and biometric auth plus push is the difference.

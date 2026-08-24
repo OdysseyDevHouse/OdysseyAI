@@ -9,12 +9,23 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
+        <!--
+          THE LAUNCHER IS THE LOGIN, NOT THE WEBVIEW.
+
+          The app must never open the back office without a session already in
+          hand — a login page inside the WebView is the one thing that gives
+          away that this is a web app in a shell. So LoginActivity runs first,
+          unlocks, exchanges the stored token, and only then starts MainActivity.
+
+          A returning device does not see this screen at all: straight to the
+          biometric prompt and on to the dashboard.
+        -->
         <activity
+            android:name=".LoginActivity"
+            android:label="@string/app_name"
+            android:theme="@style/AppTheme.Login"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
-            android:name=".MainActivity"
-            android:label="@string/title_activity_main"
-            android:theme="@style/AppTheme.NoActionBarLaunch"
-            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
 
             <intent-filter>
@@ -23,6 +34,16 @@
             </intent-filter>
 
         </activity>
+
+        <!-- No LAUNCHER filter, and not exported: this is only ever started by
+             LoginActivity, which guarantees a session exists before it does. -->
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
