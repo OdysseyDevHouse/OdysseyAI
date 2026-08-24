@@ -88,25 +88,45 @@ connection, and a half-submitted purchase order is a genuinely bad failure.
 Requires Android Studio (which brings its own JDK 21) and, for iOS, a Mac with
 Xcode. Nothing else — there is no separate JDK to install.
 
+### First time in a fresh checkout
+
+Two files the build needs are **generated, not committed**, so a clone or a
+merge arrives without them and Gradle fails in a way that reads like a broken
+project. Both are one command each:
+
 ```sh
-# Point the build at a server. Defaults to the cloud one.
-ODYSSEY_APP_URL=https://app.odyssey.co.za npx cap sync
+npm install
 
-# Android
-cd android && ./gradlew assembleDebug      # APK in app/build/outputs/apk/debug/
-npx cap open android                        # or drive it from Android Studio
+# 1. Name the SDK. Gitignored, because it is a path on one machine.
+#    FORWARD slashes — Java properties treat a backslash as an escape.
+echo "sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk" > android/local.properties
 
-# iOS (Mac only)
+# 2. Regenerate android/capacitor-cordova-android-plugins/ and the plugin list.
+#    Without it: "Could not read script cordova.variables.gradle".
+npm run mobile:sync
+```
+
+### Every time after that
+
+```sh
+npm run mobile:apk     # APK in android/app/build/outputs/apk/debug/
+npm run mobile:android # or open it in Android Studio
+```
+
+Re-run `npm run mobile:sync` whenever a Capacitor plugin is added or removed, or
+`capacitor.config.ts` changes — that is what copies the config into the app.
+
+To point a build at a different server:
+
+```sh
+ODYSSEY_APP_URL=https://shop.example.com npm run mobile:sync
+```
+
+### iOS (Mac only)
+
+```sh
 npx cap add ios && npx cap open ios
 ```
-
-`android/local.properties` must name the SDK, using forward slashes:
-
-```
-sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk
-```
-
-It is gitignored, because it is a path on one machine.
 
 ### Why the app ships no web assets
 
