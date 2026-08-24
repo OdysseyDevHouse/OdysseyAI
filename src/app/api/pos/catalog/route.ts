@@ -201,6 +201,14 @@ export async function GET(req: NextRequest) {
       'barcode_variable_prefix',
       'barcode_plu_length',
       'barcode_value_divisor',
+      /* Which lot a batch line is booked against (234). Shipped for the same
+         reason as the three above: the offline till has to make the SAME
+         decision the server would, and `lotCaptureFor` is the pure function
+         both of them resolve these two values with. Without them offline
+         would silently drop back to FEFO mid-outage — a traceability gap in
+         exactly the shops that chose not to have one. */
+      'lot_capture_mode',
+      'lot_capture_strict',
       'sales_number_scope',
       'store_number',
       /* NOT `pos_mode`. It is no longer a shop setting — each till carries its

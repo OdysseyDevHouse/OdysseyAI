@@ -442,6 +442,14 @@ export async function postOfflineSale(
     documentNumber: sale.documentNumber,
     shiftId: sale.shiftId ?? null,
     /*
+     * Do not refuse this sale over a lot that cannot be found (234).
+     *
+     * A strict shop refuses at the till, where the goods are still on the
+     * counter. Here the money changed hands hours ago; the lot text is still
+     * recorded and still reported, but the SALE posts either way.
+     */
+    fromOfflineQueue: true,
+    /*
      * The tips the SLIP said, passed straight through.
      *
      * Not recomputed here, and that is deliberate on both counts. The service-charge tiers
@@ -712,6 +720,9 @@ function linesFor(sale: OfflineSale): LineInput[] {
       printsOnReceipt: c.printsOnReceipt,
     })),
     note: line.note ?? '',
+    // The lot the till was told (234). Undefined on an older queued sale, and
+    // on every line in a shop that books lots by earliest expiry.
+    batchNo: line.batchNo,
   }))
 }
 

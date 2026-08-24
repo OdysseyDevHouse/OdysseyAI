@@ -47,6 +47,19 @@ export type OfflineSaleLine = {
   instructions?: ChosenOption[]
   note?: string
   /**
+   * The lot this line was sold from, as the clerk or the scanner gave it (234).
+   *
+   * OPTIONAL for the same load-bearing reason as the fields above: a sale
+   * queued before this shipped has none and must still post.
+   *
+   * The TEXT, never an id. This till has no lot table — the catalog feed ships
+   * products, not batches — so it records WHAT IT WAS TOLD and the server
+   * matches it at sync, inside the transaction where the row can be locked.
+   * Text that matches nothing is still kept and still reported: "we were told
+   * L2408A and could not place it" is a more useful fact than silence.
+   */
+  batchNo?: string
+  /**
    * When the line was first rung, as epoch milliseconds (167).
    *
    * OPTIONAL for the same load-bearing reason as the two above: a basket parked

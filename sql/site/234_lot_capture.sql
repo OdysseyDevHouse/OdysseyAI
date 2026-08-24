@@ -1,0 +1,84 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHICH LOT a sale is booked against, and how the till learns it.
+--
+-- 148 made every stock movement pick a lot, and picks it by FEFO: earliest
+-- expiry first, decided by the server inside recordMovement. That is a good
+-- INVENTORY model. It is an unreliable TRACEABILITY one, and the difference
+-- matters enough to be a setting.
+--
+-- ── WHAT FEFO CANNOT SEE ─────────────────────────────────────────────────
+--
+-- A customer reaches past the front milk and takes a carton from the back.
+-- The till books the sale against the lot expiring soonest, because that is
+-- the only lot it has any reason to prefer. Totals stay right — stock_on_hand
+-- is untouched and T1/T2/T3 all still hold — but the per-lot split now
+-- disagrees with the shelf.
+--
+-- The drift is not random. Shoppers systematically take the fresher pack, so
+-- the books run the OLD lot down faster than the shelf does. The predictable
+-- end of that is a lot reading zero while stock is still out there — which is
+-- precisely when an expiry report stops doing its job. And a recall trace on
+-- that lot names a customer who was handed a different one.
+--
+-- ── THREE ANSWERS, DECIDED BY TRADE AND NOT BY SOFTWARE ──────────────────
+--
+-- 'fefo'     Do not capture at all. What a grocer wants: milk is sold on a
+--            plain barcode, no lot is recorded anywhere, and a recall is
+--            answered by clearing the shelf and publishing a notice rather
+--            than by phoning buyers. This is the default and it is exactly
+--            the behaviour every site had before this migration.
+--
+-- 'barcode'  Read the lot off the pack. A GS1-128 or DataBar barcode carries
+--            the batch and expiry as element strings (see lib/gs1.ts), so
+--            where a supplier prints one the exact lot costs the clerk
+--            nothing — no keystroke, no list, no decision. Pharmacy works
+--            this way because the EU FMD made suppliers print it.
+--
+-- 'prompt'   Ask the clerk. Slow, and worth it only where an untraceable sale
+--            is a licence problem rather than an inconvenience: veterinary,
+--            agrochemical, some medical devices.
+--
+-- ── STRICTNESS IS A SEPARATE QUESTION ────────────────────────────────────
+--
+-- "How do we learn the lot" and "what do we do when we cannot" are different
+-- questions, and a shop can want any combination. A butchery scanning GS1
+-- labels still wants a plain-barcode item to sell; a pharmacy would rather
+-- refuse. So strictness is its own switch and not a fourth mode.
+--
+-- Off, a failed capture falls back to FEFO and says so in the activity log —
+-- the same reasoning 148 used for selling expired stock: the shelf is
+-- authoritative over data typed at a receiving door, and a till that stops
+-- trading on a barcode a supplier printed wrong is worse than one that books
+-- an inference and tells somebody.
+--
+-- Strict NEVER applies at sync. A queued offline sale is money that already
+-- changed hands; refusing it then would lose a sale that really happened, and
+-- the outbox is the one store whose rows cannot be recreated. A strict site
+-- refuses AT THE TILL, with the goods still on the counter.
+
+INSERT INTO settings (setting_key, setting_value) VALUES
+  ('lot_capture_mode', 'fefo'),
+  ('lot_capture_strict', '0')
+ON DUPLICATE KEY UPDATE setting_key = setting_key;
+
+-- The lot a line was sold from, as the till captured it.
+--
+-- ── WHY THE TEXT AND NOT product_batches.id ──────────────────────────────
+--
+-- An id would have to be resolved by whoever wrote the line, and the till is
+-- exactly the wrong place for that: offline it has no lot table at all (the
+-- catalog feed ships products, not batches), and a lot may legitimately not
+-- exist yet on a delivery that skipped the receiving desk.
+--
+-- So the till records WHAT IT OBSERVED — the number on the pack — and the
+-- server matches it to a lot inside the posting transaction, where the row can
+-- be locked. Unmatchable text is still evidence and still stored; it is the
+-- difference between "we do not know" and "we were told this and could not
+-- place it".
+--
+-- NULL on every line of every other product type, and on batch lines in
+-- 'fefo' mode — which is most lines in most shops. NULL therefore reads as
+-- "the server chose this lot", and a value reads as "a human or a barcode
+-- named it". The batches screen tells the two apart on that basis.
+ALTER TABLE sales_document_lines
+  ADD COLUMN IF NOT EXISTS batch_no VARCHAR(64) NULL AFTER gift_card_code;

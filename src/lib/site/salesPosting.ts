@@ -25,6 +25,7 @@ import { writeTips } from './tips'
    tender pad also runs. */
 import { planTips } from '../tipMath'
 import { getNumericSetting, getSettings } from './settings'
+import { lotCaptureFor } from '../gs1'
 import { today } from './ledger'
 import { guardPosting } from './periodLocks'
 import { getDocument, isEditable, type SalesDocument } from './salesDocuments'
@@ -90,6 +91,17 @@ export type TenderInput = {
 export type FinaliseInput = {
   documentId: number
   tenders: TenderInput[]
+  /**
+   * This sale is being posted from a till's OUTBOX, not rung up now (234).
+   *
+   * The one thing it changes: `lot_capture_strict` is not applied. A strict
+   * shop refuses an unknown lot AT THE TILL, with the goods still on the
+   * counter and the customer still there to ask. By the time a queued sale
+   * reaches here the money has changed hands, and the outbox is the one store
+   * in this app whose rows cannot be recreated — refusing it would not undo
+   * the sale, it would only lose the record of it.
+   */
+  fromOfflineQueue?: boolean
   /** Required when a tender posts to an account. */
   customerId?: number | null
   /**
@@ -857,6 +869,24 @@ export async function finaliseDocument(
   // the closure cannot hand them back alongside the document number.
   const redeemedVouchers: LoyaltyVoucher[] = []
 
+  /*
+   * Whether a named lot that cannot be found should REFUSE the sale (234).
+   *
+   * Read here, once, and only when a line actually names a lot — an ordinary
+   * basket must not pay for a settings round trip to answer a question it never
+   * asks. Outside the transaction because it is a shop policy, not a row this
+   * sale competes for.
+   *
+   * NOT applied to a sale arriving from the outbox: see `postOfflineSale`. That
+   * money already changed hands, and refusing it at sync would lose a sale that
+   * really happened.
+   */
+  const namesALot = document.lines.some((line) => (line.batchNo ?? '').trim() !== '')
+  const lotStrict =
+    namesALot && !input.fromOfflineQueue
+      ? lotCaptureFor(await getSettings(siteId, ['lot_capture_mode', 'lot_capture_strict'])).strict
+      : false
+
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
       // 1. Stock. Direction comes from the product type, not from the sign of
@@ -996,6 +1026,17 @@ export async function finaliseDocument(
           locationId: locationForLine(line),
           shiftId,
           note: line.productCode ?? undefined,
+          /*
+           * The lot the till named, if it named one (234).
+           *
+           * Passed for EVERY product type rather than gated on 'batch' — the
+           * hook only runs for batch-tracked products anyway, and a gate here
+           * would be a second place for the two to disagree. Undefined when
+           * nothing was captured, which is the FEFO path and most sales.
+           */
+          batch: line.batchNo?.trim()
+            ? { soldFromBatchNo: line.batchNo.trim(), strict: lotStrict }
+            : undefined,
         })
 
         // Which individual units went out. In the SAME transaction as the

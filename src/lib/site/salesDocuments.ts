@@ -111,6 +111,15 @@ export type SalesLine = {
   /** The gift card a `gift_card` line sold (147). Null on ordinary lines. */
   giftCardCode: string | null
   /**
+   * The lot this line was sold FROM, as the till observed it (234).
+   *
+   * Null means nobody observed one — either the product is not batch-tracked,
+   * or the shop books lots by earliest expiry and the server chose. So null
+   * reads as "inferred" and a value reads as "named", which is the whole
+   * distinction a recall trace turns on.
+   */
+  batchNo: string | null
+  /**
    * The answers given when the till asked this product's questions.
    *
    * Read back for the same reason they are stored: a recalled table bill has to
@@ -302,6 +311,8 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
     specialId: r.special_id === null || r.special_id === undefined ? null : Number(r.special_id),
     giftCardCode:
       r.gift_card_code === null || r.gift_card_code === undefined ? null : String(r.gift_card_code),
+    // Tolerant of a site that has not run 234, like kitchenGroup below.
+    batchNo: r.batch_no === null || r.batch_no === undefined ? null : String(r.batch_no),
     instructions,
     note: String(r.line_note ?? ''),
     // Joined from the product; absent on a line whose product is gone, which
@@ -712,6 +723,18 @@ export type LineInput = {
    */
   giftCardCode?: string | null
   /**
+   * The lot this line is sold FROM, named at the till (234).
+   *
+   * On the line rather than the finalise input, for the reason `giftCardCode`
+   * gives above: it is captured at ADD time, off the pack in the customer's
+   * hand, so a parked table bill or a recalled lay-by has to keep it. The
+   * posting engine matches it to a real lot inside the finalise transaction.
+   *
+   * The TEXT, never an id — the till that captured it may have been offline,
+   * where no lot table exists to resolve against.
+   */
+  batchNo?: string | null
+  /**
    * The answers given when the till asked this product's questions.
    *
    * Optional because most callers have none — a quote, a credit note, an
@@ -1093,8 +1116,8 @@ export async function saveDraft(
             department_id, sales_rep_id, source_line_id, sales_rep_user_id,
             qty, unit_price_incl, discount_pct, discount_incl,
             vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,
-            special_id, discount_code_id, gift_card_code, line_note, ordered_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            special_id, discount_code_id, gift_card_code, batch_no, line_note, ordered_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -1118,6 +1141,7 @@ export async function saveDraft(
           line.specialId ?? null,
           line.discountCodeId ?? null,
           line.giftCardCode ?? null,
+          line.batchNo?.trim().slice(0, 64) || null,
           (line.note ?? '').trim().slice(0, 190),
           orderedAtSql(line.orderedAt),
         ] as never,

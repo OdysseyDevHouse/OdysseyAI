@@ -74,6 +74,21 @@ export type BatchDirective = {
   returnOfLineId?: number | null
   /** GRV void: back out the lots this document created. */
   reverseReceiptOfDocId?: number | null
+  /**
+   * A lot named at the TILL, as observed — scanned off the pack or typed by
+   * the clerk (234).
+   *
+   * Distinct from `batchNo` above, which names a lot being CREATED by a
+   * receipt. This one names a lot the goods are believed to have come FROM, so
+   * it is matched against existing lots rather than minting one, and a miss is
+   * a reportable event rather than a new row.
+   */
+  soldFromBatchNo?: string | null
+  /**
+   * Refuse the movement when `soldFromBatchNo` matches no lot, instead of
+   * falling back to FEFO. The shop's `lot_capture_strict` setting.
+   */
+  strict?: boolean
 }
 
 function mapBatch(r: Row): Batch {
@@ -591,6 +606,68 @@ export async function applyBatchMovementTx(
       source: input.source,
     })
     return
+  }
+
+  // ── Outbound, from a lot the till NAMED (234) ──────────────────────────
+  //
+  // Takes precedence over FEFO because it is an observation rather than an
+  // inference: somebody read this number off the pack in their hand, and FEFO
+  // is only ever a guess about which pack that was.
+  const named = directive.soldFromBatchNo?.trim()
+  if (named) {
+    const [[lot]] = await tx.query<Row[]>(
+      `SELECT id, qty_remaining FROM product_batches
+        WHERE product_id = ? AND location_id = ? AND batch_no = ?
+        FOR UPDATE`,
+      [input.productId, input.locationId, named.slice(0, 64)] as never,
+    )
+
+    if (lot) {
+      /*
+       * Booked against the named lot even when that lot is EMPTY, which drives
+       * it negative — the untracked bucket's rule, for the untracked bucket's
+       * reason. The alternative is silently re-routing the sale to a lot
+       * nobody named, which would overwrite the one fact the shop went out of
+       * its way to capture and hide the discrepancy that caused it. A negative
+       * lot is a visible, fixable count problem; a rewritten one is neither.
+       */
+      await writeSlice(tx, actor, Number(lot.id), qty, {
+        action: input.movementType,
+        movementId: input.movementId,
+        documentId: input.sourceDocId,
+        documentLineId: input.sourceLineId,
+        source: input.source,
+      })
+      return
+    }
+
+    // Named a lot that does not exist here.
+    if (directive.strict) {
+      throw new Error(
+        `${label}: lot ${named} is not on file at this location. Receive it first, or check the number.`,
+      )
+    }
+
+    /*
+     * Lenient: the sale still posts, by FEFO, and the observation is recorded
+     * as an event. Same reasoning as selling expired stock — a till that stops
+     * trading because a supplier printed a barcode wrong is worse than one
+     * that books its best guess and tells somebody. What must NOT happen is
+     * losing the number quietly, because "we were told L2408A and could not
+     * place it" is a different and more useful fact than "we do not know".
+     */
+    await tx
+      .execute(
+        `INSERT INTO activity_log (entity, entity_id, action, detail, user_id, user_name)
+         VALUES ('product', ?, 'lot_not_found', ?, ?, ?)`,
+        [
+          input.productId,
+          `${label}: sold as lot ${named.slice(0, 60)}, which is not on file here — booked by earliest expiry instead`,
+          actor.userId,
+          actor.userName.slice(0, 120),
+        ] as never,
+      )
+      .catch(() => undefined)
   }
 
   // ── Outbound ───────────────────────────────────────────────────────────

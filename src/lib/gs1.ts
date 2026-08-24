@@ -273,3 +273,41 @@ export function gtinCandidates(gtin: string): string[] {
   }
   return out
 }
+
+/* ── Lot capture mode ─────────────────────────────────────────────────────── */
+
+/** How the till learns which lot a sale came from. See 234_lot_capture.sql. */
+export type LotCaptureMode = 'fefo' | 'barcode' | 'prompt'
+
+export type LotCapture = {
+  mode: LotCaptureMode
+  /** Refuse the line when no lot could be captured. Never true under 'fefo'. */
+  strict: boolean
+}
+
+/**
+ * Resolves the stored setting pair into the rule actually in force.
+ *
+ * Lives here — pure, no database — because BOTH tills need it and the offline
+ * one has no connection to ask. The catalog feed ships the two raw values and
+ * this turns them into a decision, so the online and offline tills cannot
+ * interpret the same settings differently.
+ *
+ * ── WHY STRICT IS FORCED OFF UNDER FEFO ──────────────────────────────────
+ *
+ * Under 'fefo' nothing is captured, so nothing can fail to be captured — a
+ * stored strict=1 there is a promise about an event that never occurs. Rather
+ * than have `validateSetting` reach across keys (it validates one at a time,
+ * and reading the other would put a database call inside a pure function and
+ * still race a screen saving both), the pair is reconciled HERE, at the point
+ * of use, which is the only place both values are known to be the ones in
+ * force.
+ */
+export function lotCaptureFor(settings: {
+  lot_capture_mode?: string | null
+  lot_capture_strict?: string | null
+}): LotCapture {
+  const raw = settings.lot_capture_mode
+  const mode: LotCaptureMode = raw === 'barcode' || raw === 'prompt' ? raw : 'fefo'
+  return { mode, strict: mode !== 'fefo' && settings.lot_capture_strict === '1' }
+}

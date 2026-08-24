@@ -59,6 +59,40 @@ export const SETTING_DEFAULTS = {
   barcode_variable_prefix: '2',
   barcode_plu_length: '5',
   barcode_value_divisor: '100',
+
+  /* ── Which LOT the till books a sale against (234) ─────────────────────
+     For batch-tracked products only; every other type ignores this.
+
+     'fefo'    the earliest-expiry lot, chosen by the server. What the system
+               has always done, and right for a grocer: milk is sold on a
+               plain barcode, nobody records which carton left, and a recall
+               is answered by clearing the shelf rather than by phoning
+               buyers.
+     'barcode' the lot printed on the pack, read out of a GS1 barcode. Free
+               at the till when the supplier prints one — no extra keystroke,
+               and exact rather than inferred.
+     'prompt'  the clerk names the lot. Slow, and only worth it where an
+               untraceable sale is a licence problem.
+
+     FEFO is a good inventory model and an unreliable TRACEABILITY one: a
+     customer reaching past the front milk for a fresher carton leaves the
+     books drawing down a lot the shelf still holds. Totals stay right — only
+     the per-lot split drifts — which is why this is a choice per shop rather
+     than a bug to fix. */
+  lot_capture_mode: 'fefo',
+
+  /* Whether a sale is REFUSED when no lot could be captured — a plain EAN-13
+     scanned in 'barcode' mode, or a clerk who left the box empty.
+
+     Off by default, and that is the grocer's answer: fall back to FEFO, log
+     that the lot was inferred, and keep trading. On, it is the pharmacy's: an
+     untraceable sale is worse than a lost one.
+
+     Meaningless under 'fefo' — nothing is being captured, so nothing can fail
+     to be captured. `lotCaptureFor` forces it off there rather than letting a
+     stored 1 read as a promise the till never keeps. Never applied at SYNC
+     either: a queued sale is money that already changed hands. */
+  lot_capture_strict: '0',
   /** How far a drawer may be out before an explanation is required at cash-up. */
   cashup_variance_tolerance: '5.00',
 
@@ -1268,6 +1302,20 @@ export function validateSetting(key: SettingKey, value: string): string | null {
         ? null
         : 'Divisor must be 1, 10, 100 or 1000.'
     }
+
+    case 'lot_capture_mode':
+      return value === 'fefo' || value === 'barcode' || value === 'prompt'
+        ? null
+        : 'Choose automatic, from the barcode, or ask the clerk.'
+
+    /* No cross-check against lot_capture_mode here, deliberately: this
+       validates ONE key and cannot see the other, and reading the stored mode
+       would make a pure function hit the database — and still race a screen
+       that saves both. `lotCaptureFor` resolves the pair instead, forcing
+       strict off under 'fefo' at the point of USE, which is the only place
+       both values are known to be the ones in force. */
+    case 'lot_capture_strict':
+      return value === '0' || value === '1' ? null : 'Use 1 or 0.'
 
     case 'cashup_variance_tolerance': {
       const tolerance = Number(value)
