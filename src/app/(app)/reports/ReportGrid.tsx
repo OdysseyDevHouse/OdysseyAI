@@ -5,9 +5,11 @@ import {
   EmptyState,
   Icons,
   TABLE_HEAD_ROW,
+  TABLE_HEAD_STICKY_INSET,
   TABLE_NUMERIC,
   TABLE_TD,
   TABLE_TH,
+  TableScroller,
 } from '@/components/ui'
 import { formatCell } from '@/lib/reportBuilder/format'
 import {
@@ -140,11 +142,16 @@ export default function ReportGrid({
    * `p-3`, not `px-3 pb-3`: the header row had no gutter above it and so sat
    * hard against the toolbar, which made the top the one edge that did not match
    * the other three.
+   *
+   * That gutter scrolls WITH the content, which is why the sticky header below
+   * sits at `-top-3` rather than `top-0`: at top-0 the 12px gap would stay open
+   * above it, showing rows sliding past in the margin. Pulling it up by exactly
+   * the gutter parks the header flush against the toolbar.
    */
   return (
-    <div className="overflow-x-auto p-3">
+    <TableScroller className="p-3">
       <table className="w-full text-sm">
-        <thead>
+        <thead className={TABLE_HEAD_STICKY_INSET}>
           <tr className={TABLE_HEAD_ROW}>
             {columns.map((col) => (
               <th
@@ -218,7 +225,7 @@ export default function ReportGrid({
           </tfoot>
         )}
       </table>
-    </div>
+    </TableScroller>
   )
 }
 
@@ -265,7 +272,35 @@ function Cell({ col, row }: { col: ReportColumn; row: Record<string, unknown> })
     }
   }
 
+  const tone = col.tone ? varianceTone(row[col.key]) : null
+  if (tone) return <span className={tone}>{formatted}</span>
+
   return <>{formatted}</>
+}
+
+/**
+ * Short is red, over is orange, square is green.
+ *
+ * The asymmetry is the point, and it is how a manager already reads a drawer:
+ * short means money is missing and someone must account for it; over is still
+ * an error — almost always a mis-key or an uncounted float — but nothing has
+ * walked out of the shop. Painting both the same red would bury the one that
+ * matters among the ones that do not.
+ *
+ * A blank cell gets NO colour. An empty variance is "not counted yet", and
+ * green there would claim a drawer balanced when nobody has looked at it.
+ */
+function varianceTone(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  /* Rounded to cents before comparing: the column is DECIMAL(12,4), so a
+     rounding tail of a thousandth of a cent would read as "over" and paint a
+     balanced drawer orange. */
+  const cents = Math.round(n * 100)
+  if (cents < 0) return 'font-medium text-danger'
+  if (cents > 0) return 'font-medium text-warning'
+  return 'text-success'
 }
 
 function GroupBlock({

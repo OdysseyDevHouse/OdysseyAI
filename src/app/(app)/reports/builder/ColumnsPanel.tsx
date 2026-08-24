@@ -137,7 +137,7 @@ export default function ColumnsPanel({
 
   const body = (
     <>
-      <div className={`flex flex-col gap-4 ${chrome ? 'p-4 pt-0' : ''}`}>
+      <div className={`flex flex-col gap-4 ${chrome ? 'p-4' : ''}`}>
         {!chrome && (
           <p className="text-sm text-muted">
             {summarised

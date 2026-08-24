@@ -965,6 +965,14 @@ export async function mirrorSupplierPayment(
 
 export type CashupMirror = {
   shiftId: number
+  /**
+   * The cash-up's number — CSH_01_000001 (233). Null on a shift that never got
+   * one, where the journal falls back to naming the id as it always did.
+   *
+   * `sourceDocId` still carries the id and is what the drill-through follows;
+   * this is for the human reading the ledger, who cannot click.
+   */
+  documentNumber?: string | null
   /** The trading date the count belongs to, YYYY-MM-DD. */
   closedDate: string
   terminalCode?: string | null
@@ -993,7 +1001,7 @@ export async function mirrorCashup(
   actor: Actor,
   input: CashupMirror,
 ): Promise<MirrorResult> {
-  const label = `Cash-up shift #${input.shiftId}`
+  const label = `Cash-up ${input.documentNumber ?? `shift #${input.shiftId}`}`
   return attempt(siteId, actor, label, async () => {
     // The caller skips a clean drawer entirely — see closeShift(). This throw
     // is the backstop for a caller that did not: an all-zero journal would burn
@@ -1027,7 +1035,10 @@ export async function mirrorCashup(
       const posted = await postTx(tx, actor, {
         journalDate: input.closedDate,
         description: input.terminalCode ? `Cash-up — ${input.terminalCode}` : 'Cash-up',
-        reference: null,
+        /* The reference was null because a shift had nothing to put there. Now
+           it does, and a variance journal in the ledger names the count it came
+           from — which is what somebody auditing 6910 needs to go and read. */
+        reference: input.documentNumber ?? null,
         source: 'cashup',
         sourceDocId: input.shiftId,
         lines,

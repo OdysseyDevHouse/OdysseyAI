@@ -67,7 +67,6 @@ const { SETUP_GROUPS } = nodeRequire('../src/app/(app)/setup/catalogue') as type
 const { ACCOUNTING_GROUPS } = nodeRequire('../src/app/(app)/accounting/catalogue') as typeof import('../src/app/(app)/accounting/catalogue')
 const { ONLINE_STORE_GROUPS } = nodeRequire('../src/app/(app)/online-store/catalogue') as typeof import('../src/app/(app)/online-store/catalogue')
 const { ONLINE_STORE_SETUP_GROUPS } = nodeRequire('../src/app/(app)/online-store/settings/catalogue') as typeof import('../src/app/(app)/online-store/settings/catalogue')
-const { LOYALTY_SETUP_GROUPS } = nodeRequire('../src/app/(app)/loyalty/setup/catalogue') as typeof import('../src/app/(app)/loyalty/setup/catalogue')
 const { JOBS_SETUP_GROUPS } = nodeRequire('../src/app/(app)/jobs/setup/catalogue') as typeof import('../src/app/(app)/jobs/setup/catalogue')
 
 let failures = 0
@@ -112,12 +111,17 @@ check('/accounting/assets/depreciation', crumbs('/accounting/assets/depreciation
 
 /* A key the MENU itself names, rather than a screen only a hub lists.
 
-   Four sections now carry their own Setup hub as a row — Loyalty, Job cards,
-   Tickets and the Online Store — so a key can be both a menu destination and
-   a SUBPAGE_LABELS entry. That is not the "two front doors" problem the
+   Three sections carry their own Setup hub as a row — Job cards, Tickets and
+   the Online Store — so a key can be both a menu destination and a
+   SUBPAGE_LABELS entry. That is not the "two front doors" problem the
    invariants below guard against: the label is what the hub tile and the
    breadcrumb read, and the menu row points at the same screen. The entries
    also have to stay because SubpageHref is derived from these keys.
+
+   Loyalty is no longer one of them. Its hub held three tiles, which is the
+   size at which a landing page costs a click and gives nothing back, so the
+   three are menu rows now and /loyalty/setup is gone. Its own key stays for
+   the SubpageHref reason alone.
 
    What the hub invariants below DO apply to is everything else: a screen the
    menu does not name has to resolve to a hub, or it renders with no trail. */
@@ -126,13 +130,17 @@ const menuHrefs = new Set(
 )
 const hubScreens = Object.keys(SUBPAGE_LABELS).filter((h) => !menuHrefs.has(h))
 check(
-  'the menu-named keys are the four Setup hubs and Loyalty',
+  'the menu-named keys are the three Setup hubs and Loyalty',
   Object.keys(SUBPAGE_LABELS).filter((h) => menuHrefs.has(h)).sort(),
-  ['/jobs/setup', '/loyalty', '/loyalty/setup', '/online-store/settings', '/tickets/setup/desk'],
+  ['/jobs/setup', '/loyalty', '/online-store/settings', '/tickets/setup/desk'],
 )
 /* ...and each must still lead somewhere sensible. */
 check('/loyalty', crumbs('/loyalty'), ['Loyalty', 'Members'])
-check('/loyalty/tiers', crumbs('/loyalty/tiers'), ['Loyalty', 'Setup', 'Tiers'])
+/* Loyalty's settings screens are menu rows, so the section scan names them —
+   two crumbs, not the three a hub tile produced. */
+check('/loyalty/programme', crumbs('/loyalty/programme'), ['Loyalty', 'Programme'])
+check('/loyalty/tiers', crumbs('/loyalty/tiers'), ['Loyalty', 'Tiers'])
+check('/loyalty/cards', crumbs('/loyalty/cards'), ['Loyalty', 'Punch cards'])
 check('/jobs/setup/workflow', crumbs('/jobs/setup/workflow'), ['Job cards', 'Setup', 'Workflow'])
 check('/online-store/trading', crumbs('/online-store/trading'), ['Online Store', 'Setup', 'Trading hours'])
 check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', 'Orders'])
@@ -142,7 +150,6 @@ check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', '
    setup". A menu-named path must use the section scan instead. */
 check('/jobs/setup', crumbs('/jobs/setup'), ['Job cards', 'Setup'])
 check('/tickets/setup/desk', crumbs('/tickets/setup/desk'), ['Tickets', 'Setup'])
-check('/loyalty/setup', crumbs('/loyalty/setup'), ['Loyalty', 'Setup'])
 check('/online-store/settings', crumbs('/online-store/settings'), ['Online Store', 'Setup'])
 
 // Every screen a hub can link to must resolve, or it renders with no trail.
@@ -382,7 +389,7 @@ check('every item href is unique', [...new Set(duplicates)], [])
    that some hub also lists as one of its tiles. */
 const hubTiles = new Set<string>(
   [...SETUP_GROUPS, ...ACCOUNTING_GROUPS, ...ONLINE_STORE_GROUPS, ...ONLINE_STORE_SETUP_GROUPS,
-   ...LOYALTY_SETUP_GROUPS, ...JOBS_SETUP_GROUPS].flatMap((g) => g.items).map((i) => i.href),
+   ...JOBS_SETUP_GROUPS].flatMap((g) => g.items).map((i) => i.href),
 )
 const bothPlaces = allItems.map((i) => i.href).filter((href) => hubTiles.has(href))
 check('no screen is both a menu item and a hub tile', bothPlaces, [])

@@ -5,12 +5,17 @@ export type LoyaltyTab = 'programme' | 'tiers' | 'cards'
 /**
  * The loyalty SETUP screens, in the order somebody sets them up.
  *
- * Members is deliberately NOT a tab any more. The three below are reached
- * through Loyalty › Setup and decide how the programme works; the members list
- * is its own menu row and is opened daily. Keeping them in one strip made the
- * hub tile for 'Setup' land on a screen whose first tab left it again.
+ * All three are menu rows in their own right now — the Setup hub that used to
+ * list them was a landing page for three tiles, which is a click that gives
+ * nothing back. The strip stays anyway: these three are configured in one
+ * sitting, and moving between them through the sidebar means crossing the
+ * whole screen to switch between screens that belong together.
  *
- * Shared by every screen under /loyalty/setup so the strip cannot drift.
+ * Members is deliberately NOT a tab. It is the operational screen, opened
+ * daily and for a different reason; putting it here would make a tab strip
+ * that mixes "who is on the programme" with "how the programme works".
+ *
+ * Shared by all three so the strip cannot drift.
  */
 export const LOYALTY_TABS: readonly (TabItem<LoyaltyTab> & { href: string })[] = [
   { value: 'programme', label: 'Programme', href: '/loyalty/programme' },

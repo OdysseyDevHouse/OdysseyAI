@@ -22,7 +22,7 @@ export default async function ProgrammePage() {
   return (
     <>
       <PageHeader
-        title="Loyalty"
+        title="Programme"
         subtitle="What a rand earns, what a point is worth, and how both expire."
       />
       <PageBody>

@@ -629,6 +629,12 @@ export interface ReportColumn {
    * `linkKeyFor(key)`. A column carries one kind; a row carries one id.
    */
   link?: { kind: DocumentLinkKind }
+  /**
+   * Colour the cells by meaning — see `tone` on CatalogField. Cells only; the
+   * footer stays plain, because a column of variances summing to zero has
+   * cancelled out rather than balanced.
+   */
+  tone?: 'variance'
 }
 
 export type ColumnType =
@@ -717,6 +723,7 @@ export function specColumns(spec: CustomReportSpec, source: CatalogSource): Repo
         numeric: f.numeric === true,
         total: f.numeric === true && !f.noTotal,
         ...(f.hint ? { hint: f.hint } : {}),
+        ...(f.tone ? { tone: f.tone } : {}),
         /* Unsummarised only, matching buildSelect: a grouped row is many
            documents at once and has no single record to open. */
         ...(f.link ? { link: { kind: f.link.kind } } : {}),
@@ -736,6 +743,14 @@ export function specColumns(spec: CustomReportSpec, source: CatalogSource): Repo
       total: agg === 'sum' || agg === 'count' ? !f.noTotal : weighted,
       ...(weighted ? { ratio: { ...ratioKeys(key), scale: 100 } } : {}),
       ...(f.hint ? { hint: f.hint } : {}),
+      /* Carried over SUM, MIN and MAX only — those still answer "was it short",
+         so a summed variance of −R40 is still red. Dropped for COUNT (a count
+         of variances is a tally, and a tally of 0 is not a balanced drawer) and
+         for AVG, where an average of −R100 and +R100 is zero and would paint
+         green over two drawers that were both wrong. */
+      ...(f.tone && (agg === 'sum' || agg === 'min' || agg === 'max')
+        ? { tone: f.tone }
+        : {}),
     })
   }
 

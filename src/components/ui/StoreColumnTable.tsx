@@ -7,7 +7,9 @@ import {
   TABLE_ROW,
   TABLE_NUMERIC,
   TABLE_TOTAL_ROW,
+  TABLE_HEAD_STICKY,
 } from './styles'
+import { TableScroller } from './TableScroller'
 
 /**
  * A row per thing, a column per store, a group total on the right.
@@ -34,6 +36,10 @@ import {
  * No hooks and no handlers, so it stays a server component and a page using it
  * needs no client wrapper — unlike DataTable, whose column definitions carry
  * render functions and cannot cross the boundary.
+ *
+ * The scroll box IS a client component (TableScroller, which measures the room
+ * below it), but that is a child rendered from here rather than a hook called
+ * here — a server component may render a client one, so this stays server-side.
  */
 
 export type StoreColumn = {
@@ -92,9 +98,9 @@ export function StoreColumnTable({
 
   return (
     <>
-      <div className="overflow-x-auto">
+      <TableScroller>
         <table className={TABLE}>
-          <thead>
+          <thead className={TABLE_HEAD_STICKY}>
             <tr className={TABLE_HEAD_ROW}>
               <th className={TABLE_TH}>{firstHeading}</th>
               {columns.map((c) => (
@@ -148,7 +154,7 @@ export function StoreColumnTable({
             </tfoot>
           )}
         </table>
-      </div>
+      </TableScroller>
 
       {emptyNote && <p className="px-4 py-3 text-xs text-muted">{emptyNote}</p>}
     </>

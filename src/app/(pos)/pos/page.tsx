@@ -12,6 +12,7 @@ import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
 import { liveSpecials } from '@/lib/site/specials'
 import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
+import { livePosMenus } from '@/lib/site/posMenus'
 import { listDepartments } from '@/lib/site/departments'
 import { listAllQuickKeys } from '@/lib/site/quickKeys'
 import { listTables } from '@/lib/site/posTables'
@@ -88,6 +89,7 @@ export default async function PosPage({
     cashRounding,
     specials,
     pendingPrices,
+    posMenus,
     departments,
     quickKeys,
     tables,
@@ -131,6 +133,11 @@ export default async function PosPage({
        * miss its moment on exactly the machine that had just been restarted.
        */
       pendingSchedulesForTill(site.id),
+      /* The rotating menus (231), windows unevaluated — shipped with the page
+         for exactly the reason above: a till freshly reloaded at five to eleven
+         must still switch to lunch at eleven, and it can only do that if it is
+         already holding the menus when the minute arrives. */
+      livePosMenus(site.id),
       // The department rail. Flat, with parent ids — the tree is assembled on the
       // client because drilling into one must not cost a round trip.
       listDepartments(site.id, true),
@@ -271,6 +278,7 @@ export default async function PosPage({
       depositAllowWalkin={depositAllowWalkin}
       specials={specials}
       pendingPrices={pendingPrices}
+      posMenus={posMenus}
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
       /* NO MODE PASSED DOWN, deliberately.

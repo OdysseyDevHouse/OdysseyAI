@@ -52,6 +52,8 @@ type CashupMode = 'terminal' | 'user'
 
 type OpenShift = {
   id: number
+  /** CSH_01_000001. Null on a shift opened before this site had a sequence. */
+  documentNumber: string | null
   terminalCode: string | null
   userName: string
   openedAt: string
@@ -155,7 +157,16 @@ export default function CashupClient({
                 title={
                   shift.terminalCode ? `${shift.terminalCode} — ${shift.userName}` : shift.userName
                 }
-                description={`Opened ${new Date(shift.openedAt).toLocaleString('en-ZA')} · ${shift.salesCount} sale${shift.salesCount === 1 ? '' : 's'} · ${formatMoney(shift.takingsTotal)} taken`}
+                /* The number goes FIRST in the description rather than into the
+                   title. The title answers "whose drawer is this", which is
+                   what someone scanning a list of open shifts is looking for;
+                   the number is how they refer to it once they have found it. */
+                description={[
+                  shift.documentNumber ?? `Cash-up #${shift.id}`,
+                  `Opened ${new Date(shift.openedAt).toLocaleString('en-ZA')}`,
+                  `${shift.salesCount} sale${shift.salesCount === 1 ? '' : 's'}`,
+                  `${formatMoney(shift.takingsTotal)} taken`,
+                ].join(' · ')}
                 action={
                   <div className="flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={() => setMoving(shift)}>

@@ -129,6 +129,15 @@ export type DeclarationCounters = {
 
 export type DeclarationView = {
   shiftId: number
+  /**
+   * The cash-up's number — CSH_01_000001 (233).
+   *
+   * This is the record somebody signs, so it is the one place the number most
+   * needs to appear: a supervisor querying a variance a week later has a
+   * reference to quote rather than a row id. Null on a shift opened before its
+   * site had a sequence; the screen falls back to the id.
+   */
+  documentNumber: string | null
   declarationId: number | null
   mode: 'terminal' | 'user'
   /** Whose takings these are — a person, or the till, per the site's mode. */
@@ -429,6 +438,7 @@ export async function declarationView(
 
   return {
     shiftId,
+    documentNumber: shift.documentNumber,
     declarationId: header ? Number(header.id) : null,
     mode,
     ownerLabel: mode === 'terminal' ? (shift.terminalCode ?? 'Till') : shift.userName,

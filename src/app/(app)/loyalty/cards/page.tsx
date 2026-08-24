@@ -28,7 +28,7 @@ export default async function CardsPage() {
 
   return (
     <>
-      <PageHeader title="Loyalty" subtitle="Punch cards — buy a few, get one free." />
+      <PageHeader title="Punch cards" subtitle="Buy a few, get one free — what fills a card and what it pays out." />
       <PageBody>
         <LinkTabs items={LOYALTY_TABS} value="cards" />
         <CardsClient

@@ -13,7 +13,7 @@ export default async function TiersPage() {
 
   return (
     <>
-      <PageHeader title="Loyalty" subtitle="The tiers members climb, and what each one is worth." />
+      <PageHeader title="Tiers" subtitle="The tiers members climb, and what each one is worth." />
       <PageBody>
         <LinkTabs items={LOYALTY_TABS} value="tiers" />
         <TiersClient initial={tiers} canEdit={can(capabilities, 'loyalty.edit')} />

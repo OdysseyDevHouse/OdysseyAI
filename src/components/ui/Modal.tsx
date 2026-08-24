@@ -226,7 +226,17 @@ export function Modal({
                      goes, and `vh` measures the tallest state — a footer sized
                      against it sits under the address bar, which is where the
                      save button lives. */
-                  `overflow-y-auto ${bodyGrows ? 'max-h-[calc(100dvh-13rem)]' : 'max-h-[60vh]'}`
+                  /* `shrink-0` on the bodyGrows branch, and it is load-bearing.
+                     The panel is a flex column, so a plain block child STRETCHES
+                     to fill it — measured: with the content 664px tall the body
+                     still reported 696px and the panel stayed at its 846px cap,
+                     so a short form was drawn as a full-height dialog with a
+                     band of empty panel under the last field. `shrink-0` keeps
+                     it at its content height, and `max-h` still caps it, so a
+                     long form scrolls exactly as before. */
+                  `overflow-y-auto ${
+                    bodyGrows ? 'shrink-0 max-h-[calc(100dvh-13rem)]' : 'max-h-[60vh]'
+                  }`
           }`}
         >
           {children}

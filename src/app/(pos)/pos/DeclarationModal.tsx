@@ -747,9 +747,16 @@ export default function DeclarationModal({
           <Icons.Calculator size={24} />
         </span>
       }
+      /* The number leads. This dialog IS the signed record, so the reference a
+         supervisor will quote next week belongs where they read it first —
+         before the till and the time, both of which only narrow it down. */
       description={
         view
-          ? `${view.ownerLabel} · trading since ${new Date(view.openedAt).toLocaleString('en-ZA')}`
+          ? [
+              view.documentNumber ?? `Cash-up #${view.shiftId}`,
+              view.ownerLabel,
+              `trading since ${new Date(view.openedAt).toLocaleString('en-ZA')}`,
+            ].join(' · ')
           : undefined
       }
       /* The dialog says where you ARE. Drilled into a tender, the header names

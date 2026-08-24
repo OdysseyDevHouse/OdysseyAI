@@ -144,7 +144,7 @@ export default function AskPanel({
       {asking && (
         <Card>
           <CardHeader title="Working on it…" description="Reading your data and composing the report." />
-          <div className="p-4 pt-0">
+          <div className="p-4">
             <TableSkeleton rows={6} />
           </div>
         </Card>

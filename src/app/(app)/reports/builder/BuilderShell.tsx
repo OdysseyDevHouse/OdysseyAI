@@ -612,7 +612,7 @@ function SourcePicker({
               />
             }
           />
-          <div className="grid grid-cols-1 gap-3 p-4 pt-0 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
             {shownTemplates.map((t) => (
               <ChoiceTile
                 key={t.id}

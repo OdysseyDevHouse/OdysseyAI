@@ -1,9 +1,11 @@
 import 'server-only'
-import type { RowDataPacket } from 'mysql2/promise'
+import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { round, toNum } from '../decimals'
 import { loyaltyDbPrefix } from './loyaltyDb'
 import { getNumericSetting, getSetting } from './settings'
+import { nextDocumentNumber, SITE_SEQUENCE } from './sequences'
+import { normaliseSegment } from './numbering'
 import type { Actor } from './activityLog'
 
 /**
@@ -37,6 +39,12 @@ export async function cashupMode(siteId: number): Promise<CashupMode> {
 
 export type Shift = {
   id: number
+  /**
+   * The cash-up's number — CSH_01_000001. Null only where the sequence could not
+   * be read when the shift opened; the screens fall back to the id, which is
+   * what they showed before numbers existed. See claimCashupNumber.
+   */
+  documentNumber: string | null
   mode: CashupMode
   /** Null in user mode — the person is the owner, not a register. */
   terminalId: number | null
@@ -59,6 +67,7 @@ type Row = RowDataPacket & Record<string, unknown>
 function mapShift(r: Row): Shift {
   return {
     id: Number(r.id),
+    documentNumber: (r.document_number as string | null) ?? null,
     mode: r.mode === 'user' ? 'user' : 'terminal',
     terminalId: r.terminal_id === null ? null : Number(r.terminal_id),
     terminalCode: (r.terminal_code as string | null) ?? null,
@@ -77,8 +86,9 @@ function mapShift(r: Row): Shift {
 }
 
 const SELECT_SHIFT = `
-  SELECT id, mode, terminal_id, terminal_code, user_id, user_name, opened_at, closed_at,
-         opening_float, counted_total, expected_total, variance, variance_note, closed_by_name
+  SELECT id, document_number, mode, terminal_id, terminal_code, user_id, user_name,
+         opened_at, closed_at, opening_float, counted_total, expected_total, variance,
+         variance_note, closed_by_name
     FROM shifts
 `
 
@@ -181,6 +191,48 @@ export async function listShifts(
 
 /* ── Opening ─────────────────────────────────────────────────────────────── */
 
+/* ── The cash-up's number ─────────────────────────────────────────────────── */
+
+/**
+ * Claims the next cash-up number — CSH_01_000001 — or null if it cannot.
+ *
+ * ── WHY IT IS ALLOCATED AT OPEN AND NOT AT CLOSE ──────────────────────────
+ *
+ * A cash-up is referred to while it is still running. "Who is on CSH_01_000042?"
+ * is the question a supervisor asks at 11am, and a number that only appears once
+ * the drawer is counted cannot answer it. It also means a shift has ONE identity
+ * for its whole life, rather than being an id until the moment it is signed off
+ * and a number afterwards — which is two things to search by and two things to
+ * get wrong.
+ *
+ * The cost is an explainable gap: a shift opened by mistake and closed empty
+ * keeps its number. That is the same bargain every document in this schema
+ * makes, and it is the right one — see the module comment in sequences.ts on
+ * what "no missing numbers" actually requires.
+ *
+ * ── WHY IT RETURNS NULL INSTEAD OF THROWING ───────────────────────────────
+ *
+ * nextDocumentNumber throws when a sequence row is missing, which is correct
+ * where it is called from: inside a finalise, the only sane response is to roll
+ * the sale back. Here it is not. A cashier standing at a till at 07:00 must not
+ * be refused a drawer because a settings row never got seeded — the shift is the
+ * thing that matters and the number is a label on it. So a failure degrades to
+ * an unnumbered shift, which every screen already renders by id.
+ *
+ * It cannot cause a duplicate: uq_shift_number permits many NULLs and exactly
+ * one of each real number.
+ */
+async function claimCashupNumber(siteId: number, tx: PoolConnection): Promise<string | null> {
+  try {
+    // Store segment only — a shift in user mode has no till to name. See
+    // numberFormat.ts on why the till segment is optional.
+    const store = normaliseSegment(await getSetting(siteId, 'store_number'), '01')
+    return await nextDocumentNumber(tx, 'cashup', new Date(), SITE_SEQUENCE, { store })
+  } catch {
+    return null
+  }
+}
+
 export type OpenResult = { ok: true; shiftId: number } | { ok: false; error: string }
 
 /**
@@ -233,20 +285,38 @@ export async function openShift(
   }
 
   try {
-    const res = await siteExecute(
-      siteId,
-      `INSERT INTO shifts (mode, terminal_id, terminal_code, user_id, user_name, opening_float)
-       VALUES (?,?,?,?,?,?)`,
-      [
-        mode,
-        mode === 'terminal' ? terminalId : null,
-        terminalCode,
-        actor.userId,
-        actor.userName.slice(0, 120),
-        round(openingFloat, 2).toFixed(4),
-      ],
-    )
-    return { ok: true, shiftId: res.insertId }
+    /*
+     * A TRANSACTION, where a bare INSERT used to do.
+     *
+     * nextDocumentNumber must run on the caller's connection and never open its
+     * own — that is what makes the number and the row it names commit together.
+     * A shift that fails its unique check after the counter has already moved
+     * would burn a cash-up number on a shift that does not exist, which is the
+     * one kind of gap nobody can explain.
+     *
+     * The number is claimed BEFORE the insert here, which inverts the advice in
+     * sequences.ts to issue it last. That advice is about not holding the
+     * sequence lock across a long finalise; this transaction is two statements
+     * and the insert needs the number as a value.
+     */
+    const shiftId = await siteTransaction(siteId, async (tx) => {
+      const documentNumber = await claimCashupNumber(siteId, tx)
+      const [res] = await tx.execute(
+        `INSERT INTO shifts (document_number, mode, terminal_id, terminal_code, user_id, user_name, opening_float)
+         VALUES (?,?,?,?,?,?,?)`,
+        [
+          documentNumber,
+          mode,
+          mode === 'terminal' ? terminalId : null,
+          terminalCode,
+          actor.userId,
+          actor.userName.slice(0, 120),
+          round(openingFloat, 2).toFixed(4),
+        ] as never,
+      )
+      return (res as { insertId: number }).insertId
+    })
+    return { ok: true, shiftId }
   } catch {
     // The unique index is the real guard — the checks above only buy a better
     // message. Two people opening at once land here.
@@ -686,9 +756,14 @@ export async function closeShift(
     }
 
     await tx.execute(
+      /* `status` moves with closed_at, in the same statement, so the two can
+         never disagree. It exists for verifySequence's contract (233) rather
+         than for this module, which still asks `closed_at IS NULL` everywhere —
+         but a status column that drifts from the timestamp it mirrors is worse
+         than no status column at all. */
       `UPDATE shifts
-          SET closed_at = NOW(), counted_total = ?, expected_total = ?, variance = ?,
-              variance_note = ?, closed_by_user_id = ?, closed_by_name = ?
+          SET closed_at = NOW(), status = 'closed', counted_total = ?, expected_total = ?,
+              variance = ?, variance_note = ?, closed_by_user_id = ?, closed_by_name = ?
         WHERE id = ?`,
       [
         countedTotal.toFixed(4),
@@ -718,6 +793,7 @@ export async function closeShift(
     const { mirrorCashup } = await import('./glPosting')
     await mirrorCashup(siteId, actor, {
       shiftId,
+      documentNumber: position.shift.documentNumber,
       closedDate,
       terminalCode: position.shift.terminalCode,
       tenderVariances: cashVariances,

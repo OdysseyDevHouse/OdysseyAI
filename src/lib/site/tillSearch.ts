@@ -67,6 +67,12 @@ export type TillProduct = {
    * make the fallback impossible to distinguish from a real choice.
    */
   imageColor: string | null
+  /**
+   * Where the shop dragged this tile within its department (121). 0 means
+   * nobody has placed it, and sorts AFTER every positioned row rather than
+   * first — see 121 for why 0 cannot mean "first".
+   */
+  posSortOrder: number
   /** Quantity parsed out of a weighed-goods barcode, if the scan carried one. */
   scannedQty?: number
   /** Price parsed out of a value-embedded barcode, if the scan carried one. */
@@ -107,6 +113,7 @@ function mapProduct(r: Row): TillProduct {
     /* Empty string normalised to null: a cleared colour picker writes '' rather than
        NULL, and the two mean the same thing to everything downstream. */
     imageColor: (r.image_color as string | null) || null,
+    posSortOrder: Number(r.pos_sort_order ?? 0),
   }
 }
 
@@ -137,6 +144,11 @@ function selectProduct(costBasis: string): string {
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
            p.ask_price_at_sale, p.allow_fractions, p.scale_item, p.variable_type,
            p.max_discount_pct, p.image_color,
+           -- Where the shop dragged this tile (121). Shipped rather than left
+           -- behind because the offline till sorts its own cached grid, and a
+           -- column the server ordered by but never sent would give an online
+           -- till the shop's order and an offline one the alphabet.
+           p.pos_sort_order,
            -- The alias barcodes (143). A correlated subquery, NOT a join — a
            -- join would multiply the row per alias and break every other figure.
            (SELECT GROUP_CONCAT(pb.barcode SEPARATOR '\n')
@@ -322,6 +334,29 @@ export async function browseForTill(
   const ranking = needle.length >= 2 ? 'CASE WHEN p.barcode = ? OR p.code = ? THEN 0 ELSE 1 END,' : ''
   if (ranking) params.push(needle, needle)
 
+  /*
+   * Menu order, but only when BROWSING.
+   *
+   * The menu designer has always written `products.pos_sort_order` (121) and
+   * this query has always ignored it, so a shop that dragged its six best
+   * sellers to the front of a department got an A-Z grid anyway and no
+   * explanation. That is the gap this closes.
+   *
+   * The rule is `MENU_ORDER` in lib/site/menuDesigner.ts:55 and it is
+   * repeated rather than imported — that module is the DESIGNER's data layer
+   * and importing it here would drag a back-office read path into the till's
+   * hot query. Both must sort identically; see 121 for why 0 sorts last.
+   *
+   * Suppressed while SEARCHING, deliberately. Once somebody has typed, the
+   * useful first row is the best match for what they typed — a shop's
+   * preferred display order is an answer to a different question, and letting
+   * it outrank an exact code match would bury the row they meant.
+   */
+  const menuOrder =
+    needle.length >= 2
+      ? ''
+      : `CASE WHEN p.pos_sort_order = 0 THEN 1 ELSE 0 END, p.pos_sort_order ASC,`
+
   const rows = await siteQuery<Row>(
     siteId,
     `${selectProduct(costBasis)}
@@ -335,7 +370,7 @@ export async function browseForTill(
         AND p.has_variants = 0
         ${scope}
         ${filter}
-      ORDER BY ${ranking} p.description ASC
+      ORDER BY ${ranking} ${menuOrder} p.description ASC
       LIMIT ${capped}`,
     params,
   )

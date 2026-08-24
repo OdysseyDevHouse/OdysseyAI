@@ -184,6 +184,48 @@ export function buttonShape({
  */
 export const TABLE_HEAD_ROW = 'border-y border-border bg-surface-2'
 
+/**
+ * The scroll container a table sits in.
+ *
+ * A wide table used to be wrapped in a bare `overflow-x-auto`, which grows to
+ * the table's full height — so its horizontal scrollbar sits at the BOTTOM of
+ * the whole table. On a 300-row report that means scrolling to the end of the
+ * data to reach the scrollbar, dragging it, then scrolling back up to read the
+ * columns you just revealed.
+ *
+ * `overflow-auto` (not `overflow-x-auto`) so the SAME box scrolls both ways
+ * once something caps its height — which is what puts the horizontal scrollbar
+ * at the bottom of the window instead of the bottom of the data.
+ *
+ * The cap itself is not here, because it cannot be a constant: the chrome above
+ * a table differs on every screen. `useFitViewport` measures it. A table that
+ * fits gets no cap at all and looks exactly as it always did.
+ */
+export const TABLE_SCROLLER = 'overflow-auto'
+
+/**
+ * The header row of a scrolling table. Sticks to the top of TABLE_SCROLLER so
+ * the columns stay readable while the body scrolls under them — without it,
+ * capping the height would mean scrolling a wide report with no idea which
+ * column is which.
+ *
+ * `bg-surface-2` is not decoration here: the body rows scroll UNDER this row,
+ * so it has to be opaque. The border is drawn as a shadow because a sticky
+ * element's own border scrolls away with the cell box in some engines.
+ */
+export const TABLE_HEAD_STICKY =
+  'sticky top-0 z-10 bg-surface-2 shadow-[inset_0_-1px_0_var(--color-border)]'
+
+/**
+ * The same, for a table whose scroll box has a `p-3` gutter.
+ *
+ * That gutter scrolls with the content, so at `top-0` the header would park
+ * 12px down and leave rows sliding past in the margin above it. `-top-3` pulls
+ * it back by exactly the gutter so it sits flush against the toolbar.
+ */
+export const TABLE_HEAD_STICKY_INSET =
+  'sticky -top-3 z-10 bg-surface-2 shadow-[inset_0_-1px_0_var(--color-border)]'
+
 /* Sentence case, regular weight: a heading labels its column, it does not
    compete with the values under it. align-top so a heading that wraps to two
    lines sits above its column rather than floating in the middle of it. */

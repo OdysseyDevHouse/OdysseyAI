@@ -4,7 +4,17 @@ import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { Checkbox } from './Field'
 import { EmptyState } from './EmptyState'
 import { SortAsc, SortDesc, SortNeutral } from './icons'
-import { TABLE, TABLE_HEAD_ROW, TABLE_NUMERIC, TABLE_ROW, TABLE_TD, TABLE_TH } from './styles'
+import {
+  TABLE,
+  TABLE_HEAD_ROW,
+  TABLE_HEAD_STICKY,
+  TABLE_NUMERIC,
+  TABLE_ROW,
+  TABLE_SCROLLER,
+  TABLE_TD,
+  TABLE_TH,
+} from './styles'
+import { useFitViewport } from './useFitViewport'
 
 export type SortDirection = 'asc' | 'desc'
 export type SortState = { key: string; direction: SortDirection }
@@ -80,6 +90,13 @@ export function DataTable<T>({
   /* Anchor for shift-click range selection. A ref, not state: it must not
      re-render the table, and it is read only during a click. */
   const lastClickedKey = useRef<string | null>(null)
+
+  /* Cap the scroll box to the room left below it, so a wide table's horizontal
+     scrollbar lands at the bottom of the window rather than the bottom of the
+     data. Declared here, above the empty-state return below, because hooks
+     cannot run conditionally. */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const fitCap = useFitViewport(scrollRef)
 
   // Controlled when the caller passes both; uncontrolled otherwise.
   const controlled = sort !== undefined && onSortChange !== undefined
@@ -169,9 +186,9 @@ export function DataTable<T>({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div ref={scrollRef} className={TABLE_SCROLLER} style={{ maxHeight: fitCap }}>
       <table className={TABLE}>
-        <thead>
+        <thead className={TABLE_HEAD_STICKY}>
           <tr className={TABLE_HEAD_ROW}>
             {selectable && (
               <th scope="col" className={`${TABLE_TH} w-px`}>

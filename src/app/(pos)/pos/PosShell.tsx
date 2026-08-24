@@ -21,8 +21,15 @@ import {
   browseOffline,
   storedQuickKeys,
   storedPendingPrices,
+  storedPosMenus,
   storedInstructions,
 } from '@/lib/posOffline/catalog'
+import {
+  activeMenu,
+  departmentsOnMenu,
+  productsOnMenu,
+  type PosMenu,
+} from '@/lib/posMenuEngine'
 import {
   parkOffline,
   recallOffline,
@@ -276,6 +283,7 @@ export default function PosShell({
   canVoid,
   specials,
   pendingPrices: pendingPricesProp,
+  posMenus: posMenusProp = [],
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
@@ -350,6 +358,17 @@ export default function PosShell({
    * machine's own clock, so six o'clock means six o'clock here.
    */
   pendingPrices: PendingSchedule[]
+  /**
+   * The shop's rotating menus (231), day masks and hour bands unevaluated.
+   *
+   * Shipped and applied exactly as the pending prices above are: this machine
+   * picks the live menu on its OWN clock, so breakfast gives way to lunch at
+   * eleven on every till at once — and on one that has been offline since
+   * yesterday.
+   *
+   * Empty is the ordinary case and means "show the whole grid".
+   */
+  posMenus?: PosMenu[]
   /** The shop's own till buttons. Shipped with the page so they survive the line dropping. */
   quickKeys: QuickKeyRow[]
   quickKeyProductNames: Record<number, string>
@@ -1129,6 +1148,29 @@ export default function PosShell({
   const pendingPrices =
     quickKeys.length > 0 ? pendingPricesProp : (heldPrices ?? pendingPricesProp)
 
+  /*
+   * The rotating menus, read the same way and with the same tell.
+   *
+   * An empty `posMenus` prop is ambiguous for exactly the reason the pending
+   * prices are: most shops have no menus at all, so "props are empty, read
+   * storage" cannot be the rule. The quick keys arrive in the same render and
+   * a shop that has set any up never legitimately has none, so they stand in
+   * for "did this render have a server".
+   */
+  const [heldMenus, setHeldMenus] = useState<PosMenu[] | null>(null)
+  useEffect(() => {
+    if (quickKeys.length > 0) return
+    let cancelled = false
+    void storedPosMenus(siteId).then((held) => {
+      if (!cancelled) setHeldMenus(held)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [siteId, quickKeys.length])
+
+  const posMenus = quickKeys.length > 0 ? posMenusProp : (heldMenus ?? posMenusProp)
+
   /* ── Specials and scheduled prices, re-checked as the clock moves ──────
      A basket can sit open while a window opens or closes, so this ticks as well
      as recomputing on every change. A slip that kept a price the shop stopped
@@ -1139,10 +1181,14 @@ export default function PosShell({
      true while a till is simply sitting there — so it rides the same tick. */
   const [clock, setClock] = useState(() => Date.now())
   useEffect(() => {
-    if (specials.length === 0 && pendingPrices.length === 0) return
+    /* Menus ride this tick too (231). Without them in the guard, a till in a
+       shop that runs menus but no promotions would never re-render on the
+       clock — and the grid would sit on breakfast until somebody touched it,
+       which is precisely the hour nobody is touching it. */
+    if (specials.length === 0 && pendingPrices.length === 0 && posMenus.length === 0) return
     const timer = setInterval(() => setClock(Date.now()), 30_000)
     return () => clearInterval(timer)
-  }, [specials.length, pendingPrices.length])
+  }, [specials.length, pendingPrices.length, posMenus.length])
 
   /*
    * What every product costs right now, after any scheduled change that is due.
@@ -1547,6 +1593,90 @@ export default function PosShell({
       cancelled = true
     }
   }, [openDepartment, priceStructureId, till.online, siteId])
+
+  /* ── The menu in force, and the grid it leaves ────────────────────────
+     Recomputed on the `clock` tick above, so the changeover happens on this
+     machine's own clock rather than whenever the catalogue next syncs.
+
+     ⚠ BROWSE ONLY. Search results are deliberately NOT filtered: an off-menu
+     product stays sellable by scan or by search, which is the promise 231
+     makes and the reason a kitchen can still make you eggs at 11:05. Filtering
+     search as well would turn a hospitality decision into a refusal. */
+  /*
+   * ⚠ `terminal?.id ?? null` — and the `null` is deliberate, not a fallback.
+   *
+   * `activeMenu` treats undefined as "do not narrow" (what the back office's
+   * preview wants) and null as "a machine that matches no till", which gets
+   * the shop-wide menus only. Passing undefined here would put a menu pinned
+   * to the bar on an unclaimed machine, which is the bug this parameter
+   * exists to prevent. See 232.
+   */
+  const liveMenu = useMemo(
+    () => activeMenu(posMenus, new Date(clock), terminal?.id ?? null),
+    [posMenus, clock, terminal?.id],
+  )
+
+  /* The department path lookup the engine needs, built once per department
+     list rather than per product — a 400-tile grid would otherwise climb the
+     tree 400 times to answer the same handful of questions. */
+  const departmentPath = useMemo(() => {
+    const byId = new Map(departments.map((d) => [d.id, d]))
+    const cache = new Map<number, number[]>()
+    return (departmentId: number | null): number[] => {
+      if (departmentId === null) return []
+      const hit = cache.get(departmentId)
+      if (hit) return hit
+      const path: number[] = []
+      const seen = new Set<number>()
+      let current = byId.get(departmentId)
+      while (current && !seen.has(current.id)) {
+        seen.add(current.id)
+        path.push(current.id)
+        current = current.parentId === null ? undefined : byId.get(current.parentId)
+      }
+      cache.set(departmentId, path)
+      return path
+    }
+  }, [departments])
+
+  const browseProducts = useMemo(
+    () => productsOnMenu(browse.products, liveMenu, departmentPath),
+    [browse.products, liveMenu, departmentPath],
+  )
+
+  /*
+   * The rail and the drill tiles, filtered to match.
+   *
+   * Without this the till draws every department it has ever had, and at
+   * breakfast most of them open onto nothing — a cashier presses "Burgers"
+   * and gets an empty pane with no explanation, which reads as a broken till.
+   *
+   * ⚠ Judged from the MENU'S SCOPE, not from the products on screen. The till
+   * only ever holds the open department's products, so "does this department
+   * still have anything" cannot be answered by looking at the grid — every
+   * unopened department would look empty and the rail would collapse to one
+   * button.
+   *
+   * A department counts as on the menu when the menu includes it or an
+   * ancestor of it, and does not exclude it — the same rule `menuAllows`
+   * applies to a product, minus the per-product rows.
+   */
+  const menuDepartments = useMemo(
+    () =>
+      departmentsOnMenu(departments, liveMenu, (departmentId) => {
+        if (!liveMenu) return true
+        const path = new Set(departmentPath(departmentId))
+        let included = false
+        for (const item of liveMenu.items) {
+          if (item.departmentId === null) continue
+          if (!path.has(item.departmentId)) continue
+          if (item.effect === 'exclude') return false
+          included = true
+        }
+        return included
+      }),
+    [departments, liveMenu, departmentPath],
+  )
 
   /* ── Actions ──────────────────────────────────────────────────────────── */
 
@@ -5755,7 +5885,8 @@ export default function PosShell({
         ) : (
           <>
         <DeptRail
-          departments={departments}
+          /* The menu's departments, so no rail button opens onto nothing. */
+          departments={menuDepartments}
           activeId={state.catalog.kind === 'departments' ? state.catalog.path[0] ?? null : null}
           /* root: the rail only ever lists top-level departments, so picking one
              starts a fresh trail rather than adding to wherever the cashier
@@ -5766,10 +5897,15 @@ export default function PosShell({
         <CatalogPane
           view={state.catalog}
           query={state.query}
-          departments={departments}
+          /* Same list as the rail: the drill tiles and the breadcrumb must
+             agree with it, or drilling would offer a department the rail has
+             already said is not on the menu. */
+          departments={menuDepartments}
           results={results}
           searching={searching}
-          browse={browse}
+          /* The menu's grid, not the department's whole contents. `loading` is
+             carried through untouched so a slow fetch still shows its skeleton. */
+          browse={{ loading: browse.loading, products: browseProducts }}
           onQuery={(query) => dispatch({ type: 'SET_QUERY', query })}
           onScan={submitCode}
           onDrill={(departmentId) => dispatch({ type: 'DRILL', departmentId })}

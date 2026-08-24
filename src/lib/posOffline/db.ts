@@ -342,4 +342,13 @@ export const KV = {
   instructionGroups: 'instructionGroups',
   /** productId → the ids of the questions it asks first, in order. */
   productInstructions: 'productInstructions',
+  /**
+   * The shop's rotating menus (231), day masks and hour bands UNevaluated.
+   *
+   * Same bargain as the specials and pending prices above: the till picks the
+   * live menu against its OWN clock, so breakfast gives way to lunch at eleven
+   * on a machine that has been off the network since yesterday — and at the
+   * same instant on every till in the shop.
+   */
+  posMenus: 'posMenus',
 } as const

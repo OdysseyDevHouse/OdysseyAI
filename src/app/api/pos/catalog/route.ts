@@ -12,6 +12,7 @@ import { getSequence } from '@/lib/site/sequences'
 import { numberingConfig, tillNumber } from '@/lib/site/numbering'
 import { operatorsForDevice } from '@/lib/site/offlineOperators'
 import { listAllQuickKeys } from '@/lib/site/quickKeys'
+import { livePosMenus } from '@/lib/site/posMenus'
 import { readInstructionLibrary } from '@/lib/site/instructions'
 import { siteQuery } from '@/lib/siteDb'
 
@@ -53,12 +54,20 @@ export const dynamic = 'force-dynamic'
  * how it should be cooked, and no amount of patching products into it would
  * change that: the questions are not on the product rows.
  *
+ * 5 added the alias barcodes (143) — TillProduct.barcodes rides the feed.
+ *
+ * 6 added the rotating menus (231) and, with them, `posSortOrder` on every
+ * product row. A till on 5 holds neither, so it would go on drawing one
+ * all-day grid in alphabetical order — which is precisely what it drew before
+ * this feature, with nothing on screen to say why the breakfast menu never
+ * arrives. Patching products into it cannot fix that: the menus are not on
+ * the product rows.
+ *
  * ⚠ MUST match `SCHEMA` in lib/posOffline/catalog.ts. The till sends its own
  * number and this route decides whether a delta is safe; bump only one and every
  * till in the shop full-loads on every poll, forever, with no error to show for it.
  */
-// 5 added the alias barcodes (143) — TillProduct.barcodes rides the feed.
-const CATALOG_SCHEMA = 5
+const CATALOG_SCHEMA = 6
 
 /**
  * Ceiling on one response.
@@ -146,6 +155,7 @@ export async function GET(req: NextRequest) {
     departments,
     tenders,
     specials,
+    posMenus,
     pendingPrices,
     settings,
     operators,
@@ -160,6 +170,17 @@ export async function GET(req: NextRequest) {
     // clock, so a happy hour starting at five begins on time even on a catalog
     // fetched at ten to.
       liveSpecials(siteId),
+    /*
+     * The rotating menus (231), sent the same way and for the same reason:
+     * whole, with their day masks and hour bands UNevaluated.
+     *
+     * The till picks the live one against its own clock, so breakfast gives
+     * way to lunch at eleven exactly — on every till in the shop at once, and
+     * on a till that has been off the network since yesterday. Choosing the
+     * menu here instead would smear the changeover across the fifteen-minute
+     * sync interval and strand an offline till on whatever it last downloaded.
+     */
+      livePosMenus(siteId),
     /*
      * Scheduled price changes, sent the same way and for the same reason: the
      * till compares the moment against its OWN clock, so a six o'clock price
@@ -371,6 +392,14 @@ export async function GET(req: NextRequest) {
       quickKeys,
       quickKeyProductNames,
       quickKeyDepartmentNames,
+      /*
+       * The rotating menus, windows unevaluated. Stored rather than left on the
+       * page's props for the same reason the quick keys and pending prices are:
+       * the props are right on a fresh load and gone after a reload with no
+       * network — and a café that reloads a till at 10:55 must still get its
+       * lunch menu at 11:00.
+       */
+      posMenus,
     },
     {
       // Never cached by anything in between. A catalog is per-site, per-device and

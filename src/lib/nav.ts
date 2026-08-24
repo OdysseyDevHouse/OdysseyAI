@@ -19,6 +19,7 @@ import {
   ShoppingCart,
   Gift,
   Gem,
+  Stamp,
   FileText,
   Users,
   Undo2 as Reverse,
@@ -229,16 +230,23 @@ export const NAV: NavSection[] = [
    * `online_store` module and a till-only shop that has bought loyalty then has
    * no front door to it at all.
    *
-   * One link rather than a group, because the three screens that decide how the
-   * programme WORKS — its rules, its tiers and the punch cards — are set once
-   * and stay in the setup hub. What is left is a single operational screen, and
-   * a heading that opens onto one row is worse than the row.
+   * Four rows, not a members list and a Setup hub.
+   *
+   * The hub held exactly three tiles, which is the size at which a hub costs
+   * more than it gives: every route to Tiers went Loyalty → Setup → Tiers, two
+   * clicks and a landing page whose only job was to list what the menu could
+   * have listed itself. A hub earns its place when browsing it beats reading a
+   * list, and three items is never that.
+   *
+   * They are still the screens that are SET ONCE, so they come after the
+   * members list somebody opens daily — the order is how often a row is used,
+   * not how important it is.
    */
   {
     label: 'Loyalty',
     icon: Gem,
     module: 'loyalty',
-    keywords: 'members points balance rewards earned loyalty programme',
+    keywords: 'members points balance rewards earned loyalty programme tiers punch cards',
     items: [
       {
         label: 'Members',
@@ -250,17 +258,31 @@ export const NAV: NavSection[] = [
         description: 'Members, their points and what they have earned',
       },
       {
-        /* The programme, its tiers and the punch cards, which used to be three
-           tiles in the setup hub. They are set once, so they come after the
-           list somebody opens daily — but they belong to LOYALTY, not to a
-           general settings screen a shop without the module never opens. */
-        label: 'Setup',
-        href: '/loyalty/setup',
+        label: 'Programme',
+        href: '/loyalty/programme',
         icon: Settings,
         built: true,
         capability: 'loyalty.view',
-        keywords: 'programme rules earn rate redemption tiers levels vip punch card stamps settings configure',
-        description: 'How the programme rewards people, and what a point is worth',
+        keywords: 'points rewards earn rate redemption programme rules settings configure',
+        description: 'Whether points are earned, at what rate, and what they redeem for',
+      },
+      {
+        label: 'Tiers',
+        href: '/loyalty/tiers',
+        icon: Gem,
+        built: true,
+        capability: 'loyalty.view',
+        keywords: 'tiers levels vip bronze silver gold status benefits',
+        description: 'Bronze, silver, gold — what it takes to get there and what it gives',
+      },
+      {
+        label: 'Punch cards',
+        href: '/loyalty/cards',
+        icon: Stamp,
+        built: true,
+        capability: 'loyalty.view',
+        keywords: 'punch card stamps buy x get y free coffee',
+        description: 'Buy nine, get the tenth free — punch cards and what fills them',
       },
     ],
   },
@@ -662,6 +684,7 @@ export const SUBPAGE_LABELS = {
   '/setup/numbering': 'Numbering',
   '/setup/quick-keys': 'Quick keys',
   '/setup/menu-designer': 'Menu designer',
+  '/setup/pos-menus': 'Rotating menus',
   '/setup/tables': 'Tables',
   '/setup/reservations': 'Reservations',
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
@@ -703,17 +726,13 @@ export const SUBPAGE_LABELS = {
   '/staff/leave-types': 'Leave types',
   '/staff/cost': 'Cost per employee',
   '/credit/levels': 'Credit levels',
-  /* The members list has its own menu SECTION, so — unlike every neighbour
-     here — this entry is not what names the screen: the sidebar, the
-     breadcrumb and the search all read the section. It stays only because
-     `SubpageHref` is derived from these keys and SUBPAGE_KEYWORDS below is
-     keyed by it, so deleting this line fails the build. The three screens
-     under it are owned by /setup and read "Setup › …", not "Loyalty › …". */
+  /* Loyalty names ALL FOUR of its screens in the menu — the members list and
+     the three that decide how the programme works. None of them is a hub
+     screen, so none is named here: the sidebar and the breadcrumb read the
+     section. This one key stays only because `SubpageHref` is derived from
+     these keys and SUBPAGE_KEYWORDS below is keyed by it, so deleting the line
+     fails the build. */
   '/loyalty': 'Loyalty',
-  '/loyalty/setup': 'Loyalty setup',
-  '/loyalty/programme': 'Programme',
-  '/loyalty/tiers': 'Tiers',
-  '/loyalty/cards': 'Punch cards',
   /* Commission rules had no entry here at all — no tile, no breadcrumb, no
      search — reachable only by somebody already standing on /commission who
      knew to look. It decides what every figure on that screen comes to, which
@@ -824,20 +843,15 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
      the prefix would otherwise send the trail to the hub that no longer lists
      it, leaving no way back to the screen it was reached from. */
   '/setup/audit': '/reports',
-  /* /loyalty is NOT owned by a hub: it is a menu section in its own right, so
-     `breadcrumbFor`'s section scan names it. An entry here would win over that
-     scan — `hubFor` is consulted first — and put the screen back under a hub a
-     till-only shop cannot see. Its three setup screens below still read
-     "Setup ›", because those stay listed in the setup hub. */
+  /* No /loyalty entry, for any of its four screens: Loyalty is a menu section
+     in its own right and every one of its rows is named there, so
+     `breadcrumbFor`'s section scan resolves them. An entry here would win over
+     that scan — `hubFor` is consulted first — and put a screen back under a hub
+     a till-only shop cannot see. */
   '/staff/pay-rules': '/setup',
   '/staff/leave-types': '/setup',
   '/staff/cost': '/setup',
   '/credit/levels': '/setup',
-  /* The loyalty settings belong to LOYALTY's own setup hub, not the general
-     one — a shop without the module never opens /setup looking for them. */
-  '/loyalty/programme': '/loyalty/setup',
-  '/loyalty/tiers': '/loyalty/setup',
-  '/loyalty/cards': '/loyalty/setup',
   /* The online store's five switches, likewise. They were cross-references
      from the general setup hub; now they have one front door. */
   '/online-store/setup': '/online-store/settings',
@@ -936,6 +950,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
      screen a hit for "rang" — which is how somebody finds Tills. */
   '/setup/menu-designer':
     'menu designer browse grid departments categories order sort drag tiles till pos catalogue',
+  '/setup/pos-menus':
+    'rotating menus breakfast lunch dinner day part daypart time of day service hours schedule till pos grid',
   '/setup/tables': 'restaurant hospitality floor sections covers waiter bills',
   '/setup/reservations': 'bookings diary online booking form opening hours sittings covers restaurant',
   '/setup/reconciliation': 'drift integrity check invariants audit',
@@ -959,10 +975,10 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/staff/cost': 'wages salary labour cost payroll per employee',
   '/commission/rules': 'commission rates rules percentage sales rep earnings targets',
   '/credit/levels': 'credit limit terms account hold blocked risk dunning reminders',
+  /* Only the section's own key. Its other three screens are menu rows now and
+     carry their synonyms on the NavItem, which is what the sidebar search
+     reads for a row it can see. */
   '/loyalty': 'loyalty members points balance rewards earned customers programme',
-  '/loyalty/programme': 'points rewards earn rate redemption programme rules',
-  '/loyalty/tiers': 'tiers levels vip bronze silver gold status benefits',
-  '/loyalty/cards': 'punch card stamps buy x get y free coffee',
   /* Settings the setup hub cross-references — see SETUP_ELSEWHERE. */
   '/online-store/setup': 'domain url delivery fees shipping open closed launch go live web shop',
   '/online-store/statuses': 'workflow stages pipeline packing shipped fulfilment',

@@ -13,6 +13,7 @@ const DOC_LABELS: Record<string, string> = {
   sales_order: 'Sales orders',
   stock_adjustment: 'Stock adjustments',
   job_card: 'Job cards',
+  cashup: 'Cash-ups',
 }
 
 /**

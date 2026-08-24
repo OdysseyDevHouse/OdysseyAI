@@ -1,4 +1,4 @@
-import { MAX_ROWS, type CustomReportSpec } from "./spec";
+import { MAX_ROWS, type CustomReportSpec, type SpecColumn } from "./spec";
 import type { Capability } from "../site/permissions";
 
 /**
@@ -109,6 +109,36 @@ function spec(
     ...s,
   };
 }
+
+/**
+ * The cash-up history's columns, in the order a drawer is actually reconciled.
+ *
+ * Named because the template's base spec and its first cut must be identical —
+ * the report renders before anyone has picked a cut — and two copies of a
+ * fourteen-column list drift the first time one is edited.
+ *
+ * The order tells the story of the shift: what it opened with, what it sold,
+ * what moved in and out that was not a sale, what the till therefore expected,
+ * what was actually counted, and the difference between those last two. Read
+ * left to right it reconciles; shuffled it is just fourteen numbers.
+ */
+const CASHUP_SHIFT_COLUMNS: SpecColumn[] = [
+  /* First, and the reason this report is worth opening rather than just
+     reading: every row leads to the signed count behind it, which is where a
+     variance is actually explained. */
+  { field: "cashupRef" },
+  { field: "openedAt" },
+  { field: "terminalCode" },
+  { field: "userName" },
+  { field: "openingFloat" },
+  { field: "saleCount" },
+  { field: "payins" },
+  { field: "payouts" },
+  { field: "drops" },
+  { field: "expectedTotal" },
+  { field: "countedTotal" },
+  { field: "variance" },
+]
 
 export const TEMPLATES: ReportTemplate[] = [
   /* ── Sales ───────────────────────────────────────────────────────────────── */
@@ -241,31 +271,103 @@ export const TEMPLATES: ReportTemplate[] = [
   {
     id: "cashup-history",
     name: "Cash-up history",
-    description: "Every shift closed in the period, with its drawer variance.",
+    description:
+      "Every shift closed in the period — the float, what moved through the drawer, what was counted, and where it came out short or over.",
     /* Sales, not Operations: a cash-up is what the till TOOK, so whoever
        reaches for it is reading the day's takings rather than auditing how the
-       shop ran. It joins Drawer variance by person, filed under Sales for the
-       same reason. The per-tender breakdowns and the till-void reports stay in
-       Operations — those ask whether the counting and the keying were done
-       properly, which is a different question. */
+       shop ran. Drawer variance by person and Cash-up by tender used to be
+       separate tiles beside it; they are now cuts of this one, so the whole
+       drawer question lives at a single entry point. The till-void reports stay
+       in Operations — those ask whether the keying was done properly, which is
+       a different question. */
     category: "Sales",
     permission: "sales.cashup",
+    /* Must match the first cut — the report renders before anyone has chosen. */
     spec: spec({
       source: "shifts",
-      columns: [
-        /* First, and the reason this report is worth opening rather than just
-           reading: every row leads to the signed count behind it, which is
-           where a variance is actually explained. */
-        { field: "cashupRef" },
-        { field: "openedAt" },
-        { field: "terminalCode" },
-        { field: "userName" },
-        { field: "expectedTotal" },
-        { field: "countedTotal" },
-        { field: "variance" },
-      ],
+      columns: CASHUP_SHIFT_COLUMNS,
       sort: { key: "openedAt", dir: "desc" },
     }),
+    /*
+     * Three cuts of one question: "what happened in the drawer".
+     *
+     * The shift cut is the day's list. The tender cut is the same cash-ups
+     * opened up — which tender was short, which is what a manager asks the
+     * moment the summary shows a variance at all. The person cut is the ranking
+     * that used to be its own tile, 'Drawer variance by person'; it read the
+     * same `shifts` rows as the history and differed only in shape, which is a
+     * cut rather than a report.
+     *
+     * The tender cut runs on a DIFFERENT SOURCE (shift_counts, one row per
+     * tender per cash-up) rather than sharing the shift spec. It has to: a
+     * per-tender declaration cannot be a column on a one-row-per-shift report,
+     * because the tenders a site has are data — this site has ten, another has
+     * four, and a shop can add one this afternoon. Declaring a column per tender
+     * would need the catalogue to know the shop's tender list, which it cannot.
+     */
+    variants: [
+      {
+        key: "shift",
+        label: "By cash-up",
+        name: "Cash-up history",
+        description:
+          "Every shift closed in the period — the float, what moved through the drawer, what was counted, and where it came out short or over.",
+        /* No legacyId: it would be 'cashup-history', this template's own id, and
+           getLegacyVariant runs before getTemplate and returns no variants —
+           which would strip the switcher. As the first cut the bare id already
+           lands here. Same trap as the Cancellations report; see the note there. */
+        spec: spec({
+          source: "shifts",
+          columns: CASHUP_SHIFT_COLUMNS,
+          sort: { key: "openedAt", dir: "desc" },
+        }),
+      },
+      {
+        key: "tender",
+        label: "By tender",
+        name: "Cash-up by tender",
+        description:
+          "What each tender was declared as against what the till expected. One tender short on one till is the pattern; every tender short is a counting habit.",
+        /* Was its own Operations tile, 'Cash-up by tender'. Kept resolvable for
+           the reason every legacyId is — favourites, schedules and the API. */
+        legacyId: "cashup-by-tender",
+        spec: spec({
+          source: "shiftCounts",
+          columns: [
+            { field: "openedAt" },
+            { field: "terminalCode" },
+            { field: "userName" },
+            { field: "tenderName" },
+            { field: "expected" },
+            { field: "counted" },
+            { field: "variance" },
+          ],
+          sort: { key: "openedAt", dir: "desc" },
+        }),
+      },
+      {
+        key: "person",
+        label: "By person",
+        name: "Drawer variance by person",
+        description:
+          "Ranked by how far out the drawer was, ignoring direction — a consistent R100 over is as worth asking about as R100 short.",
+        /* Was its own tile. The id is kept resolvable because a shop's
+           favourites, saved columns, 06:00 schedules and the public API all
+           name it — see the note on ReportTemplate.variants. */
+        legacyId: "cash-variance-by-user",
+        spec: spec({
+          source: "shifts",
+          groupFields: ["userName"],
+          columns: [
+            { field: "__rows" },
+            { field: "saleCount", agg: "sum" },
+            { field: "variance", agg: "sum" },
+            { field: "varianceAbs", agg: "sum" },
+          ],
+          sort: { key: "varianceAbs_sum", dir: "desc" },
+        }),
+      },
+    ],
   },
   {
     /*
@@ -802,22 +904,9 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: "discountTotal_sum", dir: "desc" },
     }),
   },
-  {
-    /* Id kept for the reason void-history's is — see there. */
-    id: "voids-by-reason",
-    name: "Cancellations by reason",
-    description:
-      "What cancelling is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.",
-    category: "Sales",
-    permission: "reports.view",
-    spec: spec({
-      source: "sales",
-      groupFields: ["cancelReasonName"],
-      columns: [{ field: "__rows" }, { field: "totalIncl", agg: "sum" }],
-      filters: [{ field: "status", op: "eq", value: "cancelled" }],
-      sort: { key: "totalIncl_sum", dir: "desc" },
-    }),
-  },
+  /* 'voids-by-reason' was here. It is now the "By reason" cut of the
+     Cancellations report — the two read identical rows and differed only in
+     shape. Its id still resolves, as a legacyId on that cut. */
   {
     id: "returns-by-reason",
     name: "Returns by reason",
@@ -1932,24 +2021,10 @@ export const TEMPLATES: ReportTemplate[] = [
      there too, second under Sales, so that reading this array in order matches
      the order the hub renders. The per-tender breakdowns and the till-void
      reports below stay in Operations. */
-  {
-    id: "cash-variance-by-user",
-    name: "Drawer variance by person",
-    description:
-      "Ranked by how far out the drawer was, ignoring direction — a consistent R100 over is as worth asking about as R100 short.",
-    category: "Sales",
-    permission: "sales.cashup",
-    spec: spec({
-      source: "shifts",
-      groupFields: ["userName"],
-      columns: [
-        { field: "__rows" },
-        { field: "variance", agg: "sum" },
-        { field: "varianceAbs", agg: "sum" },
-      ],
-      sort: { key: "varianceAbs_sum", dir: "desc" },
-    }),
-  },
+  /* 'cash-variance-by-user' was here — Drawer variance by person. It read the
+     same `shifts` rows as the cash-up history and differed only in shape, so it
+     is now that report's "By person" cut. Its id still resolves, as a legacyId
+     on the cut. */
   {
     id: "refund-history",
     name: "Refund history",
@@ -1989,11 +2064,13 @@ export const TEMPLATES: ReportTemplate[] = [
      * name and description below say "cancelled", which is the only word the
      * database has had since 022 merged the two states. */
     id: "void-history",
-    name: "Cancellation history",
+    name: "Cancellations",
     description:
-      "Documents that were cancelled, with the reason given. A run of the same reason on one till is the pattern to ask about.",
+      "What was cancelled and why — document by document, or ranked by reason.",
     category: "Sales",
     permission: "reports.view",
+    /* The base spec is the History cut, so an id resolved without a `cut` runs
+       the detail list — which is what 'void-history' has always returned. */
     spec: spec({
       source: "sales",
       columns: [
@@ -2016,6 +2093,74 @@ export const TEMPLATES: ReportTemplate[] = [
       filters: [{ field: "status", op: "eq", value: "cancelled" }],
       sort: { key: "documentDate", dir: "desc" },
     }),
+    /*
+     * Two cuts of one question, because the old pair were not two reports.
+     *
+     * 'Cancellation history' and 'Cancellations by reason' read the same rows
+     * through the same `status = cancelled` filter, and the history already
+     * carried the reason. What differed was SHAPE — one row per document versus
+     * one row per reason with a count and a total — which is a cut, not a
+     * separate report. Two hub tiles for that made people pick between them
+     * before knowing which shape answered their question.
+     *
+     * Both old ids live on as legacy ids below, so favourites, stored column
+     * choices, 06:00 schedules and the public API keep resolving to exactly the
+     * figures they always returned.
+     */
+    variants: [
+      {
+        key: "history",
+        label: "History",
+        name: "Cancellation history",
+        description:
+          "Documents that were cancelled, with the reason given. A run of the same reason on one till is the pattern to ask about.",
+        /* NO legacyId, deliberately, and it is load-bearing.
+
+           The only id this cut could claim is 'void-history' — this template's
+           OWN id. getLegacyVariant is consulted BEFORE getTemplate in resolve.ts
+           and deliberately returns `variants: []` ("no switch on a legacy id"),
+           so claiming it here would make /reports/void-history render with no
+           cut switcher at all and strand the By reason cut behind a URL nobody
+           can reach from the hub.
+
+           Nothing is lost by omitting it: as the FIRST variant this is already
+           the default, so the bare id runs exactly this spec. Its stored column
+           choices land under prefsId `void-history:history` rather than
+           `void-history`, which matches what invoice-history's default cut
+           already does — a store that had hidden columns here re-picks them
+           once. */
+        spec: spec({
+          source: "sales",
+          columns: [
+            { field: "documentDate" },
+            { field: "documentNumber" },
+            { field: "customerName" },
+            { field: "userName" },
+            { field: "terminalCode" },
+            { field: "cancelReasonName" },
+            { field: "voidReason" },
+            { field: "totalIncl" },
+          ],
+          filters: [{ field: "status", op: "eq", value: "cancelled" }],
+          sort: { key: "documentDate", dir: "desc" },
+        }),
+      },
+      {
+        key: "reason",
+        label: "By reason",
+        name: "Cancellations by reason",
+        description:
+          "What cancelling is costing, and why. One reason far ahead of the rest is either a training problem or a process one — the split says which.",
+        legacyId: "voids-by-reason",
+        spec: spec({
+          source: "sales",
+          groupFields: ["cancelReasonName"],
+          columns: [{ field: "__rows" }, { field: "totalIncl", agg: "sum" }],
+          filters: [{ field: "status", op: "eq", value: "cancelled" }],
+          sort: { key: "totalIncl_sum", dir: "desc" },
+        }),
+      },
+    ],
   },
   {
     id: "discount-history",
@@ -2096,27 +2241,9 @@ export const TEMPLATES: ReportTemplate[] = [
    * Each of these was a report v2 had and this system could not express, not
    * for want of data but for want of a source over the table holding it.
    */
-  {
-    id: "cashup-by-tender",
-    name: "Cash-up by tender",
-    description:
-      "What each tender was expected to hold and what was counted. One tender short on one till is the pattern; every tender short is a counting habit.",
-    category: "Operations",
-    permission: "sales.cashup",
-    spec: spec({
-      source: "shiftCounts",
-      columns: [
-        { field: "openedAt" },
-        { field: "terminalCode" },
-        { field: "userName" },
-        { field: "tenderName" },
-        { field: "expected" },
-        { field: "counted" },
-        { field: "variance" },
-      ],
-      sort: { key: "openedAt", dir: "desc" },
-    }),
-  },
+  /* 'cashup-by-tender' was here. It is now the "By tender" cut of the cash-up
+     history, which is where someone reading a variance actually goes next.
+     Its id still resolves, as a legacyId on that cut. */
   {
     id: "variance-by-tender",
     name: "Variance by tender",
@@ -2161,11 +2288,13 @@ export const TEMPLATES: ReportTemplate[] = [
    *
    * ── WHY THE IDS SAY till-void AND NOT void ────────────────────────────────
    *
-   * 'voids-by-reason' and 'void-history' are already taken, by the two
-   * CANCELLATION reports in the Sales category. Those kept their old ids on
-   * purpose — an id is stored in report_favorites and report_schedules, so
-   * renaming one orphans every favourite and silently stops a scheduled email
-   * — while their names moved to the word the database actually uses.
+   * 'voids-by-reason' and 'void-history' are already taken by the CANCELLATIONS
+   * report in the Sales category — 'void-history' is its id, and
+   * 'voids-by-reason' is the legacyId of its By reason cut, from back when the
+   * two cuts were separate tiles. Both kept their old spelling on purpose — an
+   * id is stored in report_favorites and report_schedules, so renaming one
+   * orphans every favourite and silently stops a scheduled email — while their
+   * names moved to the word the database actually uses.
    *
    * So the collision is not an accident of naming, it is the rename showing
    * through, and the new reports take new ids rather than disturbing stored

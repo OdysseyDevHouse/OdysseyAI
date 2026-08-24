@@ -39,13 +39,18 @@ export {
 export {
   TABLE,
   TABLE_HEAD_ROW,
+  TABLE_HEAD_STICKY,
+  TABLE_HEAD_STICKY_INSET,
   TABLE_NUMERIC,
   TABLE_ROW,
+  TABLE_SCROLLER,
   TABLE_TD,
   TABLE_TD_INPUT,
   TABLE_TH,
   TABLE_TOTAL_ROW,
 } from './styles'
+export { TableScroller } from './TableScroller'
+export { useFitViewport } from './useFitViewport'
 
 export {
   Field,

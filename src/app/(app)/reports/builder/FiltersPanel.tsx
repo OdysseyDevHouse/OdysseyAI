@@ -90,7 +90,7 @@ export default function FiltersPanel({
   }
 
   const body = (
-    <div className={`flex flex-col gap-4 ${chrome ? 'p-4 pt-0' : ''}`}>
+    <div className={`flex flex-col gap-4 ${chrome ? 'p-4' : ''}`}>
       <div className="flex flex-col gap-2">
           {spec.filters.map((filter, i) => {
             const field = findField(source, filter.field)

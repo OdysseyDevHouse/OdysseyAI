@@ -38,14 +38,20 @@ export default async function DeclarePage({
   return (
     <>
       <PageHeader
+        /* The NUMBER is the title of a signed cash-up (233), because that is
+           what this page then is: a permanent record at a permanent address,
+           and the thing anybody referring to it will quote. The owner moves
+           into the subtitle, where it still says whose drawer this was.
+           A count still in progress keeps the owner as its heading — nobody
+           standing at a drawer is looking for a reference number. */
         title={
           view.finalizedAt
-            ? `Cash-up — ${view.ownerLabel}`
+            ? (view.documentNumber ?? `Cash-up #${view.shiftId}`)
             : `Cash declaration — ${view.ownerLabel}`
         }
         subtitle={
           view.finalizedAt
-            ? 'Signed off. Every figure below is the one that was committed at the time.'
+            ? `${view.ownerLabel} · signed off. Every figure below is the one that was committed at the time.`
             : `Count the drawer, declare every tender, and close ${view.userName} off. Trading since ${view.openedAt.toLocaleString('en-ZA')}.`
         }
         action={

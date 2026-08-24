@@ -52,6 +52,7 @@ function fakeProduct(overrides: Partial<TillProduct> = {}): TillProduct {
     variableType: 'none',
     maxDiscountPct: 0,
     imageColor: null,
+    posSortOrder: 0,
     ...overrides,
   }
 }

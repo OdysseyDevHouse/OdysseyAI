@@ -13,11 +13,26 @@
  * `sequences.ts` re-exports this, so every existing import keeps working.
  */
 
-/** The store and till segments of a number, when it carries them. */
-export type NumberSegments = { store: string; till: string }
+/**
+ * The store and till segments of a number, when it carries them.
+ *
+ * `till` is OPTIONAL, and that is not a convenience — it is the difference
+ * between a document a REGISTER issues and one the STORE issues. An invoice is
+ * rung up at a till and names it: INV_01_02_000041. A cash-up is not. In user
+ * mode a shift has no till at all — it belongs to a person who worked whatever
+ * registers they worked — so there is no till to name, and inventing one would
+ * put a false claim on a count somebody signs.
+ *
+ * The STORE segment stays required, because it is the half doing the real work:
+ * every branch numbers its first till 01 and its first cash-up 000001, so
+ * without it a twenty-branch group has twenty rows all claiming CSH_000001 and
+ * nothing to tell them apart. Each site has its own database, so no unique index
+ * can catch that.
+ */
+export type NumberSegments = { store: string; till?: string }
 
 /**
- * INV000041 · INV-2026-000041 · INV_01_02_000041 · INV_01_02_2026_000041
+ * INV000041 · INV-2026-000041 · INV_01_02_000041 · CSH_01_000001
  *
  * The year goes in when the counter resets yearly, because otherwise invoice 41 of
  * this year and invoice 41 of last year are the same string — which breaks the
@@ -49,7 +64,12 @@ export function formatNumber(
     if (periodKey) return `${prefix}-${periodKey}-${digits}`
     return `${prefix}${digits}`
   }
-  const scope = `${prefix}_${segments.store}_${segments.till}`
+  // A missing till segment collapses the scope to store-only — CSH_01_000001
+  // rather than CSH_01__000001, whose double underscore would break the LIKE
+  // prefix match in tillNumberPrefix and read as a dropped field to a human.
+  // Filtered rather than a ternary so a third segment, if one is ever added,
+  // joins the same way.
+  const scope = [prefix, segments.store, segments.till].filter(Boolean).join('_')
   if (periodKey) return `${scope}_${periodKey}_${digits}`
   return `${scope}_${digits}`
 }

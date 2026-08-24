@@ -7,7 +7,6 @@ import {
   Button,
   Card,
   CardHeader,
-  CardBody,
   DataTable,
   TableToolbar,
   ToolbarSearch,
@@ -260,56 +259,66 @@ export function MembersClient({
           ) : undefined
         }
       />
-      <CardBody>
-        {rows.length === 0 ? (
-          /* Joining is now a deliberate act, so the empty state offers it.
-             It used to say members appear "the first time a customer earns" —
-             true when membership was a side effect of being a customer, and
-             now a dead end: nobody would ever appear. */
-          <EmptyState
-            icon={<Icons.Gem />}
-            title="Nobody has joined yet"
-            hint="A member does not need a customer account — a name and a cell number is enough. Add the first one, or enrol somebody at the till."
-            action={joinButton}
+      {rows.length === 0 ? (
+        /* Joining is now a deliberate act, so the empty state offers it.
+           It used to say members appear "the first time a customer earns" —
+           true when membership was a side effect of being a customer, and
+           now a dead end: nobody would ever appear.
+
+           No CardBody around any of this: EmptyState brings its own px-6 py-16,
+           and DataTable is a full-bleed table whose cells are the gutter. A
+           wrapper padding both of them inset the table a second time. */
+        <EmptyState
+          icon={<Icons.Gem />}
+          title="Nobody has joined yet"
+          hint="A member does not need a customer account — a name and a cell number is enough. Add the first one, or enrol somebody at the till."
+          action={joinButton}
+        />
+      ) : (
+        <>
+          {/* Search and tier are CHILDREN, not `actions` — they narrow the
+              list. As actions they fell under the toolbar's `ml-auto` and were
+              pinned to the right edge, reading as buttons rather than filters.
+              `inCard` is what gives the band the card gutter and its rule; its
+              px-4 matches TABLE_TD, so the search box lines up with the Member
+              column heading beneath it. */}
+          <TableToolbar inCard>
+            <ToolbarSearch
+              value={search}
+              onChange={setSearch}
+              placeholder="Name, code or phone…"
+              aria-label="Search members"
+            />
+            {tierNames.length > 0 && (
+              <SegmentedControl
+                aria-label="Which tier"
+                value={tier}
+                onChange={setTier}
+                options={[
+                  { value: 'all', label: 'All' },
+                  ...tierNames.map((name) => ({ value: name, label: name })),
+                ]}
+              />
+            )}
+          </TableToolbar>
+          <DataTable
+            columns={columns}
+            rows={visible}
+            getRowKey={(row) => row.memberId}
+            empty={{ title: 'No members match', hint: 'Try a different search or tier.' }}
           />
-        ) : (
-          <>
-            <TableToolbar
-              actions={
-                <>
-                  <ToolbarSearch
-                    value={search}
-                    onChange={setSearch}
-                    placeholder="Name, code or phone…"
-                  />
-                  {tierNames.length > 0 && (
-                    <SegmentedControl
-                      value={tier}
-                      onChange={setTier}
-                      options={[
-                        { value: 'all', label: 'All' },
-                        ...tierNames.map((name) => ({ value: name, label: name })),
-                      ]}
-                    />
-                  )}
-                </>
-              }
-            />
-            <DataTable
-              columns={columns}
-              rows={visible}
-              getRowKey={(row) => row.memberId}
-              empty={{ title: 'No members match', hint: 'Try a different search or tier.' }}
-            />
-            {truncated && (
-              <Callout tone="brand" className="mt-3">
+          {truncated && (
+            /* The table is full-bleed, so the note takes the card gutter
+               itself rather than inheriting one from a wrapper. */
+            <div className="px-4 pb-4">
+              <Callout tone="brand">
                 Showing the first {rows.length} members by balance. Search to find someone further
                 down, or run the members report for the full list.
               </Callout>
-            )}
-          </>
-        )}
-      </CardBody>
+            </div>
+          )}
+        </>
+      )}
     </Card>
 
     <Modal open={joining} onClose={() => setJoining(false)} title="Add a member">

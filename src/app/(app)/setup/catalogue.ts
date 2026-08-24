@@ -27,18 +27,18 @@ import { SETUP_ELSEWHERE, type SubpageHref } from '@/lib/nav'
  *
  * Three kinds of route qualify. Screens under /setup itself; configuration that
  * lives under another section's route but is OWNED here, per `SUBPAGE_OWNER`
- * (pay rules, commission rules, the loyalty programme); and the screens in
- * `SETUP_ELSEWHERE` — settings this hub lists but leaves in the module that
- * owns them, so their breadcrumb still reads "Online Store › Store setup".
+ * (pay rules, commission rules); and the screens in `SETUP_ELSEWHERE` —
+ * settings this hub lists but leaves in the module that owns them, so their
+ * breadcrumb still reads "Online Store › Store setup".
+ *
+ * Loyalty is no longer one of them. Its programme, tiers and punch cards are
+ * menu rows under Loyalty itself, so they are not SUBPAGE_LABELS keys any more
+ * and a `/loyalty/${string}` arm here would match nothing.
  */
 export type SetupHref =
   | Extract<
       SubpageHref,
-      | `/setup/${string}`
-      | `/staff/${string}`
-      | '/credit/levels'
-      | '/commission/rules'
-      | `/loyalty/${string}`
+      `/setup/${string}` | `/staff/${string}` | '/credit/levels' | '/commission/rules'
     >
   | (typeof SETUP_ELSEWHERE)[number]
 
@@ -303,6 +303,15 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         keywords:
           'menu designer browse grid departments categories order sort drag tiles till pos catalogue',
         icon: 'LayoutGrid',
+        tone: 'emerald',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/setup/pos-menus',
+        description: 'Breakfast, lunch and dinner — the till switches by the clock.',
+        keywords:
+          'rotating menus breakfast lunch dinner day part daypart time of day service hours schedule till pos grid',
+        icon: 'Clock',
         tone: 'emerald',
         capability: 'setup.edit',
       },

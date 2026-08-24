@@ -12,6 +12,7 @@ import PosShell from './PosShell'
 import type { DraftDocType } from '@/lib/posOffline/draftOffline'
 import type { Special } from '@/lib/specialsEngine'
 import type { PendingSchedule } from '@/lib/priceSchedules'
+import type { PosMenu } from '@/lib/posMenuEngine'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { Terminal } from '@/lib/site/terminals'
 import type { PriceStructure } from '@/lib/site/lookups'
@@ -64,6 +65,7 @@ export default function PosEntry({
   depositAllowWalkin,
   specials,
   pendingPrices,
+  posMenus,
   quickKeys,
   quickKeyProductNames,
   quickKeyDepartmentNames,
@@ -114,6 +116,8 @@ export default function PosEntry({
   specials: Special[]
   /** Approved price changes, moments unevaluated — the till decides on its clock. */
   pendingPrices: PendingSchedule[]
+  /** The rotating menus (231), windows unevaluated. Passed straight through. */
+  posMenus: PosMenu[]
   quickKeys: QuickKeyRow[]
   quickKeyProductNames: Record<number, string>
   quickKeyDepartmentNames: Record<number, string>
@@ -337,6 +341,7 @@ export default function PosEntry({
       canVoid={operator.canVoid}
       specials={specials}
       pendingPrices={pendingPrices}
+      posMenus={posMenus}
       quickKeys={quickKeys}
       quickKeyProductNames={quickKeyProductNames}
       quickKeyDepartmentNames={quickKeyDepartmentNames}

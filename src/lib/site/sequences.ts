@@ -589,6 +589,17 @@ const OWN_TABLE_TYPES: Record<string, string> = {
    * function's contract, the same way 116 did for customer_assets.
    */
   ticket: 'tickets',
+  /*
+   * Cash-ups (233). Registered WITH the migration, for the fifth time of asking
+   * — stock takes, job cards, customer assets and laybys were each found long
+   * after their numbers had been issued, every one of them reporting its entire
+   * history as missing.
+   *
+   * 233 adds `shifts.status` for this contract alone, exactly as 116 and 165
+   * did. `shifts` had only closed_at, and open-versus-closed is not the question
+   * this function asks: an open shift is in progress, not a cancelled number.
+   */
+  cashup: 'shifts',
 }
 
 export async function verifySequence(

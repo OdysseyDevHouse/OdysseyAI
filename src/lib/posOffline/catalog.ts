@@ -6,6 +6,7 @@ import { deviceId } from '../deviceId'
 import { parseVariableBarcode } from '../barcodes'
 import type { TillProduct } from '../site/tillSearch'
 import type { PendingSchedule } from '../priceSchedules'
+import type { PosMenu } from '../posMenuEngine'
 /* Type-only, and therefore erased at compile time — `instructions.ts` is
    `server-only` and none of it reaches the browser bundle. The same trick as
    `OfflineOperator` below, and for the same reason: one definition of the shape
@@ -52,8 +53,13 @@ import type { TillInstructionGroup } from '../site/instructions'
  *
  * 5 added the alias barcodes (143) — TillProduct.barcodes rides the feed and
  * the Dexie multiEntry index makes an alias scan work offline.
+ *
+ * 6 added the rotating menus (231) and `posSortOrder` on every product row.
+ * A till on 5 has neither, so it draws one all-day grid in alphabetical order
+ * — which is what it drew before the feature existed, and says nothing about
+ * why the lunch menu never arrives.
  */
-const SCHEMA = 5
+const SCHEMA = 6
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -91,6 +97,8 @@ type CatalogResponse = {
   specials: unknown[]
   /** Optional: a server on schema 2 does not send it. See the default at the store. */
   pendingPrices?: PendingSchedule[]
+  /** Optional for the same reason: a server on schema 5 sends no menus. */
+  posMenus?: PosMenu[]
   settings: CatalogSettings
   priceStructureId: number | null
   terminal: { id: number; code: string; tillNumber: string | null } | null
@@ -218,6 +226,10 @@ export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
          has no such field in the response it is replacing, and storing
          `undefined` would leave the resolver with nothing to iterate. */
       { key: KV.pendingPrices, value: body.pendingPrices ?? [] },
+      /* Defaulted for the same reason: a till talking to a server on schema 5
+         gets no menus, and an empty list is exactly right — it means "show the
+         whole grid", which is what that till did before menus existed. */
+      { key: KV.posMenus, value: body.posMenus ?? [] },
       { key: KV.settings, value: body.settings },
       { key: KV.operators, value: body.operators },
       { key: KV.terminal, value: body.terminal },
@@ -370,17 +382,55 @@ export async function searchOffline(
   return [...byCode, ...byName]
 }
 
-/** Products filed in one department, for the tile grid. */
+/**
+ * Products filed in one department, for the tile grid.
+ *
+ * ── SORTED HERE, BECAUSE DEXIE CANNOT ────────────────────────────────────
+ *
+ * The online grid orders by menu position then description (tillSearch.ts's
+ * `menuOrder`), and this must match it exactly — a till that reordered its
+ * tiles the moment it lost the network would move the button a cashier
+ * reaches for by muscle memory, which is how the wrong thing gets sold.
+ *
+ * A Dexie compound index cannot express it: the rule is "positioned rows
+ * ascending, THEN unpositioned rows alphabetically", and 0 sorting last is
+ * not something an index can say (see 121). So the sort happens in JS, over
+ * one department's worth of rows rather than the whole file.
+ *
+ * ⚠ The limit is applied AFTER sorting, deliberately. Taking 200 rows in
+ * Dexie's own order and then sorting them would give a stable-looking grid
+ * built from an arbitrary 200 of the department's 400 products — and the
+ * tiles the shop dragged to the front could be the ones cut.
+ */
 export async function browseOffline(
   siteId: number,
   departmentId: number,
   limit = 200,
 ): Promise<TillProduct[]> {
-  return posDb(siteId)
-    .products.where('departmentId')
-    .equals(departmentId)
-    .limit(limit)
-    .toArray()
+  const rows = await posDb(siteId).products.where('departmentId').equals(departmentId).toArray()
+  rows.sort(menuOrder)
+  return rows.slice(0, limit)
+}
+
+/**
+ * The one sort rule for a till's browse grid, matching `menuOrder` in
+ * lib/site/tillSearch.ts and `productOrder` in lib/site/menuDesigner.ts.
+ *
+ * Three definitions of one rule is two too many, but they sit in three
+ * different runtimes — SQL, the browser's Dexie store, and the designer's
+ * server read — and none can import from another. Changing one means
+ * changing all three.
+ */
+function menuOrder(a: TillProduct, b: TillProduct): number {
+  const ap = a.posSortOrder ?? 0
+  const bp = b.posSortOrder ?? 0
+  // 0 is "never placed" and goes after everything positioned.
+  if (ap !== bp) {
+    if (ap === 0) return 1
+    if (bp === 0) return -1
+    return ap - bp
+  }
+  return a.description.localeCompare(b.description)
 }
 
 export async function storedDepartments(siteId: number) {
@@ -408,6 +458,21 @@ export async function storedOperators(siteId: number): Promise<OfflineOperator[]
  */
 export async function storedPendingPrices(siteId: number): Promise<PendingSchedule[]> {
   return (await kvGet<PendingSchedule[]>(siteId, KV.pendingPrices)) ?? []
+}
+
+/**
+ * The rotating menus this till is carrying, windows still unevaluated.
+ *
+ * Read from storage rather than from the page's props for the same reason the
+ * pending prices are: the props are right on a fresh load and gone after a
+ * reload with no network. A café that reloads a till at five to eleven must
+ * still get its lunch menu at eleven.
+ *
+ * Empty is the ordinary case and means "show the whole grid" — see
+ * `productsOnMenu` for why an empty grid is the wrong answer to "no menu".
+ */
+export async function storedPosMenus(siteId: number): Promise<PosMenu[]> {
+  return (await kvGet<PosMenu[]>(siteId, KV.posMenus)) ?? []
 }
 
 /**

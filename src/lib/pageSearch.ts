@@ -10,7 +10,6 @@ import { SETUP_GROUPS } from '@/app/(app)/setup/catalogue'
 import { ACCOUNTING_GROUPS } from '@/app/(app)/accounting/catalogue'
 import { ONLINE_STORE_GROUPS } from '@/app/(app)/online-store/catalogue'
 import { ONLINE_STORE_SETUP_GROUPS } from '@/app/(app)/online-store/settings/catalogue'
-import { LOYALTY_SETUP_GROUPS } from '@/app/(app)/loyalty/setup/catalogue'
 import { JOBS_SETUP_GROUPS } from '@/app/(app)/jobs/setup/catalogue'
 import type { HubIconName } from './hub'
 import type { LucideIcon } from 'lucide-react'
@@ -77,10 +76,13 @@ const CATALOGUE: Record<string, { description: string; icon: HubIconName; keywor
       ...ONLINE_STORE_GROUPS,
       /* The per-section Setup hubs. Their screens left the general setup
          catalogue when each section grew a Setup row of its own, and the
-         palette has to keep reaching them — this is the file that decides
-         whether typing "punch card" finds anything at all. */
+         palette has to keep reaching them.
+
+         Loyalty is NOT among them any more: its three settings screens are
+         menu rows in their own right, so they arrive through NAV below and
+         carry their own description and keywords there. A catalogue entry as
+         well would be the second front door the nav test forbids. */
       ...ONLINE_STORE_SETUP_GROUPS,
-      ...LOYALTY_SETUP_GROUPS,
       ...JOBS_SETUP_GROUPS,
     ]
       .flatMap((group) => group.items)

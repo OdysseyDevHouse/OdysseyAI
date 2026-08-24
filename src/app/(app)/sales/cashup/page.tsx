@@ -124,6 +124,7 @@ export default async function CashupPage() {
               ? [
                   {
                     id: shift.id,
+                    documentNumber: shift.documentNumber,
                     terminalCode: shift.terminalCode,
                     userName: shift.userName,
                     openedAt: shift.openedAt.toISOString(),
@@ -162,6 +163,10 @@ export default async function CashupPage() {
                         hiding the column would silently drop the one thing
                         identifying those cash-ups. Gone only when nothing
                         listed has a till, where it would be a row of dashes. */}
+                    {/* The number leads, as a document number does everywhere
+                        else in the app. It is what somebody phoning about a
+                        short drawer will read out. */}
+                    <th className={TABLE_TH}>Cash-up</th>
                     {showTill && <th className={TABLE_TH}>Till</th>}
                     <th className={TABLE_TH}>{mode === 'user' ? 'Person' : 'Cashier'}</th>
                     <th className={TABLE_TH}>Closed</th>
@@ -184,6 +189,15 @@ export default async function CashupPage() {
                       )
                     return (
                       <tr key={shift.id} className={TABLE_ROW}>
+                        {/* Falls back to the id for a shift opened before this
+                            site had a sequence — the label it carried before
+                            cash-ups were numbered, rather than a blank cell
+                            that reads as data loss. */}
+                        <td className={TABLE_TD}>
+                          <span className="text-ink">
+                            {shift.documentNumber ?? `Cash-up #${shift.id}`}
+                          </span>
+                        </td>
                         {showTill && <td className={TABLE_TD}>{shift.terminalCode ?? '—'}</td>}
                         <td className={TABLE_TD}>
                           <div className="text-ink">{shift.userName}</div>

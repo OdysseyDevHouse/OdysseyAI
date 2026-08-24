@@ -123,6 +123,25 @@ export interface CatalogField {
   /** Closed value list — turns the filter value box into a picker. */
   options?: { value: string; label: string }[]
   /**
+   * Colour this column's cells by what the number MEANS, not by its size.
+   *
+   * 'variance' is the only rule so far, and it reads a signed figure the way a
+   * person counting a drawer does: below zero is SHORT and the thing to chase
+   * (danger), above zero is over and still wrong but differently — usually a
+   * keying error rather than missing money (warning) — and exactly zero is the
+   * drawer balancing (success).
+   *
+   * Deliberately a named RULE rather than a colour or a threshold. A catalogue
+   * entry that could name its own colour would let one report invent a palette
+   * the rest of the app does not share, and "red below zero" is a judgement
+   * about cash-ups that belongs next to the field it describes.
+   *
+   * Applies to the cell only, never the footer: a column of variances that sums
+   * to zero has not balanced, it has cancelled out, and colouring that green
+   * would state the opposite of what happened.
+   */
+  tone?: 'variance'
+  /**
    * For a `document` field: what the number identifies, and where its id is.
    *
    * `type: 'document'` alone only says "this reads as a reference". It does NOT
@@ -601,6 +620,55 @@ const RETURN_REASON_JOIN = {
   sql: 'LEFT JOIN sales_return_reasons rr ON rr.id = t.return_reason_id',
 }
 
+/*
+ * The five lookups a sales document points at but never carried a field for.
+ *
+ * All LEFT, without exception. A visit type can be retired, a till decommissioned
+ * and a user deleted long after the sale they touched — 125_sale_covers.sql is
+ * explicit that history must not be rewritten when configuration changes — so an
+ * INNER join here would silently drop finalised sales out of a turnover figure.
+ */
+const VISIT_TYPE_JOIN: JoinUnit = {
+  name: 'visitType',
+  sql: 'LEFT JOIN pos_visit_types vt ON vt.id = t.visit_type_id',
+}
+
+const SALE_USER_JOIN: JoinUnit = {
+  name: 'saleUser',
+  sql: 'LEFT JOIN users su ON su.id = t.user_id',
+}
+
+const SALE_TERMINAL_JOIN: JoinUnit = {
+  name: 'saleTerminal',
+  sql: 'LEFT JOIN terminals strm ON strm.id = t.terminal_id',
+}
+
+const SALE_PRICE_STRUCTURE_JOIN: JoinUnit = {
+  name: 'salePriceStructure',
+  sql: 'LEFT JOIN price_structures sps ON sps.id = t.price_structure_id',
+}
+
+const SALE_SHIFT_JOIN: JoinUnit = {
+  name: 'saleShift',
+  sql: 'LEFT JOIN shifts ssh ON ssh.id = t.shift_id',
+}
+
+/** The quote this document was raised from, and the quote this one supersedes. */
+const CONVERTED_FROM_JOIN: JoinUnit = {
+  name: 'convertedFrom',
+  sql: 'LEFT JOIN sales_documents cf ON cf.id = t.converted_from_id',
+}
+
+const SUPERSEDES_JOIN: JoinUnit = {
+  name: 'supersedes',
+  sql: 'LEFT JOIN sales_documents sup ON sup.id = t.supersedes_id',
+}
+
+const SALE_JOB_CARD_JOIN: JoinUnit = {
+  name: 'saleJobCard',
+  sql: 'LEFT JOIN job_cards sjc ON sjc.id = t.job_card_id',
+}
+
 /** Account context for a transaction — who they are and what they may owe. */
 const CUSTOMER_LOOKUP_FIELDS: CatalogField[] = [
   {
@@ -688,6 +756,14 @@ const SALES_SOURCE: CatalogSource = {
     VOID_REASON_JOIN,
     RETURN_REASON_JOIN,
     REVERSES_JOIN,
+    VISIT_TYPE_JOIN,
+    SALE_USER_JOIN,
+    SALE_TERMINAL_JOIN,
+    SALE_PRICE_STRUCTURE_JOIN,
+    SALE_SHIFT_JOIN,
+    CONVERTED_FROM_JOIN,
+    SUPERSEDES_JOIN,
+    SALE_JOB_CARD_JOIN,
   ],
   // A report about "sales" means money that counted. Drafts, quotes and voids
   // are all reachable by removing this, but none of them belongs in a turnover
@@ -921,6 +997,268 @@ const SALES_SOURCE: CatalogSource = {
       link: { kind: 'sale', idExpr: 't.reverses_id' },
       needs: ['reverses'],
       group: FIELD_GROUPS.IDENTITY,
+    },
+    /* ── Covers and visit type — the restaurant facts on a bill ──────────
+     *
+     * Both are written by the till when a table is opened (125_sale_covers.sql)
+     * and neither was reportable, so "average spend per head" and "eat-in vs
+     * takeaway" could not be asked at all.
+     */
+    {
+      key: 'personCount',
+      label: 'Covers',
+      type: 'number',
+      expr: 't.person_count',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      /* SUMmable on purpose: "how many people did we feed in March" is the
+         question, and it is a true total across bills. NULL on every retail
+         sale, quote and credit note — 125 chose NULL over 0 so that "not a
+         table bill" and "a table nobody sat at" stay different answers, and
+         SUM() ignoring NULL is exactly the behaviour that needs. */
+      hint: 'How many people were on the bill. Blank on sales that never sat at a table.',
+    },
+    {
+      key: 'spendPerHead',
+      label: 'Spend per head',
+      type: 'currency',
+      /* Guarded against NULL as well as 0: a retail sale has no cover count,
+         and dividing by NULL yields NULL, which stays out of an average rather
+         than dragging it towards nothing. */
+      expr: '(CASE WHEN COALESCE(t.person_count, 0) = 0 THEN NULL ELSE t.total_incl / t.person_count END)',
+      numeric: true,
+      noTotal: true,
+      /* A rate must never be averaged row-by-row — a R80 table of one and a
+         R2,000 table of ten do not average to a meaningful head rate. Declaring
+         the ratio makes a summarised report sum both sides and divide, which is
+         the weighted figure a restaurant actually runs on. */
+      ratio: { numerator: 'totalIncl', denominator: 'personCount' },
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Bill total divided by covers, weighted by bill size when summarised. Blank where no covers were recorded.',
+    },
+    {
+      key: 'visitType',
+      label: 'Visit type',
+      type: 'text',
+      /* Labelled rather than blank, for the reason cancelReasonName is: every
+         sale raised before 125, and every counter sale since, has no visit type
+         and genuinely belongs in the total. An unnamed group reads as a broken
+         report rather than as the truth. */
+      expr: "COALESCE(vt.name, 'Not recorded')",
+      needs: ['visitType'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'Eat in, takeaway or delivery, as chosen at the till.',
+    },
+    enumField('origin', 'Raised at', 't.origin', ['till', 'back_office'], {
+      hint: 'Whether the document came off a till or was raised in the back office.',
+    }),
+
+    /* ── The quote funnel ────────────────────────────────────────────────
+     *
+     * 048_quotes.sql calls the outcome "the single most useful thing a quote
+     * register knows" and names conversion rate as the question it exists to
+     * answer — and none of it was reachable from a report.
+     */
+    enumField('quoteOutcome', 'Quote outcome', 't.quote_outcome', ['open', 'accepted', 'declined'], {
+      hint: 'What the customer decided. Only meaningful on quotes.',
+    }),
+    {
+      key: 'quoteOutcomeAt',
+      label: 'Quote decided on',
+      type: 'datetime',
+      expr: 't.quote_outcome_at',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'quoteLostReason',
+      label: 'Quote lost reason',
+      type: 'text',
+      expr: 't.quote_lost_reason',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Why a declined quote was declined — a pattern in the losses is worth more than any one of them.',
+    },
+    {
+      key: 'validUntil',
+      label: 'Valid until',
+      type: 'date',
+      expr: 't.valid_until',
+      group: FIELD_GROUPS.DATES,
+      hint: 'The date the prices on a quote stop standing.',
+    },
+    {
+      key: 'quoteSentAt',
+      label: 'Quote sent on',
+      type: 'datetime',
+      expr: 't.quote_sent_at',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'quoteSentTo',
+      label: 'Quote sent to',
+      type: 'text',
+      expr: 't.quote_sent_to',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'quoteViewedAt',
+      label: 'Quote first viewed',
+      type: 'datetime',
+      expr: 't.quote_viewed_at',
+      group: FIELD_GROUPS.DATES,
+      /* 227_quote_sent_viewed.sql is careful about what this can honestly claim,
+         and the limit belongs in front of whoever builds the report rather than
+         only in the migration nobody reads. */
+      hint: 'When somebody first opened the quote link. NOT proof they read it, nor that the decision-maker saw it.',
+    },
+    {
+      key: 'quoteViewCount',
+      label: 'Times viewed',
+      type: 'number',
+      expr: 't.quote_view_count',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+    },
+    enumField(
+      'quoteAcceptMethod',
+      'Accepted how',
+      't.quote_accept_method',
+      ['verbal', 'email', 'link', 'in_person', 'internal'],
+      {
+        hint: 'The strength of the evidence — a dispute six months later turns on which of these it was.',
+      },
+    ),
+    {
+      key: 'quoteAcceptedBy',
+      label: 'Accepted by',
+      type: 'text',
+      expr: 't.quote_accepted_by',
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    {
+      key: 'quoteAcceptReference',
+      label: 'Acceptance reference',
+      type: 'text',
+      expr: 't.quote_accept_reference',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'The message id or note that backs up the acceptance.',
+    },
+    {
+      key: 'quoteRevision',
+      label: 'Quote revision',
+      type: 'number',
+      expr: 't.quote_revision',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'supersedesNumber',
+      label: 'Supersedes quote',
+      type: 'document',
+      expr: 'sup.document_number',
+      link: { kind: 'sale', idExpr: 't.supersedes_id' },
+      needs: ['supersedes'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'convertedFromNumber',
+      label: 'Converted from',
+      type: 'document',
+      expr: 'cf.document_number',
+      link: { kind: 'sale', idExpr: 't.converted_from_id' },
+      needs: ['convertedFrom'],
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The quote or order this document was raised from.',
+    },
+
+    /* ── Who, where and against what ─────────────────────────────────────── */
+    {
+      key: 'userNameLive',
+      label: 'Served by (current name)',
+      type: 'text',
+      expr: 'su.name',
+      needs: ['saleUser'],
+      group: FIELD_GROUPS.PEOPLE,
+      /* t.user_name is the snapshot and stays the default. This one exists so a
+         report can be FILTERED to a person: the snapshot spells whatever their
+         name was that day, so grouping by it splits one person in two after a
+         rename. */
+      hint: 'The user record as it reads today — use this to group or filter by person across a name change.',
+    },
+    {
+      key: 'terminalName',
+      label: 'Till name',
+      type: 'text',
+      expr: 'strm.name',
+      needs: ['saleTerminal'],
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    {
+      key: 'priceStructureName',
+      label: 'Price structure',
+      type: 'text',
+      expr: "COALESCE(sps.name, 'Default')",
+      needs: ['salePriceStructure'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'Which price list the sale was rung up on.',
+    },
+    {
+      key: 'shiftNumber',
+      label: 'Cash-up',
+      type: 'document',
+      expr: 'ssh.document_number',
+      link: { kind: 'cashup', idExpr: 't.shift_id' },
+      needs: ['saleShift'],
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The cash-up this sale falls inside.',
+    },
+    {
+      key: 'jobCardNumber',
+      label: 'Job card',
+      type: 'text',
+      expr: 'sjc.document_number',
+      needs: ['saleJobCard'],
+      group: FIELD_GROUPS.IDENTITY,
+    },
+
+    /* ── Remaining document facts ────────────────────────────────────────── */
+    {
+      key: 'tenderedTotal',
+      label: 'Tendered',
+      type: 'currency',
+      expr: 't.tendered_total',
+      numeric: true,
+      group: FIELD_GROUPS.TENDER,
+      hint: 'What was handed over, before change. Exceeds the total on a cash sale.',
+    },
+    {
+      key: 'cancelledAt',
+      label: 'Cancelled at',
+      type: 'datetime',
+      expr: 't.cancelled_at',
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'customerCode',
+      label: 'Customer code (on document)',
+      type: 'text',
+      expr: 't.customer_code',
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'As captured on the document, not the current customer record.',
+    },
+    {
+      key: 'customerAddress',
+      label: 'Customer address (on document)',
+      type: 'text',
+      expr: 't.customer_address',
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'discountCode',
+      label: 'Discount code',
+      type: 'text',
+      expr: 't.discount_code',
+      group: FIELD_GROUPS.CLASSIFICATION,
     },
     ...CUSTOMER_LOOKUP_FIELDS,
     // document_date is a DATE, so "trading by hour" has to read the timestamp
@@ -1264,6 +1602,30 @@ const SALE_LINES_SOURCE: CatalogSource = {
       expr: "COALESCE(rr.name, 'Not recorded')",
       needs: ['returnReason'],
       group: FIELD_GROUPS.OTHER,
+    },
+    {
+      key: 'lineNote',
+      label: 'Line note',
+      type: 'text',
+      expr: 't.line_note',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'What was typed against this line at the till — a preparation instruction, a serial, a reason.',
+    },
+    {
+      key: 'giftCardCode',
+      label: 'Gift card code',
+      type: 'text',
+      expr: 't.gift_card_code',
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'Set where the line sold or loaded a gift card.',
+    },
+    {
+      key: 'orderedAt',
+      label: 'Sent to kitchen at',
+      type: 'datetime',
+      expr: 't.ordered_at',
+      group: FIELD_GROUPS.DATES,
+      hint: 'When the line was fired to the kitchen. Blank on a line that was never sent.',
     },
     ...CUSTOMER_LOOKUP_FIELDS,
     ...PRODUCT_LOOKUP_FIELDS,
@@ -1663,6 +2025,103 @@ const PRODUCTS_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.DATES,
       hint: 'How long since the product last sold (or, never sold, since it arrived).',
     },
+    /* ── Stock-control dates ────────────────────────────────────────────
+     *
+     * "Not counted in eighteen months" is a real stock-control question and
+     * neither date could be asked. Both sit beside ageBand above, which already
+     * reasons about last_sold_date and last_purchase_date.
+     */
+    {
+      key: 'lastStockTakeDate',
+      label: 'Last counted',
+      type: 'datetime',
+      expr: 't.last_stock_take_date',
+      group: FIELD_GROUPS.DATES,
+      hint: 'When the product last appeared on a completed stock take. Blank if it never has.',
+    },
+    {
+      key: 'lastAdjustDate',
+      label: 'Last adjusted',
+      type: 'datetime',
+      expr: 't.last_adjust_date',
+      group: FIELD_GROUPS.DATES,
+    },
+
+    /* ── Pack and weight ────────────────────────────────────────────────
+     *
+     * Config, but the kind a buyer and a shelf-planner report on: what a case
+     * holds and what it weighs. Dimensions are deliberately NOT here — three
+     * millimetre columns are a spec sheet, not a report.
+     */
+    {
+      key: 'packSize',
+      label: 'Pack size',
+      type: 'number',
+      expr: 't.pack_size',
+      numeric: true,
+      /* A property of one product, never a total across products: adding a
+         case of 6 to a case of 24 answers nothing. */
+      noTotal: true,
+      group: FIELD_GROUPS.PRODUCT,
+    },
+    { key: 'packDescription', label: 'Pack description', type: 'text', expr: 't.pack_description', group: FIELD_GROUPS.PRODUCT },
+    { key: 'packWeight', label: 'Pack weight', type: 'number', expr: 't.pack_weight', numeric: true, noTotal: true, group: FIELD_GROUPS.PRODUCT },
+    { key: 'weightDescription', label: 'Weight unit', type: 'text', expr: 't.weight_description', group: FIELD_GROUPS.PRODUCT },
+
+    /* ── Policy flags ───────────────────────────────────────────────────
+     *
+     * Which products are exempt from the rules everything else is measured by —
+     * the question a margin review starts with.
+     */
+    {
+      key: 'maxDiscountPct',
+      label: 'Max discount %',
+      type: 'percent',
+      expr: 't.max_discount_pct',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.PRODUCT,
+      hint: 'The ceiling a till will allow on this product without an override.',
+    },
+    yesNo('nonGpProduct', 'Excluded from margin targets', 't.non_gp_product'),
+    yesNo('isManufactured', 'Manufactured', 't.is_manufactured'),
+    yesNo('showOnline', 'Sold online', 't.show_online'),
+    yesNo('visibleInPos', 'Visible on the till', 't.visible_in_pos'),
+    yesNo('scaleItem', 'Weighed at the scale', 't.scale_item'),
+    yesNo('allowFractions', 'Sold in fractions', 't.allow_fractions'),
+    {
+      key: 'expiresInDays',
+      label: 'Shelf life (days)',
+      type: 'number',
+      expr: 't.expires_in_days',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.PRODUCT,
+    },
+    {
+      key: 'extraDescription',
+      label: 'Extra description',
+      type: 'text',
+      expr: 't.extra_description',
+      group: FIELD_GROUPS.PRODUCT,
+    },
+    {
+      key: 'kitchenGroup',
+      label: 'Kitchen group',
+      type: 'text',
+      expr: 't.kitchen_group',
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'prepTimeMinutes',
+      label: 'Prep time (minutes)',
+      type: 'number',
+      expr: 't.prep_time_minutes',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.PRODUCT,
+      hint: 'How long the kitchen is expected to take. What it ACTUALLY took is not on this source.',
+    },
   ],
 }
 
@@ -1811,6 +2270,40 @@ const CUSTOMERS_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.AGEING,
       hint: 'Negative means the account is over its limit.',
     },
+    { key: 'addressLine1', label: 'Address line 1', type: 'text', expr: 't.address_line1', group: FIELD_GROUPS.IDENTITY },
+    { key: 'addressLine2', label: 'Address line 2', type: 'text', expr: 't.address_line2', group: FIELD_GROUPS.IDENTITY },
+    { key: 'postalCode', label: 'Postal code', type: 'text', expr: 't.postal_code', group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerNotes', label: 'Notes', type: 'text', expr: 't.notes', group: FIELD_GROUPS.OTHER },
+    {
+      key: 'statusReason',
+      label: 'Status reason',
+      type: 'text',
+      expr: 't.status_reason',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Why the account was suspended or closed.',
+    },
+    {
+      key: 'customerDiscountPct',
+      label: 'Standing discount %',
+      type: 'percent',
+      expr: 't.discount_pct',
+      numeric: true,
+      /* A RATE, so it is never totalled. No `ratio` either: the weight that
+         would make an average meaningful is turnover, which is not on this
+         snapshot source — declaring a ratio against something absent would be
+         worse than leaving the figure plainly un-summarised. */
+      noTotal: true,
+      group: FIELD_GROUPS.ACCOUNT,
+    },
+    { key: 'dailyLimit', label: 'Daily limit', type: 'currency', expr: 't.daily_limit', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
+    { key: 'monthlyLimit', label: 'Monthly limit', type: 'currency', expr: 't.monthly_limit', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
+    enumField('statementCycle', 'Statement cycle', 't.statement_cycle', ['monthly', '14day', '7day'], {
+      group: FIELD_GROUPS.ACCOUNT,
+    }),
+    { key: 'interestRatePct', label: 'Interest rate %', type: 'percent', expr: 't.interest_rate_pct', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
+    yesNo('interestEnabled', 'Charges interest', 't.interest_enabled'),
+    { key: 'interestGraceDays', label: 'Interest grace (days)', type: 'number', expr: 't.interest_grace_days', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
+    yesNo('autoEmailInvoices', 'Auto-emails invoices', 't.auto_email_invoices'),
     {
       key: 'limitUsedPct',
       label: 'Limit used %',
@@ -1939,6 +2432,17 @@ const CUSTOMER_TXN_SOURCE: CatalogSource = {
       needs: ['customer', 'customerGroup'],
       group: FIELD_GROUPS.ACCOUNT,
     },
+    /* The VAT split 014_subledger.sql stores "for the VAT report" — and which
+       no report could read. Zero on a payment, which carries no VAT. */
+    { key: 'amountNet', label: 'Amount (excl.)', type: 'currency', expr: 't.amount_net', numeric: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'sourceModule',
+      label: 'Raised by',
+      type: 'text',
+      expr: 't.source',
+      group: FIELD_GROUPS.CLASSIFICATION,
+      hint: 'Which part of the system wrote the entry — a sale, a payment run, an interest run, an opening balance.',
+    },
     { key: 'accountRep', label: 'Sales rep', type: 'text', expr: 'c.rep_name', needs: ['customer'], group: FIELD_GROUPS.PEOPLE },
     ...agedBucketFields(),
     ...timeBuckets('doc_date'),
@@ -1971,6 +2475,22 @@ const SUPPLIERS_SOURCE: CatalogSource = {
     { key: 'leadTimeDays', label: 'Lead time (days)', type: 'number', expr: 't.lead_time_days', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
     { key: 'minimumOrder', label: 'Minimum order', type: 'currency', expr: 't.minimum_order', numeric: true, noTotal: true, group: FIELD_GROUPS.MONEY },
     { key: 'accountNumber', label: 'Our account number', type: 'text', expr: 't.account_number', group: FIELD_GROUPS.IDENTITY },
+    { key: 'supplierVatNumber', label: 'VAT number', type: 'text', expr: 't.vat_number', group: FIELD_GROUPS.IDENTITY },
+    { key: 'addressLine1', label: 'Address line 1', type: 'text', expr: 't.address_line1', group: FIELD_GROUPS.IDENTITY },
+    { key: 'addressLine2', label: 'Address line 2', type: 'text', expr: 't.address_line2', group: FIELD_GROUPS.IDENTITY },
+    { key: 'postalCode', label: 'Postal code', type: 'text', expr: 't.postal_code', group: FIELD_GROUPS.IDENTITY },
+    { key: 'supplierNotes', label: 'Notes', type: 'text', expr: 't.notes', group: FIELD_GROUPS.OTHER },
+    { key: 'statusReason', label: 'Status reason', type: 'text', expr: 't.status_reason', group: FIELD_GROUPS.OTHER },
+    /* Settlement terms: money left on the table if nobody looks at them. */
+    { key: 'settlementDiscountPct', label: 'Settlement discount %', type: 'percent', expr: 't.settlement_discount_pct', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
+    { key: 'settlementDiscountDays', label: 'Settlement within (days)', type: 'number', expr: 't.settlement_discount_days', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
+    /* Banking details carry the same weight as the account number beside them,
+       which is already offered without a narrower capability than the source's
+       own suppliers.view. Kept consistent with that rather than inventing a
+       distinction only these three fields would observe. */
+    { key: 'bankName', label: 'Bank', type: 'text', expr: 't.bank_name', group: FIELD_GROUPS.ACCOUNT },
+    { key: 'bankBranch', label: 'Bank branch', type: 'text', expr: 't.bank_branch', group: FIELD_GROUPS.ACCOUNT },
+    { key: 'bankAccount', label: 'Bank account', type: 'text', expr: 't.bank_account', group: FIELD_GROUPS.ACCOUNT },
     { key: 'createdAt', label: 'Added', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
   ],
 }
@@ -2014,6 +2534,45 @@ const PURCHASES_SOURCE: CatalogSource = {
       expr: 's.status',
       needs: ['supplier'],
       group: FIELD_GROUPS.ACCOUNT,
+    },
+    {
+      key: 'purchaseDiscountPct',
+      label: 'Document discount %',
+      type: 'percent',
+      expr: 't.discount_pct',
+      numeric: true,
+      /* A rate on the document, not a per-row quantity. The cash it came to is
+         the field below, and that one DOES total. */
+      noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+    },
+    {
+      key: 'purchaseDiscountExcl',
+      label: 'Document discount',
+      type: 'currency',
+      expr: 't.discount_excl',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Settlement or deal discount taken off the whole order, over and above any per-line discount.',
+    },
+    { key: 'finalisedAt', label: 'Finalised at', type: 'datetime', expr: 't.finalised_at', group: FIELD_GROUPS.DATES },
+    { key: 'cancelledAt', label: 'Cancelled at', type: 'datetime', expr: 't.cancelled_at', group: FIELD_GROUPS.DATES },
+    { key: 'cancelReason', label: 'Cancel reason', type: 'text', expr: 't.cancel_reason', group: FIELD_GROUPS.OTHER },
+    {
+      key: 'purchaseNotes',
+      label: 'Note',
+      type: 'text',
+      expr: 't.notes',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'The note printed on the order.',
+    },
+    {
+      key: 'internalNote',
+      label: 'Internal note',
+      type: 'text',
+      expr: 't.internal_note',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Never printed — the note staff leave for each other.',
     },
     {
       key: 'supplierCategory',
@@ -2084,6 +2643,37 @@ const PURCHASE_LINES_SOURCE: CatalogSource = {
     enumField('docType', 'Document type', 'd.doc_type', PURCHASE_DOC_TYPES),
     enumField('status', 'Document status', 'd.status', PURCHASE_STATUSES),
     { key: 'supplierName', label: 'Supplier', type: 'text', expr: 'd.supplier_name', starter: true, group: FIELD_GROUPS.IDENTITY },
+    {
+      key: 'qtyBonus',
+      label: 'Bonus qty',
+      type: 'number',
+      expr: 't.qty_bonus',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'Free stock the supplier added — received and costed at nothing.',
+    },
+    { key: 'lineDiscountAmount', label: 'Line discount', type: 'currency', expr: 't.discount_amount', numeric: true, group: FIELD_GROUPS.MONEY },
+    { key: 'vatRatePct', label: 'VAT rate %', type: 'percent', expr: 't.vat_rate_pct', numeric: true, noTotal: true, group: FIELD_GROUPS.MONEY },
+    {
+      key: 'chargeExcl',
+      label: 'Charges (excl.)',
+      type: 'currency',
+      expr: 't.charge_excl',
+      numeric: true,
+      group: FIELD_GROUPS.COST,
+      hint: 'Freight and duty apportioned onto the line — part of what the stock really cost.',
+    },
+    {
+      key: 'sellingPriceIncl',
+      label: 'Selling price at receipt',
+      type: 'currency',
+      expr: 't.selling_price_incl',
+      numeric: true,
+      noTotal: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'What the item was to be sold at when it was received — blank where none was set.',
+    },
+    { key: 'productType', label: 'Line type', type: 'text', expr: 't.product_type', group: FIELD_GROUPS.CLASSIFICATION },
     ...PRODUCT_LOOKUP_FIELDS,
     ...timeBuckets('document_date').map((f) => ({
       ...f,
@@ -2138,6 +2728,11 @@ const EXPENSE_LINES_SOURCE: CatalogSource = {
     { key: 'reference', label: 'Reference', type: 'text', expr: 'e.reference', group: FIELD_GROUPS.OTHER },
     { key: 'userName', label: 'Captured by', type: 'text', expr: 'e.user_name', group: FIELD_GROUPS.PEOPLE },
     { key: 'dueDate', label: 'Due date', type: 'date', expr: 'e.due_date', group: FIELD_GROUPS.DATES },
+    { key: 'vatRatePct', label: 'VAT rate %', type: 'percent', expr: 't.vat_rate_pct', numeric: true, noTotal: true, group: FIELD_GROUPS.MONEY },
+    /* Whether the VAT on this line can actually be claimed back. The source
+       description already promises this column ("whether VAT is claimable")
+       and it was the one thing the source could not answer. */
+    yesNo('vatClaimable', 'VAT claimable', 't.vat_claimable'),
     ...timeBuckets('expense_date').map((f) => ({
       ...f,
       expr: f.expr.replace(/t\.`expense_date`/g, 'e.`expense_date`'),
@@ -2160,19 +2755,26 @@ const SHIFTS_SOURCE: CatalogSource = {
     /*
      * The cash-up itself, as something you can OPEN.
      *
-     * A shift carries no document number — it is identified by its id, and the
-     * cash-up screen names it by till and date. So this column shows the id and
-     * links to the signed declaration, which is the record a reader chasing a
-     * variance actually wants. Kept out of `starter` because the id is a poor
-     * thing to READ; it earns its place by being clickable, and somebody who
-     * wants it can tick it.
+     * Shows the NUMBER — CSH_01_000001 — and links to the signed declaration,
+     * which is the record a reader chasing a variance actually wants.
+     *
+     * It used to show `t.id` and was kept out of `starter` precisely because a
+     * row id is a poor thing to read: it counts every shift ever opened, it is
+     * not the 47th cash-up of anything, and it means something different at each
+     * branch of a group. 233 gave a shift a real number, so the column is worth
+     * reading on its own and now leads the starter set.
+     *
+     * COALESCE, not a bare column: a shift opened before its site had a sequence
+     * has no number, and a blank cell in the identity column reads as a broken
+     * report rather than as an old row.
      */
     {
       key: 'cashupRef',
       label: 'Cash-up',
       type: 'document',
-      expr: 't.id',
+      expr: "COALESCE(t.document_number, CONCAT('Cash-up #', t.id))",
       link: { kind: 'cashup', idExpr: 't.id' },
+      starter: true,
       group: FIELD_GROUPS.IDENTITY,
       hint: 'Opens the signed count for this shift.',
     },
@@ -2181,7 +2783,85 @@ const SHIFTS_SOURCE: CatalogSource = {
     { key: 'closedByName', label: 'Closed by', type: 'text', expr: 't.closed_by_name', group: FIELD_GROUPS.PEOPLE },
     { key: 'openedAt', label: 'Opened at', type: 'datetime', expr: 't.opened_at', starter: true, group: FIELD_GROUPS.DATES },
     { key: 'closedAt', label: 'Closed at', type: 'datetime', expr: 't.closed_at', group: FIELD_GROUPS.DATES },
-    { key: 'openingFloat', label: 'Opening float', type: 'currency', expr: 't.opening_float', numeric: true, group: FIELD_GROUPS.MONEY },
+    { key: 'openingFloat', label: 'Opening float', type: 'currency', expr: 't.opening_float', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
+    /*
+     * The drawer movements, split by kind and summed per shift.
+     *
+     * shift_movements stores the amount SIGNED — a payout and a drop are both
+     * negative, a pay-in positive — so that the drawer position is a plain SUM.
+     * That is right for the arithmetic and wrong for a column someone reads: a
+     * manager asking "what went out in payouts" wants R240, not −R240, and a
+     * column of negatives beside a column of positives invites adding them into
+     * a number that means nothing.
+     *
+     * So each of these reports its own MAGNITUDE, and `drawerMovements` below
+     * keeps the signed sum for anyone who wants the net effect on the drawer.
+     */
+    {
+      key: 'payouts',
+      label: 'Payouts',
+      type: 'currency',
+      expr:
+        "(SELECT COALESCE(SUM(ABS(sm.amount)), 0) FROM shift_movements sm " +
+        "WHERE sm.shift_id = t.id AND sm.movement_type = 'payout')",
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Money taken out for an expense. Shown as a positive amount — it left the drawer.',
+    },
+    {
+      key: 'payins',
+      label: 'Pay-ins',
+      type: 'currency',
+      expr:
+        "(SELECT COALESCE(SUM(ABS(sm.amount)), 0) FROM shift_movements sm " +
+        "WHERE sm.shift_id = t.id AND sm.movement_type = 'payin')",
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Money added that was not a sale — a top-up, or change brought in.',
+    },
+    {
+      key: 'drops',
+      label: 'Drops to safe',
+      type: 'currency',
+      expr:
+        "(SELECT COALESCE(SUM(ABS(sm.amount)), 0) FROM shift_movements sm " +
+        "WHERE sm.shift_id = t.id AND sm.movement_type = 'drop')",
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Cash moved to the safe mid-shift. Shown as a positive amount — it left the drawer.',
+    },
+    {
+      key: 'drawerMovements',
+      label: 'Movements (net)',
+      type: 'currency',
+      expr:
+        '(SELECT COALESCE(SUM(sm.amount), 0) FROM shift_movements sm WHERE sm.shift_id = t.id)',
+      numeric: true,
+      group: FIELD_GROUPS.MONEY,
+      hint: 'Pay-ins less payouts and drops — the net effect on the drawer. Negative means more left than came in.',
+    },
+    {
+      key: 'saleCount',
+      label: 'Sales',
+      type: 'number',
+      /*
+       * How many sales were rung on this shift — the "you did 11 sales today"
+       * figure, counted once per DOCUMENT rather than per tender or per line.
+       *
+       * Cancelled documents are excluded: they were reversed, so counting them
+       * would inflate the day against takings that are not there. The tender
+       * breakdown counts differently on purpose — see `transactionCount` on the
+       * by-tender source, which counts tender ROWS, so a split-tender sale
+       * lands in two tenders while staying ONE sale here.
+       */
+      expr:
+        "(SELECT COUNT(*) FROM sales_documents sd WHERE sd.shift_id = t.id " +
+        "AND sd.status <> 'cancelled')",
+      numeric: true,
+      starter: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'Documents rung on this shift, cancelled ones excluded. A split-tender sale counts once.',
+    },
     { key: 'expectedTotal', label: 'Expected', type: 'currency', expr: 't.expected_total', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
     { key: 'countedTotal', label: 'Counted', type: 'currency', expr: 't.counted_total', numeric: true, starter: true, group: FIELD_GROUPS.MONEY },
     {
@@ -2192,6 +2872,7 @@ const SHIFTS_SOURCE: CatalogSource = {
       numeric: true,
       starter: true,
       group: FIELD_GROUPS.MONEY,
+      tone: 'variance',
       hint: 'Negative means the drawer was short.',
     },
     {
@@ -2213,6 +2894,9 @@ const SHIFTS_SOURCE: CatalogSource = {
       noTotal: true,
       group: FIELD_GROUPS.OTHER,
     },
+    enumField('mode', 'Cash-up mode', 't.mode', ['terminal', 'user'], {
+      hint: 'Whether the drawer belongs to a till or to a person and their own float.',
+    }),
     ...timeBuckets('opened_at', { hours: true }),
   ],
 }
@@ -2354,6 +3038,45 @@ const JOB_TIME_SOURCE: CatalogSource = {
       type: 'text',
       expr: 't.edited_reason',
       group: FIELD_GROUPS.OTHER,
+    },
+    enumField('entrySource', 'Captured by', 't.source', ['pin', 'manual', 'import'], {
+      hint: 'Clocked in on a till PIN, typed in afterwards, or imported.',
+    }),
+    /* The approval and edit trail. A timesheet edited after the fact is an
+       audit question, and none of it could be asked. */
+    { key: 'approvedAt', label: 'Approved at', type: 'datetime', expr: 't.approved_at', group: FIELD_GROUPS.DATES },
+    { key: 'approvedByName', label: 'Approved by', type: 'text', expr: 't.approved_by_name', group: FIELD_GROUPS.PEOPLE },
+    {
+      key: 'isApproved',
+      label: 'Approved',
+      type: 'text',
+      expr: "(CASE WHEN t.approved_at IS NULL THEN 'No' ELSE 'Yes' END)",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+    },
+    { key: 'editedByName', label: 'Edited by', type: 'text', expr: 't.edited_by_name', group: FIELD_GROUPS.PEOPLE },
+    {
+      key: 'originalStartedAt',
+      label: 'Originally started at',
+      type: 'datetime',
+      expr: 't.original_started_at',
+      group: FIELD_GROUPS.DATES,
+      hint: 'What the clock said before somebody edited it. Blank where the entry was never edited.',
+    },
+    { key: 'originalEndedAt', label: 'Originally ended at', type: 'datetime', expr: 't.original_ended_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'wasEdited',
+      label: 'Edited after capture',
+      type: 'text',
+      expr: "(CASE WHEN t.original_started_at IS NULL AND t.original_ended_at IS NULL THEN 'No' ELSE 'Yes' END)",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
     },
     { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
     ...timeBuckets('started_at', { hours: true }),
@@ -2508,6 +3231,30 @@ const JOB_TRAVEL_SOURCE: CatalogSource = {
       expr: 't.verified_by_name',
       group: FIELD_GROUPS.PEOPLE,
     },
+    enumField('recordedSource', 'Distance from', 't.recorded_source', ['manual', 'odometer', 'gps'], {
+      hint: 'How the distance was arrived at. Verifying a claim against this is the point of recording it.',
+    }),
+    enumField('expectedSource', 'Expected distance from', 't.expected_source', ['estimated', 'provider', 'manual']),
+    yesNo('isReturn', 'Return leg', 't.is_return'),
+    { key: 'verifyNote', label: 'Verification note', type: 'text', expr: 't.verify_note', group: FIELD_GROUPS.OTHER },
+    {
+      /* The coordinates themselves are not a report column — four decimal
+         columns tell nobody anything. Whether the trip was GPS-stamped at all
+         is the fact a manager checks, so that is what is offered. */
+      key: 'hasGpsFix',
+      label: 'GPS recorded',
+      type: 'text',
+      expr:
+        "(CASE WHEN t.departed_lat IS NOT NULL OR t.arrived_lat IS NOT NULL " +
+        "THEN 'Yes' ELSE 'No' END)",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+      hint: 'Whether the phone stamped a position at either end of the trip.',
+    },
+    { key: 'userCreatedName', label: 'Captured by', type: 'text', expr: 't.user_created_name', group: FIELD_GROUPS.PEOPLE },
     { key: 'note', label: 'Note', type: 'text', expr: 't.note', group: FIELD_GROUPS.OTHER },
     ...timeBuckets('travelled_on'),
   ],
@@ -2638,6 +3385,16 @@ const JOB_VISITS_SOURCE: CatalogSource = {
       expr: 't.outcome_reason',
       group: FIELD_GROUPS.OTHER,
     },
+    { key: 'visitUserName', label: 'Assigned to', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
+    {
+      key: 'travelStartedAt',
+      label: 'Travel started at',
+      type: 'datetime',
+      expr: 't.travel_started_at',
+      group: FIELD_GROUPS.DATES,
+      hint: 'When the technician set off, as against when the visit was booked to start.',
+    },
+    { key: 'overrideReason', label: 'Override reason', type: 'text', expr: 't.override_reason', group: FIELD_GROUPS.OTHER },
     { key: 'notes', label: 'Notes', type: 'text', expr: 't.notes', group: FIELD_GROUPS.OTHER },
     ...timeBuckets('starts_at', { hours: true }),
   ],
@@ -2936,6 +3693,7 @@ const SHIFT_COUNTS_SOURCE: CatalogSource = {
       numeric: true,
       starter: true,
       group: FIELD_GROUPS.MONEY,
+      tone: 'variance',
       hint: 'Negative is short.',
     },
     { key: 'terminalCode', label: 'Till', type: 'text', expr: 'sh.terminal_code', starter: true, group: FIELD_GROUPS.PEOPLE },
@@ -2943,6 +3701,33 @@ const SHIFT_COUNTS_SOURCE: CatalogSource = {
     { key: 'closedByName', label: 'Closed by', type: 'text', expr: 'sh.closed_by_name', group: FIELD_GROUPS.PEOPLE },
     { key: 'openedAt', label: 'Opened at', type: 'datetime', expr: 'sh.opened_at', group: FIELD_GROUPS.DATES },
     { key: 'closedAt', label: 'Closed at', type: 'datetime', expr: 'sh.closed_at', group: FIELD_GROUPS.DATES },
+    {
+      key: 'transactionCount',
+      label: 'Transactions',
+      type: 'number',
+      expr: 't.transaction_count',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'How many tender rows made up the expected figure — a split-tender sale counts once per tender, not once per sale.',
+    },
+    {
+      key: 'floatIncluded',
+      label: 'Float included',
+      type: 'currency',
+      expr: 't.float_included',
+      numeric: true,
+      group: FIELD_GROUPS.TENDER,
+      hint: 'Only ever non-zero on a drawer-cash tender.',
+    },
+    {
+      key: 'movementsIncluded',
+      label: 'Drawer movements included',
+      type: 'currency',
+      expr: 't.movements_included',
+      numeric: true,
+      group: FIELD_GROUPS.TENDER,
+      hint: 'Pay-outs and drops folded into the expected figure. Frozen at cash-up, so it still reads true after the movements are edited.',
+    },
     { key: 'varianceNote', label: 'Variance note', type: 'text', expr: 'sh.variance_note', group: FIELD_GROUPS.OTHER },
     ...timeBuckets('opened_at', { hours: true }).map((f) => ({
       ...f,
@@ -3354,6 +4139,15 @@ const STOCK_TAKE_LINES_SOURCE: CatalogSource = {
        Filterable, so "our shrinkage on blind counts vs sighted ones" is a
        report somebody can actually run — the question that shows whether
        blind counting is earning its keep. */
+    {
+      key: 'enteredQty',
+      label: 'Entered qty',
+      type: 'number',
+      expr: 't.entered_qty',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'What the counter typed, before any approval adjusted it. Blank where the line was never entered.',
+    },
     yesNo('isBlind', 'Counted blind', 'st.is_blind'),
     ...timeBuckets('document_date').map((f) => ({
       ...f,
@@ -3952,6 +4746,45 @@ const JOB_CARDS_SOURCE: CatalogSource = {
       expr: 't.reference',
       group: FIELD_GROUPS.IDENTITY,
     },
+    {
+      key: 'jobDescription',
+      label: 'Description',
+      type: 'text',
+      expr: 't.description',
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'What the customer asked for, as taken down.',
+    },
+    {
+      key: 'internalNote',
+      label: 'Internal note',
+      type: 'text',
+      expr: 't.internal_note',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'Never shown to the customer.',
+    },
+    { key: 'customerEmail', label: 'Customer email (on job)', type: 'text', expr: 't.customer_email', group: FIELD_GROUPS.IDENTITY },
+    { key: 'customerCode', label: 'Customer code (on job)', type: 'text', expr: 't.customer_code', group: FIELD_GROUPS.IDENTITY },
+    { key: 'cancelledAt', label: 'Cancelled at', type: 'datetime', expr: 't.cancelled_at', group: FIELD_GROUPS.DATES },
+    /* Sign-off, both sides. "Was this job actually signed for" is the question
+       a disputed invoice turns on, and neither timestamp was reportable. */
+    { key: 'customerSignedAt', label: 'Customer signed at', type: 'datetime', expr: 't.customer_signed_at', group: FIELD_GROUPS.DATES },
+    { key: 'customerSignedName', label: 'Customer signed by', type: 'text', expr: 't.customer_signed_name', group: FIELD_GROUPS.PEOPLE },
+    { key: 'technicianSignedAt', label: 'Technician signed at', type: 'datetime', expr: 't.technician_signed_at', group: FIELD_GROUPS.DATES },
+    { key: 'technicianSignedName', label: 'Technician signed by', type: 'text', expr: 't.technician_signed_name', group: FIELD_GROUPS.PEOPLE },
+    {
+      key: 'isSignedOff',
+      label: 'Signed off by customer',
+      type: 'text',
+      /* Derived rather than raw: the useful question is "which jobs are NOT
+         signed", and a timestamp column cannot be filtered to that in the
+         builder without an is-null operator the spec does not offer. */
+      expr: "(CASE WHEN t.customer_signed_at IS NULL THEN 'No' ELSE 'Yes' END)",
+      group: FIELD_GROUPS.FLAGS,
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+    },
     { key: 'userName', label: 'Logged by', type: 'text', expr: 't.user_name', group: FIELD_GROUPS.PEOPLE },
     ...CUSTOMER_LOOKUP_FIELDS,
     // Hours included: "when do the calls come in" is a real staffing question,
@@ -4096,6 +4929,39 @@ const JOB_LINES_SOURCE: CatalogSource = {
       permission: 'jobs.price',
       group: FIELD_GROUPS.MONEY,
       hint: 'What was meant to be charged. The invoice is what the customer actually owes.',
+    },
+    {
+      key: 'quotedQty',
+      label: 'Quoted qty',
+      type: 'number',
+      expr: 't.quoted_qty',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'What was quoted, as against what was actually used. Blank on a line that was never quoted.',
+    },
+    {
+      key: 'quotedCostExcl',
+      label: 'Quoted cost (excl.)',
+      type: 'currency',
+      expr: 't.quoted_cost_excl',
+      numeric: true,
+      /* jobs.cost, matching unitCost and lineCost beside it — not jobs.price,
+         which gates what the customer is charged. A quoted cost is what the
+         job was expected to cost US, so it belongs on the cost side of that
+         split. */
+      permission: 'jobs.cost',
+      group: FIELD_GROUPS.COST,
+      hint: 'The cost the quote was built on — compare against actual cost to see where an estimate slipped.',
+    },
+    {
+      key: 'lineDiscountPct',
+      label: 'Line discount %',
+      type: 'percent',
+      expr: 't.discount_pct',
+      numeric: true,
+      noTotal: true,
+      permission: 'jobs.price',
+      group: FIELD_GROUPS.MONEY,
     },
     {
       key: 'unitPriceIncl',
