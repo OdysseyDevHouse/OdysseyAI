@@ -31,7 +31,45 @@ import type { CapacitorConfig } from '@capacitor/cli'
  * for the app until they can be reached over TLS — see docs/mobile-app.md.
  */
 
-const APP_URL = process.env.ODYSSEY_APP_URL ?? 'https://app.odyssey.co.za'
+/*
+ * No default, deliberately.
+ *
+ * This used to fall back to a plausible-looking hostname that did not exist,
+ * and the result was an app that installed, opened, and showed Chrome's
+ * ERR_NAME_NOT_RESOLVED page — which reads as a broken app rather than as an
+ * unset variable. Failing at BUILD time with a sentence naming the fix is the
+ * version somebody can act on.
+ */
+const APP_URL = process.env.ODYSSEY_APP_URL
+
+if (!APP_URL) {
+  throw new Error(
+    'ODYSSEY_APP_URL is not set — the app would build with nowhere to point.\n' +
+      '  production:  ODYSSEY_APP_URL=https://your-host npm run mobile:sync\n' +
+      '  dev on LAN:  ODYSSEY_APP_URL=http://192.168.x.x:4100 npm run mobile:sync\n' +
+      'It must be the address a PHONE can reach: localhost on a handset is the handset.',
+  )
+}
+
+const url = new URL(APP_URL)
+
+/*
+ * A plain-HTTP target is a DEV target, and saying so in one place keeps the
+ * two builds from drifting.
+ *
+ * Cleartext is never right in production — a signed-in session over plain HTTP
+ * is a credential on the wire — but a dev server on a laptop has no
+ * certificate, and refusing to talk to it means the app can never be seen
+ * working before it is released. So the exception is derived from the URL
+ * rather than being a flag somebody can leave switched on: point the build at
+ * https and it turns itself off.
+ *
+ * Android only. iOS App Transport Security refuses cleartext regardless, and
+ * the escape hatch (NSAllowsArbitraryLoads) weakens transport security for the
+ * whole app rather than for one host — so iOS dev testing needs a real
+ * certificate. See docs/mobile-app.md.
+ */
+const isDev = url.protocol === 'http:'
 
 const config: CapacitorConfig = {
   appId: 'za.co.odyssey.backoffice',
@@ -46,11 +84,9 @@ const config: CapacitorConfig = {
      * somewhere it should not be. Anything genuinely external is opened in the
      * system browser by the shell instead.
      */
-    allowNavigation: [new URL(APP_URL).host],
-    // Never true. A mixed-content page inside a signed-in session is exactly
-    // the shape of a credential leak.
-    cleartext: false,
-    androidScheme: 'https',
+    allowNavigation: [url.host],
+    cleartext: isDev,
+    androidScheme: isDev ? 'http' : 'https',
   },
 
   android: {
