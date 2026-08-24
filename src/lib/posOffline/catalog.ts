@@ -4,6 +4,7 @@ import { posDb, kvGet, kvPut, KV } from './db'
 import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
 import { parseVariableBarcode } from '../barcodes'
+import { parseGs1, gtinCandidates, lotCaptureFor } from '../gs1'
 import type { TillProduct } from '../site/tillSearch'
 import type { PendingSchedule } from '../priceSchedules'
 import type { PosMenu } from '../posMenuEngine'
@@ -318,6 +319,37 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
   const term = code.trim()
   if (!term) return null
   const db = posDb(siteId)
+
+  /*
+   * A GS1 element string, carrying the LOT (234). Mirrors resolveScan's branch
+   * exactly, and is tried first for the same reason: such a code never matches
+   * a stored barcode as it stands, so without this it beeps as unknown.
+   *
+   * The same `parseGs1` and `lotCaptureFor` the server runs, against the same
+   * settings the catalog feed ships — so a pack scanned during an outage is
+   * read identically to one scanned a minute earlier online.
+   */
+  const gs1 = parseGs1(term)
+  if (gs1?.gtin) {
+    const settingsForGs1 = await storedSettings(siteId)
+    for (const candidate of gtinCandidates(gs1.gtin)) {
+      const hit =
+        (await db.products.where('barcode').equals(candidate).first()) ??
+        (await db.products.where('code').equals(candidate).first()) ??
+        (await db.products.where('barcodes').equals(candidate).first().catch(() => undefined)) ??
+        null
+      if (!hit) continue
+      const capture = lotCaptureFor(settingsForGs1 as Record<string, string | null>)
+      return {
+        ...hit,
+        ...(capture.mode === 'barcode' && gs1.batchNo ? { scannedBatchNo: gs1.batchNo } : {}),
+        ...(capture.mode === 'barcode' && gs1.expiryDate
+          ? { scannedExpiry: gs1.expiryDate }
+          : {}),
+        ...(gs1.weight && hit.variableType !== 'price' ? { scannedQty: gs1.weight } : {}),
+      }
+    }
+  }
   const exact =
     (await db.products.where('barcode').equals(term).first()) ??
     (await db.products.where('code').equals(term).first()) ??

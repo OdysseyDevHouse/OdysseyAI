@@ -100,6 +100,15 @@ export type BasketLine = {
   /** The card a gift-card line sells (147). Absent on ordinary lines. */
   giftCardCode?: string
   /**
+   * The lot this line was sold FROM, as observed at the till (234).
+   *
+   * Absent on every line of every other product type, and on batch lines in a
+   * shop that books lots by earliest expiry — which is most lines in most
+   * shops. Present means somebody or something READ this number off the pack,
+   * and the posting engine books against that lot rather than guessing.
+   */
+  batchNo?: string
+  /**
    * The special that PUT this line in the basket, for a deal that hands
    * something over rather than reducing a price.
    *
@@ -191,6 +200,7 @@ export function lineFromProduct(
     // was not here — and a line's age has to start from the moment it was rung.
     orderedAt: Date.now(),
     ...(product.giftCardCode ? { giftCardCode: product.giftCardCode } : {}),
+    ...(product.scannedBatchNo ? { batchNo: product.scannedBatchNo } : {}),
   }
 }
 
@@ -385,7 +395,22 @@ export function addToBasket(
       // — but only for answers that cost something, and "no onions" costs
       // nothing while still meaning this is a different burger.
       l.instructions.length === 0 &&
-      l.note === '',
+      l.note === '' &&
+      /*
+       * A line carrying a LOT never merges, and a new unit never joins one (234).
+       *
+       * Two cartons from different lots are two facts, not a quantity of two.
+       * Merging them would keep one lot number and silently discard the other,
+       * so the sale would book both units against a lot that only supplied one
+       * — which is exactly the drift capturing lots exists to remove, arriving
+       * by a different road.
+       *
+       * Stated on BOTH sides for that reason: the existing line must carry no
+       * lot, and neither must the unit being added. The instructions rule
+       * above takes the same shape for the same kind of reason.
+       */
+      l.batchNo === undefined &&
+      !product.scannedBatchNo,
   )
 
   // A gift card never merges: each line names ITS card, and two cards folded

@@ -882,6 +882,55 @@ export async function expiringSoon(
   return items
 }
 
+/** One row of the till's lot picker. */
+export type TillLot = {
+  batchNo: string
+  expiryDate: string | null
+  qtyRemaining: number
+  /** Already past its date. Shown, not hidden — the shelf is authoritative. */
+  expired: boolean
+}
+
+/**
+ * The lots a clerk may pick from for one product, at one till (234).
+ *
+ * FEFO order — earliest expiry first, dateless last — so the top row is the
+ * one the server WOULD have chosen, and the common case is confirming it with
+ * one tap rather than reading a list.
+ *
+ * Deliberately NOT filtered to unexpired: a shop that still has expired stock
+ * on the shelf must be able to say so at the till, exactly as `allocateFefoTx`
+ * will still sell it. Hiding the lot would force the clerk to pick a wrong one.
+ *
+ * The untracked bucket (batch_no = '') is excluded — it is an accounting
+ * residue, not something anybody can read off a pack.
+ */
+export async function lotsForTill(
+  siteId: number,
+  productId: number,
+  locationId: number,
+): Promise<TillLot[]> {
+  const today = localToday()
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT batch_no, expiry_date, qty_remaining
+       FROM product_batches
+      WHERE product_id = ? AND location_id = ? AND batch_no <> '' AND qty_remaining > 0
+      ORDER BY (expiry_date IS NULL), expiry_date, received_at, id
+      LIMIT 50`,
+    [productId, locationId],
+  )
+  return rows.map((r) => {
+    const expiry = r.expiry_date === null ? null : String(r.expiry_date).slice(0, 10)
+    return {
+      batchNo: String(r.batch_no ?? ''),
+      expiryDate: expiry,
+      qtyRemaining: toNum(r.qty_remaining),
+      expired: expiry !== null && expiry < today,
+    }
+  })
+}
+
 /**
  * Recall traceability, both directions: backward to the GRV and supplier
  * that brought the lot in, forward to every document that took it out.

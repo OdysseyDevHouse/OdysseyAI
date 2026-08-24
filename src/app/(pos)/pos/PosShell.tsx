@@ -23,6 +23,7 @@ import {
   storedPendingPrices,
   storedPosMenus,
   storedInstructions,
+  storedSettings,
 } from '@/lib/posOffline/catalog'
 import {
   activeMenu,
@@ -76,6 +77,7 @@ import {
   searchProductsAction,
   browseProductsAction,
   scanAction,
+  lotsForProductAction,
   finaliseSaleAction,
   createCreditNoteAction,
   saveSaleAction,
@@ -211,6 +213,9 @@ import { kvPut, KV } from '@/lib/posOffline/db'
 import type { Capability } from '@/lib/site/permissions'
 import type { OfflineSale } from '@/lib/posOffline/types'
 import { WeighModal } from './WeighModal'
+import { LotModal } from './LotModal'
+import type { TillLot } from '@/lib/site/batches'
+import { lotCaptureFor, type LotCapture } from '@/lib/gs1'
 import { GiftCardModal, GiftCardBalanceModal } from './GiftCardModal'
 import { lookupGiftCardAction } from './giftCardActions'
 import { QuickKeyPanel } from './QuickKeyPanel'
@@ -844,6 +849,21 @@ export default function PosShell({
   const [giftBalanceOpen, setGiftBalanceOpen] = useState(false)
 
   /**
+   * A batch-tracked product waiting for its lot (234).
+   *
+   * Carries the qty like `asking` does, rather than only the product like
+   * `weighing`: the modal does not change the quantity, so it has to hand back
+   * the one it was opened with or a "3" typed before the scan becomes a 1.
+   *
+   * `lots` is what the picker lists. Empty with `loading` false means the till
+   * could not read them — offline, or a product with none on file — and the
+   * modal falls back to a typed number.
+   */
+  const [lotting, setLotting] = useState<{ product: TillProduct; qty: number } | null>(null)
+  const [lotOptions, setLotOptions] = useState<TillLot[]>([])
+  const [lotsLoading, setLotsLoading] = useState(false)
+
+  /**
    * The product being asked about, if any. Null closes the dialog.
    *
    * Same shape as `editing` above, and for the same reason: one nullable piece
@@ -1147,6 +1167,29 @@ export default function PosShell({
 
   const pendingPrices =
     quickKeys.length > 0 ? pendingPricesProp : (heldPrices ?? pendingPricesProp)
+
+  /**
+   * Whether this shop captures the lot on a batch sale, and how (234).
+   *
+   * Read from STORAGE rather than taken as a prop, for the reason the held
+   * prices above are: a till that reloads with no network still has to behave
+   * the way its shop configured it. A pharmacy that reloads at the counter must
+   * not silently start booking lots by earliest expiry.
+   *
+   * Defaults to 'fefo' until the read lands, which is the behaviour every site
+   * had before this shipped — so the wrong answer for those few milliseconds is
+   * the old one rather than a wrong new one.
+   */
+  const [lotCapture, setLotCapture] = useState<LotCapture>({ mode: 'fefo', strict: false })
+  useEffect(() => {
+    let cancelled = false
+    void storedSettings(siteId).then((stored) => {
+      if (!cancelled) setLotCapture(lotCaptureFor(stored))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [siteId])
 
   /*
    * The rotating menus, read the same way and with the same tell.
@@ -1718,6 +1761,39 @@ export default function PosShell({
      */
     if (product.productType === 'gift_card' && !product.giftCardCode) {
       setGiftSelling(product)
+      return
+    }
+
+    /*
+     * A batch item whose lot nobody has named yet (234).
+     *
+     * Only under 'prompt' — under 'barcode' the scan either carried a lot or it
+     * did not, and stopping the queue to ask would defeat the point of reading
+     * it off the pack. `scannedBatchNo` already set is the modal's own confirm
+     * coming back through, and passes.
+     *
+     * Here for the reason the three checks above are: every add path converges
+     * on add(), and the one a narrower check would miss is the scanner.
+     */
+    if (
+      lotCapture.mode === 'prompt' &&
+      product.productType === 'batch' &&
+      !product.scannedBatchNo
+    ) {
+      setLotting({ product, qty })
+      setLotOptions([])
+      /*
+       * Offline there is no list to fetch — the catalog feed ships products,
+       * not lots — so the modal opens straight into its typed field rather
+       * than showing a spinner for something that will never arrive.
+       */
+      if (till.online && product.id !== null) {
+        setLotsLoading(true)
+        void lotsForProductAction(product.id, terminal?.id ?? null)
+          .then((rows) => setLotOptions(rows))
+          .catch(() => setLotOptions([]))
+          .finally(() => setLotsLoading(false))
+      }
       return
     }
 
@@ -6826,6 +6902,25 @@ export default function PosShell({
               1,
             )
             toast.info(`Card ${card.display} on the slip — it activates when the sale completes.`)
+          }}
+        />
+      )}
+
+      {lotting && (
+        <LotModal
+          product={lotting.product}
+          lots={lotOptions}
+          loading={lotsLoading}
+          offline={!till.online}
+          strict={lotCapture.strict}
+          onCancel={() => setLotting(null)}
+          onConfirm={(batchNo) => {
+            const { product, qty } = lotting
+            setLotting(null)
+            // scannedBatchNo rides back through add() the way a confirmed
+            // weight does: the guard passes, the lot lands on the line, and
+            // this line will not merge with another of the same product.
+            add({ ...product, scannedBatchNo: batchNo }, qty)
           }}
         />
       )}

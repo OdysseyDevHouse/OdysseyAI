@@ -24,7 +24,8 @@ import { reconcileStock } from '../src/lib/site/stockMovements'
 import { saveDraft } from '../src/lib/site/salesDocuments'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
-import { lotCaptureFor } from '../src/lib/gs1'
+import { lotCaptureFor, parseGs1, gtinCandidates } from '../src/lib/gs1'
+import { addToBasket } from '../src/lib/basket'
 import { toNum } from '../src/lib/decimals'
 
 const SITE = 1
@@ -113,6 +114,54 @@ async function main() {
   await sweepStrays()
   const stamp = Date.now().toString().slice(-8)
 
+  /* ── The barcode, before any database work ─────────────────────────────── */
+
+  const GS = '\x1d'
+  const g1 = parseGs1(`010600123456789017260831${GS}10L2408A`)
+  ok(
+    '*** a GS1 barcode yields the GTIN, the expiry and the LOT ***',
+    g1?.gtin === '06001234567890' && g1?.expiryDate === '2026-08-31' && g1?.batchNo === 'L2408A',
+    JSON.stringify(g1),
+  )
+  ok(
+    '  the lot is found with no separator, when it comes last',
+    parseGs1('01060012345678901726083110L2408A')?.batchNo === 'L2408A',
+  )
+  ok(
+    '  a ]C1 symbology prefix is tolerated',
+    parseGs1(`]C1010600123456789017260831${GS}10L2408A`)?.batchNo === 'L2408A',
+  )
+  ok(
+    '*** DD=00 means END of month, not the last day of the previous one ***',
+    parseGs1('010600123456789017260400')?.expiryDate === '2026-04-30' &&
+      parseGs1('010600123456789017240200')?.expiryDate === '2024-02-29',
+    `${parseGs1('010600123456789017260400')?.expiryDate} / ${parseGs1('010600123456789017240200')?.expiryDate}`,
+  )
+  const withSerial = parseGs1(`0106001234567890${GS}21SN99887766`)
+  ok(
+    '*** a SERIAL never becomes a lot — it would mint one per item sold ***',
+    withSerial?.batchNo === null && withSerial?.serial === 'SN99887766',
+    JSON.stringify(withSerial),
+  )
+  ok(
+    'a lot that swallowed the next field is FLAGGED, not silently minted',
+    parseGs1('010600123456789010L2408A17260831')?.runOnRisk === true,
+  )
+  ok(
+    '*** an ordinary EAN-13 is not an element string ***',
+    parseGs1('6001234567890') === null && parseGs1('2007770001500') === null,
+  )
+  ok(
+    'a GTIN-14 offers its EAN-13 form for matching',
+    gtinCandidates('06001234567890').includes('6001234567890'),
+    gtinCandidates('06001234567890').join(','),
+  )
+  ok(
+    '  but an OUTER CASE code does not — that is a case, not a single',
+    gtinCandidates('16001234567890').length === 1,
+    gtinCandidates('16001234567890').join(','),
+  )
+
   /* ── The pure resolver, before any database work ───────────────────────── */
 
   ok(
@@ -134,6 +183,69 @@ async function main() {
   ok(
     'strict holds under prompt',
     lotCaptureFor({ lot_capture_mode: 'prompt', lot_capture_strict: '1' }).strict === true,
+  )
+
+  /* ── The basket: two lots are two facts, never a quantity of two ───────── */
+
+  const tile: any = {
+    id: 1,
+    code: 'MILK',
+    barcode: null,
+    barcodes: [],
+    description: 'Milk 1L',
+    productType: 'batch',
+    departmentId: null,
+    priceIncl: 15,
+    vatRatePct: 15,
+    costExcl: 8,
+    stockOnHand: 20,
+    reservedQty: 0,
+    availableQty: 20,
+    askPriceAtSale: false,
+    allowFractions: false,
+    scaleItem: false,
+    variableType: 'none',
+    maxDiscountPct: 0,
+    imageColor: null,
+    posSortOrder: 0,
+  }
+  const plainTwice = addToBasket(addToBasket([], tile, 1), tile, 1)
+  ok(
+    'two plain units still MERGE — the ordinary rule is untouched',
+    plainTwice.length === 1 && plainTwice[0]!.qty === 2,
+    `${plainTwice.length} line(s)`,
+  )
+
+  const twoLots = addToBasket(
+    addToBasket([], { ...tile, scannedBatchNo: 'LOT-A' }, 1),
+    { ...tile, scannedBatchNo: 'LOT-B' },
+    1,
+  )
+  ok(
+    '*** two DIFFERENT lots stay two lines — merging would discard one number ***',
+    twoLots.length === 2 && twoLots[0]!.batchNo === 'LOT-A' && twoLots[1]!.batchNo === 'LOT-B',
+    twoLots.map((l) => l.batchNo ?? '-').join(','),
+  )
+
+  const lotThenPlain = addToBasket(
+    addToBasket([], { ...tile, scannedBatchNo: 'LOT-A' }, 1),
+    tile,
+    1,
+  )
+  ok(
+    '  a lot line never absorbs an unnamed unit',
+    lotThenPlain.length === 2,
+    `${lotThenPlain.length} line(s)`,
+  )
+
+  const plainThenLot = addToBasket(addToBasket([], tile, 1), {
+    ...tile,
+    scannedBatchNo: 'LOT-A',
+  }, 1)
+  ok(
+    '  nor does an unnamed line absorb a lot',
+    plainThenLot.length === 2,
+    `${plainThenLot.length} line(s)`,
   )
 
   /* ── Fixtures ──────────────────────────────────────────────────────────── */

@@ -245,6 +245,13 @@ export function salePayloadLines(
       // The card a gift-card line sells (147). Whitelisted here or it would
       // vanish silently at finalise — see the comment above.
       ...(line.giftCardCode ? { giftCardCode: line.giftCardCode } : {}),
+      /* The lot this line was sold from (234). Whitelisted for the same
+         reason, and it matters on the PARK and RECALL paths especially: a
+         table bill rewrites its lines wholesale on every save, so a lot
+         survives a recall only because it makes this round trip. Left off
+         entirely when nothing was captured, so a FEFO shop's payload is
+         byte-identical to before this existed. */
+      ...(line.batchNo ? { batchNo: line.batchNo } : {}),
       /* When the line was first rung (167). Whitelisted for the same reason,
          and it MATTERS most on the save path a table takes: that rewrites the
          bill's lines wholesale, so a line's order time is only preserved

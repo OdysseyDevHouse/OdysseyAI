@@ -5,6 +5,7 @@ import { toNum, round } from '../decimals'
 import { getSettings } from './settings'
 import { duePricesFor } from './priceSchedules'
 import { parseVariableBarcode } from '../barcodes'
+import { parseGs1, gtinCandidates, lotCaptureFor } from '../gs1'
 import type { ProductTypeId } from '../productTypes'
 import { toVariableType, type VariableTypeId } from '../productProperties'
 
@@ -83,6 +84,23 @@ export type TillProduct = {
    * the one funnel every add path shares (147).
    */
   giftCardCode?: string
+  /**
+   * The lot this item is being sold FROM (234).
+   *
+   * Set two ways, both on the road into add(): read out of a GS1 barcode by
+   * the scan itself, or answered by the lot modal — the giftCardCode mechanism,
+   * for the same reason. Absent means nobody named one, which is the FEFO path
+   * and most sales in most shops.
+   */
+  scannedBatchNo?: string
+  /**
+   * The expiry the same barcode carried, as `YYYY-MM-DD`.
+   *
+   * Display only — it lets the till say "this pack expired last week" at the
+   * moment it is rung up, which is the one moment somebody can still do
+   * something about it. The LOT decides what stock moves; this never does.
+   */
+  scannedExpiry?: string
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -400,7 +418,56 @@ export async function resolveScan(
     'barcode_variable_prefix',
     'barcode_plu_length',
     'barcode_value_divisor',
+    'lot_capture_mode',
+    'lot_capture_strict',
   ])
+
+  /*
+   * A GS1-128 / DataBar element string, which can carry the LOT (234).
+   *
+   * Tried first because such a code never matches a stored barcode as it
+   * stands — it is AI-structured rather than a bare number — so every scan of
+   * one used to fall through to "unknown item". `parseGs1` returns null for
+   * anything that is not an element string, so an ordinary EAN-13 pays one
+   * regex for this and nothing else.
+   *
+   * Read regardless of `lot_capture_mode`: finding the PRODUCT is worth doing
+   * whatever the shop does about lots, and a shop on 'fefo' that scans a GS1
+   * pack should ring up the item rather than beep. Only whether the lot is
+   * USED depends on the mode.
+   */
+  const gs1 = parseGs1(code)
+  if (gs1?.gtin) {
+    const candidates = gtinCandidates(gs1.gtin)
+    const placeholders = candidates.map(() => '?').join(',')
+    const byGtin = await siteQueryOne<Row>(
+      siteId,
+      `${selectProduct(settings.cost_basis)}
+        WHERE p.is_archived = 0 AND p.has_variants = 0
+          AND (p.barcode IN (${placeholders}) OR p.code IN (${placeholders})
+               OR EXISTS (SELECT 1 FROM product_barcodes pb
+                           WHERE pb.barcode IN (${placeholders}) AND pb.product_id = p.id))
+        LIMIT 1`,
+      [locationId, priceStructureId ?? 0, ...candidates, ...candidates, ...candidates],
+    )
+    if (byGtin) {
+      const product = mapProduct(byGtin)
+      const capture = lotCaptureFor(settings)
+      return {
+        ...product,
+        // The lot rides along only where the shop asked for it. Under 'prompt'
+        // the clerk is the source of truth and a barcode must not pre-empt
+        // them; under 'fefo' there is nothing to carry it to.
+        ...(capture.mode === 'barcode' && gs1.batchNo ? { scannedBatchNo: gs1.batchNo } : {}),
+        ...(capture.mode === 'barcode' && gs1.expiryDate
+          ? { scannedExpiry: gs1.expiryDate }
+          : {}),
+        // A weighed pack states its own weight; the same decide-at-source rule
+        // the scale barcode follows, and never both qty and price.
+        ...(gs1.weight && product.variableType !== 'price' ? { scannedQty: gs1.weight } : {}),
+      }
+    }
+  }
 
   const exact = await siteQueryOne<Row>(
     siteId,

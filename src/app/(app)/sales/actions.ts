@@ -31,6 +31,7 @@ import { finaliseDocument, voidDocument, recordPrint } from '@/lib/site/salesPos
 import { setOrderDetails } from '@/lib/site/salesOrders'
 import { searchForTill, browseForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
 import { terminalStockLocationId } from '@/lib/site/terminals'
+import { lotsForTill, type TillLot } from '@/lib/site/batches'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
 import {
   searchCustomersForTill,
@@ -140,6 +141,28 @@ export async function scanAction(
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
   return resolveScan(siteId, code, priceStructureId, await tillLocation(siteId, terminalId))
+}
+
+/**
+ * The lots a clerk may pick from for one product (234).
+ *
+ * Scoped to the till's own room, because a lot is a pile in a place — offering
+ * the storeroom's lots to a counter till would let somebody sell stock that is
+ * not where they are standing.
+ *
+ * Returns an empty list rather than refusing when the product is not
+ * batch-tracked or the site has no lots for it: the modal reads that as "type
+ * it", which is exactly right for a delivery that skipped the receiving desk.
+ */
+export async function lotsForProductAction(
+  productId: number,
+  terminalId?: number | null,
+): Promise<TillLot[]> {
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
+  const locationId = await tillLocation(siteId, terminalId)
+  if (!locationId) return []
+  return lotsForTill(siteId, productId, locationId)
 }
 
 export async function searchCustomersAction(term: string): Promise<TillCustomer[]> {
