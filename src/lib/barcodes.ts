@@ -10,6 +10,10 @@
  *
  * `tillSearch.ts` re-exports both of these, so nothing that imported them from
  * there needs changing.
+ *
+ * A GS1-128 / DataBar element string — which can carry a batch and expiry —
+ * is a different shape entirely and is read by `parseGs1` in ./gs1. The two do
+ * not overlap: each returns null on the other's input.
  */
 
 export type VariableBarcode = { plu: string; value: number }
