@@ -278,6 +278,19 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
         module: 'inventory_advanced',
       },
+      /* After the stock-take tile because it answers the next question in the
+         same sentence: that one is when a difference must be explained, this
+         one is how precisely the shop knows WHICH goods it is talking about. */
+      {
+        href: '/setup/stock-tracking',
+        description: 'Which lot a sale comes from, and how a scale label is read.',
+        keywords:
+          'lot batch expiry traceability recall fefo gs1 barcode databar scale plu weighed label capture',
+        icon: 'Boxes',
+        tone: 'teal',
+        capability: 'setup.edit',
+        module: 'inventory_advanced',
+      },
       {
         href: '/setup/terminals',
         description: 'Which register rang up a sale, and which machine is which.',

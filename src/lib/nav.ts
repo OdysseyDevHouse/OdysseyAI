@@ -670,6 +670,7 @@ export const SUBPAGE_LABELS = {
   '/setup/locations': 'Stock locations',
   '/setup/reasons': 'Reasons',
   '/setup/stock-takes': 'Stock take approvals',
+  '/setup/stock-tracking': 'Stock tracking',
   '/setup/pricing': 'Price types & VAT',
   '/setup/customer-groups': 'Customer groups',
   '/setup/purchasing': 'Purchasing & cost',
@@ -937,6 +938,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
     'write off shrinkage damage breakage wastage adjustment void cancel refund return credit note faulty codes exception',
   '/setup/stock-takes':
     'stock take count variance threshold approval sign off signoff shrinkage tolerance blind count second signature manager',
+  '/setup/stock-tracking':
+    'lot batch expiry traceability recall fefo earliest expiry gs1 barcode databar scale plu weighed label capture prompt clerk',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/customer-groups':
     'customer groups categories wholesale retail staff trade terms price structure defaults segment',
