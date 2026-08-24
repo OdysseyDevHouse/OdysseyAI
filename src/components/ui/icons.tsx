@@ -250,6 +250,11 @@ export {
   MessageSquare,
   UserPlus,
   Phone,
+  // A HANDSET somebody carries, as distinct from Phone above, which is a
+  // telephone call. The mobile app's enrolled devices are its only user, and a
+  // revoke list showing a call icon beside "Tiaan's iPhone" is the wrong
+  // picture next to the right words.
+  Smartphone,
   Star,
   File as FileIcon,
   FileImage,

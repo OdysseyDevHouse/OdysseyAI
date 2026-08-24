@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
@@ -15,12 +15,21 @@ import {
   Switch,
   Checkbox,
   Icons,
+  EmptyState,
+  Skeleton,
   TableToolbar,
   useToast,
   type Column,
 } from '@/components/ui'
 import type { SiteUser, UserType } from '@/lib/site/users'
-import { saveUserAction, clearPinAction, clearTotpAction, revokeAccessAction } from './actions'
+import {
+  saveUserAction,
+  clearPinAction,
+  clearTotpAction,
+  revokeAccessAction,
+  listMobileDevicesAction,
+  revokeMobileDeviceAction,
+} from './actions'
 
 type Role = { id: number; name: string; isOwner: boolean }
 type Rep = { id: number; name: string }
@@ -55,6 +64,7 @@ export default function UsersScreen({
 }) {
   const [editing, setEditing] = useState<SiteUser | null>(null)
   const [adding, setAdding] = useState(false)
+  const [phonesFor, setPhonesFor] = useState<SiteUser | null>(null)
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -207,6 +217,22 @@ export default function UsersScreen({
                   <Icons.ShieldCheck size={15} />
                 </Button>
               )}
+              {/* Their phones. Same gate as two-factor above and for the same
+                  reason: the mobile app signs in with an email and a password,
+                  so a till-only user has nothing to list. */}
+              {u.userType === 'back_office' && u.controlUserId !== null && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  disabled={pending}
+                  aria-label={`Mobile devices for ${u.name}`}
+                  title="Mobile devices"
+                  onClick={() => setPhonesFor(u)}
+                >
+                  <Icons.Smartphone size={15} />
+                </Button>
+              )}
               {u.id !== currentUserId && u.isActive && (
                 <Button
                   variant="danger-ghost"
@@ -248,6 +274,10 @@ export default function UsersScreen({
             setEditing(null)
           }}
         />
+      )}
+
+      {phonesFor && (
+        <MobileDevicesDialog user={phonesFor} onClose={() => setPhonesFor(null)} />
       )}
     </>
   )
@@ -495,4 +525,128 @@ function UserForm({
       </div>
     </Modal>
   )
+}
+
+type MobileDevice = { id: number; platform: string; label: string; lastSeenAt: string | null }
+
+/**
+ * One person's signed-in phones, and the button that cuts one off.
+ *
+ * ── WHY A DIALOG AND NOT A COLUMN ───────────────────────────────────────────
+ *
+ * Because almost every row would be empty. Most staff will never install the
+ * app, and a column that is blank for nine users out of ten spends width on
+ * nothing while pushing the ones that matter — name, access, role — closer
+ * together. The question "which phones does this person have" is asked rarely
+ * and deliberately, which is exactly what a dialog is for.
+ *
+ * Loaded when it opens rather than with the page: the list is a control-database
+ * read per user, and doing it for everybody on a screen nobody may open would
+ * be dozens of queries to answer a question nobody asked.
+ */
+function MobileDevicesDialog({ user, onClose }: { user: SiteUser; onClose: () => void }) {
+  const [devices, setDevices] = useState<MobileDevice[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+  const toast = useToast()
+  const router = useRouter()
+
+  useEffect(() => {
+    let live = true
+    listMobileDevicesAction(user.id).then((result) => {
+      if (!live) return
+      if (!result.ok) setError(result.error)
+      else setDevices(result.devices)
+    })
+    /* A dialog closed before the read lands must not set state on a component
+       that is gone — and worse, must not show the PREVIOUS person's phones if
+       it is reopened on somebody else in the meantime. */
+    return () => {
+      live = false
+    }
+  }, [user.id])
+
+  function revokeOne(device: MobileDevice) {
+    startTransition(async () => {
+      const result = await revokeMobileDeviceAction(user.id, device.id)
+      if (!result.ok) return toast.error(result.error)
+      toast.success(result.message)
+      setDevices((current) => (current ?? []).filter((d) => d.id !== device.id))
+      router.refresh()
+    })
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Mobile devices — ${user.name}`}
+      description="Phones and tablets signed in to the mobile app."
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      }
+    >
+      {error ? (
+        <Callout tone="warning">{error}</Callout>
+      ) : devices === null ? (
+        <div className="flex flex-col gap-2 py-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : devices.length === 0 ? (
+        <EmptyState
+          icon={<Icons.Smartphone size={22} />}
+          title="No devices signed in"
+          hint="Nothing to do here until this person signs in on the mobile app."
+        />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {devices.map((d) => (
+            <div
+              key={d.id}
+              className="flex items-center justify-between gap-3 rounded-card border border-border bg-surface-2 px-3 py-2.5"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-ink">{d.label}</div>
+                <div className="text-xs text-muted">
+                  {d.platform === 'ios' ? 'iPhone or iPad' : 'Android'}
+                  {' · '}
+                  {d.lastSeenAt ? `last used ${relativeDay(d.lastSeenAt)}` : 'never used'}
+                </div>
+              </div>
+              <Button
+                variant="danger-ghost"
+                size="sm"
+                disabled={pending}
+                onClick={() => revokeOne(d)}
+              >
+                Sign out
+              </Button>
+            </div>
+          ))}
+          {/* Said once, under the list, rather than in every toast: a revoked
+              device stops being able to sign in AGAIN immediately, but a session
+              it already holds runs its twelve hours out. Someone dealing with a
+              stolen phone needs to know that to decide about the password. */}
+          <p className="px-1 pt-1 text-xs text-muted">
+            Signing out stops a device getting a new session. One it already holds keeps
+            working for up to twelve hours — change the password too if the device was stolen.
+          </p>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+/** "today", "yesterday", or a plain date — enough to spot the one nobody uses. */
+function relativeDay(iso: string): string {
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return 'unknown'
+  const days = Math.floor((Date.now() - then.getTime()) / 86_400_000)
+  if (days <= 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days < 30) return `${days} days ago`
+  return then.toLocaleDateString()
 }

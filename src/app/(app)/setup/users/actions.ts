@@ -233,3 +233,99 @@ export async function setCapabilityAction(
   revalidatePath('/setup/roles')
   return { ok: true, message: allowed ? 'Permission granted.' : 'Permission removed.' }
 }
+
+/**
+ * The phones and tablets this person has signed the mobile app in on.
+ *
+ * ── WHY THIS SITS ON THE USER AND NOT BESIDE THE TILLS ──────────────────────
+ *
+ * Because a phone belongs to a PERSON, not to a shop floor. Tills are licensed
+ * per device out of `cp2_devices` and a shop may only trade from as many as it
+ * was sold; a phone consumes no licence, follows a multi-store manager between
+ * branches, and is revoked because somebody left it in a taxi. Listing the two
+ * together would invite the reading that a phone eats a till seat.
+ *
+ * It also matches how the question arrives. Nobody opens a device inventory to
+ * ask "which of these is Tiaan's" — they open Tiaan.
+ */
+export async function listMobileDevicesAction(
+  userId: number,
+): Promise<
+  | { ok: true; devices: { id: number; platform: string; label: string; lastSeenAt: string | null }[] }
+  | { ok: false; error: string }
+> {
+  const ctx = await requireUserAdmin()
+  if (!ctx) return { ok: false, error: DENIED.error }
+
+  const target = await getUser(ctx.site.id, userId)
+  if (!target) return { ok: false, error: 'That user no longer exists.' }
+  /* A till-only user has no back-office account, and the mobile app signs in
+     with an email and password — so there is nothing to list rather than an
+     empty list, and saying so is kinder than an empty table. */
+  if (!target.controlUserId) {
+    return { ok: false, error: 'That person has no back-office sign-in, so they cannot use the mobile app.' }
+  }
+
+  const { listDevices } = await import('@/lib/control/mobileDevices')
+  const devices = await listDevices(target.controlUserId)
+
+  return {
+    ok: true,
+    devices: devices.map((d) => ({
+      id: d.id,
+      platform: d.platform,
+      label: d.label,
+      /* Serialised here rather than in the client: a Date crossing the server
+         boundary arrives as a string anyway, and doing it explicitly means the
+         format is decided once instead of by whatever the browser's locale is. */
+      lastSeenAt: d.lastSeenAt ? d.lastSeenAt.toISOString() : null,
+    })),
+  }
+}
+
+/**
+ * Cut one phone off.
+ *
+ * The refresh token dies immediately, so the app cannot mint another session.
+ * The session it is ALREADY holding lives until it expires — at most twelve
+ * hours — and the message says so rather than implying an instant lockout that
+ * this cannot deliver. Somebody revoking a stolen phone needs to know whether
+ * to also change the password, and a reassuring lie is the worst answer.
+ */
+export async function revokeMobileDeviceAction(
+  userId: number,
+  deviceId: number,
+): Promise<Result> {
+  const ctx = await requireUserAdmin()
+  if (!ctx) return DENIED
+
+  const target = await getUser(ctx.site.id, userId)
+  if (!target) return { ok: false, error: 'That user no longer exists.' }
+  if (!target.controlUserId) {
+    return { ok: false, error: 'That person has no back-office sign-in.' }
+  }
+
+  /* Scoped to the OWNER's id, not just the device id — so a tampered device
+     number cannot revoke somebody else's phone through this screen. The same
+     rule the library enforces; asserted twice because the cost is one column
+     in a WHERE and the failure is silent. */
+  const { revokeDevice } = await import('@/lib/control/mobileDevices')
+  const revoked = await revokeDevice(target.controlUserId, deviceId)
+  if (!revoked) {
+    return { ok: false, error: 'That device was already signed out.' }
+  }
+
+  const { logActivity } = await import('@/lib/site/activityLog')
+  await logActivity(ctx.site.id, { userId: ctx.user.id, userName: ctx.user.name }, {
+    entity: 'user',
+    entityId: userId,
+    action: 'mobile_device_revoked',
+    detail: `A mobile device was signed out for ${target.name} — it cannot sign in again without the password`,
+  })
+
+  revalidatePath('/setup/users')
+  return {
+    ok: true,
+    message: `Signed out. Any session already open on that device stops working within twelve hours.`,
+  }
+}
