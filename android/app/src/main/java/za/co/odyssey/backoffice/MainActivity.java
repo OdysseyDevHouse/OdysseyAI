@@ -2,6 +2,7 @@ package za.co.odyssey.backoffice;
 
 import android.graphics.Color;
 import android.os.Bundle;
+import android.webkit.CookieManager;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -29,6 +30,53 @@ public class MainActivity extends BridgeActivity {
     if (getBridge() != null && getBridge().getWebView() != null) {
       getBridge().getWebView().setBackgroundColor(Color.parseColor("#0b0f14"));
       getBridge().setWebViewClient(new OfflineAwareClient(this));
+    }
+
+    declareMobileShell();
+  }
+
+  /**
+   * Tell the server this is the app, not a browser.
+   *
+   * ── WHY A COOKIE AND NOT A HEADER ───────────────────────────────────────
+   *
+   * The header (x-odyssey-shell) is the honest signal and the shell's own fetch
+   * sends it — but a WebView attaches custom headers ONLY to requests it makes
+   * itself, never to navigations the PAGE starts. A tapped link, a redirect
+   * after sign-in, a form post: all arrive bare. And WebResourceRequest headers
+   * are read-only, so there is no interception hook that can add one either.
+   *
+   * The cookie is the half that survives navigation. The proxy already writes
+   * it when it sees the header (src/proxy.ts), and this sets the same value up
+   * front so the VERY FIRST page — before any fetch has run — is already the
+   * phone's layout. Without it the app renders the desktop sidebar: 256px of
+   * menu on a 390px screen, with the dashboard's widgets crushed beside it.
+   *
+   * Presentation only, and deliberately not a credential: it decides which
+   * chrome is drawn and nothing else. Every capability check, module gate and
+   * session check runs exactly as it does for a browser.
+   */
+  private void declareMobileShell() {
+    try {
+      String url = getBridge().getServerUrl();
+      if (url == null || url.isEmpty()) return;
+
+      CookieManager cookies = CookieManager.getInstance();
+      cookies.setAcceptCookie(true);
+      /* Third-party cookies too: the WebView treats the app's own origin as
+         third-party in some configurations, and a session that silently fails
+         to stick is the hardest kind of bug to see. */
+      cookies.setAcceptThirdPartyCookies(getBridge().getWebView(), true);
+
+      /* No Secure attribute: a dev build talks to a plain-HTTP LAN address and
+         a Secure cookie would simply be dropped there. It carries nothing
+         sensitive — the session cookie is a separate, httpOnly one the server
+         sets itself. */
+      cookies.setCookie(url, "odyssey_shell=mobile; Path=/; Max-Age=31536000; SameSite=Lax");
+      cookies.flush();
+    } catch (Exception ignored) {
+      /* Worst case the app renders the desktop layout — wrong, but usable.
+         Failing to launch over a presentation hint would be far worse. */
     }
   }
 
