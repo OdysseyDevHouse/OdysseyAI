@@ -133,6 +133,26 @@ lot which gave up the stock is the one that gets it back.
 If you return more than the original sale took, the surplus lands on the newest
 open lot.
 
+### A return with no receipt
+
+Different case, and worth testing separately: a walk-in refund has no original
+line to mirror.
+
+- **With lot capture off**, it lands on the **newest open lot** — a guess, and
+  one that dates a returned old carton as though it were fresh.
+- **With capture on** (step 11), the till asks which lot is on the pack being
+  handed back, and books it there. Nothing is preselected: the lot due to sell
+  next says nothing about what somebody bought a fortnight ago.
+
+**Worth testing:** sell from the *later*-expiring lot, then refund it without a
+receipt while naming the *earlier* lot. The stock should go back where you said,
+not to the newest.
+
+**And the rule that protects the good case:** on a receipted return the original
+line still wins, even if a lot number is keyed. A record of what actually left
+beats a reading off a label. Try it — credit a receipted line while naming a
+different lot; the original one gets the stock back.
+
 ---
 
 ## 6. Transfers and stock takes
@@ -279,6 +299,10 @@ because they may genuinely be on the shelf.
 Then check **Stock → Batches → that lot → trace**: the sale should have **no
 Inferred badge**, and the quantity should have come off the lot you picked
 rather than the one expiring soonest. That is the whole feature in one check.
+
+The same dialog appears on a **refund with no receipt**, worded for goods coming
+back and with nothing preselected — see step 5. A receipted return never asks,
+because the original line already knows the answer.
 
 **"Another lot — type it"** exists for a delivery that skipped the receiving
 desk. The number is recorded either way; if it matches nothing on file, the
