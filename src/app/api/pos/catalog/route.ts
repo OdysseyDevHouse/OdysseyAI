@@ -63,11 +63,19 @@ export const dynamic = 'force-dynamic'
  * arrives. Patching products into it cannot fix that: the menus are not on
  * the product rows.
  *
+ * 7 added the tile PICTURES — `imageIcon` on every product row and `posImageId`
+ * on every department. A till on 6 holds neither, so it would go on drawing the
+ * generic box-and-tag glyphs on a shop that has uploaded a picture for every
+ * department, with nothing on screen to say why. A delta cannot repair that for
+ * departments in particular: they are sent whole rather than since a cursor, but
+ * the products beside them would only gain their icon as each one happened to be
+ * edited — a grid half in pictures and half in glyphs, settling over weeks.
+ *
  * ⚠ MUST match `SCHEMA` in lib/posOffline/catalog.ts. The till sends its own
  * number and this route decides whether a delta is safe; bump only one and every
  * till in the shop full-loads on every poll, forever, with no error to show for it.
  */
-const CATALOG_SCHEMA = 6
+const CATALOG_SCHEMA = 7
 
 /**
  * Ceiling on one response.
@@ -306,9 +314,21 @@ export async function GET(req: NextRequest) {
       products,
       /** Archived or hidden since the cursor. Empty on a full load. */
       deletedIds,
+      /* `posImageId` rides along so an offline till draws the same department
+         tiles as an online one. It is an id, not bytes: the picture itself is
+         fetched from /api/department-image and cached by the browser, which
+         keeps IndexedDB holding rows rather than a photo library. The trade is
+         deliberate — a till that goes offline before it has ever drawn a
+         department falls back to the glyph, which is what it drew anyway. */
       departments: departments
         .filter((d) => d.isActive)
-        .map((d) => ({ id: d.id, parentId: d.parentId, name: d.name, sortOrder: d.sortOrder })),
+        .map((d) => ({
+          id: d.id,
+          parentId: d.parentId,
+          name: d.name,
+          sortOrder: d.sortOrder,
+          posImageId: d.posImageId,
+        })),
       tenders,
       specials,
       /**

@@ -1,7 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { has } from '@/lib/control/modules'
-import { templatesFor, type ReportTemplate } from '@/lib/reportBuilder/templates'
+import { catalogueFor, type CatalogueEntry } from '@/lib/reportBuilder/templates'
 import { listSavedReports } from '@/lib/site/savedReports'
 import { listFavorites } from '@/lib/site/reportFavorites'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -54,7 +54,7 @@ export default async function ReportsPage() {
 
   // Built-ins are filtered by capability here rather than in the client, so a
   // report someone may not run is never sent to their browser at all.
-  const templates = templatesFor(allow).map(toHubItem)
+  const templates = catalogueFor(allow).map(toHubItem)
 
   // Stock intelligence is a dedicated PAGE, not an engine template — aging
   // peels movement history into layers, and turn/sell-through divide one
@@ -271,14 +271,21 @@ export default async function ReportsPage() {
 }
 
 /* Annotated rather than inferred, so the pushes below may carry the optional
-   fields a PAGE tile needs — an inferred literal type has neither. */
-function toHubItem(t: ReportTemplate): HubItem {
+   fields a PAGE tile needs — an inferred literal type has neither.
+
+   Takes a CatalogueEntry rather than a ReportTemplate because a report with a
+   switch contributes one tile per cut, each with its own name, star and `?cut=`
+   href — see the note on `catalogueFor`. `href` is always set here, including
+   for the plain reports where it is just the engine route it would have
+   defaulted to; carrying it explicitly is what lets a cut point at itself. */
+function toHubItem(e: CatalogueEntry): HubItem {
   return {
-    id: t.id,
-    name: t.name,
-    description: t.description,
-    category: t.category,
-    source: t.spec.source,
+    id: e.id,
+    name: e.name,
+    description: e.description,
+    category: e.category,
+    source: e.source,
+    href: e.href,
     kind: 'builtin' as const,
     createdByName: '',
     broken: false,

@@ -76,14 +76,11 @@ export function ReceiptModal({
       open={open}
       onClose={onClose}
       title="Sale complete"
-      /* The tick belongs beside the title rather than above the amount: it
-         answers "did that go through?", which is a different question from
-         "what do I hand back?" and should not compete with the change. */
-      titleMedia={
-        <span className="flex size-8 items-center justify-center rounded-pill bg-success text-white">
-          <Icons.Check size={18} strokeWidth={3} />
-        </span>
-      }
+      /* No `titleMedia`. There WAS a small green tick beside the title, back
+         when it was the only one on the dialog. The drawn tick in the body now
+         answers "did that go through?" far more plainly, and two ticks a
+         centimetre apart saying the same thing read as a duplicate rather than
+         as emphasis — so the badge went and the big one stayed. */
       /* Sized by the FOOTER, not the body. Five touch-size keys measure ~535px
          of buttons plus gaps and the panel's own padding; at `sm` (448px) they
          overflowed and "Open" was clipped by the panel edge, and at `md` (576px)

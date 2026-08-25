@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useSyncExternalStore, useTransition } from 'react'
 import Link from 'next/link'
 import {
   Badge,
@@ -14,6 +14,7 @@ import {
   SegmentedControl,
   Tabs,
   ToolbarSearch,
+  Tooltip,
   useToast,
 } from '@/components/ui'
 import {
@@ -86,6 +87,12 @@ const POPULAR = '__popular'
  */
 const CATEGORY_ORDER = [
   'Sales',
+  /* Directly after Sales, because it is the same subject asked a different way:
+     Sales is WHAT the shop sold, Performance is WHO AND WHAT earned it. It has
+     no sidebar entry of its own to match, so it is placed by meaning — and the
+     two tabs are read together often enough that separating them would cost a
+     trip across the bar. */
+  'Performance',
   'Stock',
   'Customers',
   'Suppliers',
@@ -99,6 +106,85 @@ const CATEGORY_ORDER = [
 function categoryRank(category: string) {
   const i = CATEGORY_ORDER.indexOf(category)
   return i === -1 ? CATEGORY_ORDER.length : i
+}
+
+/* ── laying the panels out in columns ──────────────────────────────────────
+ *
+ * See the note at the grid itself for why this is done in JS rather than with
+ * CSS `columns`. In short: CSS fills a column top-to-bottom before moving
+ * across, which permutes the category running order; this keeps it.
+ */
+
+/**
+ * The breakpoints the panel grid uses, as pixel widths.
+ *
+ * These MUST match the `lg:grid-cols-2 2xl:grid-cols-3` on the grid — the
+ * columns are built here but drawn by those classes, so a mismatch means
+ * panels dealt into three columns and rendered in two, which strands the third
+ * column's contents in a stack at the bottom. Tailwind's own values.
+ */
+const LG = 1024
+const XXL = 1536
+
+/** Subscribe to a media query, SSR-safe. */
+function useMediaQuery(query: string): boolean {
+  const [mq] = useState(() =>
+    typeof window === 'undefined' ? null : window.matchMedia(query),
+  )
+  return useSyncExternalStore(
+    (onChange) => {
+      if (!mq) return () => {}
+      mq.addEventListener('change', onChange)
+      return () => mq.removeEventListener('change', onChange)
+    },
+    () => (mq ? mq.matches : false),
+    /* The SERVER snapshot, and it must be a stable `false`: the server cannot
+       know the viewport, so it renders the one-column case and the client
+       corrects on mount. Returning `mq.matches` here would differ between the
+       two renders and trip a hydration mismatch. */
+    () => false,
+  )
+}
+
+/**
+ * How many columns the grid is currently drawing.
+ *
+ * One before mount and on a narrow screen, which is also what the server
+ * renders — so the first paint is a single ordered stack, which is correct at
+ * any width rather than merely unstyled.
+ */
+function useColumnCount(): number {
+  const wide = useMediaQuery(`(min-width: ${XXL}px)`)
+  const medium = useMediaQuery(`(min-width: ${LG}px)`)
+  return wide ? 3 : medium ? 2 : 1
+}
+
+/**
+ * Deal items into `count` columns, in order, keeping the top row in reading
+ * order and the columns roughly level.
+ *
+ * The first `count` items go one per column — that is what puts Sales,
+ * Performance and Stock across the top row. After that each item joins
+ * whichever column is currently shortest, so a tall panel does not drag its
+ * column far past the others. Height is approximated by the number of reports
+ * a panel holds, which is what actually drives it.
+ */
+function balance<T>(items: readonly T[], count: number, weigh: (item: T) => number): T[][] {
+  const columns: T[][] = Array.from({ length: count }, () => [])
+  const heights = new Array<number>(count).fill(0)
+
+  items.forEach((item, i) => {
+    /* The first row is positional, not balanced: it is the running order, and
+       levelling it would be the very reordering this exists to prevent. */
+    const target =
+      i < count ? i : heights.indexOf(Math.min(...heights))
+    columns[target].push(item)
+    /* A constant per panel for its header and padding, so three short panels
+       are not treated as cheaper than one panel of the same total rows. */
+    heights[target] += weigh(item) + 3
+  })
+
+  return columns
 }
 
 /** What to CALL a tab in prose — the sentinels are not words. */
@@ -160,6 +246,7 @@ export default function ReportsHub({
   const [tab, setTab] = useState<string>(ALL)
   const [view, setView] = useState<ViewMode>('grid')
   const [favs, setFavs] = useState<Set<string>>(() => new Set(favorites))
+  const columnCount = useColumnCount()
   const [, startTransition] = useTransition()
   const toast = useToast()
 
@@ -258,8 +345,11 @@ export default function ReportsHub({
    * one or two — which is the catalogue the reader just chose to step out of,
    * and it would throw away the running order they were given in.
    */
-  const groups = useMemo(() => {
-    if (activeTab === POPULAR && !searchedWider) return [[POPULAR, visible] as const]
+  /* Typed rather than inferred: the Popular branch below returns a single
+     fixed pair and would otherwise infer a narrower tuple than the general
+     branch, which `balance` cannot take as one type. */
+  const groups = useMemo<[string, HubItem[]][]>(() => {
+    if (activeTab === POPULAR && !searchedWider) return [[POPULAR, visible]]
     const out = new Map<string, HubItem[]>()
     for (const item of visible) {
       const list = out.get(item.category) ?? []
@@ -396,9 +486,23 @@ export default function ReportsHub({
               </p>
             </div>
           ) : (
+            /*
+             * Each favourite is its own TILE, not a row.
+             *
+             * The rows below draw no box of their own — they rely on the
+             * category panel around them for their edges, which is right when
+             * a dozen sit in a list under one heading. The shelf has no such
+             * panel: a handful of rows in one wide card ran together as a
+             * single strip, with nothing to say where one report ended and the
+             * next began.
+             *
+             * So these carry their own border and surface, and the grid gaps
+             * separate them. They are the shortcuts somebody uses every
+             * morning — they should look like things to press.
+             */
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {favouriteItems.map((item) => (
-                <ReportTile key={item.id} item={item} starred onToggle={onToggleFavorite} />
+                <FavouriteTile key={item.id} item={item} onToggle={onToggleFavorite} />
               ))}
             </div>
           )}
@@ -445,22 +549,42 @@ export default function ReportsHub({
           />
         </Card>
       ) : view === 'grid' ? (
-        <div className="flex flex-col gap-6">
-          {groups.map(([category, items]) => (
-            <CategoryGrid
-              key={category}
-              category={category}
-              items={items}
-              favs={favs}
-              onToggle={onToggleFavorite}
-              /* On a single-category tab the selected tab already names the
-                 section; repeating it as a heading directly underneath is the
-                 same word twice for no information. The description still
-                 shows, since that does say something the tab cannot. When the
-                 search has widened past the tab, headings come back — the
-                 results span categories and need naming again. */
-              showHeading={activeTab === ALL || searchedWider}
-            />
+        /*
+         * Category CARDS, side by side — each subject its own panel of rows.
+         *
+         * ── WHY THE COLUMNS ARE BUILT IN JS ─────────────────────────────────
+         *
+         * Two layouts are wrong here, and this is the third.
+         *
+         * A plain GRID lays out in rows, so every panel beside Sales is stranded
+         * at the top of a row as deep as the tallest panel in it, and the page
+         * fills with empty gaps.
+         *
+         * CSS `columns` fixes the gaps but reorders the reading: it fills each
+         * column top-to-bottom before moving across, so the running order
+         * Sales, Performance, Stock… lands as a FIRST ROW of Sales, Stock,
+         * Suppliers, with Performance hidden under Sales. The order is
+         * meaningful — Performance sits second because it is read with Sales —
+         * and a layout that silently permutes it is not showing that order.
+         *
+         * So the panels are dealt into columns here, in order, and each column
+         * is rendered as a plain flex stack. The top row reads across as the
+         * first three categories, and the columns still pack by height because
+         * `balance` puts each panel in whichever column is currently shortest.
+         */
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+          {balance(groups, columnCount, ([, items]) => items.length).map((column, i) => (
+            <div key={i} className="flex flex-col gap-4">
+              {column.map(([category, items]) => (
+                <CategoryGrid
+                  key={category}
+                  category={category}
+                  items={items}
+                  favs={favs}
+                  onToggle={onToggleFavorite}
+                />
+              ))}
+            </div>
           ))}
         </div>
       ) : (
@@ -483,43 +607,52 @@ export default function ReportsHub({
 /* ── grid view ─────────────────────────────────────────────────────────── */
 
 /**
- * A category as a heading over a row of tiles.
+ * A category as a CARD: its name and count in a header, its reports as rows.
  *
- * The heading is plain text rather than a card, so the tiles are the only boxes
- * on the screen — nesting cards inside cards is what makes a hub read as busy.
+ * ── WHY A CARD OF ROWS RATHER THAN A ROW OF TILES ──────────────────────────
+ *
+ * The subject is the thing being chosen first. Somebody arriving at this hub
+ * knows they want a stock figure long before they know which stock report, and
+ * a flat field of eighty equal tiles makes them read every name to find where
+ * one subject ends and the next begins. Boxing each subject turns that into two
+ * decisions: pick the panel, then read the handful of names inside it.
+ *
+ * It also lets the subjects sit SIDE BY SIDE. As full-width bands of tiles, six
+ * categories were a very long page whose lower half nobody scrolled to; as
+ * columns, most of the catalogue is on one screen.
+ *
+ * The cost is nesting — a card inside a card — which is what the old flat
+ * layout was avoiding, and the reason the rows inside carry no borders or
+ * surfaces of their own. The panel is the only box; a row is text that
+ * highlights when pointed at.
  */
 function CategoryGrid({
   category,
   items,
   favs,
   onToggle,
-  showHeading = true,
 }: {
   category: string
   items: HubItem[]
   favs: Set<string>
   onToggle: (id: string) => void
-  /** False when a selected tab already names this category — see the caller. */
-  showHeading?: boolean
 }) {
   const description = categoryDescription(category)
 
   return (
-    <section className="flex flex-col gap-3">
-      {showHeading ? (
-        <div className="flex items-center gap-3">
-          <CategoryTile icon={categoryIcon(category, 16)} tone={categoryTone(category)} size="sm" />
-          <div className="min-w-0">
-            <h2 className="truncate text-[15px] font-semibold text-ink">{tabLabel(category)}</h2>
-            {description && <p className="truncate text-xs text-muted">{description}</p>}
-          </div>
-          <Badge tone="neutral">{items.length}</Badge>
+    <Card className="flex flex-col">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+        <CategoryTile icon={categoryIcon(category, 16)} tone={categoryTone(category)} size="sm" />
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-semibold text-ink">{tabLabel(category)}</h2>
+          {description && <p className="truncate text-xs text-muted">{description}</p>}
         </div>
-      ) : (
-        description && <p className="text-xs text-muted">{description}</p>
-      )}
+        {/* The count belongs in the header rather than on a row: it says how
+            much is in this panel, which is exactly the thing being decided. */}
+        <Badge tone="neutral">{items.length}</Badge>
+      </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      <div className="flex flex-col p-1.5">
         {items.map((item) => (
           <ReportTile
             key={item.id}
@@ -529,16 +662,38 @@ function CategoryGrid({
           />
         ))}
       </div>
-    </section>
+    </Card>
   )
 }
 
 /**
- * One report as a card: what it is called, and what it answers.
+ * One report as a ROW inside its category's card: its name, a chevron, a star —
+ * and, on hover, what it answers.
  *
- * The star sits above the card's own click target rather than inside it — an
- * overlay link makes the whole tile clickable, and the star is lifted back out
- * of it so it stays separately hittable.
+ * ── WHY THE DESCRIPTION IS NOT ON THE FACE ─────────────────────────────────
+ *
+ * A catalogue of eighty reports whose every entry carries a full sentence is
+ * eighty sentences to read past, and the NAME is what a reader scans by; the
+ * sentence only matters for the one they have already narrowed down to. In a
+ * card of rows there is nowhere to put it anyway without turning each row into
+ * a paragraph and the panel into a page. So it moves into a tooltip the whole
+ * row raises — the text is there for the one report being considered, and costs
+ * nothing for the seventy-nine that are not.
+ *
+ * `trigger="card"` and not the default, which would silently never appear: the
+ * overlay link below covers the row (`after:absolute inset-0`) so it can be
+ * clicked anywhere, and nothing underneath that overlay ever receives `:hover`.
+ * Reacting to the row's own hover is the only thing that works without
+ * dismantling the overlay — see Tooltip's note. The panel stays
+ * `pointer-events-none`, so it cannot swallow the click from the link under it.
+ *
+ * `side="bottom"` because these rows are stacked: a tooltip opening upwards
+ * from the second row covers the first, which is the row the reader just
+ * rejected and may want back. Downwards it covers rows they have not reached.
+ *
+ * The star sits above the row's own click target rather than inside it — the
+ * overlay makes the whole row clickable, and the star is lifted back out of it
+ * so it stays separately hittable.
  */
 function ReportTile({
   item,
@@ -550,29 +705,97 @@ function ReportTile({
   onToggle: (id: string) => void
 }) {
   return (
-    <div className="group relative flex items-start gap-3 rounded-card border border-border bg-surface px-4 py-3.5 transition-colors hover:border-border-strong hover:bg-surface-2">
-      <CategoryTile icon={sourceIcon(item.source)} tone={sourceTone(item.source)} />
-      <Link
-        href={itemHref(item)}
-        className="min-w-0 flex-1 outline-none after:absolute after:inset-0 after:rounded-card after:content-['']"
+    <div className="group relative flex items-center gap-2.5 rounded-control px-2.5 py-1.5 transition-colors hover:bg-surface-2">
+      <Tooltip
+        label={item.description}
+        trigger="card"
+        side="bottom"
+        align="start"
+        className="min-w-0 flex-1"
       >
-        <span className="flex items-center gap-1.5">
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
-            {item.name}
+        <Link
+          href={itemHref(item)}
+          className="block min-w-0 outline-none after:absolute after:inset-0 after:rounded-control after:content-['']"
+        >
+          <span className="flex items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2 group-hover:text-ink">
+              {item.name}
+            </span>
+            {item.kind === 'ask' && <Icons.Sparkles size={12} className="shrink-0 text-brand" />}
+            {item.broken && <Badge tone="warning">Needs attention</Badge>}
           </span>
-          {item.kind === 'ask' && <Icons.Sparkles size={12} className="shrink-0 text-brand" />}
-          {item.broken && <Badge tone="warning">Needs attention</Badge>}
-        </span>
-        {/* The full sentence, wrapping. It was briefly clipped to one line with
-            the rest on hover, back when every category sat on one page and the
-            ragged tile heights were the loudest thing on the screen. The tabs
-            fixed that at the source — a tab shows a dozen tiles, not eighty —
-            so the description can simply be readable again. */}
-        <span className="mt-0.5 block text-xs leading-relaxed text-muted">{item.description}</span>
-      </Link>
+        </Link>
+      </Tooltip>
+      {/* Points the way in, and gives the eye a right-hand edge to run down.
+          Faint until the row is pointed at — eighty of these at full strength
+          would be the loudest thing on the screen. */}
+      <Icons.ChevronRight
+        size={14}
+        className="shrink-0 text-faint transition-colors group-hover:text-muted"
+        aria-hidden
+      />
       {!item.unstarrable && (
         <span className="relative z-10">
           <FavoriteToggle starred={starred} onToggle={() => onToggle(item.id)} label={item.name} />
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * One starred report on the shelf, as a tile that stands on its own.
+ *
+ * ── WHY THIS IS NOT `ReportTile` WITH A BORDER ─────────────────────────────
+ *
+ * They answer different questions. A row in a category panel is one of a dozen
+ * being SCANNED under a heading that already says what they have in common, so
+ * it carries a name and nothing else, and the panel draws the edges. A
+ * favourite is being RECOGNISED and pressed — there are three or four, they
+ * come from different categories, and there is no panel around them.
+ *
+ * So this one keeps the source glyph, which is the fastest way to tell a stock
+ * report from a sales one when they sit side by side with no heading to group
+ * them. The rows drop it precisely because inside Stock every glyph is the
+ * same and it says nothing.
+ *
+ * The star is always filled and always on: everything here is starred by
+ * definition, and it is the way back OUT — pressing it removes the report from
+ * the shelf, which is the only un-starring anyone does deliberately.
+ */
+function FavouriteTile({
+  item,
+  onToggle,
+}: {
+  item: HubItem
+  onToggle: (id: string) => void
+}) {
+  return (
+    <div className="group relative flex items-center gap-3 rounded-card border border-border bg-surface px-3.5 py-3 shadow-card transition-colors hover:border-border-strong hover:bg-surface-2">
+      <CategoryTile icon={sourceIcon(item.source, 15)} tone={sourceTone(item.source)} size="sm" />
+      <Tooltip
+        label={item.description}
+        trigger="card"
+        side="bottom"
+        align="start"
+        className="min-w-0 flex-1"
+      >
+        <Link
+          href={itemHref(item)}
+          className="block min-w-0 outline-none after:absolute after:inset-0 after:rounded-card after:content-['']"
+        >
+          <span className="flex items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
+              {item.name}
+            </span>
+            {item.kind === 'ask' && <Icons.Sparkles size={12} className="shrink-0 text-brand" />}
+            {item.broken && <Badge tone="warning">Needs attention</Badge>}
+          </span>
+        </Link>
+      </Tooltip>
+      {!item.unstarrable && (
+        <span className="relative z-10">
+          <FavoriteToggle starred onToggle={() => onToggle(item.id)} label={item.name} />
         </span>
       )}
     </div>

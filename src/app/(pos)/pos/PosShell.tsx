@@ -149,6 +149,7 @@ import {
   salePayloadLines,
   returnPayloadLines,
   docDiscountShares,
+  departmentTallies,
   type DocDiscount,
 } from './saleSelectors'
 import DocDiscountModal from './DocDiscountModal'
@@ -277,6 +278,7 @@ export default function PosShell({
   operatorUserId,
   terminals,
   departments,
+  departmentCounts = {},
   priceStructureId: siteDefaultStructureId,
   priceStructures,
   tenders,
@@ -319,6 +321,19 @@ export default function PosShell({
   operatorUserId: number
   terminals: Terminal[]
   departments: Department[]
+  /**
+   * How many sellable products sit DIRECTLY in each department, keyed by id.
+   *
+   * Rolled up into the subtree totals the tiles show by `departmentTallies` —
+   * the till holds the whole tree, so counting a branch costs a walk over a
+   * few dozen rows rather than a query per tile.
+   *
+   * Defaulted to empty rather than required: a department with no entry has
+   * nothing of its own, which is both the honest reading of a missing key and
+   * the common case for every branch. A caller that passes none gets tiles
+   * with no count rather than tiles claiming zero.
+   */
+  departmentCounts?: Record<number, number>
   priceStructureId: number | null
   /**
    * Every active price type, for the price-change key to offer.
@@ -1743,6 +1758,29 @@ export default function PosShell({
         return included
       }),
     [departments, liveMenu, departmentPath],
+  )
+
+  /*
+   * What each department tile says beneath its name.
+   *
+   * Rolled up over MENU-FILTERED departments rather than the whole tree, and
+   * that is the load-bearing part: at breakfast the menu hides most of a
+   * restaurant's departments, and counting the raw tree would have a visible
+   * 'Drinks' tile promise the sections and products of a 'Cocktails' that is
+   * not on the menu and cannot be opened. The number a tile shows has to be
+   * the number of things behind it right now.
+   *
+   * The per-department PRODUCT counts are still the shop's whole file — a menu
+   * can hide a department but products are excluded per row, and the till only
+   * holds the open department's products, so a menu that excludes individual
+   * items will read very slightly high on its parent's tile. That is the
+   * deliberate trade: the alternative is shipping the whole product file's
+   * department ids to count them, and a count that is off by the handful of
+   * items a menu suppresses is worth far less than the round trip.
+   */
+  const tallies = useMemo(
+    () => departmentTallies(menuDepartments, departmentCounts),
+    [menuDepartments, departmentCounts],
   )
 
   /* ── Actions ──────────────────────────────────────────────────────────── */
@@ -6013,6 +6051,9 @@ export default function PosShell({
         <DeptRail
           /* The menu's departments, so no rail button opens onto nothing. */
           departments={menuDepartments}
+          /* What is behind each button, so a cashier can see a department is
+             worth opening before opening it. */
+          tallies={tallies}
           activeId={state.catalog.kind === 'departments' ? state.catalog.path[0] ?? null : null}
           /* root: the rail only ever lists top-level departments, so picking one
              starts a fresh trail rather than adding to wherever the cashier
@@ -6027,6 +6068,10 @@ export default function PosShell({
              agree with it, or drilling would offer a department the rail has
              already said is not on the menu. */
           departments={menuDepartments}
+          /* The same tallies the rail shows, from the same memo — a tile and
+             the row that opens it disagreeing on the count would read as a
+             rendering fault. */
+          tallies={tallies}
           results={results}
           searching={searching}
           /* The menu's grid, not the department's whole contents. `loading` is

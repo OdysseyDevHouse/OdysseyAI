@@ -189,29 +189,68 @@ export default function BuilderShell({
       {/* The preview IS the build surface — full width, front and centre. */}
       <PreviewPanel spec={spec} source={source} onChange={update} />
 
-      {/* What this report will be, in a sentence — then the way out. */}
+      {/*
+        What this report is CALLED, what it will be in a sentence, then the way
+        out.
+
+        ── WHY THE NAME IS HERE AND NOT IN THE TOOLBAR ──────────────────────
+
+        The toolbar above shapes the QUERY — source, columns, filters, sort —
+        and every control on it changes the preview underneath. A name changes
+        nothing about the report; it is part of saving it. Putting it beside the
+        Save button means the last thing read before saving is the thing the
+        report will be called, which is exactly when somebody notices it still
+        says "(copy)".
+
+        It is seeded — "New sales report", or "<template> (copy)" when starting
+        from a built-in — because a builder that opens with an empty required
+        field reads as a form to fill in rather than a report to shape. But it
+        was only ever a seed and had no input: every custom report saved under a
+        generated title, which is the bug this fixes.
+      */}
       <div className="flex flex-wrap items-center gap-3 rounded-card border border-border bg-surface px-4 py-3 shadow-card">
-        <span
-          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-pill ${
-            check.ok ? 'bg-brand-soft text-brand' : 'bg-danger-soft text-danger'
-          }`}
-        >
-          <Icons.Info size={16} />
-        </span>
-        <p className="min-w-0 flex-1 text-[13px] text-muted">
-          {check.ok ? (
-            <span className="font-medium text-ink">{summaryLine(spec, source)}</span>
-          ) : (
-            <span className="font-medium text-danger">{check.error}</span>
-          )}
-        </p>
-        <ButtonLink href="/reports" variant="secondary">
-          Cancel
-        </ButtonLink>
-        <Button variant="primary" onClick={onSave} disabled={saving || !check.ok}>
-          <Icons.Save size={16} />
-          {saving ? 'Saving…' : savedId ? 'Save changes' : 'Save report'}
-        </Button>
+        <div className="min-w-56 flex-1 sm:max-w-sm">
+          <Field label="Report name" htmlFor="report-name">
+            <Input
+              id="report-name"
+              value={spec.name}
+              onChange={(e) => update({ name: e.target.value })}
+              placeholder="What is this report called?"
+              maxLength={120}
+              /* Selected on focus so a seeded "(copy)" name is replaced by
+                 typing rather than edited around — the seed is a suggestion,
+                 and the common case is wanting a different name entirely. */
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </Field>
+        </div>
+
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <span
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-pill ${
+              check.ok ? 'bg-brand-soft text-brand' : 'bg-danger-soft text-danger'
+            }`}
+          >
+            <Icons.Info size={16} />
+          </span>
+          <p className="min-w-0 flex-1 text-[13px] text-muted">
+            {check.ok ? (
+              <span className="font-medium text-ink">{summaryLine(spec, source)}</span>
+            ) : (
+              <span className="font-medium text-danger">{check.error}</span>
+            )}
+          </p>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-3">
+          <ButtonLink href="/reports" variant="secondary">
+            Cancel
+          </ButtonLink>
+          <Button variant="primary" onClick={onSave} disabled={saving || !check.ok}>
+            <Icons.Save size={16} />
+            {saving ? 'Saving…' : savedId ? 'Save changes' : 'Save report'}
+          </Button>
+        </div>
       </div>
 
       {/* ── the pop-up editors ──────────────────────────────────────────────

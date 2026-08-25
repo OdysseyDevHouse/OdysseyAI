@@ -24,6 +24,7 @@ export type CategoryTone =
   | 'rose'
   | 'teal'
   | 'orange'
+  | 'cyan'
   | 'slate'
 
 const TONE: Record<CategoryTone, string> = {
@@ -35,6 +36,7 @@ const TONE: Record<CategoryTone, string> = {
   rose: 'text-cat-rose bg-cat-rose-bg',
   teal: 'text-cat-teal bg-cat-teal-bg',
   orange: 'text-cat-orange bg-cat-orange-bg',
+  cyan: 'text-cat-cyan bg-cat-cyan-bg',
   slate: 'text-cat-slate bg-cat-slate-bg',
 }
 
@@ -55,7 +57,16 @@ const SIZE = {
   lg: 'h-11 w-11 rounded-[14px]',
 }
 
-/** Every tone, in the order toneForId walks them. */
+/**
+ * The tones `toneForId` walks, in its own order.
+ *
+ * NOT every tone, and it must not become every tone. `cyan` is deliberately
+ * absent: `toneForId` is `id % length`, so appending here re-colours every
+ * department and quick-key group that already has a derived hue — breaking the
+ * promise directly below that a record keeps its colour between reloads. A tone
+ * added for one named subject (Performance) belongs in CATEGORY_TONE in
+ * categoryStyle.tsx, where it is chosen by hand, and not in this ramp.
+ */
 export const CATEGORY_TONES: readonly CategoryTone[] = [
   'indigo',
   'teal',

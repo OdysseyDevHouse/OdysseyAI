@@ -348,3 +348,101 @@ export function departmentTrail(all: Department[], path: number[]): Department[]
 export function hasChildren(all: Department[], id: number): boolean {
   return all.some((d) => d.parentId === id)
 }
+
+/**
+ * What each department tile says beneath its name — "54 products", or
+ * "2 sections · 306 products" where it has sub-departments.
+ *
+ * Two counts, both rolled up over the WHOLE SUBTREE:
+ *
+ *   products  every sellable product beneath this department, at any depth
+ *   sections  its direct children only
+ *
+ * The products figure has to be a subtree total because a branch holds none of
+ * its own: a "Wine & Ciders" whose stock all sits in two sections beneath it
+ * would read "0 products" on a direct count, which is the one number guaranteed
+ * to be wrong on exactly the tiles a cashier is deciding whether to open. The
+ * sections figure is deliberately NOT rolled up — it answers "how many buttons
+ * is the next screen", and a total that counted grandchildren would promise
+ * more than that screen shows.
+ *
+ * Computed here rather than queried per department: the till already holds the
+ * whole department tree, so this is one walk over a list of a few dozen rows
+ * against one recursive query per tile.
+ *
+ * ⚠ `counts` holds DIRECT counts keyed by department id, filtered to what the
+ * till can actually sell — see tillProductCounts, which owns that rule. A
+ * department missing from the map has none of its own, which is the common case
+ * for every branch.
+ */
+export type DepartmentTally = {
+  /** Every sellable product beneath this department, at any depth. */
+  products: number
+  /** Its DIRECT children only — how many buttons the next screen has. */
+  sections: number
+}
+
+export function departmentTallies(
+  all: Department[],
+  counts: Record<number, number>,
+): Map<number, DepartmentTally> {
+  /* Children indexed once. Filtering `all` per department turns a walk over a
+     few dozen rows into a quadratic one, and this runs on every render of the
+     grid. */
+  const kids = new Map<number, Department[]>()
+  for (const d of all) {
+    if (d.parentId === null) continue
+    const list = kids.get(d.parentId)
+    if (list) list.push(d)
+    else kids.set(d.parentId, [d])
+  }
+
+  const out = new Map<number, DepartmentTally>()
+
+  /* Iterative rather than recursive, and guarded by `seen`: these rows come
+     from the database, and one mis-parented department that points at its own
+     descendant would otherwise overflow the stack on a till mid-sale. A cycle
+     is counted once and left alone — a wrong number on a tile is recoverable,
+     a white screen at the counter is not. */
+  const total = (root: Department): number => {
+    let products = 0
+    const seen = new Set<number>([root.id])
+    const queue: Department[] = [root]
+    while (queue.length) {
+      const current = queue.shift()!
+      products += counts[current.id] ?? 0
+      for (const child of kids.get(current.id) ?? []) {
+        if (seen.has(child.id)) continue
+        seen.add(child.id)
+        queue.push(child)
+      }
+    }
+    return products
+  }
+
+  for (const d of all) {
+    out.set(d.id, { products: total(d), sections: (kids.get(d.id) ?? []).length })
+  }
+  return out
+}
+
+/**
+ * That tally as the line a tile shows — "2 sections · 306 products".
+ *
+ * Empty string for a department with nothing in it at all, so the caller passes
+ * it straight to `subtitle` and an empty department simply has none rather than
+ * a tile that says "0 products". The count is already the answer to "is there
+ * anything in here"; saying it twice, once as a number and once as a caption,
+ * is what makes a grid noisy.
+ */
+export function departmentTallyNote(tally?: DepartmentTally): string {
+  if (!tally) return ''
+  const parts: string[] = []
+  if (tally.sections > 0) {
+    parts.push(`${tally.sections} ${tally.sections === 1 ? 'section' : 'sections'}`)
+  }
+  if (tally.products > 0) {
+    parts.push(`${tally.products} ${tally.products === 1 ? 'product' : 'products'}`)
+  }
+  return parts.join(' · ')
+}

@@ -13,7 +13,6 @@ import {
   Input,
   NumberInput,
   Select,
-  SettingGroup,
   SettingRow,
   Switch,
   Textarea,
@@ -103,9 +102,11 @@ export default function ReservationSettingsForm({
           title="Online bookings"
           description="The link you put on your website or a QR code on the door."
         />
-        {/* Nested inside the card above, which draws the heading and the rule.
-            tone="default" keeps this group from drawing a second one. */}
-        <SettingGroup tone="default" title="" description="">
+        {/* The rows sit straight in the card. A SettingGroup here drew a second
+            rounded border inside the card's own, and its heading block — which
+            it renders whether or not it is given a title — left an empty banded
+            strip between the header and the first row. */}
+        <div>
           <SettingRow
             icon={<Icons.CalendarClock size={18} />}
             label="Take bookings online"
@@ -130,7 +131,7 @@ export default function ReservationSettingsForm({
               label="Confirm bookings automatically"
             />
           </SettingRow>
-        </SettingGroup>
+        </div>
 
         <CardBody>
           {blocker ? (
@@ -139,31 +140,35 @@ export default function ReservationSettingsForm({
             </Callout>
           ) : null}
 
-          <div className="mt-4 flex items-end gap-2">
-            <Field
-              label="Your booking link"
-              hint="Put this behind a “Book a table” button, or print it as a QR code."
-              className="flex-1"
-            >
-              <Input value={bookingUrl} readOnly />
-            </Field>
-            <Button
-              variant="secondary"
-              className="mb-6"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(bookingUrl)
-                  toast.success('Link copied.')
-                } catch {
-                  // Clipboard access is refused outside a secure context.
-                  toast.info('Select the link and copy it.')
-                }
-              }}
-            >
-              <Icons.Copy size={15} />
-              Copy
-            </Button>
-          </div>
+          {/* The button sits INSIDE the field, beside the input, rather than
+              beside the whole field pushed down by a hardcoded margin — that
+              offset only lined up while the hint stayed on one line. */}
+          <Field
+            label="Your booking link"
+            hint="Put this behind a “Book a table” button, or print it as a QR code."
+            /* Only spaced off the Callout when there IS one — CardBody's own
+               padding is the gap when the field is the first thing in it. */
+            className={blocker ? 'mt-4' : ''}
+          >
+            <div className="flex items-center gap-2">
+              <Input value={bookingUrl} readOnly className="flex-1" />
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(bookingUrl)
+                    toast.success('Link copied.')
+                  } catch {
+                    // Clipboard access is refused outside a secure context.
+                    toast.info('Select the link and copy it.')
+                  }
+                }}
+              >
+                <Icons.Copy size={15} />
+                Copy
+              </Button>
+            </div>
+          </Field>
         </CardBody>
       </Card>
 

@@ -160,6 +160,7 @@ export {
    globals.css and the .till-surface rules at the foot of it. */
 export { TileGrid, SHORT_TILE_MAX, isShortTile } from './TileGrid'
 export { ProductTile } from './ProductTile'
+export { TileGlyph, departmentGlyph, productGlyph } from './TileGlyph'
 export { ActionTile } from './ActionTile'
 export { NumPad, NumPadDisplay, numPadValue } from './NumPad'
 export { TenderTile, tenderIcon } from './TenderTile'

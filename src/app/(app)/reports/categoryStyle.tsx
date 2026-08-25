@@ -33,6 +33,12 @@ export const CATEGORY_TONE: Record<string, CategoryTone> = {
      Popular sits alone on its own tab. */
   [POPULAR]: 'amber',
   Sales: 'indigo',
+  /* Cyan, added to the ramp for this: the nine existing tones were all spoken
+     for, and the two candidates for sharing both sit on this same unfiltered
+     hub — violet on Saved, indigo on Sales, which is the tab Performance sits
+     directly beside. A subject whose hue is another subject's is not an
+     identifier, so it got its own. */
+  Performance: 'cyan',
   Stock: 'teal',
   Customers: 'sky',
   Suppliers: 'rose',
@@ -66,6 +72,7 @@ const CATEGORY_DESCRIPTION: Record<string, string> = {
      history is missing from Sales — it is not, and this is the same tile. */
   [POPULAR]: 'The ones most shops run. Each is also filed under its own subject.',
   Sales: 'What was sold, by whom, and what it came to.',
+  Performance: 'Who and what is earning — product, department, clerk, till or customer.',
   Stock: 'What is on hand, what moved, and what is running out.',
   Customers: 'Who buys, who owes, and how long they take to pay.',
   Suppliers: 'What was bought in, from whom, and what it cost.',
@@ -86,6 +93,11 @@ export function categoryIcon(category: string, size = 18): ReactNode {
       return <Icons.Flame size={size} strokeWidth={1.7} />
     case 'Sales':
       return <Icons.BarChart size={size} strokeWidth={1.7} />
+    /* A LINE against Sales' bars: the two tabs sit next to each other and are
+       the pair most easily confused, so they are told apart by shape as well as
+       hue. A rising line is also the right drawing for "how are we doing". */
+    case 'Performance':
+      return <Icons.LineChart size={size} strokeWidth={1.7} />
     case 'Stock':
       return <Icons.Boxes size={size} strokeWidth={1.7} />
     case 'Customers':

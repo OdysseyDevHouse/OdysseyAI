@@ -52,6 +52,7 @@ const TONE: Record<CategoryTone, string> = {
   rose: 'border-cat-rose/25 bg-cat-rose-bg/60 text-cat-rose hover:bg-cat-rose-bg hover:border-cat-rose/45',
   teal: 'border-cat-teal/25 bg-cat-teal-bg/60 text-cat-teal hover:bg-cat-teal-bg hover:border-cat-teal/45',
   orange: 'border-cat-orange/25 bg-cat-orange-bg/60 text-cat-orange hover:bg-cat-orange-bg hover:border-cat-orange/45',
+  cyan: 'border-cat-cyan/25 bg-cat-cyan-bg/60 text-cat-cyan hover:bg-cat-cyan-bg hover:border-cat-cyan/45',
   slate: 'border-cat-slate/25 bg-cat-slate-bg/60 text-cat-slate hover:bg-cat-slate-bg hover:border-cat-slate/45',
 }
 

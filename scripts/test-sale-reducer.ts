@@ -338,10 +338,10 @@ function main() {
 
   {
     const departments: Department[] = [
-      { id: 1, parentId: null, name: 'Groceries', sortOrder: 2 },
-      { id: 2, parentId: null, name: 'Butchery', sortOrder: 1 },
-      { id: 3, parentId: 1, name: 'Tinned', sortOrder: 1 },
-      { id: 4, parentId: null, name: 'Bakery', sortOrder: 1 },
+      { id: 1, parentId: null, name: 'Groceries', sortOrder: 2, posImageId: null },
+      { id: 2, parentId: null, name: 'Butchery', sortOrder: 1, posImageId: null },
+      { id: 3, parentId: 1, name: 'Tinned', sortOrder: 1, posImageId: null },
+      { id: 4, parentId: null, name: 'Bakery', sortOrder: 1, posImageId: null },
     ]
 
     const top = childDepartments(departments, null)

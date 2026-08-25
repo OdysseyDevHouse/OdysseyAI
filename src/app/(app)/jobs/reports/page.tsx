@@ -1,6 +1,6 @@
 import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
-import { templatesFor } from '@/lib/reportBuilder/templates'
+import { catalogueFor } from '@/lib/reportBuilder/templates'
 import { listFavorites } from '@/lib/site/reportFavorites'
 import { PageHeader, PageBody } from '@/components/ui'
 import ReportsHub from '../../reports/ReportsHub'
@@ -52,15 +52,18 @@ export default async function JobReportsPage() {
    */
   const allow = (c: Parameters<typeof can>[1]) => can(capabilities, c)
 
+  /* Through the same catalogue the main hub uses, so a job report that gains a
+     switch lists each of its cuts here too rather than only there. */
   const templates = allow('reports.view')
-    ? templatesFor(allow)
-        .filter((t) => t.category === 'Job cards')
-        .map((t) => ({
-          id: t.id,
-          name: t.name,
-          description: t.description,
-          category: t.category,
-          source: t.spec.source,
+    ? catalogueFor(allow)
+        .filter((e) => e.category === 'Job cards')
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          description: e.description,
+          category: e.category,
+          source: e.source,
+          href: e.href,
           kind: 'builtin' as const,
           createdByName: '',
           broken: false,

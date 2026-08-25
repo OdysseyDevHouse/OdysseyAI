@@ -241,6 +241,8 @@
   --color-cat-teal-bg: #def5f2;
   --color-cat-orange: #ea580c;
   --color-cat-orange-bg: #fdebe0;
+  --color-cat-cyan: #0891b2;
+  --color-cat-cyan-bg: #e0f4f8;
   --color-cat-slate: #475569;
   --color-cat-slate-bg: #eef1f5;
 
@@ -392,6 +394,8 @@
     --color-cat-teal-bg: rgb(13 148 136 / 0.16);
     --color-cat-orange: #fb923c;
     --color-cat-orange-bg: rgb(234 88 12 / 0.18);
+    --color-cat-cyan: #22d3ee;
+    --color-cat-cyan-bg: rgb(8 145 178 / 0.18);
     --color-cat-slate: #94a3b8;
     --color-cat-slate-bg: rgb(71 85 105 / 0.22);
 
@@ -478,6 +482,8 @@
   --color-cat-teal-bg: rgb(13 148 136 / 0.16);
   --color-cat-orange: #fb923c;
   --color-cat-orange-bg: rgb(234 88 12 / 0.18);
+  --color-cat-cyan: #22d3ee;
+  --color-cat-cyan-bg: rgb(8 145 178 / 0.18);
   --color-cat-slate: #94a3b8;
   --color-cat-slate-bg: rgb(71 85 105 / 0.22);
 

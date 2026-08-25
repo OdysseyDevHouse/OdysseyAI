@@ -284,6 +284,21 @@ if ((await evaluate('location.pathname')).startsWith('/select-site')) {
 // checking once something has been pressed.
 const CLICK = process.env.SHOT_CLICK
 
+/*
+ * SHOT_HOVER="Invoice history" parks a real mouse pointer over the element
+ * whose text contains that label, before capturing.
+ *
+ * Needed because CSS `:hover` answers only to actual input. Page JS cannot
+ * fake it: dispatching a synthetic `mouseover` fires the listeners but never
+ * matches the selector, so anything the kit reveals with `hover:` or
+ * `group-hover:` — every Tooltip, most notably — captures in its resting state
+ * and a probe reads it as hidden. That looks exactly like a tooltip that does
+ * not work, which is the one thing this is meant to tell apart. So the move is
+ * dispatched through the DevTools input domain instead, where it is a real
+ * pointer as far as the renderer is concerned.
+ */
+const HOVER = process.env.SHOT_HOVER
+
 // localStorage needs an origin, so this can only be written once a page from
 // the app has loaded — hence after sign-in rather than before the first goto.
 await applyTheme()
@@ -376,6 +391,34 @@ for (const p of paths) {
     })()`)
     if (!clicked) console.warn(`  (no control matching "${label}" on ${p})`)
     await sleep(2500)
+  }
+
+  /* Hovering happens after any click chain — a tooltip inside a dialog is
+     only reachable once that dialog is open — and before the probe below, so
+     a probe can measure what the hover revealed. */
+  if (HOVER) {
+    /* The element is found and scrolled into view in the page, which then
+       hands back viewport coordinates for the pointer move. Its centre, so a
+       label with an odd shape still gets a point that is inside it. */
+    const point = await evaluate(`(() => {
+      const wanted = ${JSON.stringify(HOVER)}.trim().toLowerCase()
+      const el = [...document.querySelectorAll('a, button, [role="button"], [data-hover]')]
+        .find((n) => ((n.textContent || '') + ' ' + (n.getAttribute('aria-label') || ''))
+          .trim().toLowerCase().includes(wanted))
+      if (!el) return null
+      el.scrollIntoView({ block: 'center' })
+      const r = el.getBoundingClientRect()
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }
+    })()`)
+
+    if (!point) {
+      console.warn(`  (nothing matching SHOT_HOVER="${HOVER}" on ${p})`)
+    } else {
+      await sleep(400) // let the scroll settle, or the point is stale
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point }, sessionId)
+      // Long enough for the kit's 75ms opacity transition to finish.
+      await sleep(400)
+    }
   }
 
   // SHOT_DIAG=1 prints what the page actually says BEFORE the overlay below is

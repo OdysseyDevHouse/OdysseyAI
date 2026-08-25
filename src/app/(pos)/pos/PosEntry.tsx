@@ -55,6 +55,7 @@ export default function PosEntry({
   serverOperator,
   terminals,
   departments,
+  departmentCounts,
   priceStructureId,
   priceStructures,
   tenders,
@@ -101,6 +102,8 @@ export default function PosEntry({
   } | null
   terminals: Terminal[]
   departments: Department[]
+  /** Per-department product counts for the tile captions. Relayed unchanged. */
+  departmentCounts?: Record<number, number>
   priceStructureId: number | null
   /** Every active price type, for the price-change key. Relayed unchanged. */
   priceStructures: PriceStructure[]
@@ -328,6 +331,7 @@ export default function PosEntry({
       operatorUserId={operator.userId}
       terminals={terminals}
       departments={departments}
+      departmentCounts={departmentCounts}
       priceStructureId={priceStructureId}
       priceStructures={priceStructures}
       tenders={tenders}

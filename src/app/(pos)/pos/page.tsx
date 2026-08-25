@@ -14,6 +14,7 @@ import { liveSpecials } from '@/lib/site/specials'
 import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { livePosMenus } from '@/lib/site/posMenus'
 import { listDepartments } from '@/lib/site/departments'
+import { tillProductCounts } from '@/lib/site/tillSearch'
 import { listAllQuickKeys } from '@/lib/site/quickKeys'
 import { listTables } from '@/lib/site/posTables'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
@@ -91,6 +92,7 @@ export default async function PosPage({
     pendingPrices,
     posMenus,
     departments,
+    departmentCounts,
     quickKeys,
     tables,
     floorRooms,
@@ -141,6 +143,13 @@ export default async function PosPage({
       // The department rail. Flat, with parent ids — the tree is assembled on the
       // client because drilling into one must not cost a round trip.
       listDepartments(site.id, true),
+      /* How many sellable products sit in each department, for the count on
+         its tile. Counted here rather than read off listDepartments' own
+         `productCount`: that one counts every row, archived products and
+         variant parents included, so a tile would promise more than the grid
+         behind it opens on. tillProductCounts owns the rule, and its WHERE
+         clause is browseForTill's. */
+      tillProductCounts(site.id),
       /* The shop's own till buttons. Shipped with the page rather than fetched by the
          client: they are the DEFAULT pane, so a till that had to wait for them would
          open on an empty grid — and one that lost them when the line dropped would lose
@@ -261,12 +270,24 @@ export default async function PosPage({
       voidReasons={voidReasons}
       returnReasons={returnReasons}
       /* Narrowed on the way out rather than passed whole: the till needs an id,
-         a parent and a name, and shipping `color`/`posImageId`/`code` as well
-         would invite a tile to read a stored hex — which the design system does
-         not allow. Tile colour comes from toneForId. */
+         a parent, a name, an order and the till picture. `color` and `code` stay
+         behind — `color` is a stored hex, and a tile reading one would paint
+         outside the tokens. Tile colour still comes from toneForId; the picture
+         is an id the tile resolves to a URL, which is a different thing. */
       departments={departments
         .filter((d) => d.isActive)
-        .map((d) => ({ id: d.id, parentId: d.parentId, name: d.name, sortOrder: d.sortOrder }))}
+        .map((d) => ({
+          id: d.id,
+          parentId: d.parentId,
+          name: d.name,
+          sortOrder: d.sortOrder,
+          posImageId: d.posImageId,
+        }))}
+      /* Direct per-department counts, rolled into subtree totals on the client
+         — see departmentTallies. Passed as the raw map rather than as finished
+         captions so the rail and the grid can phrase them differently without
+         this page having to know that they do. */
+      departmentCounts={departmentCounts}
       priceStructureId={priceStructure?.id ?? null}
       /* The whole list, so the price-change key can offer them. Shipped with the
          page rather than fetched when the key is pressed: a shop has a handful of

@@ -10,6 +10,8 @@ import {
   ProductTile as KitTile,
   toneForId,
   toneForTileToken,
+  departmentGlyph,
+  productGlyph,
   type CategoryTone,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -234,18 +236,12 @@ export function ProductTile({
           price={formatMoney(product.price)}
           /* The product's own icon when a manager has uploaded one, so the tile a
              cashier will actually press is what shows here. It sits ON the tone rather
-             than replacing it, so a transparent glyph keeps its background. */
-          icon={
-            product.imageIcon ? (
-              <img
-                src={`/api/product-icon/${product.id}`}
-                alt=""
-                className="size-full object-contain p-0.5"
-              />
-            ) : (
-              <Icons.Package size={20} />
-            )
-          }
+             than replacing it, so a transparent glyph keeps its background.
+
+             The KIT's helper, which is what the till itself calls — this screen
+             promises a preview of the till, and two copies of the same ternary is
+             exactly how that promise gets broken without anyone noticing. */
+          icon={productGlyph(product.id, product.imageIcon)}
           tone={tone}
           edge={tone}
           tileHeight={TILE_H}
@@ -353,7 +349,11 @@ export function DepartmentTile({
              saying how much menu is behind the tile, which is what a manager is
              deciding about when they arrange one. */
           subtitle={detail}
-          icon={<Icons.Tag size={20} />}
+          /* The department's till picture where the shop has set one — the same
+             call the rail and the catalogue grid make. Without it this screen drew
+             a tag glyph where the till draws a photograph, which is the preview
+             disagreeing with the thing it is previewing. */
+          icon={departmentGlyph(department.id, department.posImageId, 20)}
           tone={tone}
           edge={tone}
           /* The affordance the hand-rolled tile never had: on the till a department

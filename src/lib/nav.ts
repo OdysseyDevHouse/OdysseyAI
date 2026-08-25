@@ -179,7 +179,6 @@ export const NAV: NavSection[] = [
          which price types exist, what VAT applies — which is a different job. */
       { label: 'Price changes', href: '/pricing-schedules', icon: CalendarClock, built: true, capability: 'products.edit', description: 'New prices approved now to take effect later' },
       { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view', description: 'The questions a till asks when an item is sold' },
-      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, built: true, capability: 'products.edit', module: 'inventory_advanced', description: 'Build stock from a recipe of other stock' },
     ],
   },
   {
@@ -198,6 +197,11 @@ export const NAV: NavSection[] = [
          other end: a count discovers a variance, an adjustment declares one. */
       { label: 'Adjustments', href: '/adjustments', icon: SlidersHorizontal, built: true, capability: 'stock.adjust', module: 'inventory_advanced', keywords: 'write off write-off shrinkage damage breakage wastage expired spoiled scrap', description: 'Write stock on or off with a reason, without counting the location' },
       { label: 'Batches', href: '/batches', icon: Boxes, built: true, capability: 'stock.view', module: 'inventory_advanced', keywords: 'lot expiry expiring fefo recall trace batch', description: 'Which lots are on the shelf, what is expiring, and where each went' },
+      /* Manufacturing lives with stock, not with the product file. The RECIPE is
+         defined on the product, but a BUILD is a stock movement — components off
+         the shelf, a finished item on — done by the same person, on the same
+         day, as a transfer or an adjustment. */
+      { label: 'Manufacturing', href: '/manufacturing', icon: Factory, built: true, capability: 'products.edit', module: 'inventory_advanced', description: 'Build stock from a recipe of other stock' },
       /* A supplier exists in this app because stock comes from one. Their age
          analysis and remittances are money questions and sit in that hub. */
       { label: 'Suppliers', href: '/suppliers', icon: Truck, built: true, capability: 'suppliers.view', description: 'Who the shop buys from, and what it owes them' },

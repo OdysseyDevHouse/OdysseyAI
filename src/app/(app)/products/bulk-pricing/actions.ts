@@ -25,7 +25,7 @@ export async function saveBulkPricesAction(
 ): Promise<BulkPricingSaveResult> {
   const { siteId, actor } = await actorForOrThrow('products.edit')
 
-  const result = await saveBulkPrices(siteId, structureId, edits, actor.userName)
+  const result = await saveBulkPrices(siteId, structureId, edits, actor)
 
   // The product list and any product screen show these prices too.
   revalidatePath('/products')

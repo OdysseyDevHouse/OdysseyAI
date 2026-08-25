@@ -34,6 +34,7 @@ export interface ReportTemplate {
    */
   category:
     | "Sales"
+    | "Performance"
     | "Stock"
     | "Customers"
     | "Suppliers"
@@ -73,6 +74,30 @@ export interface ReportTemplate {
    * or silently drop the report somebody scheduled at 06:00.
    */
   variants?: ReportVariant[];
+  /**
+   * List every cut as its own tile in the catalogue, rather than only the report.
+   *
+   * ── WHY THIS IS A CHOICE PER REPORT ──────────────────────────────────────
+   *
+   * Because "is a cut a report in its own right?" has a different answer for
+   * each of them, and the answer is about the NAMES rather than the mechanism.
+   *
+   * Performance sets it: "Cashier performance" and "Promotion performance" are
+   * things a manager asks for by name, and nobody browsing for one thinks to
+   * look inside a tile called "Performance" first. Each cut earns a tile.
+   *
+   * Turnover and Invoice history leave it off. Their cuts are the SAME report at
+   * another grain or in more detail — hour/day/month/year, documents/lines — and
+   * a reader wanting monthly takings is not asking a different question from one
+   * wanting daily, they are moving a dial on the answer they already have.
+   * Listing those separately puts four near-identical names in the catalogue
+   * that have to be read carefully to tell apart, which is precisely the noise
+   * the switch was built to remove.
+   *
+   * The switch itself is unaffected either way — it is always there, and every
+   * cut is always reachable. This only decides what the HUB lists.
+   */
+  splitVariants?: boolean;
 }
 
 export interface ReportVariant {
@@ -407,10 +432,30 @@ export const TEMPLATES: ReportTemplate[] = [
      * is the one of the five that is asked without needing a reason.
      */
     id: "performance",
-    name: "Performance",
+    /*
+     * Named for its DEFAULT CUT, not for the family.
+     *
+     * The template's own name and description are what the catalogue shows for
+     * the default cut's tile — the product one — because that tile IS the
+     * template (see `catalogueFor`). While the five cuts shared a single tile,
+     * "Performance" and a description listing all five were right. Now that
+     * each cut has its own tile, they were not: the product tile sat in a
+     * column of five headed "Performance" and described itself as being about
+     * department, cashier and till as well, which reads as the old grouped tile
+     * left behind rather than as the report it opens.
+     *
+     * So this pair says what the PRODUCT cut is, matching the variant below.
+     * The five together are named by the category they now sit in.
+     */
+    name: "Product performance",
     description:
-      "Who and what is earning — by product, department, cashier, till or promotion, over the same period.",
-    category: "Sales",
+      "What sold, how much of it, and what it made. The top-sellers list.",
+    /* Its own category rather than Sales, and it takes its five cuts with it —
+       see the note on the "Performance" category in `CATEGORY_ORDER`. */
+    category: "Performance",
+    /* Each cut is a report a manager asks for by name — "Cashier performance"
+       — so each gets its own tile. See `splitVariants`. */
+    splitVariants: true,
     permission: "reports.view",
     spec: spec({
       source: "saleLines",
@@ -907,24 +952,9 @@ export const TEMPLATES: ReportTemplate[] = [
   /* 'voids-by-reason' was here. It is now the "By reason" cut of the
      Cancellations report — the two read identical rows and differed only in
      shape. Its id still resolves, as a legacyId on that cut. */
-  {
-    id: "returns-by-reason",
-    name: "Returns by reason",
-    description:
-      "Why goods come back, and what it costs. Faulty is a supplier conversation; wrong size is a description one.",
-    category: "Sales",
-    permission: "reports.view",
-    spec: spec({
-      source: "sales",
-      groupFields: ["returnReasonName"],
-      columns: [{ field: "__rows" }, { field: "totalIncl", agg: "sum" }],
-      filters: [
-        { field: "status", op: "eq", value: "finalised" },
-        { field: "docType", op: "eq", value: "credit_sale" },
-      ],
-      sort: { key: "totalIncl_sum", dir: "desc" },
-    }),
-  },
+  /* 'returns-by-reason' was here — Returns by reason. It read the same credit
+     notes as the refund history and differed only in shape, so it is now that
+     report's "By reason" cut. Its id still resolves, as a legacyId there. */
 
   /* ── Stock ───────────────────────────────────────────────────────────────── */
   {
@@ -1415,12 +1445,25 @@ export const TEMPLATES: ReportTemplate[] = [
     id: "sales-by-customer",
     name: "Customer performance",
     description: "Who buys the most — turnover and basket count per account.",
-    /* Named to sit with the other four performance reports, but filed under
-       Customers rather than Sales: someone reading it is asking about an
-       ACCOUNT, and the rest of what they want — its balance, its ageing, its
-       ledger — is here. On `sales`, so the count is a basket count and there is
-       no margin, exactly as for cashier and till. */
-    category: "Customers",
+    /*
+     * Filed with the other performance reports rather than under Customers.
+     *
+     * It sat under Customers on the reasoning that someone reading it is asking
+     * about an ACCOUNT, and the rest of what they want — its balance, its
+     * ageing, its ledger — is there. That reading is still true, and it is why
+     * this was the one performance report filed away from the others.
+     *
+     * What settles it the other way is the question actually being asked. "Who
+     * is earning" is one question cut six ways — product, department, cashier,
+     * till, promotion, customer — and the whole point of the Performance tab is
+     * that those six are compared against each other. Splitting one cut off by
+     * its subject means the person comparing them has to know that the sixth
+     * lives somewhere else. Its NAME already said it belonged with them.
+     *
+     * On `sales`, so the count is a basket count and there is no margin,
+     * exactly as for cashier and till.
+     */
+    category: "Performance",
     permission: "reports.view",
     spec: spec({
       source: "sales",
@@ -2026,12 +2069,31 @@ export const TEMPLATES: ReportTemplate[] = [
      is now that report's "By person" cut. Its id still resolves, as a legacyId
      on the cut. */
   {
+    /*
+     * Refunds, as lines or ranked by reason.
+     *
+     * These were two tiles — this one and 'returns-by-reason'. They read the
+     * SAME rows (finalised credit notes) and differed only in shape: one lists
+     * every line, the other counts them by reason code. That is a dial on one
+     * answer, not two questions, and two tiles meant deciding between them by
+     * name before seeing either.
+     *
+     * WHY EACH CUT KEEPS ITS OWN SPEC RATHER THAN A SWAPPED groupFields: the
+     * detail cut runs on `saleLines`, where a row is a returned ITEM and the
+     * product columns mean something; the reason cut runs on `sales`, where a
+     * row is a whole credit note, so its count is a count of DOCUMENTS. Moving
+     * the reason cut onto saleLines to share a spec would silently turn "12
+     * refunds for faulty" into a line count — the same trap the note on
+     * ReportTemplate.variants describes for cashier and till.
+     */
     id: "refund-history",
     name: "Refund history",
     description:
-      "Every credit note line — what was handed back, why, by whom, and what it cost in margin.",
+      "Every credit note — line by line with what it cost in margin, or ranked by the reason goods came back.",
     category: "Sales",
     permission: "reports.view",
+    /* The DETAIL cut is the default, so this spec must match the first variant
+       below: the report has to render before anyone has chosen a cut. */
     spec: spec({
       source: "saleLines",
       columns: [
@@ -2054,6 +2116,55 @@ export const TEMPLATES: ReportTemplate[] = [
       ],
       sort: { key: "documentDate", dir: "desc" },
     }),
+    variants: [
+      {
+        key: "detail",
+        label: "Detail",
+        name: "Refund history",
+        description:
+          "Every credit note line — what was handed back, why, by whom, and what it cost in margin.",
+        spec: spec({
+          source: "saleLines",
+          columns: [
+            { field: "documentDate" },
+            { field: "documentNumber" },
+            { field: "customerName" },
+            { field: "userName" },
+            { field: "returnReasonName" },
+            { field: "productCode" },
+            { field: "description" },
+            { field: "qty" },
+            { field: "lineTotalIncl" },
+          ],
+          filters: [
+            { field: "status", op: "eq", value: "finalised" },
+            { field: "docType", op: "eq", value: "credit_sale" },
+          ],
+          sort: { key: "documentDate", dir: "desc" },
+        }),
+      },
+      {
+        key: "reason",
+        label: "By reason",
+        name: "Returns by reason",
+        description:
+          "Why goods come back, and what it costs. Faulty is a supplier conversation; wrong size is a description one.",
+        /* Was its own tile. The id is kept resolvable because a shop's
+           favourites, saved columns, 06:00 schedules and the public API all
+           name it — see the note on ReportTemplate.variants. */
+        legacyId: "returns-by-reason",
+        spec: spec({
+          source: "sales",
+          groupFields: ["returnReasonName"],
+          columns: [{ field: "__rows" }, { field: "totalIncl", agg: "sum" }],
+          filters: [
+            { field: "status", op: "eq", value: "finalised" },
+            { field: "docType", op: "eq", value: "credit_sale" },
+          ],
+          sort: { key: "totalIncl_sum", dir: "desc" },
+        }),
+      },
+    ],
   },
   {
     /* The ID keeps the old spelling on purpose.
@@ -2284,7 +2395,7 @@ export const TEMPLATES: ReportTemplate[] = [
     }),
   },
   /*
-   * The three TILL void reports.
+   * The TILL void report — one tile, three cuts.
    *
    * ── WHY THE IDS SAY till-void AND NOT void ────────────────────────────────
    *
@@ -2301,56 +2412,45 @@ export const TEMPLATES: ReportTemplate[] = [
    * data. The names carry the distinction a reader needs: Cancellation is a
    * finalised sale reversed, Till void is something taken off a draft.
    *
-   * All three exclude the `sale` rollup row, because an abandoned basket writes
-   * BOTH that row and one per line — summing the two together counts every
-   * abandoned basket twice.
+   * The `sale` rollup row is excluded by the two GROUPED cuts and kept by the
+   * history — see the note on the template below, which is where that now
+   * matters.
    */
+  /* 'till-voids-by-reason' and 'till-voids-by-operator' were here. They read the
+     same posVoids rows as the void history and differed only in shape, so they
+     are now its "By reason" and "By operator" cuts. Both ids still resolve, as
+     legacyIds there. */
   {
-    id: "till-voids-by-reason",
-    name: "Till voids by reason",
-    description:
-      "What is being taken off sales before they are paid for, and why. Items and lines only — a voided sale appears through its lines, so nothing is counted twice.",
-    category: "Operations",
-    permission: "sales.cashup",
-    spec: spec({
-      source: "posVoids",
-      groupFields: ["reasonName"],
-      filters: [{ field: "voidType", op: "ne", value: "sale" }],
-      columns: [
-        { field: "__rows" },
-        { field: "qty", agg: "sum" },
-        { field: "value", agg: "sum" },
-      ],
-      sort: { key: "value_sum", dir: "desc" },
-      chartType: "pie",
-    }),
-  },
-  {
-    id: "till-voids-by-operator",
-    name: "Till voids by operator",
-    description:
-      "Who is voiding, how often, and for how much. The first place to look when stock goes missing without a sale behind it.",
-    category: "Operations",
-    permission: "sales.cashup",
-    spec: spec({
-      source: "posVoids",
-      groupFields: ["userName"],
-      filters: [{ field: "voidType", op: "ne", value: "sale" }],
-      columns: [
-        { field: "__rows" },
-        { field: "qty", agg: "sum" },
-        { field: "value", agg: "sum" },
-      ],
-      sort: { key: "value_sum", dir: "desc" },
-    }),
-  },
-  {
+    /*
+     * Till voids, as a list or grouped two ways.
+     *
+     * These were three tiles over ONE source. The history lists every void; the
+     * other two count the same rows by reason and by operator. That is a dial
+     * on one answer — and the three sat adjacent in Operations under names that
+     * had to be read carefully to tell apart.
+     *
+     * ── THE `sale` ROLLUP ROW, WHICH IS WHY THE FILTERS DIFFER ──────────────
+     *
+     * An abandoned basket writes BOTH a `sale` rollup row and one row per line.
+     * The two GROUPED cuts therefore exclude voidType = 'sale', or every
+     * abandoned basket is counted twice in the totals they exist to produce.
+     * The HISTORY does not exclude it, and must not: it is the detail behind a
+     * figure somebody is questioning, and hiding the rollup row would mean the
+     * list could not account for its own total.
+     *
+     * So each cut keeps its own filters rather than inheriting one set. A
+     * shared spec here would either double-count the summaries or blind the
+     * history — this is exactly the case the note on ReportTemplate.variants
+     * warns about.
+     */
     id: "till-void-history",
     name: "Till void history",
     description:
-      "Every void at the till, with the kind, the reason and the note — the detail behind a total somebody is questioning.",
+      "Every void at the till — line by line with the reason and the note, or totalled by reason or by who did it.",
     category: "Operations",
     permission: "sales.cashup",
+    /* The HISTORY cut is the default, so this spec must match the first variant
+       below: the report has to render before anyone has chosen a cut. */
     spec: spec({
       source: "posVoids",
       columns: [
@@ -2366,6 +2466,72 @@ export const TEMPLATES: ReportTemplate[] = [
       ],
       sort: { key: "voidedAt", dir: "desc" },
     }),
+    variants: [
+      {
+        key: "history",
+        label: "History",
+        name: "Till void history",
+        description:
+          "Every void at the till, with the kind, the reason and the note — the detail behind a total somebody is questioning.",
+        spec: spec({
+          source: "posVoids",
+          columns: [
+            { field: "voidedAt" },
+            { field: "voidType" },
+            { field: "description" },
+            { field: "qty" },
+            { field: "value" },
+            { field: "reasonName" },
+            { field: "note" },
+            { field: "userName" },
+            { field: "terminalCode" },
+          ],
+          sort: { key: "voidedAt", dir: "desc" },
+        }),
+      },
+      {
+        key: "reason",
+        label: "By reason",
+        name: "Till voids by reason",
+        description:
+          "What is being taken off sales before they are paid for, and why. Items and lines only — a voided sale appears through its lines, so nothing is counted twice.",
+        /* Was its own tile. The id is kept resolvable because a shop's
+           favourites, saved columns, 06:00 schedules and the public API all
+           name it — see the note on ReportTemplate.variants. */
+        legacyId: "till-voids-by-reason",
+        spec: spec({
+          source: "posVoids",
+          groupFields: ["reasonName"],
+          filters: [{ field: "voidType", op: "ne", value: "sale" }],
+          columns: [
+            { field: "__rows" },
+            { field: "qty", agg: "sum" },
+            { field: "value", agg: "sum" },
+          ],
+          sort: { key: "value_sum", dir: "desc" },
+          chartType: "pie",
+        }),
+      },
+      {
+        key: "operator",
+        label: "By operator",
+        name: "Till voids by operator",
+        description:
+          "Who is voiding, how often, and for how much. The first place to look when stock goes missing without a sale behind it.",
+        legacyId: "till-voids-by-operator",
+        spec: spec({
+          source: "posVoids",
+          groupFields: ["userName"],
+          filters: [{ field: "voidType", op: "ne", value: "sale" }],
+          columns: [
+            { field: "__rows" },
+            { field: "qty", agg: "sum" },
+            { field: "value", agg: "sum" },
+          ],
+          sort: { key: "value_sum", dir: "desc" },
+        }),
+      },
+    ],
   },
   {
     id: "tips-by-person",
@@ -2737,4 +2903,99 @@ export function templatesFor(
   can: (c: Capability) => boolean,
 ): ReportTemplate[] {
   return TEMPLATES.filter((t) => can(t.permission));
+}
+
+/** One listable thing in the catalogue: a report, or one cut of one. */
+export interface CatalogueEntry {
+  /**
+   * What this tile is STARRED as, and what identifies it in the hub.
+   *
+   * A cut uses its own `legacyId` where it has one — which is not a workaround
+   * but the accurate key: 'sales-by-department' is precisely what a favourite
+   * on department takings has meant in `report_favorites` all along, so a shop
+   * that starred it before the cuts were folded together finds it still
+   * starred. Only a cut with no legacy id needs a synthetic 'id:cut' key, and
+   * it cannot collide with a template id because no template id contains ':'.
+   */
+  id: string;
+  /** The template to run. Several entries may share one — see `href`. */
+  templateId: string;
+  name: string;
+  description: string;
+  category: ReportTemplate["category"];
+  /** The dataset behind THIS cut, which may differ from its siblings'. */
+  source: string;
+  /** Where the tile goes. A cut carries its `?cut=` so it opens on itself. */
+  href: string;
+  /** The cut this entry is, or null for a report that has no switch. */
+  variantKey: string | null;
+}
+
+/**
+ * The catalogue as TILES rather than as templates — every cut listed in its
+ * own right.
+ *
+ * ── WHICH CUTS ARE LISTED SEPARATELY ──────────────────────────────────────
+ *
+ * Only those whose template sets `splitVariants`, and that flag's own note is
+ * where the reasoning lives. In short: a cut earns a tile when it is a report
+ * somebody asks for BY NAME ("Cashier performance"), and does not when it is
+ * the same report at another grain ("Turnover by month"), where four
+ * near-identical names would be harder to tell apart than one tile with a dial.
+ *
+ * Finding and comparing are different jobs, and this is what serves the first.
+ * Somebody who already knows they want department takings would otherwise have
+ * to know it lives inside a tile called "Performance" before they could open
+ * it — and a name absent from the hub cannot be searched for either, which is
+ * how "Cashier performance" was unfindable by typing "cashier".
+ *
+ * ── WHY THIS IS NOT A SPLIT INTO SEPARATE TEMPLATES ───────────────────────
+ *
+ * Because the switch, the `?cut=` bookmarks, the legacy ids in `report_favorites`
+ * / `report_columns` / `report_schedules`, and the public API's documented keys
+ * all resolve through the variant machinery. A tile here is a LINK carrying
+ * `?cut=`, so all of that keeps working untouched and the two ways in — the hub
+ * and the switch — land on exactly the same screen.
+ *
+ * The first cut is deliberately NOT listed twice: it is the report's own default,
+ * so its tile IS the template's tile, which keeps `performance` resolving bare
+ * and stops "Product performance" and "Performance" sitting side by side as two
+ * names for one thing.
+ */
+export function catalogueFor(
+  can: (c: Capability) => boolean,
+): CatalogueEntry[] {
+  return templatesFor(can).flatMap((t) => {
+    const base = `/reports/${encodeURIComponent(t.id)}`;
+    /* A report that does not split contributes ONE tile — its own — exactly as
+       one with no variants at all does. Its cuts stay reachable on the switch. */
+    const cuts = t.splitVariants ? (t.variants ?? []) : [];
+    if (cuts.length === 0) {
+      return [
+        {
+          id: t.id,
+          templateId: t.id,
+          name: t.name,
+          description: t.description,
+          category: t.category,
+          source: t.spec.source,
+          href: base,
+          variantKey: null,
+        },
+      ];
+    }
+
+    /* The default cut wears the TEMPLATE's own name, id and bare href — see
+       above. Every other cut gets its own tile under its own name. */
+    return cuts.map((v, i) => ({
+      id: i === 0 ? t.id : (v.legacyId ?? `${t.id}:${v.key}`),
+      templateId: t.id,
+      name: i === 0 ? t.name : v.name,
+      description: i === 0 ? t.description : v.description,
+      category: t.category,
+      source: v.spec.source,
+      href: i === 0 ? base : `${base}?cut=${encodeURIComponent(v.key)}`,
+      variantKey: i === 0 ? null : v.key,
+    }));
+  });
 }

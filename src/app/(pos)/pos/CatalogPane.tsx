@@ -11,13 +11,20 @@ import {
   Skeleton,
   toneForId,
   toneForTileToken,
+  departmentGlyph,
+  productGlyph,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import { stockNote } from '@/lib/tillProductNotes'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { CatalogView } from './useSaleState'
 import type { Department } from './types'
-import { childDepartments, departmentTrail, hasChildren } from './saleSelectors'
+import {
+  childDepartments,
+  departmentTrail,
+  departmentTallyNote,
+  type DepartmentTally,
+} from './saleSelectors'
 import { useTileSizeValue } from '@/lib/posOffline/useTileSize'
 
 /**
@@ -43,6 +50,7 @@ export function CatalogPane({
   view,
   query,
   departments,
+  tallies,
   results,
   searching,
   onQuery,
@@ -59,6 +67,13 @@ export function CatalogPane({
   view: CatalogView
   query: string
   departments: Department[]
+  /**
+   * What is behind each department — its sections and the products beneath
+   * them — keyed by department id. Built once by the shell (departmentTallies)
+   * and shared with the rail, so a tile and the row that opens it cannot show
+   * different numbers.
+   */
+  tallies: Map<number, DepartmentTally>
   /** Search results, when the view is `search`. */
   results: TillProduct[]
   searching: boolean
@@ -196,6 +211,7 @@ export function CatalogPane({
         {view.kind === 'departments' && (
           <DepartmentLevel
             departments={departments}
+            tallies={tallies}
             path={view.path}
             browse={browse}
             onDrill={onDrill}
@@ -253,6 +269,7 @@ function Trail({
 
 function DepartmentLevel({
   departments,
+  tallies,
   path,
   browse,
   onDrill,
@@ -262,6 +279,7 @@ function DepartmentLevel({
   priceFor,
 }: {
   departments: Department[]
+  tallies: Map<number, DepartmentTally>
   path: number[]
   browse: { loading: boolean; products: TillProduct[] }
   onDrill: (id: number) => void
@@ -343,14 +361,46 @@ function DepartmentLevel({
         <ProductTile
           key={`d${d.id}`}
           title={d.name}
-          icon={<Icons.Tag size={20} />}
+          /* What is in there — "54 products", or "2 sections · 306 products"
+             where it has sub-departments. A cashier deciding whether a
+             department is worth a tap can see the answer before spending it,
+             and a department that has emptied out no longer looks identical to
+             one holding three hundred lines.
+
+             Empty string for a department with nothing in it, which
+             ProductTile treats as no subtitle at all — a tile reading
+             "0 products" states twice over what the empty grid behind it
+             already says. Note that a SHORT tile drops the subtitle entirely
+             (see isShortTile): at that height there is one line of room and
+             the department's name has the better claim on it. */
+          subtitle={departmentTallyNote(tallies.get(d.id))}
+          /* The shop's own picture where it has set one, otherwise the tag glyph
+             — the SAME call the rail makes for this department, so the row on the
+             left and the tile here cannot show different things. */
+          icon={departmentGlyph(d.id, d.posImageId, 20)}
           tone={toneForId(d.id)}
           /* The same tone the rail gives this department, so a sub-department tile
              and its row on the left are recognisably the same thing. */
           edge={toneForId(d.id)}
-          /* A chevron only where tapping really opens another level — on a leaf
-             it promises a screen that never arrives. */
-          chevron={hasChildren(departments, d.id)}
+          /*
+           * EVERY department tile, not only the ones with sub-departments.
+           *
+           * This used to be `hasChildren`, on the reasoning that a chevron on a
+           * leaf promises a screen that never arrives. That was true when a tile
+           * said nothing about itself — a leaf and a branch were the same button
+           * and only the chevron distinguished them, so it had to carry that
+           * meaning alone.
+           *
+           * The count beneath the name carries it now: "2 sections · 306
+           * products" and "54 products" already say which kind of screen is
+           * behind the tile, and say it more precisely than a chevron can. What
+           * is left for the chevron is the thing that IS true of every one of
+           * these tiles and not of the product tiles beside them in the same
+           * grid: tapping it opens something rather than adding a line to the
+           * basket. Half the department tiles wearing one made that read as an
+           * inconsistency instead of a distinction.
+           */
+          chevron
           onClick={() => onDrill(d.id)}
         />
       ))}
@@ -474,7 +524,11 @@ function ProductTileFor({
       title={product.description}
       subtitle={note || product.code}
       price={formatMoney(priceFor(product))}
-      icon={<Icons.Package size={20} />}
+      /* The product's own icon when a manager has uploaded one — the tile a
+         cashier presses is then exactly what the menu designer previewed. It sits
+         ON the tone rather than replacing it, so a transparent glyph keeps its
+         background and the colour still codes the department. */
+      icon={productGlyph(product.id, product.imageIcon)}
       tone={tone}
       edge={tone}
       onClick={() => onPick(product)}

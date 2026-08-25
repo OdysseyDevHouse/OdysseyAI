@@ -1,7 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listProductsForPricing } from '@/lib/site/bulkPricing'
-import { listPriceStructures, listBrands } from '@/lib/site/lookups'
+import { listPriceStructures, listVatRates } from '@/lib/site/lookups'
 import { listSuppliers } from '@/lib/site/suppliers'
 import { getSetting } from '@/lib/site/settings'
 import { toEndingDirection } from '@/lib/repricing'
@@ -45,7 +45,6 @@ export default async function BulkPricingPage({
   searchParams: Promise<{
     q?: string
     department?: string
-    brand?: string
     supplier?: string
     structure?: string
     archived?: string
@@ -58,10 +57,11 @@ export default async function BulkPricingPage({
   const params = await searchParams
   const { q, department, archived } = params
 
-  const [departments, structures, brands, suppliers, endingDirection] = await Promise.all([
+  const [departments, structures, vatRates, suppliers, endingDirection] =
+    await Promise.all([
     listDepartments(siteId, true),
     listPriceStructures(siteId),
-    listBrands(siteId),
+    listVatRates(siteId),
     /* Through listSuppliers rather than a join in the product query: the
        creditors book may be shared from another site's database. Closed
        suppliers are dropped — you do not reprice a range you no longer buy. */
@@ -108,10 +108,6 @@ export default async function BulkPricingPage({
       ? [...descendantIds(departments, departmentId)]
       : undefined
 
-  const brandId = Number(params.brand)
-  const brandFilter =
-    Number.isFinite(brandId) && brands.some((b) => b.id === brandId) ? brandId : undefined
-
   const supplierId = Number(params.supplier)
   const supplierFilter =
     Number.isFinite(supplierId) && suppliers.items.some((s) => s.id === supplierId)
@@ -123,7 +119,6 @@ export default async function BulkPricingPage({
     structureId: structure.id,
     search: q,
     departmentIds: filterIds,
-    brandId: brandFilter,
     supplierId: supplierFilter,
     includeArchived: archived === '1',
     limit: PAGE_SIZE,
@@ -160,15 +155,6 @@ export default async function BulkPricingPage({
       .sort((a, b) => a.label.localeCompare(b.label)),
   ]
 
-  const brandOptions = [
-    { value: '', label: 'All brands', href: filterHref({ brand: null }) },
-    ...brands.map((b) => ({
-      value: String(b.id),
-      label: b.name,
-      href: filterHref({ brand: String(b.id) }),
-    })),
-  ]
-
   const supplierOptions = [
     { value: '', label: 'All suppliers', href: filterHref({ supplier: null }) },
     ...suppliers.items.map((s) => ({
@@ -178,7 +164,7 @@ export default async function BulkPricingPage({
     })),
   ]
 
-  const filtered = !!filterIds || !!brandFilter || !!supplierFilter || !!q?.trim()
+  const filtered = !!filterIds || !!supplierFilter || !!q?.trim()
 
   return (
     <>
@@ -202,7 +188,6 @@ export default async function BulkPricingPage({
                 keep={{
                   structure: String(structure.id),
                   department,
-                  brand: params.brand,
                   supplier: params.supplier,
                   archived,
                 }}
@@ -223,12 +208,6 @@ export default async function BulkPricingPage({
               icon={<Icons.LayoutGrid size={16} />}
             />
 
-            <LinkSelect
-              aria-label="Brand"
-              options={brandOptions}
-              value={brandFilter ? String(brandFilter) : ''}
-            />
-
             {suppliers.items.length > 0 && (
               <LinkSelect
                 aria-label="Supplier"
@@ -243,7 +222,6 @@ export default async function BulkPricingPage({
                 value={`${total} ${total === 1 ? 'product' : 'products'}`}
                 clearHref={filterHref({
                   department: null,
-                  brand: null,
                   supplier: null,
                   q: null,
                 })}
@@ -264,6 +242,15 @@ export default async function BulkPricingPage({
           ) : (
             <BulkPricingGrid
               rows={items}
+              /* Split here rather than in the grid: which rates apply to buying
+                 and which to selling is a fact about the data, and the row
+                 should not be filtering the same list fifty times. */
+              purchaseVatRates={vatRates
+                .filter((v) => v.vatType === 'purchase')
+                .map((v) => ({ id: v.id, rate: v.rate, code: v.code }))}
+              sellingVatRates={vatRates
+                .filter((v) => v.vatType === 'sales')
+                .map((v) => ({ id: v.id, rate: v.rate, code: v.code }))}
               structureId={structure.id}
               structureName={structure.name}
               costBasis={costBasis}

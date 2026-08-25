@@ -101,6 +101,7 @@ import {
   toneForTileToken,
   TouchRow,
   ProductTile,
+  TileGlyph,
   RowDisclosure,
   Slider,
   Stepper,
@@ -2537,6 +2538,7 @@ function CategoryTileSection() {
           <CategoryTile icon={<Icons.Settings size={18} />} tone="amber" />
           <CategoryTile icon={<Icons.Star size={18} />} tone="violet" />
           <CategoryTile icon={<Icons.PackageOpen size={18} />} tone="orange" />
+          <CategoryTile icon={<Icons.LineChart size={18} />} tone="cyan" />
           <CategoryTile icon={<Icons.FileText size={18} />} tone="slate" />
         </div>
       </Row>
@@ -3126,6 +3128,26 @@ function ModuleMenuSection() {
   )
 }
 
+/**
+ * A stand-in for a shop's uploaded tile picture.
+ *
+ * Inlined as a data URI rather than pointing at /api/department-image: this page
+ * must render the same on every site, and a real route would need a department
+ * that happens to have a picture — which almost none do, so the row would show
+ * the fallback on both tiles and demonstrate nothing.
+ *
+ * A ring on a transparent ground, because that is what these pictures ARE — the
+ * transparency is the point, since it is what lets the department's tone show
+ * through from the disc behind.
+ */
+const SAMPLE_TILE_PICTURE =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/>' +
+      '<circle cx="12" cy="12" r="3"/></svg>',
+  )
+
 function TillTileSection() {
   return (
     <Card>
@@ -3186,6 +3208,10 @@ function TillTileSection() {
             />
             <ProductTile
               title="Frozen Foods"
+              /* A department tile's subtitle is what is BEHIND it — the till
+                 counts the whole subtree, so a department holding nothing of
+                 its own still says what its sections add up to. */
+              subtitle="2 sections · 306 products"
               icon={<Icons.Tag size={20} />}
               tone={toneForId(5)}
               edge={toneForId(5)}
@@ -3193,6 +3219,57 @@ function TillTileSection() {
               onClick={() => {}}
             />
           </TileGrid>
+        </div>
+      </Row>
+      <Row>
+        <Spec name="<TileGlyph>" note="The shop's OWN picture, in the disc" />
+        <div className="w-full max-w-xl">
+          <p className="pb-3 text-[13px] text-muted">
+            A department or product a manager has uploaded a picture for shows it INSIDE
+            the tinted disc, not instead of the tile — so the tone still codes the
+            department and a transparent icon keeps its background. Anything with no
+            picture keeps its glyph, which is most of the shop. Never{' '}
+            <code className="text-ink">ProductTile image</code>: that is a bordered,
+            cover-cropped thumbnail meant for a product PHOTOGRAPH, and it clips the
+            edges off a symbol.
+          </p>
+          <TileGrid tileWidth={190} tileHeight={150}>
+            <ProductTile
+              title="Espresso Bar"
+              icon={<TileGlyph src={SAMPLE_TILE_PICTURE} fallback={<Icons.Tag size={20} />} />}
+              tone={toneForId(7)}
+              edge={toneForId(7)}
+              chevron
+              onClick={() => {}}
+            />
+            <ProductTile
+              title="Cold Drinks"
+              /* The same call with no picture — the fallback, side by side with the
+                 picture so the two states can be compared rather than imagined. */
+              icon={<TileGlyph src={null} fallback={<Icons.Tag size={20} />} />}
+              tone={toneForId(9)}
+              edge={toneForId(9)}
+              chevron
+              onClick={() => {}}
+            />
+          </TileGrid>
+          <div className="flex w-full max-w-sm flex-col gap-2 pt-3">
+            {/* The rail row, because a department appears in BOTH places at once and
+                the whole point of the shared helper is that they cannot disagree. */}
+            <TouchRow
+              edge={toneForId(7)}
+              icon={
+                <CategoryTile
+                  icon={<TileGlyph src={SAMPLE_TILE_PICTURE} fallback={<Icons.Tag size={18} />} />}
+                  tone={toneForId(7)}
+                  size="lg"
+                />
+              }
+              title="Espresso Bar"
+              showChevron={false}
+              onClick={() => {}}
+            />
+          </div>
         </div>
       </Row>
       <Row>

@@ -59,8 +59,14 @@ import type { TillInstructionGroup } from '../site/instructions'
  * A till on 5 has neither, so it draws one all-day grid in alphabetical order
  * — which is what it drew before the feature existed, and says nothing about
  * why the lunch menu never arrives.
+ *
+ * 7 added the tile pictures — `imageIcon` on a product, `posImageId` on a
+ * department. A till on 6 stores neither, so it goes on drawing the generic
+ * glyphs on a shop that has uploaded a picture for every department. A delta
+ * cannot fix it: products would gain their icon one at a time as each happened
+ * to be edited, leaving a grid half in pictures and half in glyphs.
  */
-const SCHEMA = 6
+const SCHEMA = 7
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -93,7 +99,14 @@ type CatalogResponse = {
   reloadProducts: boolean
   products: TillProduct[]
   deletedIds: number[]
-  departments: { id: number; parentId: number | null; name: string; sortOrder: number }[]
+  departments: {
+    id: number
+    parentId: number | null
+    name: string
+    sortOrder: number
+    /** The till picture, as an id. Absent on a response from a schema-6 server. */
+    posImageId?: number | null
+  }[]
   tenders: unknown[]
   specials: unknown[]
   /** Optional: a server on schema 2 does not send it. See the default at the store. */

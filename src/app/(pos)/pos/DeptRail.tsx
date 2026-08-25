@@ -1,8 +1,8 @@
 'use client'
 
-import { Icons, TouchRow, CategoryTile, toneForId } from '@/components/ui'
+import { Icons, TouchRow, CategoryTile, toneForId, departmentGlyph } from '@/components/ui'
 import type { Department } from './types'
-import { childDepartments } from './saleSelectors'
+import { childDepartments, departmentTallyNote, type DepartmentTally } from './saleSelectors'
 
 /**
  * The department rail — the middle column.
@@ -19,10 +19,19 @@ import { childDepartments } from './saleSelectors'
  */
 export function DeptRail({
   departments,
+  tallies,
   activeId,
   onPick,
 }: {
   departments: Department[]
+  /**
+   * What is behind each button — its sections and the products beneath them.
+   *
+   * The SAME map the catalogue pane draws its tiles from, built once by the
+   * shell. A rail row and the tile it opens onto quoting different counts
+   * would read as a rendering fault rather than as two views of one shop.
+   */
+  tallies: Map<number, DepartmentTally>
   /** The department currently drilled into, if it is a top-level one. */
   activeId: number | null
   onPick: (id: number) => void
@@ -59,8 +68,19 @@ export function DeptRail({
                 key={d.id}
                 tone={activeId === d.id ? 'active' : 'default'}
                 edge={tone}
-                icon={<CategoryTile icon={<Icons.Tag size={18} />} tone={tone} size="lg" />}
+                /* The shop's own picture when it has set one, on the same tinted
+                   disc — so a department that has a picture is still the same
+                   colour here as it is on its tile in the grid. See tileGlyphs. */
+                icon={
+                  <CategoryTile icon={departmentGlyph(d.id, d.posImageId)} tone={tone} size="lg" />
+                }
                 title={d.name}
+                /* What is in there, on the row that opens it — the same line
+                   the department's tile carries in the grid. It is what turns
+                   the rail from a list of names into a list a cashier can
+                   judge: an empty department and a department of three hundred
+                   lines are otherwise the same button. */
+                subtitle={departmentTallyNote(tallies.get(d.id))}
                 showChevron={false}
                 onClick={() => onPick(d.id)}
               />

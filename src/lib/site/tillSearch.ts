@@ -69,6 +69,18 @@ export type TillProduct = {
    */
   imageColor: string | null
   /**
+   * The picture a manager uploaded for this product's tile, as the stored file
+   * name. Null on almost every product, which is why the tile keeps a glyph
+   * fallback rather than treating a missing icon as a fault.
+   *
+   * The NAME, not the bytes and not a URL. The bytes would put a photograph per
+   * product into every catalog response and into IndexedDB on every till; a URL
+   * built here would bake a route shape into the data and go stale the moment
+   * the route moves. The till only needs to know WHETHER there is one — it can
+   * build `/api/product-icon/{id}` itself from the id it already holds.
+   */
+  imageIcon: string | null
+  /**
    * Where the shop dragged this tile within its department (121). 0 means
    * nobody has placed it, and sorts AFTER every positioned row rather than
    * first — see 121 for why 0 cannot mean "first".
@@ -141,6 +153,10 @@ function mapProduct(r: Row): TillProduct {
     /* Empty string normalised to null: a cleared colour picker writes '' rather than
        NULL, and the two mean the same thing to everything downstream. */
     imageColor: (r.image_color as string | null) || null,
+    /* Normalised the same way and for the same reason: a cleared upload can leave
+       '' behind rather than NULL, and a tile treating '' as "there is a picture"
+       would draw a broken image on every product that once had an icon. */
+    imageIcon: (r.image_icon as string | null) || null,
     posSortOrder: Number(r.pos_sort_order ?? 0),
   }
 }
@@ -171,7 +187,7 @@ function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
            p.ask_price_at_sale, p.allow_fractions, p.scale_item, p.variable_type,
-           p.max_discount_pct, p.image_color,
+           p.max_discount_pct, p.image_color, p.image_icon,
            -- Where the shop dragged this tile (121). Shipped rather than left
            -- behind because the offline till sorts its own cached grid, and a
            -- column the server ordered by but never sent would give an online
@@ -619,4 +635,37 @@ export async function priceCheckForTill(
       priceIncl: priced[i]?.priceIncl ?? 0,
     })),
   }
+}
+
+/**
+ * How many sellable products sit DIRECTLY in each department.
+ *
+ * Feeds the count on the till's department tiles ("54 products"). Direct only —
+ * the till rolls these up into subtree totals itself, from the department list
+ * it already holds, so a branch can be counted without asking the server about
+ * every department beneath it.
+ *
+ * ⚠ The WHERE clause here MUST match browseForTill's. A count is a promise about
+ * what tapping the tile will show, and the obvious source — `product_count` on
+ * lib/site/departments' Department — is the wrong one: it counts every row,
+ * archived products and variant parents included. A department of 240 rows where
+ * 60 are archived would promise 240 and open on 180, and the cashier has no way
+ * to tell which number is the lie.
+ *
+ * Departments with nothing in them are absent from the result rather than
+ * present as 0, so the caller reads a missing key as zero. That keeps the
+ * payload proportional to the departments that actually hold stock.
+ */
+export async function tillProductCounts(siteId: number): Promise<Record<number, number>> {
+  const rows = await siteQuery<{ department_id: number; n: number }>(
+    siteId,
+    `SELECT p.department_id, COUNT(*) AS n
+       FROM products p
+      WHERE p.is_archived = 0
+        AND p.visible_in_pos = 1
+        AND p.has_variants = 0
+        AND p.department_id IS NOT NULL
+      GROUP BY p.department_id`,
+  )
+  return Object.fromEntries(rows.map((r) => [Number(r.department_id), Number(r.n)]))
 }

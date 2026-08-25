@@ -8,6 +8,7 @@ import {
   Checkbox,
   CurrencyInput,
   NumberInput,
+  Select,
   TABLE_FRAME,
   TABLE_HEAD_ROW,
   TABLE_HEAD_STICKY,
@@ -54,8 +55,19 @@ import ApplyRuleModal from './ApplyRuleModal'
  * this screen follows it.
  */
 
+/** What a row can have pending. Absent field = untouched, and never sent. */
+type RowEdit = {
+  priceIncl?: number
+  lastCost?: number
+  purchaseVatRateId?: number | null
+  sellingVatRateId?: number | null
+}
+
 type Props = {
   rows: BulkPricingRow[]
+  /** The tax rates a person may pick, split by what they apply to. */
+  purchaseVatRates: VatRateOption[]
+  sellingVatRates: VatRateOption[]
   structureId: number
   structureName: string
   costBasis: CostBasis
@@ -65,8 +77,30 @@ type Props = {
   defaultEndingDirection: EndingDirection
 }
 
+export type VatRateOption = { id: number; rate: number; code: string }
+
+/**
+ * The percentage a row is working at right now.
+ *
+ * Takes the pending rate id when one has been chosen, otherwise the product's
+ * own — and falls back to the percentage the server sent, which is what a
+ * product with no rate at all (or one no longer active) reads as.
+ */
+function rateOf(
+  rates: VatRateOption[],
+  pendingId: number | null | undefined,
+  storedId: number | null,
+  storedPercent: number,
+): number {
+  const id = pendingId !== undefined ? pendingId : storedId
+  if (id === null) return 0
+  return rates.find((r) => r.id === id)?.rate ?? storedPercent
+}
+
 export default function BulkPricingGrid({
   rows,
+  purchaseVatRates,
+  sellingVatRates,
   structureId,
   structureName,
   costBasis,
@@ -77,9 +111,10 @@ export default function BulkPricingGrid({
   const toast = useToast()
   const [saving, startSave] = useTransition()
 
-  /* Edits only. A row the user has not touched is absent, which is what makes
-     "13 changes" honest and keeps the save down to what actually moved. */
-  const [edits, setEdits] = useState<Record<number, number>>({})
+  /* Edits only, and only the FIELDS that moved. A row the user has not touched
+     is absent, which is what makes "13 changed" honest and keeps the save down
+     to what actually moved. */
+  const [edits, setEdits] = useState<Record<number, RowEdit>>({})
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const cap = useFitViewport(scrollRef)
@@ -174,13 +209,17 @@ export default function BulkPricingGrid({
       const next = { ...prev }
       for (const p of priced) {
         const was = original.get(p.productId)
+        const current: RowEdit = { ...(next[p.productId] ?? {}) }
         // Same un-dirtying rule as a typed edit: a rule that works out to the
-        // price already on the row is not a change.
+        // price already on the row is not a change. Any cost or tax edit
+        // already pending on that row is left alone.
         if (was !== null && was !== undefined && Math.abs(was - p.priceIncl) < 0.00005) {
-          delete next[p.productId]
+          delete current.priceIncl
         } else {
-          next[p.productId] = p.priceIncl
+          current.priceIncl = p.priceIncl
         }
+        if (Object.keys(current).length === 0) delete next[p.productId]
+        else next[p.productId] = current
       }
       return next
     })
@@ -205,38 +244,99 @@ export default function BulkPricingGrid({
 
   const dirtyCount = Object.keys(edits).length
 
+  /* Whether the delta column has anything to show. A cost-only edit does not
+     move a PRICE, so it must not widen the column that holds old prices. */
+  const anyPriceEdited = Object.values(edits).some((e) => e.priceIncl !== undefined)
+
+  /* Cost is only editable when this site PRICES off last cost. On the average
+     basis the margins are measured against average_cost, which is a
+     consequence of purchases and deliberately not writable — an editable box
+     there would take a number and appear to do nothing. */
+  const costEditable = costBasis === 'last'
+  const costLabel = costEditable ? 'Cost' : 'Avg cost'
+
+  /* Counted over the row as it now STANDS, not just its price: an edited cost
+     can put a price under water without the price itself being touched. */
   const belowCostCount = useMemo(
     () =>
       rows.filter((r) => {
-        const edited = edits[r.id]
-        if (edited === undefined || r.costExcl <= 0) return false
-        return removeVat(edited, r.sellingVatPercent) < r.costExcl
+        const e = edits[r.id]
+        if (!e) return false
+        /* The same basis the row itself shows: the edited last cost on a
+           last-cost site, otherwise the stored basis. Comparing an edited last
+           cost against an average-cost row would flag products the row is not
+           actually pricing from. */
+        const cost =
+          e.lastCost !== undefined && costEditable
+            ? e.lastCost
+            : costEditable
+              ? r.lastCost
+              : r.costExcl
+        const incl = e.priceIncl !== undefined ? e.priceIncl : r.sellingIncl
+        if (cost <= 0 || incl === null) return false
+        const vat = rateOf(sellingVatRates, e.sellingVatRateId, r.sellingVatRateId, r.sellingVatPercent)
+        return removeVat(incl, vat) < cost
       }).length,
-    [rows, edits],
+    [rows, edits, sellingVatRates, costEditable],
   )
 
-  /* Typing a value back to what it was un-dirties the row rather than saving a
-     no-op — borrowed from BudgetGrid, and it is why the footer count can be
-     trusted after someone changes their mind. */
-  function setPrice(id: number, next: number) {
+  /**
+   * One field of one row, changed.
+   *
+   * A field set back to what it was is REMOVED rather than stored — borrowed
+   * from BudgetGrid — and a row whose last changed field goes back drops out
+   * of `edits` entirely. That is what keeps the footer count honest after
+   * somebody changes their mind, and keeps the save down to what actually
+   * moved: an untouched cost is never sent, so this screen cannot overwrite a
+   * cost someone else changed while it was open.
+   */
+  /* `next` may legitimately be null — clearing a tax rate is a real choice, and
+     distinct from leaving the field untouched, which is `undefined`. */
+  function setField<K extends keyof RowEdit>(
+    row: BulkPricingRow,
+    field: K,
+    next: RowEdit[K],
+    was: RowEdit[K],
+  ) {
     setEdits((prev) => {
-      const was = original.get(id)
+      const current: RowEdit = { ...(prev[row.id] ?? {}) }
+      const same =
+        typeof next === 'number' && typeof was === 'number'
+          ? Math.abs(was - next) < 0.00005
+          : was === next
+
+      if (same) delete current[field]
+      else current[field] = next
+
       const copy = { ...prev }
-      if (was !== null && was !== undefined && Math.abs(was - next) < 0.00005) delete copy[id]
-      else copy[id] = next
+      if (Object.keys(current).length === 0) delete copy[row.id]
+      else copy[row.id] = current
       return copy
     })
   }
 
-  function priceFor(row: BulkPricingRow): number | null {
-    const edited = edits[row.id]
-    return edited !== undefined ? edited : row.sellingIncl
+  /** The value on screen: the pending edit if there is one, else what is stored. */
+  function valueFor(row: BulkPricingRow): {
+    priceIncl: number | null
+    lastCost: number
+    purchaseVatRateId: number | null
+    sellingVatRateId: number | null
+  } {
+    const e = edits[row.id] ?? {}
+    return {
+      priceIncl: e.priceIncl !== undefined ? e.priceIncl : row.sellingIncl,
+      lastCost: e.lastCost !== undefined ? e.lastCost : row.lastCost,
+      purchaseVatRateId:
+        e.purchaseVatRateId !== undefined ? e.purchaseVatRateId : row.purchaseVatRateId,
+      sellingVatRateId:
+        e.sellingVatRateId !== undefined ? e.sellingVatRateId : row.sellingVatRateId,
+    }
   }
 
   function save() {
-    const payload = Object.entries(edits).map(([id, priceIncl]) => ({
+    const payload = Object.entries(edits).map(([id, e]) => ({
       productId: Number(id),
-      priceIncl,
+      ...e,
     }))
     if (payload.length === 0) return
 
@@ -249,14 +349,13 @@ export default function BulkPricingGrid({
       } else if (result.skipped.length > 0) {
         toast.info(`${result.updated} saved, ${result.skipped.length} skipped.`)
       } else {
-        toast.success(`${result.updated} ${result.updated === 1 ? 'price' : 'prices'} saved.`)
+        toast.success(`${result.updated} ${result.updated === 1 ? 'product' : 'products'} saved.`)
       }
       setEdits({})
       router.refresh()
     })
   }
 
-  const costLabel = costBasis === 'last' ? 'Last cost' : 'Average cost'
 
   return (
     <div className="flex min-h-0 flex-col">
@@ -298,13 +397,27 @@ export default function BulkPricingGrid({
               a ragged column of price fields is unreadable at fifty rows. */}
           <colgroup>
             <col className="w-[56px]" />
-            <col className="w-[130px]" />
+            <col className="w-[120px]" />
             <col />
-            {showCost && <col className="w-[110px]" />}
-            {showCost && <col className="w-[104px]" />}
-            {showCost && <col className="w-[104px]" />}
-            <col className="w-[124px]" />
-            <col className="w-[150px]" />
+            {showCost && <col className="w-[112px]" />}
+            {showCost && <col className="w-[84px]" />}
+            {showCost && <col className="w-[112px]" />}
+            {showCost && <col className="w-[96px]" />}
+            {showCost && <col className="w-[92px]" />}
+            <col className="w-[112px]" />
+            <col className="w-[84px]" />
+            {/* The "was → %" delta has its own column so it can never land on
+                top of the Sell tax dropdown — but it must not RESERVE the room
+                either, or an untouched page carries 100px of dead air between
+                the tax and the price.
+
+                So the column exists only once something on this page has
+                actually been edited. `w-0` rather than removing the <col>: the
+                cells stay in place, so the column count never changes under
+                the keyboard navigation, and nothing shifts except this one
+                strip widening when the first delta appears. */}
+            <col className={anyPriceEdited ? 'w-[124px]' : 'w-0'} />
+            <col className="w-[104px]" />
           </colgroup>
           <thead>
             {/* Sticky: fifty rows of bare numbers are unreadable once the
@@ -323,10 +436,21 @@ export default function BulkPricingGrid({
               </th>
               <th className={TABLE_TH}>Code</th>
               <th className={TABLE_TH}>Description</th>
-              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>{costLabel}</th>}
+              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>{costLabel} excl.</th>}
+              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Buy tax</th>}
+              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>{costLabel} incl.</th>}
               {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Markup %</th>}
               {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>GP %</th>}
-              <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Excl. VAT</th>
+              <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Sell excl.</th>
+              <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Sell tax</th>
+              {/* The delta column carries no heading: it holds the OLD price of
+                  whichever rows have been edited, which the "was" styling says
+                  on its own. A word here would label an empty column on every
+                  untouched page. */}
+              <th
+                className={`${TABLE_TH} ${anyPriceEdited ? '' : 'px-0'}`}
+                aria-label="Previous price"
+              />
               <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>{structureName} incl.</th>
             </tr>
           </thead>
@@ -335,13 +459,17 @@ export default function BulkPricingGrid({
               <PriceRow
                 key={row.id}
                 row={row}
-                price={priceFor(row)}
-                dirty={edits[row.id] !== undefined}
+                value={valueFor(row)}
+                edits={edits[row.id]}
+                purchaseVatRates={purchaseVatRates}
+                sellingVatRates={sellingVatRates}
+                costEditable={costEditable}
+                anyPriceEdited={anyPriceEdited}
                 showCost={showCost}
                 busy={saving}
                 selected={selected.has(row.id)}
                 onSelect={() => toggleRow(row.id)}
-                onChange={(next) => setPrice(row.id, next)}
+                onField={(field, next, was) => setField(row, field, next, was)}
               />
             ))}
           </tbody>
@@ -355,7 +483,11 @@ export default function BulkPricingGrid({
         <span className="text-sm text-muted">
           {dirtyCount === 0
             ? 'No changes yet.'
-            : `${dirtyCount} ${dirtyCount === 1 ? 'price' : 'prices'} changed, not yet saved.`}
+            : /* "products", not "prices": a row can be dirty because its COST
+                 or a tax rate moved with the price left alone, and calling
+                 that a changed price would be a lie about what is being
+                 saved. */
+              `${dirtyCount} ${dirtyCount === 1 ? 'product' : 'products'} changed, not yet saved.`}
           {/* Counted across every CHANGED row, not just the visible ones: a
               price put under cost by a rule is worth saying out loud before it
               is written, not after somebody notices the margin. */}
@@ -383,79 +515,107 @@ export default function BulkPricingGrid({
 }
 
 /**
- * One product's line.
+ * One product's line: cost, tax, margin and selling price, all live.
  *
- * Every editable cell reads from the same inclusive price and writes back to
- * it. `basis` is the cost this site prices from, already resolved server-side,
- * so markup and GP mean here exactly what they mean on the product screen.
+ * ── THE TWO CHAINS ────────────────────────────────────────────────────
+ * Cost excl. → purchase VAT → cost incl. is one chain; markup/GP → sell excl.
+ * → selling VAT → sell incl. is the other. They meet at the margin: markup and
+ * GP are ratios of the EXCLUSIVE cost against the EXCLUSIVE selling price, so
+ * a change on the cost side moves both percentages without touching the
+ * selling price — which is exactly what a cost increase does in real life.
+ *
+ * Each chain still has ONE stored number behind it: last_cost excl. and the
+ * selling price incl. Every other box is a view that converts back into one of
+ * those on change, so no two figures can drift apart.
  */
 function PriceRow({
   row,
-  price,
-  dirty,
+  value,
+  edits,
+  purchaseVatRates,
+  sellingVatRates,
+  costEditable,
+  anyPriceEdited,
   showCost,
   busy,
   selected,
   onSelect,
-  onChange,
+  onField,
 }: {
   row: BulkPricingRow
-  price: number | null
-  dirty: boolean
+  value: {
+    priceIncl: number | null
+    lastCost: number
+    purchaseVatRateId: number | null
+    sellingVatRateId: number | null
+  }
+  edits: RowEdit | undefined
+  purchaseVatRates: VatRateOption[]
+  sellingVatRates: VatRateOption[]
+  /** Cost is only a figure a person states when the site prices off last cost. */
+  costEditable: boolean
+  /** Whether ANY row on this page has an edited price — see the delta col. */
+  anyPriceEdited: boolean
   showCost: boolean
   busy: boolean
   selected: boolean
   onSelect: () => void
-  onChange: (next: number) => void
+  onField: <K extends keyof RowEdit>(field: K, next: RowEdit[K], was: RowEdit[K]) => void
 }) {
-  const vat = row.sellingVatPercent
-  const basis = row.costExcl
-  const incl = price ?? 0
-  const excl = removeVat(incl, vat)
-  const priced = price !== null
+  const purchaseVat = rateOf(
+    purchaseVatRates,
+    edits?.purchaseVatRateId,
+    row.purchaseVatRateId,
+    row.purchaseVatPercent,
+  )
+  const sellingVat = rateOf(
+    sellingVatRates,
+    edits?.sellingVatRateId,
+    row.sellingVatRateId,
+    row.sellingVatPercent,
+  )
 
-  /* ── WHY THESE CELLS ARE KEYED ────────────────────────────────────────
-     NumberInput and CurrencyInput hold what you typed until they lose focus,
-     so formatting does not fight the caret. That is right for a lone field and
-     wrong for four that compute each other: typing a GP recomputes the price,
-     but the markup box beside it keeps showing its own stale text.
+  /* What margins are measured against: the edited last cost when this site
+     prices off last cost, otherwise the stored basis — which may be the
+     average, and is not a figure anyone may type here. */
+  const costExcl = costEditable ? value.lastCost : row.costExcl
+  const costIncl = addVat(costExcl, purchaseVat)
 
-     Keying each box on the current price remounts the ones you are NOT in
-     whenever the row's price moves, so they re-read it. `editingField` keeps
-     the box under the cursor mounted — remounting that one would drop the
-     caret mid-keystroke. */
+  const incl = value.priceIncl ?? 0
+  const excl = removeVat(incl, sellingVat)
+  const priced = value.priceIncl !== null
+
+  const belowCost = priced && costExcl > 0 && excl < costExcl
+
   const [editingField, setEditingField] = useState<string | null>(null)
 
   /**
-   * A cell's key changes when the row's price moves — EXCEPT for the cell the
-   * caret is in, whose key must never change while it holds focus.
+   * A cell's key changes when the figures move — EXCEPT for the cell the caret
+   * is in, whose key must never change while it holds focus.
    *
-   * The subtlety that cost an afternoon: the focused cell cannot simply use a
+   * The subtlety that cost an afternoon: the focused cell cannot use a
    * different key SHAPE from its siblings, because taking focus would then
    * change its own key, React would unmount the element that just gained the
-   * caret, and focus would fall to the body. That is what broke arrow-key
+   * caret, and focus would fall to the body — which is what broke arrow-key
    * movement between rows.
    *
-   * So the focused cell keeps the key it already had — the price as it was when
-   * focus arrived, held in a ref — while its siblings key off the live price
-   * and remount to re-read it. Nothing the focused cell does changes its own
-   * key; everything it does changes theirs.
+   * So the focused cell keeps the key it had when focus arrived, held in a ref,
+   * while its siblings key off the live figures and remount to re-read them.
+   * The stamp covers cost and both tax rates too, because a change to any of
+   * them moves the boxes further down the row.
    */
-  const focusedKeyPrice = useRef(incl)
+  const stamp = `${incl.toFixed(4)}:${costExcl.toFixed(4)}:${purchaseVat}:${sellingVat}`
+  const focusedStamp = useRef(stamp)
 
-  /* Captured in the focus event itself, not in a render that follows it: by the
-     time a re-render could read `incl`, the key would already have changed once
-     and taken the element with it. */
   function focusCell(field: string) {
-    focusedKeyPrice.current = incl
+    focusedStamp.current = stamp
     setEditingField(field)
   }
 
   const cellKey = (field: string) =>
-    `${field}:${(editingField === field ? focusedKeyPrice.current : incl).toFixed(4)}`
+    `${field}:${editingField === field ? focusedStamp.current : stamp}`
 
-  // Below cost is worth seeing while typing, not only at save time.
-  const belowCost = priced && basis > 0 && excl < basis
+  const num = (raw: string) => Number(String(raw).replace(',', '.'))
 
   return (
     <tr className={TABLE_ROW}>
@@ -473,58 +633,121 @@ function PriceRow({
       <td className={`${TABLE_TD_INPUT} px-4 truncate text-sm text-muted`}>{row.code}</td>
       <td className={`${TABLE_TD_INPUT} px-4 truncate text-sm text-ink`}>
         {row.description}
-        {belowCost && (
-          <span className="ml-2 text-xs text-danger">below cost</span>
-        )}
+        {belowCost && <span className="ml-2 text-xs text-danger">below cost</span>}
       </td>
 
       {showCost && (
-        /* Read-only by design. average_cost is a consequence of purchases and
-           stock movements — see updateProduct, which refuses to write it — so
-           an editable box here would either lie or falsify stock valuation. */
-        <td className={`${TABLE_TD_INPUT} px-4 ${TABLE_NUMERIC} text-sm text-muted`}>
-          {formatMoney(basis)}
-        </td>
-      )}
+        <>
+          {/* Cost excl. — the stored figure. Read-only on an average-cost site:
+              average_cost is a consequence of purchases, so an editable box
+              here would either lie or falsify stock valuation. */}
+          <td className={TABLE_TD_INPUT}>
+            {costEditable ? (
+              <CurrencyInput
+                key={cellKey('costExcl')}
+                value={costExcl}
+                disabled={busy}
+                onFocus={() => focusCell('costExcl')}
+                onBlur={() => setEditingField(null)}
+                onChange={(e) => {
+                  const next = num(e.target.value)
+                  if (Number.isFinite(next) && next >= 0) onField('lastCost', next, row.lastCost)
+                }}
+              />
+            ) : (
+              <span className={`${TABLE_NUMERIC} block px-2 text-sm text-muted`}>
+                {formatMoney(costExcl)}
+              </span>
+            )}
+          </td>
 
-      {showCost && (
-        <td className={TABLE_TD_INPUT}>
-          <NumberInput
-            key={cellKey('markup')}
-            precision={2}
-            value={priced ? markupPercent(basis, excl) : ''}
-            disabled={busy || basis <= 0}
-            onFocus={() => focusCell('markup')}
-            onBlur={() => setEditingField(null)}
-            onChange={(e) => {
-              const next = Number(String(e.target.value).replace(',', '.'))
-              if (!Number.isFinite(next)) return
-              onChange(addVat(sellExclFromMarkup(basis, next), vat))
-            }}
-          />
-        </td>
-      )}
+          <td className={TABLE_TD_INPUT}>
+            <Select
+              value={value.purchaseVatRateId ?? ''}
+              disabled={busy}
+              aria-label={`Purchase tax for ${row.description}`}
+              onChange={(e) =>
+                onField(
+                  'purchaseVatRateId',
+                  e.target.value === '' ? null : Number(e.target.value),
+                  row.purchaseVatRateId,
+                )
+              }
+            >
+              <option value="">&mdash;</option>
+              {purchaseVatRates.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.rate}%
+                </option>
+              ))}
+            </Select>
+          </td>
 
-      {showCost && (
-        <td className={TABLE_TD_INPUT}>
-          <NumberInput
-            key={cellKey('gp')}
-            precision={2}
-            max="99.99"
-            value={priced ? gpPercent(basis, excl) : ''}
-            disabled={busy || basis <= 0}
-            onFocus={() => focusCell('gp')}
-            onBlur={() => setEditingField(null)}
-            onChange={(e) => {
-              const next = Number(String(e.target.value).replace(',', '.'))
-              if (!Number.isFinite(next)) return
-              // A GP of 100% or more needs an infinite price; ignore rather
-              // than write Infinity into the row.
-              const sell = sellExclFromGp(basis, next)
-              if (sell !== null) onChange(addVat(sell, vat))
-            }}
-          />
-        </td>
+          {/* Cost incl. edits the SAME stored figure, backwards through tax. */}
+          <td className={TABLE_TD_INPUT}>
+            {costEditable ? (
+              <CurrencyInput
+                key={cellKey('costIncl')}
+                value={costIncl}
+                disabled={busy}
+                onFocus={() => focusCell('costIncl')}
+                onBlur={() => setEditingField(null)}
+                onChange={(e) => {
+                  const next = num(e.target.value)
+                  if (Number.isFinite(next) && next >= 0) {
+                    onField('lastCost', removeVat(next, purchaseVat), row.lastCost)
+                  }
+                }}
+              />
+            ) : (
+              <span className={`${TABLE_NUMERIC} block px-2 text-sm text-muted`}>
+                {formatMoney(costIncl)}
+              </span>
+            )}
+          </td>
+
+          <td className={TABLE_TD_INPUT}>
+            <NumberInput
+              key={cellKey('markup')}
+              precision={2}
+              value={priced ? markupPercent(costExcl, excl) : ''}
+              disabled={busy || costExcl <= 0}
+              onFocus={() => focusCell('markup')}
+              onBlur={() => setEditingField(null)}
+              onChange={(e) => {
+                const next = num(e.target.value)
+                if (!Number.isFinite(next)) return
+                onField(
+                  'priceIncl',
+                  addVat(sellExclFromMarkup(costExcl, next), sellingVat),
+                  row.sellingIncl ?? undefined,
+                )
+              }}
+            />
+          </td>
+
+          <td className={TABLE_TD_INPUT}>
+            <NumberInput
+              key={cellKey('gp')}
+              precision={2}
+              max="99.99"
+              value={priced ? gpPercent(costExcl, excl) : ''}
+              disabled={busy || costExcl <= 0}
+              onFocus={() => focusCell('gp')}
+              onBlur={() => setEditingField(null)}
+              onChange={(e) => {
+                const next = num(e.target.value)
+                if (!Number.isFinite(next)) return
+                // A GP of 100% or more needs an infinite price; ignore rather
+                // than write Infinity into the row.
+                const sell = sellExclFromGp(costExcl, next)
+                if (sell !== null) {
+                  onField('priceIncl', addVat(sell, sellingVat), row.sellingIncl ?? undefined)
+                }
+              }}
+            />
+          </td>
+        </>
       )}
 
       <td className={TABLE_TD_INPUT}>
@@ -535,18 +758,57 @@ function PriceRow({
           onFocus={() => focusCell('excl')}
           onBlur={() => setEditingField(null)}
           onChange={(e) => {
-            const next = Number(String(e.target.value).replace(',', '.'))
-            if (Number.isFinite(next)) onChange(addVat(next, vat))
+            const next = num(e.target.value)
+            if (Number.isFinite(next)) {
+              onField('priceIncl', addVat(next, sellingVat), row.sellingIncl ?? undefined)
+            }
           }}
         />
       </td>
 
       <td className={TABLE_TD_INPUT}>
-        <span className="flex items-center justify-end gap-2">
-          {/* What it was, and how far it has moved — a column of plain numbers
-              makes a 40% rise look like a 2% one. */}
-          <Delta from={row.sellingIncl} to={price} dirty={dirty} />
-          <span className="w-[92px] shrink-0">
+        <Select
+          value={value.sellingVatRateId ?? ''}
+          disabled={busy}
+          aria-label={`Selling tax for ${row.description}`}
+          onChange={(e) =>
+            onField(
+              'sellingVatRateId',
+              e.target.value === '' ? null : Number(e.target.value),
+              row.sellingVatRateId,
+            )
+          }
+        >
+          <option value="">&mdash;</option>
+          {sellingVatRates.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.rate}%
+            </option>
+          ))}
+        </Select>
+      </td>
+
+      {/* What it was, and how far it has moved, in its OWN cell — a column of
+          plain numbers makes a 40% rise look like a 2% one. Empty until the
+          price is edited. */}
+      {/* px-0 while the column is collapsed: TABLE_TD_INPUT's own padding
+          would otherwise hold 12px open on every row of an untouched page,
+          which is the gap this column was narrowed to close. */}
+      <td
+        className={`${TABLE_TD_INPUT} whitespace-nowrap text-right ${
+          anyPriceEdited ? '' : 'px-0'
+        }`}
+      >
+        <Delta
+          from={row.sellingIncl}
+          to={value.priceIncl}
+          dirty={edits?.priceIncl !== undefined}
+        />
+      </td>
+
+      <td className={TABLE_TD_INPUT}>
+        <span className="flex items-center justify-end">
+          <span className="w-[88px] shrink-0">
             <CurrencyInput
               key={cellKey('incl')}
               value={priced ? incl : ''}
@@ -554,8 +816,10 @@ function PriceRow({
               onFocus={() => focusCell('incl')}
               onBlur={() => setEditingField(null)}
               onChange={(e) => {
-                const next = Number(String(e.target.value).replace(',', '.'))
-                if (Number.isFinite(next)) onChange(next)
+                const next = num(e.target.value)
+                if (Number.isFinite(next)) {
+                  onField('priceIncl', next, row.sellingIncl ?? undefined)
+                }
               }}
             />
           </span>
@@ -564,6 +828,7 @@ function PriceRow({
     </tr>
   )
 }
+
 
 function Delta({
   from,
@@ -578,7 +843,10 @@ function Delta({
   const moved = ((to - from) / from) * 100
   if (Math.abs(moved) < 0.05) return null
   return (
-    <span className="flex items-baseline gap-1.5 text-xs">
+    /* flex-nowrap explicitly: the old price and the percentage are one
+       statement, and letting them stack doubles the row height on exactly the
+       rows the user is watching. */
+    <span className="flex flex-nowrap items-baseline justify-end gap-1.5 text-xs">
       <span className="numeric text-muted line-through">{formatMoney(from)}</span>
       <span className={`numeric ${moved > 0 ? 'text-success' : 'text-danger'}`}>
         {moved > 0 ? '+' : ''}
