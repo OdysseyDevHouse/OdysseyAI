@@ -303,6 +303,16 @@ export function returnPayloadLines(lines: BasketLine[]) {
      * was used rather than silently re-derived later.
      */
     unitCostExcl: line.unitCostExcl,
+    /*
+     * The lot off the pack (236).
+     *
+     * A whitelist of its own, with the same failure mode as
+     * `salePayloadLines`: a field left out here is shown on screen and never
+     * sent. And this is the path where the lot matters MOST — an offline
+     * return is always the no-receipt case, so there is no original line to
+     * mirror and the alternative is the newest-lot guess.
+     */
+    ...(line.batchNo ? { batchNo: line.batchNo } : {}),
   }))
 }
 

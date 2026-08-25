@@ -52,6 +52,15 @@ export type CreditLineInput = {
   unitPriceIncl: number
   vatRatePct: number
   unitCostExcl: number
+  /**
+   * The lot this unit is coming BACK to, read off the pack (236).
+   *
+   * Only ever consulted on a NO-RECEIPT return. A receipted one mirrors the
+   * slices the original line took, which is a record rather than a reading and
+   * therefore always better — so this is ignored when `sourceLineId` is set,
+   * rather than allowed to overrule it.
+   */
+  batchNo?: string | null
 }
 
 export type CreditNoteInput = {
@@ -436,9 +445,20 @@ export async function createCreditNote(
                 terminalId: input.terminalId ?? null,
                 locationId: returnLocationId,
                 note: invoice ? `Credit of ${invoice.documentNumber}` : 'No-receipt return',
-                // A receipted batch return goes back to the lots the ORIGINAL
-                // line took (148); a no-receipt return falls to the newest lot.
-                batch: { returnOfLineId: line.sourceLineId ?? null },
+                /*
+                 * A receipted batch return goes back to the lots the ORIGINAL
+                 * line took (148). A no-receipt return has no such record, so
+                 * it uses the lot read off the pack if the till captured one
+                 * (236), and only then falls to the newest lot.
+                 *
+                 * Both are passed; `returnToBatchTx` prefers them in that
+                 * order, so a receipted return is unaffected even if a lot
+                 * number was also keyed.
+                 */
+                batch: {
+                  returnOfLineId: line.sourceLineId ?? null,
+                  observedBatchNo: line.batchNo ?? null,
+                },
               })
             }
           }

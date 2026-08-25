@@ -41,6 +41,7 @@ export function LotModal({
   loading,
   offline,
   strict,
+  returning = false,
   onConfirm,
   onCancel,
 }: {
@@ -52,6 +53,15 @@ export function LotModal({
   offline: boolean
   /** The shop refuses a sale with no lot. Changes what Cancel means, not the UI. */
   strict: boolean
+  /**
+   * Goods coming BACK rather than going out (236).
+   *
+   * Changes the words and the default, not the mechanism. Nothing is
+   * preselected on a return: the pack is in the customer's hand with its own
+   * number on it, and the lot due to sell next is no kind of guess about which
+   * carton somebody bought a fortnight ago.
+   */
+  returning?: boolean
   onConfirm: (batchNo: string) => void
   onCancel: () => void
 }) {
@@ -64,21 +74,29 @@ export function LotModal({
    * Preselect the first row, which is the FEFO pick, once the list lands.
    */
   useEffect(() => {
-    setPicked(lots[0]?.batchNo ?? '')
+    // Nothing preselected on a RETURN — see `returning`. On a sale the first
+    // row IS the FEFO answer, so preselecting makes the common case one tap.
+    setPicked(returning ? '' : (lots[0]?.batchNo ?? ''))
     setTyped('')
     setTyping(lots.length === 0)
-  }, [product.id, lots])
+  }, [product.id, lots, returning])
 
   const chosen = typing ? typed.trim() : picked
   const valid = chosen.length > 0
 
   return (
-    <Modal open onClose={onCancel} title={`Lot for ${product.description}`}>
+    <Modal
+      open
+      onClose={onCancel}
+      title={returning ? `Lot coming back — ${product.description}` : `Lot for ${product.description}`}
+    >
       <div className="space-y-4">
         <p className="text-sm text-muted">
           {offline
             ? 'No lot list while offline — key the number printed on the pack.'
-            : 'Which lot is this coming from? The first is the one due to sell next.'}
+            : returning
+              ? 'Which lot is on the pack being handed back? Read it off the label.'
+              : 'Which lot is this coming from? The first is the one due to sell next.'}
         </p>
 
         {loading ? (
@@ -165,11 +183,11 @@ export function LotModal({
             Cancel
           </Button>
           <Button variant="success" disabled={!valid} onClick={() => onConfirm(chosen)}>
-            Add to sale
+            {returning ? 'Add the return' : 'Add to sale'}
           </Button>
         </div>
 
-        {strict && (
+        {strict && !returning && (
           <p className="text-xs text-muted">
             This shop records the lot on every sale — cancelling leaves the item off.
           </p>

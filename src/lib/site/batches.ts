@@ -76,17 +76,24 @@ export type BatchDirective = {
   reverseReceiptOfDocId?: number | null
   /**
    * A lot named at the TILL, as observed — scanned off the pack or typed by
-   * the clerk (234).
+   * the clerk (234, 236).
    *
    * Distinct from `batchNo` above, which names a lot being CREATED by a
-   * receipt. This one names a lot the goods are believed to have come FROM, so
-   * it is matched against existing lots rather than minting one, and a miss is
-   * a reportable event rather than a new row.
+   * receipt. This one names a lot the goods are believed to have come from or
+   * be going back to, so it is matched against existing lots rather than
+   * minting one, and a miss is a reportable event rather than a new row.
+   *
+   * Read in BOTH directions: outbound it beats FEFO, inbound it beats the
+   * newest-lot guess on a walk-in return. It never beats a RECEIPTED return,
+   * which mirrors what the original line actually took.
    */
-  soldFromBatchNo?: string | null
+  observedBatchNo?: string | null
   /**
-   * Refuse the movement when `soldFromBatchNo` matches no lot, instead of
+   * Refuse the movement when `observedBatchNo` matches no lot, instead of
    * falling back to FEFO. The shop's `lot_capture_strict` setting.
+   *
+   * Outbound only. A return is goods coming back through the door with money
+   * already refunded or about to be — refusing it would not un-return them.
    */
   strict?: boolean
 }
@@ -357,6 +364,8 @@ export async function returnToBatchTx(
     action: string
     source: string
     documentId: number | null
+    /** The lot read off the pack being handed back (236). See the header. */
+    observedBatchNo?: string | null
   },
 ): Promise<void> {
   let remaining = round(input.qty, 3)
@@ -384,6 +393,38 @@ export async function returnToBatchTx(
         source: input.source,
       })
       remaining = round(remaining - give, 3)
+    }
+  }
+
+  /*
+   * A lot READ OFF THE PACK coming back (236).
+   *
+   * After the receipted mirror above and before the newest-lot guess below,
+   * which is exactly its standing: a record of what the original line took
+   * beats a reading of a label, and a reading of a label beats a guess.
+   *
+   * Only a lot already on file is used. Minting one from a returned pack would
+   * let a customer's carton conjure stock the shop never received, and the
+   * expiry alone is not enough to reconstruct what that lot was. Unmatched
+   * text falls through to the guess below, which is where it stood before.
+   */
+  const observed = input.observedBatchNo?.trim()
+  if (remaining > 0 && observed) {
+    const [[named]] = await tx.query<Row[]>(
+      `SELECT id FROM product_batches
+        WHERE product_id = ? AND location_id = ? AND batch_no = ?
+        FOR UPDATE`,
+      [input.productId, input.locationId, observed.slice(0, 64)] as never,
+    )
+    if (named) {
+      await writeSlice(tx, actor, Number(named.id), remaining, {
+        action: input.action,
+        movementId: input.movementId,
+        documentId: input.documentId,
+        documentLineId: input.returnOfLineId,
+        source: input.source,
+      })
+      return
     }
   }
 
@@ -537,6 +578,16 @@ export async function applyBatchMovementTx(
         action: input.movementType,
         source: input.source,
         documentId: input.sourceDocId,
+        /*
+         * The lot the till read off the pack being handed back (236).
+         *
+         * Used ONLY when nothing better exists. A receipted return mirrors the
+         * slices the original line took — a record of what actually left, which
+         * beats a reading of a label every time — so this never overrules it.
+         * It replaces the newest-lot guess on a walk-in return, where until now
+         * a carton expiring on Friday came back dated as a fresh one.
+         */
+        observedBatchNo: directive.observedBatchNo ?? null,
       })
       return
     }
@@ -613,7 +664,7 @@ export async function applyBatchMovementTx(
   // Takes precedence over FEFO because it is an observation rather than an
   // inference: somebody read this number off the pack in their hand, and FEFO
   // is only ever a guess about which pack that was.
-  const named = directive.soldFromBatchNo?.trim()
+  const named = directive.observedBatchNo?.trim()
   if (named) {
     const [[lot]] = await tx.query<Row[]>(
       `SELECT id, qty_remaining FROM product_batches

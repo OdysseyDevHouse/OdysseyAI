@@ -438,6 +438,10 @@ export async function postOfflineReturn(
       // The till's catalog cost, carried rather than re-read — re-reading would
       // value the return at today's cost and manufacture margin never earned.
       unitCostExcl: l.unitCostExcl,
+      // The lot off the pack (236). Absent on a return queued before this
+      // shipped, and on every shop that does not capture lots — both of which
+      // fall back to the newest lot exactly as they did.
+      batchNo: l.batchNo,
     })),
     refunds: ret.refunds.map((r) => ({
       tenderTypeId: r.tenderTypeId,

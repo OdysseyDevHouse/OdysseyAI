@@ -861,7 +861,18 @@ export default function PosShell({
    * could not read them — offline, or a product with none on file — and the
    * modal falls back to a typed number.
    */
-  const [lotting, setLotting] = useState<{ product: TillProduct; qty: number } | null>(null)
+  const [lotting, setLotting] = useState<{
+    product: TillProduct
+    qty: number
+    /**
+     * The Refund key was armed when this was asked (236).
+     *
+     * Captured HERE rather than read at confirm time, because arming is spent
+     * by the ADD that the modal's own confirm performs — by then the state says
+     * false, and a return would be worded and defaulted as a sale.
+     */
+    returning: boolean
+  } | null>(null)
   const [lotOptions, setLotOptions] = useState<TillLot[]>([])
   const [lotsLoading, setLotsLoading] = useState(false)
 
@@ -1819,7 +1830,7 @@ export default function PosShell({
       product.productType === 'batch' &&
       !product.scannedBatchNo
     ) {
-      setLotting({ product, qty })
+      setLotting({ product, qty, returning: state.refundArmed })
       setLotOptions([])
       /*
        * Offline there is no list to fetch — the catalog feed ships products,
@@ -6965,6 +6976,7 @@ export default function PosShell({
       {lotting && (
         <LotModal
           product={lotting.product}
+          returning={lotting.returning}
           lots={lotOptions}
           loading={lotsLoading}
           offline={!till.online}

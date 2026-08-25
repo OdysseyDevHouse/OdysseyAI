@@ -1064,15 +1064,27 @@ export async function finaliseDocument(
           shiftId,
           note: line.productCode ?? undefined,
           /*
-           * The lot the till named, if it named one (234).
+           * The lot the till named, if it named one (234, 236).
            *
            * Passed for EVERY product type rather than gated on 'batch' — the
            * hook only runs for batch-tracked products anyway, and a gate here
            * would be a second place for the two to disagree. Undefined when
            * nothing was captured, which is the FEFO path and most sales.
+           *
+           * Serves both directions. Going out it beats FEFO; on a REFUND LINE
+           * (negative qty, the till's `refundArmed`) it beats the newest-lot
+           * guess, so a carton expiring on Friday comes back dated Friday.
+           *
+           * `strict` only on the way out. A return is goods already back over
+           * the counter with the money going the other way — refusing it over
+           * an unrecognised lot would not un-return them, and the number is
+           * still recorded either way.
            */
           batch: line.batchNo?.trim()
-            ? { soldFromBatchNo: line.batchNo.trim(), strict: lotStrict }
+            ? {
+                observedBatchNo: line.batchNo.trim(),
+                strict: line.qty > 0 ? lotStrict : false,
+              }
             : undefined,
         })
 

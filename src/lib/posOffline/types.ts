@@ -274,6 +274,17 @@ export type OfflineReturnLine = {
   unitPriceIncl: number
   vatRatePct: number
   unitCostExcl: number
+  /**
+   * The lot read off the pack being handed back (236).
+   *
+   * OPTIONAL for the load-bearing reason the sale line's fields are: a return
+   * queued before this shipped has none and must still post.
+   *
+   * This path is where it matters MOST. An offline return is always the
+   * no-receipt case — there is no invoice to mirror, by construction — so
+   * without a lot it falls to the newest-lot guess every time.
+   */
+  batchNo?: string
 }
 
 /**

@@ -24,6 +24,9 @@ import { reconcileStock } from '../src/lib/site/stockMovements'
 import { saveDraft } from '../src/lib/site/salesDocuments'
 import { finaliseDocument } from '../src/lib/site/salesPosting'
 import { getTenderByCode } from '../src/lib/site/tenderTypes'
+import { createCreditNote } from '../src/lib/site/salesReversal'
+import { postOfflineReturn } from '../src/lib/site/offlineReturns'
+import { findSalesReasonByCode } from '../src/lib/site/salesReasons'
 import { lotCaptureFor, parseGs1, gtinCandidates } from '../src/lib/gs1'
 import { addToBasket } from '../src/lib/basket'
 import { toNum } from '../src/lib/decimals'
@@ -442,7 +445,155 @@ async function main() {
     overdraw.ok ? `B=${await lotQty(milk, 'LATER-B')}` : overdraw.error,
   )
 
-  /* ── 5. The trace tells an observation from an inference ───────────────── */
+  /* ── 5. A walk-in return goes back to the lot on the pack (236) ─────────
+     A no-receipt return has no original line to mirror, so before this it
+     landed on the NEWEST lot — which dates a carton expiring on Friday as
+     though it expires in three weeks, in the report whose whole job is to
+     find the Friday one. */
+  {
+    const reason = await findSalesReasonByCode(SITE, 'return', 'FAULTY')
+    if (!reason) throw new Error('Seeded return reason FAULTY is missing.')
+
+    const aBefore = await lotQty(milk, 'SOON-A')
+    const bBefore = await lotQty(milk, 'LATER-B')
+
+    const credit = await createCreditNote(SITE, actor, {
+      invoiceId: null, // walk-in: no receipt, nothing to mirror
+      customerName: `${TAG} ${stamp}`,
+      reasonId: reason.id,
+      lines: [
+        {
+          productId: milk,
+          productCode: code,
+          description: `Milk ${stamp}`,
+          productType: 'batch',
+          qty: 1,
+          unitPriceIncl: 15,
+          vatRatePct: rate,
+          unitCostExcl: 8,
+          batchNo: 'SOON-A', // read off the pack in the customer's hand
+        },
+      ],
+      refunds: [{ tenderTypeId: cash.id, amount: 15 }],
+    } as never)
+    ok('a walk-in credit note posts', credit.ok, credit.ok ? '' : (credit as any).error)
+
+    ok(
+      '*** the return goes back to the NAMED lot, not the newest ***',
+      (await lotQty(milk, 'SOON-A')) === aBefore + 1,
+      `SOON-A ${aBefore} -> ${await lotQty(milk, 'SOON-A')}`,
+    )
+    ok(
+      '  and the newest lot is untouched',
+      (await lotQty(milk, 'LATER-B')) === bBefore,
+      `LATER-B ${bBefore} -> ${await lotQty(milk, 'LATER-B')}`,
+    )
+
+    /*
+     * A RECEIPTED return is not overruled by a keyed lot.
+     *
+     * The mirror is a record of what the original line actually took; a lot
+     * number read off a label is a reading. If a wrong number could redirect
+     * a receipted return, this change would have made traceability worse for
+     * the case that already had the better answer — so it is asserted rather
+     * than assumed. Sell 1 from LATER-B, then credit that very line while
+     * naming SOON-A: the mirror must win.
+     */
+    const receipted = await sell(1, 'LATER-B')
+    if (receipted.ok) {
+      const doc = await siteQueryOne<any>(
+        SITE,
+        'SELECT id FROM sales_documents WHERE id = ?',
+        [(receipted as any).documentId],
+      )
+      const soldLine = await siteQueryOne<any>(
+        SITE,
+        'SELECT id FROM sales_document_lines WHERE document_id = ? LIMIT 1',
+        [doc?.id],
+      )
+      const a2 = await lotQty(milk, 'SOON-A')
+      const b2 = await lotQty(milk, 'LATER-B')
+
+      const back = await createCreditNote(SITE, actor, {
+        invoiceId: Number(doc?.id),
+        customerName: `${TAG} ${stamp}`,
+        reasonId: reason.id,
+        lines: [
+          {
+            sourceLineId: Number(soldLine?.id),
+            productId: milk,
+            productCode: code,
+            description: `Milk ${stamp}`,
+            productType: 'batch',
+            qty: 1,
+            unitPriceIncl: 15,
+            vatRatePct: rate,
+            unitCostExcl: 8,
+            batchNo: 'SOON-A', // deliberately WRONG — the mirror must ignore it
+          },
+        ],
+        refunds: [{ tenderTypeId: cash.id, amount: 15 }],
+      } as never)
+      ok('a receipted credit note posts', back.ok, back.ok ? '' : (back as any).error)
+      ok(
+        '*** a RECEIPTED return mirrors the original line, ignoring a keyed lot ***',
+        (await lotQty(milk, 'LATER-B')) === b2 + 1 && (await lotQty(milk, 'SOON-A')) === a2,
+        `A ${a2} -> ${await lotQty(milk, 'SOON-A')}, B ${b2} -> ${await lotQty(milk, 'LATER-B')}`,
+      )
+    }
+  }
+
+  /* ── 6. An OFFLINE return keeps its lot through sync (236) ──────────────
+     The branch where this matters most: an offline return is always the
+     no-receipt case by construction, so without the pack's lot it falls to
+     the newest-lot guess every single time. */
+  {
+    const reason = await findSalesReasonByCode(SITE, 'return', 'FAULTY')
+    const aBefore = await lotQty(milk, 'SOON-A')
+    const bBefore = await lotQty(milk, 'LATER-B')
+
+    const posted = await postOfflineReturn(SITE, {
+      returnUid: `20000000-2000-4000-8000-${(Date.now().toString(16) + '0001').slice(-12)}`,
+      documentNumber: `ZLCCR${stamp}`,
+      terminalId: null,
+      terminalCode: null,
+      operatorUserId: 1,
+      operatorName: 'Lot Capture Test',
+      shiftId: null,
+      takenAt: new Date().toISOString(),
+      documentDate: new Date().toISOString().slice(0, 10),
+      customerId: null,
+      customerName: `${TAG} ${stamp}`,
+      reasonId: reason!.id,
+      lines: [
+        {
+          productId: milk,
+          productCode: code,
+          description: `Milk ${stamp}`,
+          productType: 'batch',
+          departmentId: null,
+          qty: 1,
+          unitPriceIncl: 15,
+          vatRatePct: rate,
+          unitCostExcl: 8,
+          batchNo: 'SOON-A',
+        },
+      ],
+      refunds: [{ tenderTypeId: cash.id, tenderCode: 'CASH', amount: 15, reference: null }],
+      claimedTotalIncl: 15,
+      claimedRefundTotal: 15,
+    } as never)
+
+    ok('an offline return posts at sync', posted.ok, posted.ok ? '' : (posted as any).error)
+    ok(
+      '*** and its lot survived the queue — NOT the newest-lot guess ***',
+      (await lotQty(milk, 'SOON-A')) === aBefore + 1 &&
+        (await lotQty(milk, 'LATER-B')) === bBefore,
+      `A ${aBefore} -> ${await lotQty(milk, 'SOON-A')}, B ${bBefore} -> ${await lotQty(milk, 'LATER-B')}`,
+    )
+  }
+
+  /* ── 7. The trace tells an observation from an inference ───────────────── */
 
   const lotRow = await siteQueryOne<any>(
     SITE,
@@ -479,7 +630,7 @@ async function main() {
     (namedTrace?.events ?? []).filter((e) => e.action === 'receipt').every((e) => e.observed),
   )
 
-  /* ── 6. The invariants survive all of it ───────────────────────────────── */
+  /* ── 8. The invariants survive all of it ───────────────────────────────── */
 
   const driftAfter = (await reconcileStock(SITE)).length
   const batchDriftAfter = (await reconcileBatches(SITE)).length
