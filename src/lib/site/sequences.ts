@@ -600,19 +600,6 @@ const OWN_TABLE_TYPES: Record<string, string> = {
    * this function asks: an open shift is in progress, not a cancelled number.
    */
   cashup: 'shifts',
-  /*
-   * Block tests (236). Registered WITH the migration, for the sixth time of
-   * asking — stock takes, job cards, customer assets, laybys and cash-ups were
-   * each found long after their numbers had been issued, every one reporting
-   * its whole history as missing.
-   *
-   * 236 gives `block_tests.status` its 'cancelled' value for this contract
-   * alone, exactly as 116, 165 and 233 did. A block test is not a sales
-   * document — it is a costing document that CONSUMES one product and produces
-   * several — so without this entry it would be checked against
-   * sales_documents, where none of its numbers exist.
-   */
-  block_test: 'block_tests',
 }
 
 export async function verifySequence(
