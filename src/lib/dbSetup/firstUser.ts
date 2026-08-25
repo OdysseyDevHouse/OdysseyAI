@@ -104,5 +104,11 @@ export async function createStoreOwner(
     salesRepId: null,
     pin,
     isActive: true,
+    /* Said explicitly, because this wizard cannot be recognised by what it is
+       running as: it is a CLOUD client — reading the control panel is its whole
+       job — building a LOCAL site. Left to infer, validate() asks whether THIS
+       machine is a local install, gets "no", and demands an email address the
+       technician was never asked for and does not have. */
+    pinIsCredential: true,
   })
 }

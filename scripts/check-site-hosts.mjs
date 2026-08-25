@@ -19,7 +19,8 @@ const conn = await mysql.createConnection({
 
 const [rows] = await conn.query(
   `SELECT d.id, d.site_id, d.purpose, d.location_name, d.server_host,
-          d.server_port, d.database_name, d.status, s.connection_type
+          d.server_port, d.database_name, d.db_username, d.status, s.connection_type,
+          CASE WHEN d.db_password_enc IS NULL OR d.db_password_enc = '' THEN 0 ELSE 1 END AS has_pw
      FROM cp2_site_databases d
      JOIN cp2_sites s ON s.id = d.site_id
     ORDER BY d.site_id, d.id`,
@@ -40,6 +41,9 @@ for (const r of rows) {
   console.log(`     connection_type : ${r.connection_type}`)
   console.log(`     server_host     : ${host || '(empty)'}:${r.server_port}${flag}`)
   console.log(`     database_name   : ${r.database_name}`)
+  const reserved = ['root','mysql','mariadb.sys','mariadb'].includes(String(r.db_username||'').toLowerCase())
+  console.log(`     db_username     : ${r.db_username || '(none)'}${reserved ? '   <-- RESERVED, setup will refuse' : ''}`)
+  console.log(`     password stored : ${r.has_pw ? 'yes' : 'NO'}`)
   console.log('')
 }
 

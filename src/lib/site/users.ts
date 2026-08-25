@@ -158,6 +158,18 @@ export type UserInput = {
   /** Null leaves an existing PIN alone; a string replaces it. */
   pin: string | null
   isActive: boolean
+  /**
+   * This user signs in with their name and PIN, not an email and a password.
+   *
+   * Set by Odyssey Database Setup when it creates a local site's first user.
+   * It cannot be inferred there: the wizard runs as a CLOUD client, because
+   * reading the control panel is its entire job, so "what kind of install is
+   * this" gives the wrong answer about the site it is building.
+   *
+   * Every other caller leaves it alone — the shop's own Users screen is running
+   * ON the local install by then, and validate() works that out for itself.
+   */
+  pinIsCredential?: boolean
 }
 
 async function validate(
@@ -169,22 +181,36 @@ async function validate(
   if (!name) return { ok: false, error: 'Enter a name.' }
   if (name.length > 120) return { ok: false, error: 'That name is too long.' }
 
-  /* ── WHAT A BACK-OFFICE USER SIGNS IN WITH DEPENDS ON THE INSTALL ─────────
+  /* ── WHAT A BACK-OFFICE USER SIGNS IN WITH DEPENDS ON THE SITE ────────────
    *
    * On a cloud site the credential is an email and a password held upstream in
-   * `cp2_users`, so a back-office user without an email has no way in and the
+   * `cp2_users`, so a back-office user without an email has no way in, and the
    * screen should say so at the point of creation rather than later.
    *
-   * A local Electron install has no upstream. Its credential is the name and
-   * PIN on this very row — see lib/localSignIn.ts — and an email there is a
-   * contact detail, not a way in. Insisting on one would block the shop's own
-   * Users screen, and block the store owner the setup wizard has to create
-   * before anybody can sign in at all.
+   * On a LOCAL site there is no upstream. The credential is the name and PIN on
+   * this very row — see lib/localSignIn.ts — and an email is a contact detail
+   * rather than a way in.
+   *
+   * Two ways to know we are in the second case, and BOTH are needed:
+   *
+   *   · `pinIsCredential`, set by the caller. Odyssey Database Setup creates
+   *     the store owner while running as a CLOUD client — it has to be, since
+   *     its whole job is reading the control panel — so it cannot be recognised
+   *     by asking what kind of install it is. It knows, and says so.
+   *   · resolveOfflineSite(), for the shop's own Users screen afterwards, where
+   *     nobody passes a flag and the install genuinely is local.
+   *
+   * Asking only the second question is what produced "a back office user needs
+   * an email address" on the setup wizard's last step, in front of a technician
+   * who had just installed the database and had no email to give it.
    */
   if (input.userType === 'back_office' && !input.email?.trim()) {
-    const { resolveOfflineSite } = await import('../licence/offlineSite')
-    const local = await resolveOfflineSite()
-    if (!local) {
+    let pinIsTheCredential = input.pinIsCredential === true
+    if (!pinIsTheCredential) {
+      const { resolveOfflineSite } = await import('../licence/offlineSite')
+      pinIsTheCredential = (await resolveOfflineSite()) !== null
+    }
+    if (!pinIsTheCredential) {
       return { ok: false, error: 'A back office user needs an email address to sign in with.' }
     }
     if (input.pin === null) {

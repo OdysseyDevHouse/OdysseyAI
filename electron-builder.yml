@@ -85,8 +85,53 @@ extraResources:
   # Not under app/ — this is the installer's own material, not the Next server's.
   - from: sql
     to: sql
+  # ── WHAT THE APP RUNS, NOT WHAT BUILT IT ──────────────────────────────────
+  #
+  # The Next server runs in-process and needs its production dependencies
+  # beside the asar, so the folder is copied wholesale. Wholesale also brings
+  # every devDependency, and those are not small: 597MB of the 1081MB shipped
+  # was tooling the app never loads.
+  #
+  # `electron` is the clearest case — a complete second copy of Electron, inside
+  # an Electron app that already has one — and `app-builder-bin` is the program
+  # that produced this installer, packed inside it. Every customer downloaded
+  # both, and unpacked them on every install.
+  #
+  # Excluded by NAME rather than by reading devDependencies, because a build
+  # must not silently drop something the app needs the day a package moves
+  # between the two lists. Getting this wrong fails loudly and immediately —
+  # a missing runtime module is a crash on launch, not a subtle wrong answer.
+  #
+  # Checked before cutting: nothing in src/, electron/ or server/ references
+  # any of these outside comments.
   - from: node_modules
     to: app/node_modules
+    filter:
+      - '**/*'
+      # A second Electron, inside Electron.
+      - '!electron{,/**/*}'
+      - '!@electron{,/**/*}'
+      # The builder, and its binaries, inside the thing they built.
+      - '!electron-builder{,/**/*}'
+      - '!app-builder-bin{,/**/*}'
+      - '!app-builder-lib{,/**/*}'
+      - '!dmg-builder{,/**/*}'
+      - '!builder-util{,/**/*}'
+      - '!builder-util-runtime{,/**/*}'
+      - '!7zip-bin{,/**/*}'
+      # Compilers and test tooling. Next ships compiled; nothing compiles here.
+      - '!typescript{,/**/*}'
+      - '!esbuild{,/**/*}'
+      - '!@esbuild{,/**/*}'
+      - '!tsx{,/**/*}'
+      - '!playwright-core{,/**/*}'
+      - '!playwright{,/**/*}'
+      - '!@playwright{,/**/*}'
+      # Scripts-only helpers, used by npm run, never by the app.
+      - '!concurrently{,/**/*}'
+      - '!wait-on{,/**/*}'
+      - '!cross-env{,/**/*}'
+      - '!@capacitor{,/**/*}'
   # ── A COPY, NOT THE FILE ITSELF ────────────────────────────────────────────
   #
   # Every `from` listed here is added to the app copier's EXCLUDE list — see

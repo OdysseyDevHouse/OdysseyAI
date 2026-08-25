@@ -10,6 +10,7 @@ const localDb = require('./localDb')
 const replicationTunnel = require('./replicationTunnel')
 const { isPos, isDatabaseSetup, startPath, posNavigation, setupNavigation } = require('./appRole')
 const dbSetupBridge = require('./dbSetupBridge')
+const log = require('./log')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
@@ -363,7 +364,25 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  app.whenReady().then(createWindow)
+  app.whenReady().then(() => {
+    /* ── BEFORE THE WINDOW, AND BEFORE THE SERVER ──────────────────────────
+     *
+     * A packaged Windows app has no console, so console.error — which is how
+     * Next reports a server component that threw — goes nowhere. The customer
+     * sees "A server error occurred" and a digest number, and that is the whole
+     * of the evidence.
+     *
+     * Started here rather than at the top of the file because it needs
+     * app.getPath, which is only meaningful once the app is ready. */
+    const file = log.start(app.getPath('userData'), {
+      role: isPos() ? 'pos' : isDatabaseSetup() ? 'database' : 'backoffice',
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      platform: `${process.platform} ${process.arch}`,
+    })
+    if (file) console.log(`[odyssey] logging to ${file}`)
+    return createWindow()
+  })
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()

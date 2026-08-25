@@ -77,6 +77,15 @@ check(
   'a back-office user may have a PIN instead of an email on a local install',
   /resolveOfflineSite/.test(users) && /needs a PIN to sign in with/.test(users),
 )
+/* The wizard runs as a CLOUD client while building a LOCAL site, so it cannot
+   be recognised by asking what kind of install it is — resolveOfflineSite says
+   "not local" and the rule demands an email the technician was never asked for.
+   It has to say so explicitly. This shipped wrong once. */
+check('the caller can declare the PIN is the credential', /pinIsCredential/.test(users))
+check(
+  'and the setup wizard does declare it',
+  /pinIsCredential: true/.test(read('src/lib/dbSetup/firstUser.ts')),
+)
 
 /* ── The first user ───────────────────────────────────────────────────────── */
 

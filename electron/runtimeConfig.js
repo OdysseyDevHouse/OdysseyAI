@@ -340,6 +340,29 @@ function ensureBackend() {
     return 'cloud'
   }
 
+  /* ── A CLOUD DECISION MADE BY DEFAULT IS NOT A DECISION ───────────────────
+   *
+   * resolveInitialBackend() below refuses to re-decide once cfg.backend is set,
+   * and it is right to: flipping a trading shop between backends means moving
+   * its data, and an install that has been running as one must not silently
+   * become the other.
+   *
+   * But the first decision is often not a decision at all. A Back Office
+   * installed BEFORE Odyssey Database Setup has run finds no marker, defaults to
+   * cloud, and writes that down. userData survives reinstalls — deliberately, so
+   * an upgrade cannot lose a database password — so every later install inherits
+   * that default and never looks at backend.txt again. The machine then has a
+   * database sitting on it that the app will not use, and the shop is asked for
+   * an email address on a site whose sign-in is a name and a PIN.
+   *
+   * So: adopt when there is something to adopt and nothing to lose. Both
+   * conditions matter. `siteDbSealed` absent means this install has no local
+   * credentials of its own, so nothing is being overwritten; the marker means
+   * this build was made for a local site, so a cloud install that happens to sit
+   * on a machine hosting some other shop's database does not wander into it.
+   */
+  if (!readConfig().siteDbSealed && markerSaysLocal() && adoptMachineConfig()) return 'local'
+
   const chosen = resolveInitialBackend()
   if (chosen === 'local') {
     /* ── ADOPT WHAT SETUP LEFT, RATHER THAN MINTING OUR OWN ─────────────────
@@ -380,6 +403,23 @@ function ensureBackend() {
  *
  * Returns whether this install now has an adopted local database.
  */
+/**
+ * Does the marker beside the executable say this is a local build?
+ *
+ * Read separately from resolveInitialBackend because that function answers
+ * "what did this install already decide", and the question here is the
+ * different one of "what was this installer built for" — which is a fact about
+ * the BUILD and stays true however many times it is reinstalled.
+ */
+function markerSaysLocal() {
+  try {
+    const marker = path.join(path.dirname(app.getPath('exe')), 'backend.txt')
+    return fs.readFileSync(marker, 'utf8').trim().toLowerCase() === 'local'
+  } catch {
+    return false
+  }
+}
+
 function adoptMachineConfig() {
   const cfg = readConfig()
   if (cfg.siteDbSealed && cfg.siteId) return true
