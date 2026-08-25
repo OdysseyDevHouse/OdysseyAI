@@ -1272,7 +1272,15 @@ export default function JobDetail({
         </div>
       </Modal>
 
-      <Modal open={billing} onClose={() => setBilling(false)} title="Bill the job" size="lg">
+      <Modal
+        open={billing}
+        onClose={() => setBilling(false)}
+        title="Bill the job"
+        size="lg"
+        /* A billing table of every line to charge — the rows are the thing
+           being checked before an invoice is raised. */
+        bodyGrows
+      >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted">
             This raises a <strong className="text-ink">draft</strong> invoice. Nothing is posted and no

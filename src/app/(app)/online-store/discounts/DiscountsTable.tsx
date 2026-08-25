@@ -306,6 +306,9 @@ function DiscountEditor({
       open
       onClose={onClose}
       title={row.id ? `Edit ${row.code}` : 'New discount code'}
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       footer={
         // In the FOOTER, because the body scrolls at 60vh and a primary button
         // inside it can end up below the fold on a short screen.

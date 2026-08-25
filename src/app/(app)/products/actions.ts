@@ -2,7 +2,13 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
+import {
+  requireSiteId,
+  requireCapability,
+  actorFor,
+  actorForOrThrow,
+  actorForModuleOrThrow,
+} from '@/lib/auth'
 import { toProductType } from '@/lib/productTypes'
 import { toVariableType, toPriceCalc } from '@/lib/productProperties'
 import { linkedStores } from '@/lib/storeGroups'
@@ -13,6 +19,11 @@ import { setPrintersForProduct } from '@/lib/site/kitchenPrinters'
 import { saveLocationLevels } from '@/lib/site/stockLocations'
 import { listPriceStructures, listVatRates } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
+import { listReasons, postNewAdjustment } from '@/lib/site/stockAdjustments'
+import { can, type Capability } from '@/lib/site/permissions'
+import { runBuilderSpec, ReportAccessError } from '@/lib/reportBuilder/run'
+import { type ReportColumn } from '@/lib/reportBuilder/spec'
+import { PRODUCT_REPORTS } from '@/lib/reportBuilder/productReports'
 import {
   createProduct,
   updateProduct,
@@ -571,4 +582,150 @@ export async function bulkUpdateProductsAction(
   const result = await bulkUpdateProducts(siteId, ids, change)
   revalidatePath('/products')
   return result
+}
+
+/* ── Quick adjust ────────────────────────────────────────────────────────── */
+
+/**
+ * The reasons a quick adjustment may name, for the modal's picker.
+ *
+ * Gated the same way the adjustments screen is — module first, then capability.
+ * Someone who cannot open /adjustments/new must not be able to reach the same
+ * posting path through a product.
+ */
+export async function adjustmentReasonsAction(): Promise<
+  { id: number; name: string; direction: 'in' | 'out' | 'both' }[]
+> {
+  const { siteId } = await actorForModuleOrThrow('inventory_advanced', 'stock.adjust')
+  const reasons = await listReasons(siteId, false)
+  return reasons.map((r) => ({ id: r.id, name: r.name, direction: r.direction }))
+}
+
+/**
+ * Adjusts ONE product at ONE location, from the product screen.
+ *
+ * Delegates to `postNewAdjustment` rather than writing a movement: that
+ * function creates the draft, posts it, mirrors to the GL and keeps the draft
+ * if posting is refused. Writing stock directly here would skip the document
+ * trail, the GL and the reversal path — and nothing would notice until a
+ * reconcile check failed, long after anyone could say why.
+ *
+ * So this is a thin wrapper whose whole job is to refuse what a single-line
+ * modal cannot express, and then hand over.
+ */
+export async function quickAdjustAction(input: {
+  productId: number
+  locationId: number
+  qtyChange: number
+  reasonId: number
+  note?: string
+}): Promise<{ ok: true; documentNumber: string } | { ok: false; error: string }> {
+  const { siteId, actor } = await actorForModuleOrThrow('inventory_advanced', 'stock.adjust')
+
+  const product = await getProduct(siteId, input.productId)
+  if (!product) return { ok: false, error: 'That product no longer exists.' }
+
+  /*
+   * Serial products are refused rather than adjusted.
+   *
+   * A serial line carries the UNITS going off the shelf, and writeOffSerialsTx
+   * returns ok on an empty list — so a quantity-only adjustment would post
+   * happily, move products.stock_on_hand, and leave every serial row untouched.
+   * That breaks invariant (S1), count(in_stock serials) = stock_on_hand, with
+   * nothing on the document to explain it. Ticking units needs the full screen.
+   */
+  if (product.productType === 'serial') {
+    return {
+      ok: false,
+      error:
+        'This product tracks individual units, so an adjustment has to say which ones. Use Stock → Adjustments.',
+    }
+  }
+
+  const result = await postNewAdjustment(siteId, actor, {
+    locationId: input.locationId,
+    reasonId: input.reasonId,
+    note: input.note?.trim() || null,
+    lines: [
+      {
+        productId: product.id,
+        productCode: product.code,
+        description: product.description,
+        qtyChange: input.qtyChange,
+      },
+    ],
+  })
+
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath(`/products/${input.productId}`)
+  return { ok: true, documentNumber: result.documentNumber }
+}
+
+/* ── Product reports ─────────────────────────────────────────────────────── */
+
+export type ProductReportResult =
+  | {
+      ok: true
+      columns: ReportColumn[]
+      rows: Record<string, unknown>[]
+      totals: Record<string, number>
+      range: { from: string; to: string }
+      truncated: boolean
+    }
+  | { ok: false; error: string }
+
+/**
+ * Runs one of the product Reporting-tab reports.
+ *
+ * The browser sends a report ID, never a spec. The builder's own preview action
+ * takes a whole spec back from the client and has to re-validate it against the
+ * catalog for exactly that reason; here the spec is composed server-side from
+ * an id and this product, so a tampered request can only ever name a report
+ * that exists or none at all.
+ *
+ * The capability is still checked twice: once to decide whether the report is
+ * offered, and again inside runBuilderSpec against the source's own permission.
+ * A product report reads sales, stock or purchasing data, and being allowed to
+ * edit a product is not being allowed to see any of that.
+ */
+export async function runProductReportAction(
+  productId: number,
+  reportId: string,
+): Promise<ProductReportResult> {
+  const { siteId, capabilities } = await requireCapability('products.view')
+  const allow = (c: Capability) => can(capabilities, c)
+
+  const report = PRODUCT_REPORTS.find((r) => r.id === reportId)
+  if (!report) return { ok: false, error: 'That report does not exist.' }
+  if (!allow(report.permission)) {
+    return { ok: false, error: 'You do not have access to this data.' }
+  }
+
+  const product = await getProduct(siteId, productId)
+  if (!product) return { ok: false, error: 'That product no longer exists.' }
+
+  try {
+    const result = await runBuilderSpec(
+      siteId,
+      report.spec({ id: product.id, code: product.code }),
+      allow,
+    )
+    return {
+      ok: true,
+      columns: result.columns,
+      rows: result.rows,
+      totals: result.totals,
+      range: result.range,
+      truncated: result.truncated,
+    }
+  } catch (e) {
+    if (e instanceof ReportAccessError) {
+      return { ok: false, error: 'You do not have access to this data.' }
+    }
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'This report could not be run.',
+    }
+  }
 }

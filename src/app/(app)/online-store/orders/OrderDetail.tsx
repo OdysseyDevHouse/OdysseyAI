@@ -81,6 +81,10 @@ export default function OrderDetail({
             })}`
           : undefined
       }
+      /* A whole order: summary grids, customer and deliver-to blocks, then the
+         order-lines table. Comfortably past 60vh on any real order, so the
+         lines — the part being checked — were the half that scrolled away. */
+      bodyGrows
     >
       {error ? (
         <EmptyState icon={<Icons.StatusError size={22} />} title="Couldn't load" hint={error} />

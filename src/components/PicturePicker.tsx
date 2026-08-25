@@ -174,14 +174,19 @@ function PickerDialog({
       title="Your pictures"
       description="Choose one for this banner, or upload a new one."
       size="lg"
+      /* The picture GRID scrolls inside a growing body, so the upload control
+         above it stays put while the thumbnails scroll past. */
+      bodyPins
       footer={
         <Button variant="secondary" onClick={onClose}>
           Close
         </Button>
       }
     >
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-center gap-3 rounded-control bg-surface-2 px-4 py-3">
+      {/* `min-h-0` so the picture grid below can shrink rather than pushing
+          this column past the panel. */}
+      <div className="flex min-h-0 flex-col gap-4">
+        <div className="flex shrink-0 flex-wrap items-center gap-3 rounded-control bg-surface-2 px-4 py-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-ink">Upload a picture</p>
             <p className="text-sm text-muted">
@@ -221,7 +226,7 @@ function PickerDialog({
             </p>
           </div>
         ) : (
-          <ul className="grid max-h-96 grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3">
+          <ul className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3">
             {images.map((image) => (
               <li key={image.id} className="group relative">
                 {/* Not a kit Button: a picture tile whose whole area is the

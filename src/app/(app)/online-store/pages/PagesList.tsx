@@ -497,6 +497,9 @@ function AddPageDialog({
       onClose={onClose}
       title="Add a page"
       description="A page of your own — About, Delivery, Returns, anything."
+      /* A long dialog: the default 60vh cap letterboxed it with empty desktop
+         above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
@@ -663,6 +666,9 @@ function EditPageDialog({
       open
       onClose={onClose}
       title={`“${page.title}” settings`}
+      /* A long dialog: the default 60vh cap letterboxed it with empty desktop
+         above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>

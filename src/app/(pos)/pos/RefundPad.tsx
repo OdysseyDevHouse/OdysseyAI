@@ -156,6 +156,13 @@ export function RefundPad({
       title="Refund"
       description={`${formatMoney(totalIncl)} to pay back`}
       size="lg"
+      /* Two columns — the reason picker and given tenders on the left, the
+         tender keys on the right — and both grow with the shop's own lists.
+         `bodyGrows`, NOT `bodyPins`: pinning would need a scroll container per
+         column, and the column that then scrolled would be the touch keypad,
+         which is the one thing on a till that must never move under a finger.
+         Taking the full height means neither column usually scrolls at all. */
+      bodyGrows
       footer={
         <div className="flex w-full items-center justify-between gap-3">
           <Button variant="ghost" size="touch" onClick={onClose} disabled={pending}>

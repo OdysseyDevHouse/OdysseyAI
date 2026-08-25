@@ -109,6 +109,9 @@ export function NewTableModal({
       title="Create new table"
       description="Enter table details and select a table number"
       size="lg"
+      /* A table-number grid plus fields plus the visit-type list — well past
+         60vh on a floor with thirty tables. */
+      bodyGrows
       /* Half-typed work: a stray tap on the backdrop must not lose the name a
          waiter is halfway through entering. */
       closeOnBackdrop={false}

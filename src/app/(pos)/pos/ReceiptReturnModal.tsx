@@ -230,6 +230,10 @@ export default function ReceiptReturnModal({
       onClose={onClose}
       title="Return against a receipt"
       size="lg"
+      /* Receipt search results, then the return-lines list once one is open —
+         both long. The filter strip is already pinned as a `subheader` below,
+         so the body can scroll as one without taking the control with it. */
+      bodyGrows
       /* The filter strip is a subheader rather than the first thing in the body
          so it stays PUT while a long day's sales scroll under it — the whole
          point of the control is saying which slice you are looking at. Only

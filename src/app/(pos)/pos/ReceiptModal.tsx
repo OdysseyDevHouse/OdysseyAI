@@ -92,6 +92,12 @@ export function ReceiptModal({
          on ONE line. Every Button is `shrink-0 whitespace-nowrap`, so this row
          genuinely cannot be made narrower — the panel has to give. */
       size="lg"
+      /* Tall as well as wide: the change panel, the receipt options and the
+         large touch cards below them ran past the 60vh cap on a till screen,
+         which put the change owed — the one figure a cashier reads here — into
+         a scrolling pane. The footer row above is unaffected: it sits outside
+         the body and keeps its own width reasoning. */
+      bodyGrows
       footer={
         <>
           {/* Print IS print now — the 80mm slip route (or the ESC/POS bridge).

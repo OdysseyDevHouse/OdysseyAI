@@ -1,14 +1,28 @@
 'use client'
 
+import { useEffect, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Badge,
+  Button,
+  Callout,
+  Field,
+  Icons,
+  Input,
+  Modal,
   NumberInput,
+  Select,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_ROW,
   TABLE_TD_INPUT,
   TABLE_TH,
+  useToast,
 } from '@/components/ui'
+import {
+  adjustmentReasonsAction,
+  quickAdjustAction,
+} from '@/app/(app)/products/actions'
 
 /* This table cannot be a <DataTable>: its cells hold editable level inputs
    rather than rendered values. It wears DataTable's own skin from styles.ts, so
@@ -70,10 +84,28 @@ export type StoreLocationStock = {
 export default function LocationStockPanel({
   stores,
   isNew,
+  productId = null,
+  productName = '',
+  canAdjust = false,
 }: {
   stores: StoreLocationStock[]
   isNew: boolean
+  /** The product being edited. Null on the new-product screen, which has no stock. */
+  productId?: number | null
+  productName?: string
+  /**
+   * Whether to offer the per-location Adjust button.
+   *
+   * Resolved by the page, which knows the module and capability — a serial
+   * product passes false, because a quantity-only adjustment cannot say WHICH
+   * units left the shelf and posting one would break the serial count.
+   */
+  canAdjust?: boolean
 }) {
+  /* Before the isNew return on purpose: a hook must run on every render, and
+     this one is cheap. */
+  const [adjusting, setAdjusting] = useState<LocationStockRow | null>(null)
+
   // A new product has no stock anywhere yet, and opening stock is captured on
   // the form itself. An empty grid of zeroes would be noise.
   if (isNew) {
@@ -154,10 +186,25 @@ export default function LocationStockPanel({
                         </td>
 
                         <td className={TD}>
-                          {/* Same border as an editable control so the row reads
-                              as one set of boxes; the tint marks it read-only. */}
-                          <div className="numeric h-control min-w-24 rounded-control border border-border-strong bg-warning-soft px-3 py-2 text-right text-sm text-ink">
-                            {row.stockOnHand.toFixed(3)}
+                          <div className="flex items-center gap-1.5">
+                            {/* Same border as an editable control so the row reads
+                                as one set of boxes; the tint marks it read-only. */}
+                            <div className="numeric h-control min-w-24 flex-1 rounded-control border border-border-strong bg-warning-soft px-3 py-2 text-right text-sm text-ink">
+                              {row.stockOnHand.toFixed(3)}
+                            </div>
+                            {/* type="button": this panel sits INSIDE the product
+                                form, and a bare <button> would submit it. */}
+                            {store.isCurrent && canAdjust && productId !== null && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setAdjusting(row)}
+                                title={`Adjust stock in ${row.name}`}
+                              >
+                                Adjust
+                              </Button>
+                            )}
                           </div>
                         </td>
 
@@ -222,7 +269,192 @@ export default function LocationStockPanel({
         Stock on hand changes through receipts, sales, transfers and adjustments; levels save with
         the product.
       </p>
+
+      <QuickAdjustModal
+        row={adjusting}
+        productId={productId}
+        productName={productName}
+        onClose={() => setAdjusting(null)}
+      />
     </div>
+  )
+}
+
+/**
+ * Adjust one product at one location, without leaving the product.
+ *
+ * The whole point is to skip the full adjustment screen when a single shelf is
+ * wrong — but it posts through exactly the same path, so the document, its
+ * number, the GL mirror and the reversal trail all exist afterwards just as if
+ * it had been captured there.
+ */
+function QuickAdjustModal({
+  row,
+  productId,
+  productName,
+  onClose,
+}: {
+  row: LocationStockRow | null
+  productId: number | null
+  productName: string
+  onClose: () => void
+}) {
+  const router = useRouter()
+  const toast = useToast()
+
+  const [reasons, setReasons] = useState<
+    { id: number; name: string; direction: 'in' | 'out' | 'both' }[]
+  >([])
+  const [loadingReasons, setLoadingReasons] = useState(false)
+  const [reasonId, setReasonId] = useState<number | ''>('')
+  const [qty, setQty] = useState('')
+  const [note, setNote] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, startSave] = useTransition()
+
+  const open = row !== null
+
+  // Fetched when the dialog opens rather than with the page: most visits to a
+  // product never adjust anything, and this is a round trip for a list that is
+  // only ever read here.
+  useEffect(() => {
+    if (!open || reasons.length > 0) return
+    setLoadingReasons(true)
+    void adjustmentReasonsAction()
+      .then(setReasons)
+      .catch(() => setError('The reasons could not be loaded.'))
+      .finally(() => setLoadingReasons(false))
+  }, [open, reasons.length])
+
+  // Reopening starts clean. A quantity left over from the last location would
+  // be applied to a different shelf.
+  useEffect(() => {
+    if (!open) {
+      setQty('')
+      setNote('')
+      setReasonId('')
+      setError(null)
+    }
+  }, [open])
+
+  const delta = Number(qty)
+  const valid = qty.trim() !== '' && Number.isFinite(delta) && Math.abs(delta) >= 0.0005
+  const chosen = reasons.find((r) => r.id === reasonId)
+
+  /*
+   * The same direction rule the full screen applies, checked here so the refusal
+   * arrives while the number is still on screen rather than after a round trip.
+   * The server re-checks: this is a courtesy, not the boundary.
+   */
+  const directionProblem =
+    chosen && valid
+      ? chosen.direction === 'out' && delta > 0
+        ? `${chosen.name} only writes stock off.`
+        : chosen.direction === 'in' && delta < 0
+          ? `${chosen.name} only writes stock on.`
+          : null
+      : null
+
+  const ready = valid && reasonId !== '' && !directionProblem && !saving
+
+  function submit() {
+    if (!row || productId === null || reasonId === '') return
+    setError(null)
+    startSave(async () => {
+      const result = await quickAdjustAction({
+        productId,
+        locationId: row.locationId,
+        qtyChange: delta,
+        reasonId: Number(reasonId),
+        note: note.trim() || undefined,
+      })
+      if (!result.ok) {
+        // Kept in the dialog, not a toast: a locked period or an overdrawn pile
+        // is something to correct here, and the numbers are still on screen.
+        setError(result.error)
+        return
+      }
+      toast.success(`Stock adjusted — ${result.documentNumber}`)
+      onClose()
+      // The figure on the row is server-rendered, so it needs a refresh to move.
+      router.refresh()
+    })
+  }
+
+  const after = row && valid ? row.stockOnHand + delta : null
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={row ? `Adjust stock — ${row.name}` : 'Adjust stock'}
+      description={productName || undefined}
+      size="sm"
+      /* Holds a captured figure and a reason; a stray backdrop click must not
+         discard them. */
+      closeOnBackdrop={false}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="button" variant="primary" disabled={!ready} onClick={submit}>
+            {saving ? 'Posting…' : 'Post adjustment'}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {error && <Callout tone="danger">{error}</Callout>}
+
+        <div className="flex items-baseline justify-between gap-3 rounded-control border border-border bg-surface-2 px-3 py-2 text-sm">
+          <span className="text-muted">On hand now</span>
+          <span className="numeric text-ink">{row ? row.stockOnHand.toFixed(3) : '—'}</span>
+        </div>
+
+        <Field
+          label="Gained or lost"
+          hint="A positive number writes stock on, a negative one writes it off."
+        >
+          <NumberInput
+            value={qty}
+            step="0.001"
+            onChange={(e) => setQty(e.target.value)}
+            autoFocus
+          />
+        </Field>
+
+        <Field label="Reason">
+          <Select
+            value={reasonId}
+            onChange={(e) => setReasonId(e.target.value === '' ? '' : Number(e.target.value))}
+            disabled={loadingReasons}
+          >
+            <option value="">{loadingReasons ? 'Loading…' : 'Choose a reason'}</option>
+            {reasons.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {directionProblem && <Callout tone="warning">{directionProblem}</Callout>}
+
+        <Field label="Note" hint="Optional — what happened.">
+          <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={400} />
+        </Field>
+
+        {after !== null && (
+          <p className="text-sm text-muted">
+            After posting: <span className="numeric text-ink">{after.toFixed(3)}</span>
+            {after < 0 && (
+              <span className="text-danger"> — that would take the shelf below zero.</span>
+            )}
+          </p>
+        )}
+      </div>
+    </Modal>
   )
 }
 

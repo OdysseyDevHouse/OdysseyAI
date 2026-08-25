@@ -78,8 +78,15 @@ export function SerialModal({
   }
 
   return (
-    <Modal open onClose={onCancel} title={`Which ${product.description}?`}>
-      <div className="space-y-4">
+    <Modal
+      open
+      onClose={onCancel}
+      title={`Which ${product.description}?`}
+      /* The unit LIST scrolls inside a growing body, so the scan box above it
+         stays put while the serials scroll past. */
+      bodyPins
+    >
+      <div className="flex min-h-0 flex-col gap-4">
         <p className="text-sm text-muted">
           Scan the serial on the box, or pick it from the list.
         </p>
@@ -110,7 +117,7 @@ export function SerialModal({
             Nothing matches “{term.trim()}”. Clear the box to see all {units.length}.
           </p>
         ) : (
-          <div className="max-h-64 space-y-1 overflow-y-auto">
+          <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
             {shown.map((unit) => (
               <label
                 key={unit.id}

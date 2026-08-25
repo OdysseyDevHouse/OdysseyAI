@@ -311,6 +311,9 @@ function StatusModal({
       title={draft.id ? 'Edit status' : 'Add a status'}
       description="What you call this step, and what your customer hears when an order reaches it."
       size="lg"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={busy}>

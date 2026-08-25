@@ -161,6 +161,9 @@ export function LineEditModal({
       onClose={onClose}
       title={line.description}
       size="sm"
+      /* Qty, price and discount touch pads stacked above a note and a refusal
+         callout — a tall panel on the small screen it is used on. */
+      bodyGrows
       footer={
         <>
           <Button variant="ghost" size="touch" onClick={onClose}>

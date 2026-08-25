@@ -228,7 +228,14 @@ function AddressEditor({
   const [isDefault, setIsDefault] = useState(address?.isDefault ?? false)
 
   return (
-    <Modal open onClose={onClose} title={address ? `Edit ${address.label}` : 'New address'}>
+    <Modal
+      open
+      onClose={onClose}
+      title={address ? `Edit ${address.label}` : 'New address'}
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
+    >
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Used for">

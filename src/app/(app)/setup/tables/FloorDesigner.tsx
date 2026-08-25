@@ -1565,6 +1565,10 @@ function AddTableModal({
       open
       title="Add a table"
       onClose={onClose}
+      /* Fields above a seat-preset grid and a shape grid — both grids grow with
+         the options offered, so this ran past the 60vh cap. The designer's own
+         side rail keeps its scroller; that one is outside this dialog. */
+      bodyGrows
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" disabled={busy} onClick={onClose}>

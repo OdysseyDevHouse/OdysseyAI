@@ -1454,6 +1454,9 @@ export default function InvoiceEditor({
           onClose={() => setSearchOpen(false)}
           title="Add a product"
           description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the invoice."
+          /* Search box, department browse and an unbounded results list — the
+             picker is exactly as tall as the catalogue lets it be. */
+          bodyGrows
           size="lg"
           footer={
             <Button variant="secondary" onClick={() => setSearchOpen(false)}>
@@ -1586,6 +1589,12 @@ export default function InvoiceEditor({
           /* The reason face is one question with a reason list; the record is a
              three-column layout. They are not the same dialog size. */
           size={finalisedFace === null ? 'xl' : 'sm'}
+          /* And as tall as the screen allows. The record face is a full sale —
+             header, lines, tenders, totals — which is the shape the 60vh cap
+             gets most wrong, because the lines are the middle and scrolled away
+             from both ends. The buttons stay in the footer for the reason
+             below; a grown body still scrolls on a long enough invoice. */
+          bodyGrows
           footer={
             finalisedFace === null ? (
               /* The four buttons live in the FOOTER now, not in the body: the

@@ -321,6 +321,9 @@ function AddProductsDialog({
       title="Add products"
       description={`Pick as many as you like — up to ${room} more in this row.`}
       size="lg"
+      /* The body grows and the RESULTS LIST scrolls inside it, so the search
+         and department filters above stay put while products scroll past. */
+      bodyPins
       /* Holds a half-made selection; a stray click on the backdrop must not
          throw it away. */
       closeOnBackdrop={false}
@@ -344,7 +347,9 @@ function AddProductsDialog({
         </>
       }
     >
-      <div className="flex flex-col gap-3">
+      {/* `min-h-0` so the results list below can shrink rather than pushing
+          this column past the panel. */}
+      <div className="flex min-h-0 flex-col gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-56 flex-1">
             <Field label="Search">
@@ -405,7 +410,7 @@ function AddProductsDialog({
               )}
             </div>
           ) : (
-            <ul className="max-h-80 overflow-y-auto divide-y divide-border">
+            <ul className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
               {offered.map((product) => {
                 const checked = selected.has(product.id)
                 return (

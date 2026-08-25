@@ -333,7 +333,13 @@ function ScheduleEditor({
   }
 
   return (
-    <Modal open onClose={onClose} title={schedule ? `Edit ${schedule.name}` : 'New recurring journal'}>
+    <Modal
+      open
+      onClose={onClose}
+      title={schedule ? `Edit ${schedule.name}` : 'New recurring journal'}
+      /* Nine fields across three grids, then an UNBOUNDED lines table. */
+      bodyGrows
+    >
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Name" hint="What the list calls it.">

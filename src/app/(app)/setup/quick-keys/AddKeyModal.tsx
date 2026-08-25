@@ -167,6 +167,9 @@ export function AddKeyModal({
       onClose={onClose}
       title={parentId ? 'Add a key to this group' : 'Add a key'}
       size="md"
+      /* The body grows and the LIST scrolls inside it, so the kind-picker at the
+         top stays put while the options scroll past it. */
+      bodyPins
       footer={
         <>
           <Button variant="ghost" size="md" onClick={onClose}>
@@ -184,7 +187,7 @@ export function AddKeyModal({
         </>
       }
     >
-      <div className="flex flex-col gap-4">
+      <div className="flex min-h-0 flex-col gap-4">
         <SegmentedControl
           aria-label="What kind of key"
           value={kind}
@@ -197,7 +200,7 @@ export function AddKeyModal({
         />
 
         {kind === 'action' && (
-          <div className="till-pane flex max-h-[46vh] flex-col gap-1.5 overflow-y-auto">
+          <div className="till-pane flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
             {QUICK_KEY_ACTIONS.filter(
               /* Actions this kind of till cannot use are dropped, not greyed — see
                  quickKeyAllowedOnTill. A retail shop should never be offered

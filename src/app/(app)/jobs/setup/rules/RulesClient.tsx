@@ -230,6 +230,9 @@ export default function RulesClient({
           open
           onClose={() => setDraft(null)}
           title={draft.id === null ? 'New rule' : 'Edit rule'}
+      /* A long form: the default 60vh cap made it read through a letterbox with
+             empty desktop above and below. Still a MAX, so a short one stays short. */
+          bodyGrows
           footer={
             <>
               <Button variant="ghost" onClick={() => setDraft(null)} disabled={pending}>

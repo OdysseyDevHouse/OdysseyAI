@@ -147,6 +147,10 @@ function SaleDialog({
       /* Matches the invoicing dialog: SaleRecord is a three-column layout and
          is cramped at anything narrower. */
       size="xl"
+      /* And as tall as the screen allows: a full sale record — header, lines,
+         tenders, totals — is the case the 60vh cap gets most wrong, because
+         the lines are the middle and scrolled away from both ends. */
+      bodyGrows
       footer={
         <>
           {/* The way OUT of the dialog and into the sale's own screen, where

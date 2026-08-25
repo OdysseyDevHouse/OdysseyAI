@@ -48,6 +48,43 @@ needs a saved product id to attach barcodes to.
 
 ## Item 1 — Quick adjust from the product screen
 
+**Status: DONE.** Built 25 Aug 2026.
+
+An **Adjust** button on each location row of the Inventory section, opening a
+dialog scoped to that one product and location. It delegates to
+`postNewAdjustment`, so the result is indistinguishable from capturing it on the
+full screen.
+
+**Verified by posting a real one**: stock moved −1.000 → 4.000, and it left
+`ADJ000007` — status posted, reason "Found on the floor", one line linked to
+stock movement 412, and GL batch #106 (`source=stock_adjustment`, 2 balanced
+lines) referencing it. `reconcileStock` reports zero drift and
+`test-adjustments.ts` still passes. That paperwork is the point: a shortcut that
+only moved `stock_on_hand` would look identical on the product screen and have
+none of it.
+
+Decisions worth keeping:
+
+- **Serial products are excluded**, both in the offer and in the action.
+  `writeOffSerialsTx` returns ok on an empty serial list, so a quantity-only
+  adjustment would post happily, move `stock_on_hand`, and leave every serial row
+  untouched — breaking invariant (S1), `count(in_stock serials) = stock_on_hand`,
+  with nothing on the document to explain it.
+- **Gated module-first**, exactly as `/adjustments/new` is: `inventory_advanced`
+  then `stock.adjust`. The page resolves it for the button; the action re-checks.
+  Without that, the product screen would be a back door around the module.
+- The button is `type="button"` — the panel sits inside the product form, and a
+  bare button would submit it.
+- Refusals (locked period, overdrawn pile, wrong reason direction) stay **in the
+  dialog** rather than becoming a toast, so the captured figure is still on
+  screen to correct.
+
+**Note for later:** the reversal guard refuses to drive stock negative, so the
+verification document could not be cancelled on a product already at −1. It is
+left posted on the demo site; drift is zero.
+
+*Original analysis below.*
+
 **Effort:** Small–Medium. **Risk:** Low.
 
 An **Adjust** button beside each location row on the product screen, opening a
@@ -106,6 +143,47 @@ Two things need deciding first:
 
 ## Item 3 — Reporting tab with 11 product reports
 
+**Status: DONE — 10 of 11.** Built 25 Aug 2026.
+
+A **Reporting** tab after Linked stores, holding Price history (moved off the
+General tab, which was long) and ten report tiles. Each opens in a dialog over
+the product; nothing navigates away, so unsaved edits survive.
+
+As predicted, these are builder specs run by the ordinary engine
+(`lib/reportBuilder/productReports.ts`) — no new SQL. The only thing that makes
+them product reports is a pinned filter.
+
+**"Product Undos" was NOT built.** `pos_void_events` records
+`void_type ENUM('item','line','sale')` and nothing resembling an undo, so it
+would have been either a second Voids report under a different name or an empty
+table with no explanation. The question below stands.
+
+Decisions worth keeping:
+
+- **The browser sends a report id, never a spec.** The builder's own preview
+  action takes a whole spec back from the client and must re-validate it against
+  the catalog; here the spec is composed server-side from an id, so a tampered
+  request can only name a report that exists or none.
+- **The capability is checked twice** — once to decide which tiles to offer, and
+  again inside `runBuilderSpec` against the source's own permission. Being
+  allowed to edit a product is not being allowed to see sales or purchasing data.
+- **`entityId` added to the activity catalog.** `activity_log` keys on
+  `(entity, entity_id)`, so the Activity Log pins on that pair — the same pair
+  `ix_activity_entity` indexes. Every other report pins on `productCode`, which
+  the lines carry denormalised.
+- The tab is **hidden while creating** a product: there is no history yet, and
+  every spec reads a saved code or id.
+
+**Verified**: all ten specs run and return columns
+(`scripts/test-product-reports.ts`), and — the check that matters — adjustments,
+GRVs, voids and the activity log each **find** their history when run against a
+product that has it. A spec that returned nothing everywhere would have looked
+identical to a working one, so an empty result was never accepted as a pass.
+`test-report-catalog-fields.ts` still resolves all 1,246 fields across 48
+sources against the live schema.
+
+*Original analysis below.*
+
 **Effort:** Medium. **Risk:** Low–Medium. **This is much cheaper than it looks.**
 
 The notes read as eleven new reports. They are not. **The report builder is the
@@ -152,7 +230,22 @@ own scroll container rather than fighting that.
 
 ## Item 4 — Department and Brand: caption size and layout
 
-**Effort:** Small. **Risk:** Low. **Cause confirmed.**
+**Status: DONE.** Built 25 Aug 2026.
+
+`DepartmentPicker` now uses the kit's `Field` instead of its hand-rolled span,
+so both captions measure 14px in the same colour — verified in the browser.
+
+The duplicated label string is gone too: it existed in three places (Field
+itself, the till-tile panel, and the picker's drifted copy). It is now
+`FIELD_LABEL` in `styles.ts`, which all three point at.
+
+**Brand moved INTO the picker's grid** via a `trailing` slot rather than the
+caller placing it. How many selects are showing is the picker's own state and
+changes as someone drills down, so a caller deciding the layout would be reading
+a number it cannot see. On a shallow tree Brand fills the spare column; at three
+levels it wraps underneath, which is where it used to live.
+
+*Original analysis below.*
 
 The caption mismatch is real and the cause is exact:
 
@@ -183,7 +276,18 @@ fewer than 3 levels", so a 4-level tree does not fall through it.
 
 ## Item 5 — Move Product Type into Product Overview
 
-**Effort:** Small. **Risk:** Low.
+**Status: DONE.** Built 25 Aug 2026.
+
+Now sits directly under the till tile, so the choice that decides whether the
+Recipe, Refer and Serials tabs exist at all comes before the things it governs
+rather than after them.
+
+**One thing the plan missed:** the panel renders the type's NAME ("Normal
+product"), never the words "Product type" — that heading came from the `Card`
+being removed, so the straight move left the control unlabelled. It now carries
+its own `FIELD_LABEL` caption.
+
+*Original analysis below.*
 
 Product Type is currently dead last in the General tab
 (`ProductForm.tsx:609-619`); Product Overview is `:413-506` with `TillTilePanel`
@@ -259,7 +363,28 @@ Current state, verified:
 | Last stock take | `last_stock_take_date` | `stockTakes.ts:1240` | **column + writer already exist; only the UI is missing** |
 | Last transfer | — | — | genuinely absent |
 
-### 7a. Fix `last_sold_date` — do this first, on its own
+### 7a. Fix `last_sold_date` — **DONE**, 25 Aug 2026
+
+Stamped in `recordMovement` (`stockMovements.ts`) rather than in the posting
+paths: that is the one chokepoint every sale already goes through — till,
+invoicing and online orders all land there — so no path can move stock for a
+sale and forget to say so. It rides the caller's transaction, so a rolled-back
+sale takes the date back with it.
+
+`'sale'` only, NOT `'sale_return'`. A return is stock coming back; stamping it
+would make a product that has only ever been refunded look freshly sold, which
+is the exact line dead stock exists to catch.
+
+Covered by `scripts/test-last-sold-date.ts`: a sale stamps it, a second sale
+moves it forward, and a void (which writes the `sale_return`) leaves it alone.
+`npm run test:posting` still passes with zero stock and balance drift.
+
+**Worth knowing:** the first version of that test asserted the return case with a
+negative invoice line, which the engine refuses outright — so it "passed" by
+comparing a date against itself and proved nothing. It now goes through
+`voidDocument`, which is what actually writes a `sale_return`.
+
+*Original analysis below.*
 
 Nothing writes it. This is not part of the new-fields work; it is a standing bug
 whose blast radius reaches past this screen into the **dead-stock alert**, which
@@ -275,7 +400,14 @@ reads NULL until each product next sells, which will look like the bug is still
 there. `seed-stress.mjs:759` already does exactly this backfill for test data,
 so the query shape is known.
 
-### 7b. Show `last_stock_take_date`
+### 7b. Show `last_stock_take_date` — **DONE**, 25 Aug 2026
+
+Shown beside Last adjusted. The grid moved from `sm:grid-cols-4` to
+`sm:grid-cols-2 lg:grid-cols-3` at the same time — at five and six entries a
+four-column grid leaves a ragged orphan row, so 7c's transfer date will drop in
+without a second re-layout.
+
+*Original analysis below.*
 
 The column and the writer exist. This is adding the tuple to the grid at
 `ProductForm.tsx:489-495` and the mapping in `products.ts`. Near-zero work.
@@ -284,7 +416,40 @@ Doing this also resolves a real confusion: a stock take currently stamps
 `last_adjust_date` too (when variance ≠ 0), so today a count looks like an
 adjustment. Showing both separates them.
 
-### 7c. Add `last_transfer_date`
+### 7c. Add `last_transfer_date` — **DONE**, 25 Aug 2026
+
+Migration **236** (not 234 — another session had taken 234 and 235 by the time
+this was written). Stamped in `recordMovement` on `transfer_in` or
+`transfer_out`, which is the one chokepoint BOTH transfer paths already go
+through: location-to-location (`stockTransfers.ts`) and inter-store
+(`storeTransfers.ts`). Both directions stamp it — a product only ever received
+into a room has moved just as much as one only ever sent out, and stamping the
+out leg alone would leave the receiving store reading "never".
+
+The date grid is now six fields in a 3×2 layout, which is why 7b re-laid it out
+at the time rather than twice.
+
+**Applied to all 23 active sites, not 2.** The obvious assumption — that this
+machine has the two sites the screenshots use — was wrong: `cp2_site_databases`
+lists 23 active masters. Missing the other 21 would not have failed quietly
+either, because `last_transfer_date` is in the product SELECT, so every product
+screen on those sites would have 500'd on the missing column. Verified with
+`SHOW COLUMNS` on a sample afterwards.
+
+**Verified by posting a real transfer** (`scripts/test-last-transfer-date.ts`):
+`TRF000052`, both legs recorded, the date stamped, zero reconcile drift.
+
+Two things the backfill could not tell me:
+
+- It reported success against **zero rows** — no site on this machine has ever
+  posted a transfer, so the backfill query proved nothing about the writer. That
+  is why the test posts one.
+- The first version of that test seeded stock by writing `stock_on_hand`
+  directly, which left Σ movements ≠ stock_on_hand and failed the reconcile
+  check **on a row it had created itself**. It reads as a transfer bug and is
+  not one; the seed now goes through an `opening` movement.
+
+*Original analysis below.*
 
 Genuinely new: migration `234`, plus a writer in `stockTransfers.ts:284`
 (`postTransfer`) and `storeTransfers.ts:734` (inter-store), neither of which
@@ -309,14 +474,14 @@ maintained sibling column. Both mislead the next reader.
 
 ## Suggested sequence
 
-1. **7a — fix `last_sold_date`.** Standing bug, widest blast radius, independent
-   of everything else.
-2. **4, 5, 7b** — small contained UI work (captions, Product Type move, show the
-   stock-take date). Quick wins, low risk.
-3. **1** — quick adjust modal over the existing `postNewAdjustment`.
-4. **3** — Reporting tab. The largest piece, but mostly specs rather than SQL.
-5. **7c** — `last_transfer_date` migration and writers, plus the six-date
-   re-layout.
+1. ~~**7a — fix `last_sold_date`**~~ — **DONE.**
+   Standing bug, widest blast radius, independent of everything else.
+2. ~~**4, 5, 7b**~~ — **DONE.** Captions, Product Type move, stock-take date.
+   Item 6 also done, out of order, when it came up in conversation.
+3. ~~**Item 1**~~ — **DONE.** Quick adjust dialog over the existing `postNewAdjustment`.
+4. ~~**Item 3**~~ — **DONE** (10 of 11). Reporting tab; "Product Undos" held pending the question below.
+5. ~~**7c**~~ — **DONE.** Migration 236, writers in recordMovement, applied to all
+   23 active sites. The date grid is now six fields.
 6. **Item 2** — held until the Rename Stock Code question below is answered.
 
 ---
@@ -333,9 +498,12 @@ maintained sibling column. Both mislead the next reader.
 3. **`last_sold_date` backfill (item 7a)** — backfill from sales history, or let
    it populate from the next sale onward? Without a backfill it will look
    unfixed for a while.
-4. **"Product Undos" (item 3)** — which event is an "undo" in the old system? I
-   have mapped it to POS voids, but if it is a distinct event I need to know what
-   it is recorded as.
+4. **"Product Undos" (item 3)** — **now the blocking question for the last
+   report.** The other ten are built. `pos_void_events` records
+   `void_type ENUM('item','line','sale')` and nothing else that resembles an
+   undo, so there is no event in this system to point a report at. What did the
+   old system record when a cashier "undid" something — and is it different from
+   a void?
 5. **Barcodes on the create screen (item 2)** — hide the menu entry until the
    product is saved, or show it disabled with a hint? I would default to
    disabled-with-a-hint.

@@ -239,6 +239,11 @@ export default function TenderPad({
           : `${formatMoney(totalIncl)} due`
       }
       size="md"
+      /* A button per configured tender type, then a row per tender taken —
+         both grow with the shop, and this is the longest body in invoicing.
+         `bodyGrows` rather than the till's `bodyPins`: there is no fixed
+         keypad here to pin, only buttons that flow with the rest. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <>

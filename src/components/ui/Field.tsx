@@ -15,6 +15,7 @@ import {
   CONTROL_H_TOUCH,
   CONTROL_INVALID as INVALID,
   CONTROL_QUIET_FOCUS,
+  FIELD_LABEL,
 } from './styles'
 
 /**
@@ -80,7 +81,7 @@ export function Field({
     >
       <div className={className}>
         {label && (
-          <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-ink-2">
+          <label htmlFor={id} className={FIELD_LABEL}>
             {label}
           </label>
         )}

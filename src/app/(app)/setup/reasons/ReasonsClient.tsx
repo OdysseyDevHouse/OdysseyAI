@@ -338,6 +338,9 @@ export default function ReasonsClient({
         open={open}
         onClose={() => setOpen(false)}
         title={editing ? `Edit ${editing.name}` : 'New reason'}
+        /* A long dialog: the default 60vh cap letterboxed it with empty desktop
+           above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
         size="sm"
         footer={
           <>

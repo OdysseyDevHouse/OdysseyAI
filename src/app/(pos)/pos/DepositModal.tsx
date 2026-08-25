@@ -159,6 +159,9 @@ export function DepositModal({
       title="Take a deposit"
       description="Money held against this sale. The goods stay here until it is paid up."
       size="lg"
+      /* Amount, a tender grid and a reference: the tender keys are touch-sized,
+         so this runs past 60vh on a shop with more than a few tenders. */
+      bodyGrows
       footer={
         <>
           <Button variant="ghost" size="touch" onClick={onClose} disabled={busy}>

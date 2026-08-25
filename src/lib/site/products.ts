@@ -120,6 +120,12 @@ export type Product = {
    */
   lastStockTakeDate: Date | null
   /**
+   * When this stock last moved between locations — including between STORES.
+   * A transfer is neither a correction nor a sale, and it changes the figure
+   * per location while leaving the site total alone. See 236.
+   */
+  lastTransferDate: Date | null
+  /**
    * Reorder levels for the MAIN location — see PRODUCT_LEVELS_JOIN.
    *
    * Not the site total, and not this-or-any-location: levels are per location
@@ -261,7 +267,7 @@ const SELECT_PRODUCT = `
          p.scale_item, p.label_scale_item, p.fixed_price_scale, p.expires_in_days,
          p.created_at,
          p.last_edit_date, p.last_purchase_date, p.last_sold_date, p.last_adjust_date,
-         p.last_stock_take_date,
+         p.last_stock_take_date, p.last_transfer_date,
          pl.min_stock AS min_stock, pl.max_stock AS max_stock,
          pv.rate AS purchase_vat_rate, sv.rate AS selling_vat_rate
     FROM products p
@@ -342,6 +348,7 @@ function mapProduct(
     lastSoldDate: (r.last_sold_date as Date | null) ?? null,
     lastAdjustDate: (r.last_adjust_date as Date | null) ?? null,
     lastStockTakeDate: (r.last_stock_take_date as Date | null) ?? null,
+    lastTransferDate: (r.last_transfer_date as Date | null) ?? null,
     minStock: toNum(r.min_stock),
     maxStock: toNum(r.max_stock),
 

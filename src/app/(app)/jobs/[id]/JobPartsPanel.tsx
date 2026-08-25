@@ -293,6 +293,9 @@ export default function JobPartsPanel({
         onClose={() => setMode(null)}
         title={mode === 'issue' ? 'Issue parts to a van' : 'Bring parts back'}
         size="md"
+        /* A row per part in the van — unbounded, and the rows are what is
+           being counted. */
+        bodyGrows
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted">

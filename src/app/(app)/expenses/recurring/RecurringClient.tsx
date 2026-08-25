@@ -339,6 +339,9 @@ function ScheduleModal({
       open={open}
       onClose={onClose}
       title={schedule ? 'Edit schedule' : 'New recurring expense'}
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
     >
       <div className="space-y-4">
         <Field label="Name" hint="What it is, in your words.">

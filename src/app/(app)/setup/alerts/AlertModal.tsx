@@ -165,6 +165,9 @@ export default function AlertModal({
     <Modal
       open
       size="lg"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       title={rule ? 'Edit alert' : 'New alert'}
       onClose={onClose}
       closeOnBackdrop={false}
@@ -277,7 +280,10 @@ export default function AlertModal({
             label="Who to tell"
             hint="Their email is looked up fresh each time, so a change of address keeps working."
           >
-            <div className="max-h-40 overflow-y-auto rounded-control border border-border p-2">
+            {/* Bounded on purpose: a recipient picker among the rule's other fields.
+                 Unbounded, a long staff list would push the form off screen. 40
+                 (160px) showed three rows; this grows with the display. */}
+            <div className="max-h-[24vh] min-h-40 overflow-y-auto rounded-control border border-border p-2">
               {users.length === 0 ? (
                 <p className="p-2 text-sm text-muted">No back-office users to notify.</p>
               ) : (

@@ -69,6 +69,9 @@ export default function SendToKitchenModal({
       onClose={onClose}
       title="Send to kitchen"
       description="Only what the kitchen has not seen yet. Tick a course or single items, or send everything."
+      /* A block per course, each expanding into its own line list — a table of
+         eight runs well past 60vh, and the lines being ticked are the point. */
+      bodyGrows
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="secondary" onClick={onClose} disabled={pending}>

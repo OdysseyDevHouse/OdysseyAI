@@ -738,6 +738,10 @@ export default function BillingClient(props: Props) {
         open={confirming}
         onClose={() => setConfirming(false)}
         title="Confirm these changes"
+        /* Three change lists — adding, removing, device deltas — and a shop
+           changing plan can have a lot of each. The default 60vh cap hid the
+           tail of the very list somebody is being asked to approve. */
+        bodyGrows
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setConfirming(false)} disabled={saving}>

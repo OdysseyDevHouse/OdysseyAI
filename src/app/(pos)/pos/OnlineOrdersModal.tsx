@@ -72,6 +72,9 @@ export function OnlineOrdersModal({
       title="Online orders"
       description="Tap one to bring it onto the till. Anything else they pick up goes on the same sale."
       size="lg"
+      /* An unbounded list of documents on a touch screen: the more rows a
+         cashier can see without dragging, the faster the handover. */
+      bodyGrows
       footer={
         <Button variant="secondary" size="touch" onClick={onClose}>
           Close

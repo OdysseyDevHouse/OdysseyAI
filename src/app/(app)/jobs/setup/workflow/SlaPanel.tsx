@@ -516,6 +516,9 @@ export default function SlaPanel({
         onClose={() => setCreating(false)}
         title="Promise to a customer"
         size="sm"
+        /* Five fields plus two mapped lists in an `sm` panel — the narrow width
+           makes it taller, so this hits the cap sooner than a wide dialog. */
+        bodyGrows
         closeOnBackdrop={false}
         footer={
           <>

@@ -19,6 +19,7 @@ export {
   buttonClass,
   buttonShape,
   CONTROL,
+  FIELD_LABEL,
   CONTROL_H,
   CONTROL_H_TOUCH,
   CONTROL_INVALID,

@@ -257,7 +257,14 @@ function CategoryModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={category ? 'Edit category' : 'New category'}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={category ? 'Edit category' : 'New category'}
+      /* Five fields plus the account-mapping selects, which carry the whole
+         chart of accounts. */
+      bodyGrows
+    >
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Account code" hint="Becomes the ledger code.">

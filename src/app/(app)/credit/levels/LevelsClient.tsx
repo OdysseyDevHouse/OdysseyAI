@@ -212,6 +212,9 @@ export function LevelsClient({ levels }: { levels: LevelRow[] }) {
         open={editing !== null}
         onClose={() => setEditing(null)}
         title={editingId ? `Edit level ${form.step}` : 'Add a reminder level'}
+      /* A long form: the default 60vh cap made it read through a letterbox with
+           empty desktop above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
         footer={
           <>
             <Button variant="secondary" onClick={() => setEditing(null)} disabled={pending}>

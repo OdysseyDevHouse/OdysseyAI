@@ -89,8 +89,11 @@ export function LotModal({
       open
       onClose={onCancel}
       title={returning ? `Lot coming back — ${product.description}` : `Lot for ${product.description}`}
+      /* The lot LIST scrolls inside a growing body, so the entry box above it
+         stays put while the lots scroll past. */
+      bodyPins
     >
-      <div className="space-y-4">
+      <div className="flex min-h-0 flex-col gap-4">
         <p className="text-sm text-muted">
           {offline
             ? 'No lot list while offline — key the number printed on the pack.'
@@ -104,7 +107,7 @@ export function LotModal({
         ) : (
           <>
             {lots.length > 0 && (
-              <div className="max-h-64 space-y-1 overflow-y-auto">
+              <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
                 {lots.map((lot) => (
                   <label
                     key={lot.batchNo}

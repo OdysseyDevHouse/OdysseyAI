@@ -36,6 +36,9 @@ export function WidgetPanel({
       onClose={onClose}
       title="Widgets"
       description="Choose what this dashboard shows. Drag and resize them on the page itself."
+      /* The whole widget catalogue as a list of toggles, and it only grows as
+         widgets are added. Still a MAX, so a small catalogue stays small. */
+      bodyGrows
       footer={
         <>
           <Button variant="ghost" onClick={onReset}>

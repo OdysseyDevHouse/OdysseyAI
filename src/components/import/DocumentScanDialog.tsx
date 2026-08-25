@@ -231,6 +231,9 @@ export function DocumentScanDialog({
       title="Read a supplier document"
       description="A PDF invoice, delivery note or quote. Nothing is posted — the lines land in the grid for you to check against the paperwork."
       size="xl"
+      /* An unbounded scanned-lines table, checked against the paper invoice in
+         somebody's hand. The more of it on screen at once, the better. */
+      bodyGrows
       footer={
         <>
           <Button

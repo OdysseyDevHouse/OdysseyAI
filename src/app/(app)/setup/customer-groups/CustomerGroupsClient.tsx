@@ -326,6 +326,9 @@ export default function CustomerGroupsClient({
         onClose={() => setOpen(false)}
         title={editing ? `Edit ${editing.name}` : 'New group'}
         size="md"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+           empty desktop above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
         /* The primary action lives in the footer: this dialog is taller than
            the modal body's 60vh, so a button placed after the fields would sit
            below the scroll line on a laptop. */

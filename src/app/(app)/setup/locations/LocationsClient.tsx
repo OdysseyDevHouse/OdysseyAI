@@ -273,6 +273,9 @@ function LocationModal({
       onClose={onClose}
       title={location ? `Edit ${location.name}` : 'Add a location'}
       size="sm"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <>

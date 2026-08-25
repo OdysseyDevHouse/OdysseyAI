@@ -185,7 +185,12 @@ export type PriceAudit = {
    * supplier's cost changed, so the shelf price was changed with it, and the
    * receipt is the document that decided it. `sourceDocId` is that GRV.
    */
-  source: 'editor' | 'import' | 'reprice' | 'schedule' | 'revert' | 'fanout' | 'grv'
+  /**
+   * `grid` is the bulk price editor (products/bulk-pricing): a person changed
+   * this one price by hand among many, which is a different act from `reprice`
+   * (a rule swept the catalogue) and worth telling apart in the history.
+   */
+  source: 'editor' | 'import' | 'reprice' | 'schedule' | 'revert' | 'fanout' | 'grv' | 'grid'
   sourceDocId?: number | null
   userName: string
 }

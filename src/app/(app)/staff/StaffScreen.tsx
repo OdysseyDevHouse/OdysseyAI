@@ -266,6 +266,9 @@ function EmploymentForm({
       title={name}
       description="Employment terms. These feed the hours, leave and cost figures."
       size="lg"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <div className="flex justify-end gap-2">

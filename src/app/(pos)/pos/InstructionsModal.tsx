@@ -138,6 +138,12 @@ export default function InstructionsModal({
       }
       subheader={asked.length > 1 ? <StepRail groups={asked} chosen={chosen} /> : undefined}
       size="lg"
+      /* One heading per question, each with a grid of options, so this is as
+         tall as the shop's modifier list — the case the 60vh cap gets most
+         wrong on a kitchen till. The confirm button stays in the footer for
+         the reason given below; that is belt and braces, not redundant, since
+         a long enough menu can still fill even the grown body. */
+      bodyGrows
       /* Half-answered work: a stray tap on the backdrop with a customer waiting
          should not throw the order away. */
       closeOnBackdrop={false}

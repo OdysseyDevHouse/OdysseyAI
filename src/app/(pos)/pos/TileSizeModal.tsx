@@ -57,6 +57,9 @@ export function TileSizeModal({
       open={open}
       onClose={onClose}
       title="Tile size"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       description="How this screen draws the product grid. Remembered on this machine only."
       footer={
         <div className="flex w-full items-center justify-between gap-3">
@@ -108,7 +111,7 @@ export function TileSizeModal({
             button — off the bottom of the screen. Modal's body scrolls at 60vh; a
             preview that pushes the footer out of reach is how a dialog traps someone.
           */}
-          <div className="till-pane max-h-56 overflow-y-auto rounded-card border border-border p-2">
+          <div className="till-pane max-h-[30vh] min-h-56 overflow-y-auto rounded-card border border-border p-2">
             <TileGrid tileWidth={size.width} tileHeight={size.height}>
               {PREVIEW.map((p) => (
                 <ProductTile

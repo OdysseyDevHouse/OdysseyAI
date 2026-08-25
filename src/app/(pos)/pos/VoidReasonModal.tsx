@@ -110,6 +110,13 @@ export function VoidReasonModal({
         </span>
       }
       size="sm"
+      /* The summary strip plus a shop's whole reason list ran past the 60vh cap
+         on a till screen — which is what the body comment below means by the
+         heading scrolling out of view. `bodyGrows` rather than `bodyPins`
+         because the strip is not a fixed header the body can pin: ReasonPicker
+         is a kit component and cannot be given `flex-1` from here. Taking the
+         full height means the list usually does not scroll at all. */
+      bodyGrows
       /* A stray tap on the backdrop must not throw away the line the cashier is
          still deciding about, nor submit a half-picked reason. */
       closeOnBackdrop={false}

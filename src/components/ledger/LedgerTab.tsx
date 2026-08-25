@@ -232,6 +232,9 @@ function PostModal({
       open={open}
       onClose={onClose}
       title="Post a transaction"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       description="Posts to the ledger and moves the balance, in one step."
       /* Half-typed capture must survive a stray click on the backdrop. */
       closeOnBackdrop={false}

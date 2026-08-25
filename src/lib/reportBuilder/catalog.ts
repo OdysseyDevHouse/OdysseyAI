@@ -3442,6 +3442,19 @@ const ACTIVITY_SOURCE: CatalogSource = {
   fields: [
     { key: 'action', label: 'Action', type: 'text', expr: 't.action', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'entityType', label: 'Record type', type: 'text', expr: 't.entity', starter: true, group: FIELD_GROUPS.CLASSIFICATION },
+    /*
+     * WHICH record, as its id.
+     *
+     * Not a starter — on its own a bare number tells a reader nothing, and the
+     * label beside it already names the record. It exists so a report can be
+     * PINNED to one record: "everything that has happened to this product" is
+     * (entity = 'product' AND entity_id = 42), which is exactly the pair
+     * ix_activity_entity indexes.
+     *
+     * A 'number' field so it filters with eq/in rather than LIKE, and
+     * so it cannot be summed into a meaningless total by a careless column.
+     */
+    { key: 'entityId', label: 'Record id', type: 'number', expr: 't.entity_id', group: FIELD_GROUPS.CLASSIFICATION },
     {
       /* What actually changed, field by field. Written as JSON and read here as
          text: nothing queries INSIDE it (011), and a report that could filter

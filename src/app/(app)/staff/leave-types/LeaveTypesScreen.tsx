@@ -273,6 +273,9 @@ function TypeForm({ type, onClose }: { type?: LeaveType; onClose: () => void }) 
       open
       onClose={onClose}
       title={type ? `Edit ${type.name}` : 'Add a leave type'}
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       description="What this kind of leave grants, and how it arrives."
       closeOnBackdrop={false}
       footer={

@@ -675,6 +675,9 @@ function SeedModal({
       open={open}
       onClose={onClose}
       title="Start from my current prices"
+        /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       description="Brings today's prices in so you can edit the ones that are changing."
       footer={
         <>
@@ -716,7 +719,10 @@ function SeedModal({
           label="Which departments"
           hint="Leave all unticked for the whole shop."
         >
-          <div className="flex max-h-48 flex-col gap-2 overflow-y-auto">
+          {/* Bounded on purpose — a picker among the dialog's other fields, so
+              unbounded it would push them off screen. Grows with the display
+              instead of sitting at a fixed 192px. */}
+          <div className="flex max-h-[26vh] min-h-48 flex-col gap-2 overflow-y-auto">
             {departments.map((d) => (
               <Checkbox
                 key={d.id}

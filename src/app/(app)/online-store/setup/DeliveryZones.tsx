@@ -207,6 +207,9 @@ export default function DeliveryZones({ zones }: { zones: DeliveryZone[] }) {
         onClose={() => setEditing(null)}
         title={editing?.id ? 'Edit delivery area' : 'Add delivery area'}
         description="Match on the suburb or postal code a customer types at checkout."
+        /* A long dialog: the default 60vh cap letterboxed it with empty desktop
+           above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
         footer={
           <>
             <Button variant="secondary" onClick={() => setEditing(null)}>

@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { Select } from '@/components/ui'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Field, Select } from '@/components/ui'
 import type { Department } from '@/lib/site/departments'
 
 /**
@@ -25,10 +25,22 @@ export default function DepartmentPicker({
   name,
   departments,
   defaultValue,
+  trailing,
 }: {
   name: string
   departments: Department[]
   defaultValue: number | null
+  /**
+   * A field to sit in the same grid, filling the empty column when the tree is
+   * shallow enough to leave one.
+   *
+   * A slot rather than the caller placing it: how many selects are showing is
+   * this component's own state and changes as someone drills down, so a caller
+   * deciding the layout would be reading a number it cannot see. Passed in
+   * rather than hard-coded because "Brand" is the product screen's business,
+   * not the picker's.
+   */
+  trailing?: ReactNode
 }) {
   const byId = useMemo(() => new Map(departments.map((d) => [d.id, d])), [departments])
 
@@ -78,9 +90,12 @@ export default function DepartmentPicker({
   return (
     <>
       <div className="grid gap-4 sm:grid-cols-3">
+        {/* The kit's Field, not a hand-rolled label: these captions sat at
+            text-xs/text-muted while every sibling field on the screen — Brand
+            right below them — used Field's text-sm/text-ink-2, so the same kind
+            of caption came out two sizes and two colours in one card. */}
         {levels.map((level, depth) => (
-          <label key={depth} className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted">{labelFor(depth)}</span>
+          <Field key={depth} label={labelFor(depth)}>
             <Select value={level.selected} onChange={(e) => choose(depth, e.target.value)}>
               <option value="">&lt;None&gt;</option>
               {level.options.map((d) => (
@@ -89,8 +104,16 @@ export default function DepartmentPicker({
                 </option>
               ))}
             </Select>
-          </label>
+          </Field>
         ))}
+
+        {/* Inline when there is room, on its own row when there is not.
+            The grid is 3 wide, so a 1- or 2-level tree leaves a column standing
+            empty and the trailing field fills it; at 3 levels or deeper it wraps
+            to the next row on its own, which is the same result as rendering it
+            below. Either way it is ONE grid, so every caption in the card lines
+            up on the same baseline. */}
+        {trailing}
       </div>
 
       <input type="hidden" name={name} value={deepest} />

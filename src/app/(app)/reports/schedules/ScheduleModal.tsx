@@ -149,6 +149,9 @@ export default function ScheduleModal({
       title={schedule ? 'Edit schedule' : 'Schedule this report'}
       description="It will run and email itself on this timer, with nobody signed in."
       size="lg"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       // Half-typed recipient lists are easy to lose to a stray backdrop click.
       closeOnBackdrop={false}
       footer={
@@ -267,7 +270,9 @@ export default function ScheduleModal({
           label="Send to"
           hint="People are looked up fresh each time, so someone who changes their email keeps receiving it."
         >
-          <div className="flex max-h-40 flex-col gap-1 overflow-y-auto rounded-control border border-border p-2">
+          {/* Bounded on purpose: a recipient picker among the schedule's other
+               fields. Unbounded, a long list would push the form off screen. */}
+          <div className="flex max-h-[24vh] min-h-40 flex-col gap-1 overflow-y-auto rounded-control border border-border p-2">
             {(users ?? []).length === 0 ? (
               <p className="px-1 py-2 text-sm text-muted">
                 Nobody here has an email address on their profile yet.

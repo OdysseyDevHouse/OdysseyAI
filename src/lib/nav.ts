@@ -8,6 +8,7 @@ import {
   PackageOpen,
   ArrowLeftRight,
   Tag,
+  Tags,
   CalendarClock,
   Lightbulb,
   Factory,
@@ -167,6 +168,11 @@ export const NAV: NavSection[] = [
       { label: 'Products', href: '/products', icon: Boxes, built: true, capability: 'products.view', description: 'Everything the shop sells, and what it costs' },
       { label: 'Departments', href: '/departments', icon: LayoutGrid, built: true, capability: 'products.view', description: 'How the product file is grouped and reported on' },
       { label: 'Specials', href: '/specials', icon: Tag, built: true, capability: 'products.edit', description: 'Promotional prices that start and end on a date' },
+      /* The MANUAL side of pricing: a page of products with their prices, edited
+         by hand. Setup → Pricing's bulk reprice is the rule-driven side — it
+         sweeps a whole price type from cost. Both exist because "put 40% on
+         everything" and "these twelve are wrong" are different jobs. */
+      { label: 'Bulk edit pricing', href: '/products/bulk-pricing', icon: Tags, built: true, capability: 'products.edit', keywords: 'price grid margin markup gp bulk change selling', description: 'Change many selling prices on one screen' },
       /* Beside Specials rather than under Setup, and for the same reason Specials
          is here: both are prices that change themselves on a clock, and both are
          used by a shop owner weekly. Setup → Pricing is the SHAPE of pricing —

@@ -396,6 +396,9 @@ export default function RecurringClient({
         onClose={() => setEditing(null)}
         title={editing === 'new' ? 'A new schedule' : `Edit ${editing?.name ?? ''}`}
         size="lg"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+           empty desktop above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
         closeOnBackdrop={false}
         footer={
           <>

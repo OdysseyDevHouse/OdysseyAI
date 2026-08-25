@@ -60,6 +60,9 @@ export function PriceTypeModal({
       title="Price type"
       description="What the rest of this sale rings up at. It goes back to normal when the sale is done."
       size="sm"
+      /* One touch-sized block per pricing structure, so a wholesaler with six
+         price types outgrew the cap. Still a MAX — a shop with two stays small. */
+      bodyGrows
       footer={
         <Button variant="secondary" size="touch" onClick={onClose}>
           Close

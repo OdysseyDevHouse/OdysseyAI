@@ -30,7 +30,15 @@ export default function RunsModal({ rule, onClose }: { rule: AlertRow; onClose: 
   }, [rule.id])
 
   return (
-    <Modal open size="lg" title={`${rule.name} — history`} onClose={onClose}>
+    <Modal
+      open
+      size="lg"
+      title={`${rule.name} — history`}
+      onClose={onClose}
+      /* An unbounded run history: a rule that fires daily has hundreds of rows,
+         and the 60vh cap showed a dozen through a letterbox. */
+      bodyGrows
+    >
       {error && <p className="text-sm text-danger">{error}</p>}
 
       {runs === null && !error && <p className="text-sm text-muted">Reading the history…</p>}

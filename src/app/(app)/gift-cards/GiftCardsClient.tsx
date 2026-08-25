@@ -260,6 +260,10 @@ function GenerateModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
       open
       onClose={codes ? onDone : onClose}
       title="Generate gift cards"
+      /* The generated codes are the thing to read, and there can be fifty of
+         them. The body grows and that list scrolls inside it, so the "copy the
+         numbers now" line above it stays put. */
+      bodyPins
       description="A batch of unsold cards — the box of plastic behind the counter."
       footer={
         codes ? (
@@ -279,12 +283,14 @@ function GenerateModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
       }
     >
       {codes ? (
-        <div className="space-y-3">
+        /* A flex column so the code list below can take the leftover height.
+           `min-h-0` is what lets it shrink instead of growing past the panel. */
+        <div className="flex min-h-0 flex-col gap-3">
           <p className="text-sm text-muted">
             {codes.length} card{codes.length === 1 ? '' : 's'} generated. Copy the numbers now —
             they are also on the list behind this dialog.
           </p>
-          <ul className="numeric max-h-60 overflow-y-auto rounded-control border border-border bg-surface-2 px-3 py-2 text-sm">
+          <ul className="numeric min-h-0 flex-1 overflow-y-auto rounded-control border border-border bg-surface-2 px-3 py-2 text-sm">
             {codes.map((code) => (
               <li key={code}>{display(code)}</li>
             ))}

@@ -500,6 +500,10 @@ export default function TipsPayoutClient({
         title="Split the pool"
         description="Divide the pooled tips between the people who worked for them."
         size="lg"
+        /* A share row per person: a busy Saturday's staff list ran well past
+           the 60vh cap, so the people at the bottom of the split were the ones
+           nobody could see while dividing the money. */
+        bodyGrows
         footer={
           <>
             <Button variant="ghost" onClick={() => setSplitOpen(false)} disabled={pending}>

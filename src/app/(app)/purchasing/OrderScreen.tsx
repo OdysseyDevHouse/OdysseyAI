@@ -711,6 +711,9 @@ export default function OrderScreen({
         onClose={() => setPickerOpen(false)}
         title="Add stock"
         description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the order."
+        /* Search box, department browse and an unbounded results list — the
+           picker is exactly as tall as the catalogue lets it be. */
+        bodyGrows
         size="lg"
         footer={
           <Button variant="secondary" onClick={() => setPickerOpen(false)}>

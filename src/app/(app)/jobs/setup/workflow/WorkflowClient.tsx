@@ -404,6 +404,9 @@ export default function WorkflowClient({
         onClose={() => setEditing(null)}
         title={editing === 'new' ? 'Add a stage' : 'Edit stage'}
         size="sm"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+           empty desktop above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
       >
         <div className="flex flex-col gap-4">
           <Field label="Name" hint="What your team calls this stage.">

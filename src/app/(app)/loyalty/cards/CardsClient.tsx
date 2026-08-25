@@ -318,6 +318,9 @@ export function CardsClient({
         open={open}
         onClose={() => setOpen(false)}
         title={editingId ? 'Edit punch card' : 'New punch card'}
+        /* A long form: the default 60vh cap made it read through a letterbox with
+           empty desktop above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)}>
@@ -429,7 +432,7 @@ export function CardsClient({
             label="Departments that earn a stamp"
             hint="Leave everything unticked and the card earns on anything in the shop."
           >
-            <div className="max-h-40 space-y-2 overflow-y-auto rounded-control border border-border p-3">
+            <div className="max-h-[24vh] min-h-40 space-y-2 overflow-y-auto rounded-control border border-border p-3">
               {departments.length === 0 ? (
                 <p className="text-sm text-muted">No departments yet.</p>
               ) : (

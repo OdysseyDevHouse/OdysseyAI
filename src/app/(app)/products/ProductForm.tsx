@@ -18,6 +18,7 @@ import ReferWizard from '@/components/ReferWizard'
 import SerialsPanel from '@/components/SerialsPanel'
 import ProductSuppliersPanel from '@/components/ProductSuppliersPanel'
 import ProductKitchenPanel from '@/components/ProductKitchenPanel'
+import ProductReportingPanel, { type ProductReportChoice } from '@/components/ProductReportingPanel'
 import type { InstructionGroup } from '@/lib/site/instructions'
 import type { KitchenPrinter } from '@/lib/site/kitchenPrinters'
 import type { RecipeLine } from '@/lib/site/productComposition'
@@ -29,6 +30,7 @@ import {
   Callout,
   Card,
   EDIT_COLUMN,
+  FIELD_LABEL,
   Field,
   Input,
   SectionTitle,
@@ -49,6 +51,7 @@ import {
   Barcode,
   ArrowLeftRight,
   Printer,
+  LineChart,
 } from '@/components/ui/icons'
 import { DEFAULT_PRODUCT_TYPE, type ProductTypeId } from '@/lib/productTypes'
 import { saveProductAction, type ProductFormState } from './actions'
@@ -67,6 +70,7 @@ type TabValue =
   | 'refer'
   | 'serials'
   | 'linked'
+  | 'reporting'
 
 /** Which tab configures a given product type, for the setup buttons. */
 const SETUP_TAB: Partial<Record<ProductTypeId, TabValue>> = {
@@ -128,6 +132,9 @@ export default function ProductForm({
   referChain,
   serials,
   productSuppliers,
+  canQuickAdjust = false,
+  reports = [],
+  priceHistory = null,
   suggestedCode = null,
   autoCode = false,
   pictureFont = '',
@@ -204,6 +211,19 @@ export default function ProductForm({
   serials: Serial[]
   /** Who this product is bought from. */
   productSuppliers: ProductSupplier[]
+  /**
+   * Whether this user may post a stock adjustment — the inventory_advanced
+   * module AND stock.adjust. Resolved by the page: a client component cannot
+   * read an entitlement, and the action checks it again anyway.
+   */
+  canQuickAdjust?: boolean
+  /**
+   * The reports offered on the Reporting tab, already filtered to what this
+   * user may run. Empty hides the tab — an empty tab is worse than no tab.
+   */
+  reports?: ProductReportChoice[]
+  /** The price-history card, which now lives on the Reporting tab. */
+  priceHistory?: React.ReactNode
 }) {
   const [state, formAction] = useActionState<ProductFormState, FormData>(saveProductAction, {
     error: null,
@@ -291,6 +311,22 @@ export default function ProductForm({
   }
 
   const initial = (description.trim()[0] ?? '?').toUpperCase()
+
+  /* Defined once and placed by the department picker, which is the only thing
+     that knows how many levels are on screen — see its `trailing` prop. No
+     max-w here: it is a grid cell now, and the column sets the width. */
+  const brandField = (
+    <Field label="Brand">
+      <Select name="brandId" defaultValue={product?.brandId ?? ''}>
+        <option value="">&lt;None&gt;</option>
+        {brands.map((b) => (
+          <option key={b.id} value={b.id}>
+            {b.name}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  )
 
   // EDIT_COLUMN, not a literal: this wrapper is what gives the whole screen its
   // width, including the self-saving panels in `generalExtras` that sit after
@@ -395,6 +431,11 @@ export default function ProductForm({
                   },
                 ]
               : []),
+            /* Edit only. A product being created has no history to report on,
+               and every one of these reads its saved code or id. */
+            ...(!isNew && reports.length > 0
+              ? [{ value: 'reporting', label: 'Reporting', icon: <LineChart size={16} /> }]
+              : []),
           ]}
           value={tab}
           onChange={(next) => setTab(next as TabValue)}
@@ -476,6 +517,27 @@ export default function ProductForm({
                 pictureFont={pictureFont}
               />
 
+              {/* Product type, moved up from the foot of the tab.
+                  It sat last, below Pricing and Inventory, which put the choice
+                  that DECIDES whether Recipe, Refer and Serials tabs exist at
+                  all after everything it governs. It belongs with identity.
+
+                  It carries its own caption now: the panel renders the type's
+                  NAME ("Standard product"), never the words "Product type" —
+                  those came from the card heading this replaced, so without a
+                  label here the control lost the only thing saying what it is. */}
+              <div>
+                <span className={FIELD_LABEL}>Product type</span>
+                <ProductTypePanel
+                  defaultValue={product?.productType ?? DEFAULT_PRODUCT_TYPE}
+                  onChange={setProductType}
+                  onSetupClick={(type) => {
+                    const target = SETUP_TAB[type]
+                    if (target) setTab(target)
+                  }}
+                />
+              </div>
+
               <Field label="Extra description">
                 <RichText
                   name="extraDescription"
@@ -484,14 +546,24 @@ export default function ProductForm({
                 />
               </Field>
 
+              {/* Three across rather than four: at five and six entries a
+                  four-column grid leaves a ragged orphan row, and these read as
+                  pairs anyway — what a person did, what the stock did. */}
               {product && (
-                <div className="grid gap-4 sm:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {(
                     [
                       ['Last edit date', product.lastEditDate],
                       ['Last purchase', product.lastPurchaseDate],
                       ['Last sold', product.lastSoldDate],
+                      /* Counted and adjusted are DIFFERENT events and both are
+                         shown: posting a stock take stamps last_adjust_date too
+                         when the count disagreed, so without the count beside it
+                         a stock take looks like someone adjusted the figure by
+                         hand. */
+                      ['Last stock take', product.lastStockTakeDate],
                       ['Last adjusted', product.lastAdjustDate],
+                      ['Last transfer', product.lastTransferDate],
                     ] as const
                   ).map(([label, value]) => (
                     <Field key={label} label={label}>
@@ -509,28 +581,25 @@ export default function ProductForm({
           <Card>
             <SectionTitle icon={<LayoutGrid size={16} />}>Departments</SectionTitle>
             <div className="flex flex-col gap-4 p-6">
+              {/* Brand rides IN the picker's grid rather than sitting under it,
+                  so it fills the spare column on a shallow tree instead of
+                  costing a whole row of height. On a 3-level tree it wraps
+                  underneath, which is where it used to live anyway. */}
               {departments.length === 0 ? (
-                <p className="text-sm text-muted">
-                  No departments exist yet. Products can still be saved without one.
-                </p>
+                <>
+                  <p className="text-sm text-muted">
+                    No departments exist yet. Products can still be saved without one.
+                  </p>
+                  {brandField}
+                </>
               ) : (
                 <DepartmentPicker
                   name="departmentId"
                   departments={departments}
                   defaultValue={product?.departmentId ?? null}
+                  trailing={brandField}
                 />
               )}
-
-              <Field label="Brand" className="max-w-xs">
-                <Select name="brandId" defaultValue={product?.brandId ?? ''}>
-                  <option value="">&lt;None&gt;</option>
-                  {brands.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
             </div>
           </Card>
 
@@ -571,6 +640,13 @@ export default function ProductForm({
             <SectionBody open={inventoryOpen}>
             <LocationStockPanel
               isNew={isNew}
+              productId={product?.id ?? null}
+              productName={description}
+              /* A serial product is excluded here rather than refused in the
+                 dialog: a quantity-only adjustment cannot say WHICH units left,
+                 so offering the button would promise something it cannot do.
+                 The action refuses it too — this just stops the offer. */
+              canAdjust={canQuickAdjust && productType !== 'serial'}
               stores={[
                 {
                   siteId: currentSiteId,
@@ -605,18 +681,6 @@ export default function ProductForm({
             </SectionBody>
           </Card>
 
-          {/* ── Product type ─────────────────────────────────────────────── */}
-          <Card>
-            <SectionTitle icon={<Shapes size={16} />}>Product type</SectionTitle>
-            <ProductTypePanel
-              defaultValue={product?.productType ?? DEFAULT_PRODUCT_TYPE}
-              onChange={setProductType}
-              onSetupClick={(type) => {
-                const target = SETUP_TAB[type]
-                if (target) setTab(target)
-              }}
-            />
-          </Card>
         </div>
         </fieldset>
 
@@ -779,6 +843,20 @@ export default function ProductForm({
         )}
 
       </form>
+
+      {/* OUTSIDE the form on purpose. Reporting submits nothing — it reads — and
+          its dialog carries a table and a Close button. Nesting that in the
+          product form would make every click inside it a candidate for
+          submitting the product. */}
+      {product && reports.length > 0 && (
+        <div className={tab === 'reporting' ? 'flex flex-col gap-4' : 'hidden'}>
+          <ProductReportingPanel
+            productId={product.id}
+            reports={reports}
+            priceHistory={priceHistory}
+          />
+        </div>
+      )}
 
       {/* OUTSIDE the form, like every other self-saving panel here: the wizard
           carries its own inputs and commits its own transaction, and nesting a

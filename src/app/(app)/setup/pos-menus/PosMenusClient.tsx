@@ -185,6 +185,38 @@ export function PosMenusClient({
   const liveIds = useMemo(() => new Set(liveNow.map((l) => l.menu.id)), [liveNow])
 
   /*
+   * Menus pinned to a till that can never actually win it.
+   *
+   * Pinning says WHERE a menu may run, not that it beats anything. A bar menu
+   * pinned to till 2 still loses to a shop-wide menu that covers the same hour
+   * on the same priority — the tie breaks on the lower id, which is invisible
+   * from this screen. The shop sees a menu pinned to a till and assumes that
+   * settles it; it does not, and nothing on screen said so.
+   *
+   * Checked at the MIDPOINT of the pinned menu's band rather than at `now`, so
+   * the warning is a fact about the arrangement rather than something that
+   * appears and disappears as the day moves.
+   */
+  const shadowed = useMemo(() => {
+    const out: { menu: PosMenu; beatenBy: string }[] = []
+    for (const m of menus) {
+      if (!m.isActive || m.terminalIds.length === 0) continue
+      const from = m.dailyStart ? Number(m.dailyStart.slice(0, 2)) * 60 + Number(m.dailyStart.slice(3)) : 0
+      const to = m.dailyEnd ? Number(m.dailyEnd.slice(0, 2)) * 60 + Number(m.dailyEnd.slice(3)) : 1440
+      // Overnight bands wrap; the midpoint of the running half is close enough
+      // to answer "does anything outrank this while it is on".
+      const mid = from <= to ? Math.floor((from + to) / 2) : (from + 30) % 1440
+      const day = m.daysOfWeek.indexOf('1')
+      if (day < 0) continue
+      // 2026-08-24 is a Monday, so +day lands on the mask's first live day.
+      const probe = new Date(2026, 7, 24 + day, Math.floor(mid / 60), mid % 60)
+      const winner = activeMenu(menus, probe, m.terminalIds[0])
+      if (winner && winner.id !== m.id) out.push({ menu: m, beatenBy: winner.name })
+    }
+    return out
+  }, [menus])
+
+  /*
    * The hours nothing covers.
    *
    * Collapsed by WINDOW rather than listed per day: a shop whose breakfast
@@ -435,6 +467,36 @@ export function PosMenusClient({
       {/* The gap warning. Below the "showing now" line because that answers
           "is it working"; this answers "will it work all week" — and a shop
           reads the first question first. */}
+      {/* Pinned but outranked. Above the gap warning because a menu that never
+          runs is a bigger surprise than an hour with no menu — the shop has
+          deliberately assigned this one to a till and it is doing nothing. */}
+      {shadowed.length > 0 && (
+        <Callout
+          tone="warning"
+          title={
+            shadowed.length === 1
+              ? `${shadowed[0].menu.name} never runs — ${shadowed[0].beatenBy} outranks it`
+              : `${shadowed.length} pinned menus never run`
+          }
+        >
+          <p>
+            Pinning a menu to a till says <em>where</em> it may run, not that it wins. These are
+            beaten by a menu covering the same hours at the same or lower priority:
+          </p>
+          <ul className="mt-2 flex flex-col gap-1">
+            {shadowed.slice(0, 4).map((s) => (
+              <li key={s.menu.id}>
+                <span className="font-medium">{s.menu.name}</span>
+                <span className="text-muted"> · loses to {s.beatenBy}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-muted">
+            Give the pinned menu a lower priority number than the menu beating it.
+          </p>
+        </Callout>
+      )}
+
       {gapSummary.length > 0 && (
         <Callout
           tone="warning"
@@ -792,7 +854,16 @@ function MenuEditor({
 
         <Field
           label="Priority"
-          hint="Lower wins when two menus cover the same moment — breakfast at 0 beats an all-day menu at 10."
+          /* Spells out that pinning does NOT win on its own. A menu pinned to
+             the bar still loses to a shop-wide menu on the same priority — the
+             tie breaks on the lower id, which is invisible from this screen.
+             It surprised the person who built this feature; it will surprise a
+             shop the same way, and the fix is one number. */
+          hint={
+            draft.terminalIds.length > 0
+              ? 'Lower wins when two menus cover the same moment. Pinning to a till does NOT make this menu win — give it a lower number than the shop-wide menus it overlaps, or they take the till instead.'
+              : 'Lower wins when two menus cover the same moment — breakfast at 0 beats an all-day menu at 10.'
+          }
         >
           <span className="block w-24">
             <Input

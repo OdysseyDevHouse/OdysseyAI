@@ -426,6 +426,10 @@ function CountModal({
           ? 'Count the drawer, then enter what you found.'
           : 'Count what you are holding, then enter what you found.'
       }
+      /* A counted-amount field per tender type, plus the variance summary and
+         notes. A shop with eight tenders ran past the cap, and the variance —
+         the number the whole screen exists for — sat below the fold. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <>

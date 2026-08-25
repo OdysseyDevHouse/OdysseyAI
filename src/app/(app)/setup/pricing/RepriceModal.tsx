@@ -154,6 +154,9 @@ export default function RepriceModal({
       title="Bulk reprice"
       description="Fill a price type across the catalogue from a rule. Nothing is written until you apply."
       size="lg"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <>
@@ -455,7 +458,11 @@ function PickList({
     return <p className="text-sm text-muted">None set up.</p>
   }
   return (
-    <div className="max-h-36 overflow-y-auto rounded-control border border-border bg-surface p-2">
+    /* KEPT bounded: this is a checkbox picker sitting among the rule's other
+       fields, and unbounded a long department list would push the rest of the
+       form off screen. 36 (144px) showed barely three rows, so it grows with
+       the display while still capping well short of the form around it. */
+    <div className="max-h-[26vh] min-h-36 overflow-y-auto rounded-control border border-border bg-surface p-2">
       {items.map((item) => (
         <label key={item.id} className="flex items-center gap-2 px-1 py-1 text-sm text-ink-2">
           <Checkbox

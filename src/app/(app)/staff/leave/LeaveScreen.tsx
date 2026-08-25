@@ -489,6 +489,9 @@ function BookModal({
       onClose={onClose}
       title="Book leave"
       description="Working days only — weekends and public holidays are not counted."
+      /* Fields above a balance breakdown that lists every leave type the shop
+         runs — the breakdown is what somebody checks before booking. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <div className="flex justify-end gap-2">

@@ -450,6 +450,9 @@ function DetailModal({
         reservation.reservedFor,
       )}`}
       size="lg"
+      /* A status strip, a two-column detail grid, the table picker and fields —
+         171 lines of body, comfortably past the 60vh cap. */
+      bodyGrows
       footer={
         next.length === 0 ? (
           <Button variant="secondary" onClick={onClose}>
@@ -696,6 +699,8 @@ function AddModal({
       title="Take a booking"
       description="For a booking taken over the phone or at the door. It is confirmed straight away."
       size="lg"
+      /* Eight fields plus a table-selection list that grows with the floor. */
+      bodyGrows
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>

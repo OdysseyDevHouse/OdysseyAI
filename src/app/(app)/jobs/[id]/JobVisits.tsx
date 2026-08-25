@@ -831,6 +831,9 @@ export default function JobVisits({
             : `Change visit ${editing.visitNumber}`
         }
         size="md"
+        /* A long form: the default 60vh cap made it read through a letterbox with
+           empty desktop above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
       >
         <div className="flex flex-col gap-4">
           {conflicts.length > 0 && (
@@ -874,7 +877,10 @@ export default function JobVisits({
             label="Who is going"
             hint="Leave it empty to hold the slot before you know who is free — it shows as unassigned until you do."
           >
-            <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
+            {/* Bounded on purpose: a conflict list sitting above the booking
+                fields, so unbounded it would push them off screen. Grows with
+                the display instead of sitting at a fixed 192px. */}
+            <div className="flex max-h-[26vh] min-h-48 flex-col gap-1.5 overflow-y-auto">
               {people.length === 0 ? (
                 <span className="text-sm text-muted">No active users to assign.</span>
               ) : (

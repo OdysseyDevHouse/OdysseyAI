@@ -360,6 +360,9 @@ function UserForm({
       title={user ? `Edit ${user.name}` : 'Add a user'}
       description="A till user needs only a PIN. A back office user also signs in with an email address."
       size="lg"
+      /* A long form: the default 60vh cap made it read through a letterbox with
+         empty desktop above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <div className="flex justify-end gap-2">

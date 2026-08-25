@@ -104,7 +104,14 @@ export function JournalClient({ accounts }: { accounts: Account[] }) {
         New journal
       </Button>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Manual journal">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Manual journal"
+        /* Header fields above an UNBOUNDED lines table — a journal can run to
+           twenty legs, and the 60vh cap hid the ones that make it balance. */
+        bodyGrows
+      >
         <div className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-4">
             <Field label="Date">

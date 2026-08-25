@@ -279,6 +279,49 @@ export async function recordMovement(
     input.productId,
   ] as never)
 
+  /*
+   * "Last sold", stamped here because here is where a sale actually moves stock.
+   *
+   * The column has existed since 001 and NOTHING has ever written it: the
+   * product screen, the product list, the report catalog and the dead-stock
+   * alert all read it, so "Last sold" was blank on every store and dead stock
+   * fell back to COALESCE(last_sold_date, created_at) for every line — it could
+   * not tell "never sold" from "sold yesterday".
+   *
+   * Stamped in `recordMovement` rather than in the posting paths because this is
+   * the one chokepoint every sale already goes through — the till, invoicing and
+   * online orders all land here — so there is no path that moves stock for a
+   * sale and forgets to say so. It rides the caller's transaction, so a rolled
+   * back sale takes the date back with it.
+   *
+   * 'sale' only, NOT 'sale_return': a return is stock coming back, the opposite
+   * of the question this column answers. Stamping it there would make a product
+   * that has only ever been refunded look freshly sold, which is precisely the
+   * line dead stock exists to catch.
+   */
+  if (input.movementType === 'sale') {
+    await tx.execute('UPDATE products SET last_sold_date = NOW() WHERE id = ?', [
+      input.productId,
+    ] as never)
+  }
+
+  /*
+   * "Last transfer" (236), stamped here for the same reason and in the same
+   * place: both transfer paths — location-to-location (stockTransfers.ts) and
+   * inter-store (storeTransfers.ts) — record their movements through this
+   * function, so there is no way to move stock as a transfer and not say so.
+   *
+   * BOTH directions stamp it. The question the column answers is "when did this
+   * stock last move rooms", and a product only ever received into a room has
+   * moved just as much as one only ever sent out of it — stamping the out leg
+   * alone would leave the receiving store reading "never".
+   */
+  if (input.movementType === 'transfer_in' || input.movementType === 'transfer_out') {
+    await tx.execute('UPDATE products SET last_transfer_date = NOW() WHERE id = ?', [
+      input.productId,
+    ] as never)
+  }
+
   await tx.execute(
     `INSERT INTO product_location_stock (product_id, location_id, stock_on_hand)
           VALUES (?,?,?)

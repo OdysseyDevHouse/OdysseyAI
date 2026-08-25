@@ -7,6 +7,7 @@ import {
   Icons,
   PICTURE_TILE_GRADIENTS,
   TILE_NONE,
+  FIELD_LABEL,
   tileInkClass,
   tileClass,
   useToast,
@@ -38,7 +39,9 @@ import {
  * so rather than offering a button that cannot work.
  */
 
-const labelText = 'mb-1.5 block text-sm font-medium text-ink-2'
+/* The kit's field caption. This heading labels a GROUP of controls, which Field
+   itself cannot do — it labels exactly one — so it borrows the class rather than
+   keeping a copy that drifts. */
 
 export default function TillTilePanel({
   productId,
@@ -140,7 +143,7 @@ export default function TillTilePanel({
           which is why only the colour needs a field here. */}
       <input type="hidden" name="imageColor" value={color} />
 
-      <span className={labelText}>How this product looks on the till</span>
+      <span className={FIELD_LABEL}>How this product looks on the till</span>
 
       <div className="flex flex-wrap items-start gap-5">
         {/* The preview. The icon sits ON the colour rather than replacing it,

@@ -22,6 +22,8 @@ const SOURCE_TONE: Record<string, 'brand' | 'success' | 'warning' | 'danger' | '
   fanout: 'neutral',
   // A cost change from a supplier drove this one, so it reads like a receipt.
   grv: 'brand',
+  // Hand-edited, same as the product screen — just from the bulk grid.
+  grid: 'brand',
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -32,6 +34,7 @@ const SOURCE_LABEL: Record<string, string> = {
   revert: 'Put back',
   fanout: 'Linked store',
   grv: 'Goods received',
+  grid: 'Bulk edit',
 }
 
 export default function PriceHistoryPanel({ rows }: { rows: PriceHistoryRow[] }) {

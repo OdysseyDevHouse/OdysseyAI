@@ -81,6 +81,9 @@ export function OrdersModal({
       title="Sales orders"
       description="Tap one to hand it over. The goods go out and an invoice comes onto the till to be paid."
       size="lg"
+      /* An unbounded list of documents on a touch screen: the more rows a
+         cashier can see without dragging, the faster the handover. */
+      bodyGrows
       footer={
         <Button variant="secondary" size="touch" onClick={onClose}>
           Close

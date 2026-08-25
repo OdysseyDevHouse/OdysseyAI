@@ -96,6 +96,9 @@ export function StartLaybyModal({
       title="Put this aside as a lay-by"
       description={`${lineCount} line${lineCount === 1 ? '' : 's'} · ${formatMoney(totalIncl)}`}
       size="md"
+      /* Fields above the terms and the instalment schedule preview — the
+         schedule grows with the term, which is the part being checked. */
+      bodyGrows
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           <Button variant="secondary" size="touch" onClick={onClose} disabled={busy}>

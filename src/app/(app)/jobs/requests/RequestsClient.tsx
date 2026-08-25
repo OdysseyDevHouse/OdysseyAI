@@ -288,6 +288,9 @@ export default function RequestsClient({
         onClose={() => setAccepting(null)}
         title="Raise a job from this request"
         size="sm"
+        /* A long form: the default 60vh cap made it read through a letterbox with
+           empty desktop above and below. Still a MAX, so a short one stays short. */
+        bodyGrows
         footer={
           <>
             <Button variant="secondary" onClick={() => setAccepting(null)} disabled={pending}>
@@ -327,7 +330,7 @@ export default function RequestsClient({
             </p>
           ) : (
             matches.length > 0 && (
-              <ul className="max-h-48 overflow-y-auto rounded-control border border-border">
+              <ul className="max-h-[26vh] min-h-48 overflow-y-auto rounded-control border border-border">
                 {matches.map((c) => (
                   <li key={c.id}>
                     <button

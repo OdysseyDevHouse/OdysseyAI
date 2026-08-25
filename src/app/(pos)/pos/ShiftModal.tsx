@@ -202,6 +202,9 @@ export default function ShiftModal({
             ? 'Shift'
             : 'Open a shift'
       }
+      /* A counting field per drawer and per other tender — as tall as the
+         shop's tender list, which is exactly what the 60vh cap truncated. */
+      bodyGrows
       footer={
         <Button variant="secondary" onClick={onClose} disabled={pending}>
           Close

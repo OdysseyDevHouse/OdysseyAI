@@ -139,6 +139,10 @@ export function LaybysModal({
           : 'Find the customer, then take what they are paying.'
       }
       size="lg"
+      /* Two faces, both taller than 60vh: a lay-by list on one and a payment
+         form on the other. `bodyGrows` rather than `bodyPins` because the
+         payment face is a form, not a list with a fixed header above it. */
+      bodyGrows
       footer={
         chosen ? (
           <div className="flex w-full items-center justify-between gap-2">

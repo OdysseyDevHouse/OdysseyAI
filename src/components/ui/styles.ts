@@ -409,6 +409,19 @@ export const DRAWER_SIZE: Record<DrawerSize, string> = {
 
 /* ── Form controls ───────────────────────────────────────────────────────── */
 
+/**
+ * The caption above a control.
+ *
+ * `Field` wears this, and so should anything that has to sit beside a Field and
+ * look like it belongs — a heading over a GROUP of controls, which Field itself
+ * cannot label because it labels exactly one.
+ *
+ * A constant rather than a string typed twice: it had already been copied into
+ * the till-tile panel, and the department picker had drifted to a different size
+ * AND colour, so one card showed the same kind of caption three ways.
+ */
+export const FIELD_LABEL = 'mb-1.5 block text-sm font-medium text-ink-2'
+
 /** The one skin every single-line control wears. Edit here, every form follows. */
 export const CONTROL =
   'w-full rounded-control border border-border-strong bg-surface px-3 text-sm text-ink ' +

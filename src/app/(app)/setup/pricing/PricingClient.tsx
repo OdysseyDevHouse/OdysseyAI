@@ -503,6 +503,9 @@ function VatModal({
       onClose={onClose}
       title={rate ? `Edit ${rate.name}` : 'Add a VAT rate'}
       description="Rates are kept separately for what you charge and what you are charged."
+      /* A long dialog: the default 60vh cap letterboxed it with empty desktop
+         above and below. Still a MAX, so a short one stays short. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <>

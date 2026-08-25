@@ -54,7 +54,14 @@ export function DisposeButton({
         Dispose
       </Button>
 
-      <Modal open={open} onClose={() => setOpen(false)} title={`Dispose of ${assetName}`}>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`Dispose of ${assetName}`}
+        /* An explainer, four fields and the profit/loss outcome summary — and
+           the outcome is the part somebody reads before confirming. */
+        bodyGrows
+      >
         <div className="space-y-4">
           <p className="text-sm text-muted">
             The asset comes off the balance sheet at its book value of{' '}

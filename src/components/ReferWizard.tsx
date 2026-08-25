@@ -287,6 +287,9 @@ export default function ReferWizard({
       title="Refer code wizard"
       description="Set up how each pack size refers to the one below it, then create the linked products."
       size="xl"
+      /* The generated-rows table grows with the number of pack sizes, and it is
+         what the person is checking before the products are created. */
+      bodyGrows
       closeOnBackdrop={false}
       footer={
         <>

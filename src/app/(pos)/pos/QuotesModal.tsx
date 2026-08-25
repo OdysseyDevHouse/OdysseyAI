@@ -94,6 +94,9 @@ export function QuotesModal({
       title="Quotes"
       description="Tap one to bring it onto the till. It stays a quote until you take the money."
       size="lg"
+      /* An unbounded list of documents on a touch screen: the more rows a
+         cashier can see without dragging, the faster the handover. */
+      bodyGrows
       footer={
         <Button variant="secondary" size="touch" onClick={onClose}>
           Close

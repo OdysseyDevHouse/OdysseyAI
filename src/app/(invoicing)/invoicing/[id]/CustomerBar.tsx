@@ -159,8 +159,15 @@ export default function CustomerBar({
         onClose={() => setPicking(false)}
         title="Select customer"
         description="Search by code, name or phone number."
+        /* The body grows and the RESULTS LIST scrolls inside it, so the search
+           box stays put while the names scroll past. With the default cap the
+           whole body scrolled as one and took the field being typed into with
+           it. */
+        bodyPins
       >
-        <div className="flex flex-col gap-3">
+        {/* `min-h-0` so the list below can shrink rather than pushing this
+            column past the panel — the flex default is `min-height:auto`. */}
+        <div className="flex min-h-0 flex-col gap-3">
           <Input
             autoFocus
             value={query}
@@ -188,7 +195,9 @@ export default function CustomerBar({
 
           {/* Scrolls itself: a hundred rows would otherwise run the modal off
               the bottom of the screen and take the search box with it. */}
-          <ul className="-mx-1 flex max-h-[26rem] flex-col divide-y divide-border overflow-y-auto px-1">
+          {/* Takes the height left over rather than a fixed 26rem, so a tall
+              screen shows more names and a laptop still works. */}
+          <ul className="-mx-1 flex min-h-0 flex-1 flex-col divide-y divide-border overflow-y-auto px-1">
             {results.map((customer) => (
               <li key={customer.id}>
                 {/* A multi-line selection row, which the kit's Button cannot

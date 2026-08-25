@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
+import { has as hasModule } from '@/lib/control/modules'
 import { getProduct } from '@/lib/site/products'
 import { listBrands, listVatRates, listPriceStructures, getCostBasis } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
@@ -31,6 +32,7 @@ import BarcodesPanel from '../BarcodesPanel'
 import PriceHistoryPanel from '../PriceHistoryPanel'
 import { listProductBarcodes } from '@/lib/site/productBarcodes'
 import { listPriceHistory } from '@/lib/site/priceHistory'
+import { productReportsFor } from '@/lib/reportBuilder/productReports'
 import ProductActions from './ProductActions'
 
 export const dynamic = 'force-dynamic'
@@ -49,7 +51,7 @@ export default async function EditProductPage({
 
   // A hidden menu entry is not a boundary — this URL is typeable.
 
-  const { capabilities } = await requireCapability('products.edit')
+  const { capabilities, modules } = await requireCapability('products.edit')
 
   const site = await requireSite()
   const siteId = site.id
@@ -257,6 +259,11 @@ export default async function EditProductPage({
           pictureFont={pictureFont}
           serials={serials}
           productSuppliers={productSuppliers}
+          /* Module first, then capability — the same order and the same two
+             gates the Adjustments screen applies. The action re-checks both. */
+          canQuickAdjust={
+            hasModule(modules, 'inventory_advanced') && can(capabilities, 'stock.adjust')
+          }
           // Archive and delete live in the header's Actions menu — Save stays
           // the one primary on this screen.
           //
@@ -283,10 +290,18 @@ export default async function EditProductPage({
               {/* The alias barcodes (143). Self-saving, like its siblings. */}
               <BarcodesPanel productId={product.id} initial={extraBarcodes} />
 
-              {/* Who moved the price, and through which door (144). */}
-              <PriceHistoryPanel rows={priceHistory} />
+              {/* Price history has MOVED to the Reporting tab — it is history,
+                  which is what that tab is for, and the General tab was long. */}
             </>
           }
+          /* Filtered here rather than in the panel: a capability check belongs
+             on the server, and the tab is hidden entirely when none survive. */
+          reports={productReportsFor((c) => can(capabilities, c)).map((r) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description,
+          }))}
+          priceHistory={<PriceHistoryPanel rows={priceHistory} />}
         />
       </PageBody>
     </>

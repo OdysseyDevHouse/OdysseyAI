@@ -96,8 +96,11 @@ export function BulkOptionsDialog<K extends string>({
       /* Wider than a form dialog: three columns of action names need the room,
          and at lg the longest ("Change pack weight description") clips. */
       size="xl"
-      /* The footer's Close is the only way out besides Escape — the body
-         scrolls at 60vh and a button below the fold cannot be found. */
+      /* Grows with the display: this renders every visible option group, so it
+         is exactly as tall as the shop's option list. The footer's Close stays
+         the way out besides Escape — with the body still capped, a button
+         placed after the options could otherwise sit below the fold. */
+      bodyGrows
       footer={
         <Button variant="secondary" onClick={onClose}>
           Close

@@ -93,6 +93,9 @@ export function LineImportDialog({
       title={`Import ${noun}`}
       description="A .csv or .xlsx with a product code and a quantity. Nothing is posted — the lines land in the grid for you to check."
       size="lg"
+      /* The problems table runs to fifty rows, and the whole point of the
+         dialog is reading them before importing. */
+      bodyGrows
       footer={
         <>
           <Button variant="ghost" onClick={() => { reset(); onClose() }}>Cancel</Button>

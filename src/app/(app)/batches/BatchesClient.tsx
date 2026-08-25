@@ -230,6 +230,9 @@ function BatchDrawer({
       onClose={onClose}
       title={batch.batchNo ? `Lot ${batch.batchNo}` : 'Untracked stock'}
       description={`${batch.productDescription} · ${formatQty(batch.qtyRemaining)} remaining${batch.supplierName ? ` · from ${batch.supplierName}` : ''}`}
+      /* Write-off fields above an unbounded movement history — every receipt,
+         sale and adjustment this lot has seen. */
+      bodyGrows
       footer={
         writeOff ? (
           <>
