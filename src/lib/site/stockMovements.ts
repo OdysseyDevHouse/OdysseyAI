@@ -48,6 +48,19 @@ export const MOVEMENT_TYPES = [
   // referBreakdown.ts.
   'unpack_in',
   'unpack_out',
+  /*
+   * Breaking a carcass down (236). A balanced pair, like unpack above and for
+   * the same reason: a manager asking why the hindquarter count dropped has to
+   * see that it was BROKEN DOWN, not adjusted away or sold.
+   *
+   * Distinct from manufacture, despite looking similar, because the direction
+   * is inverted — manufacturing is many inputs to one output, a block test is
+   * one input to twenty outputs at twenty different values — and a yield report
+   * that could not tell the two apart would average a carcass against a
+   * sausage recipe. See blockTests.ts.
+   */
+  'block_test_in',
+  'block_test_out',
 ] as const
 export type MovementType = (typeof MOVEMENT_TYPES)[number]
 

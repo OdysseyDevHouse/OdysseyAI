@@ -21,9 +21,51 @@ import {
   priceFromFactor,
   type BlockTestOutput,
 } from '../src/lib/blockTestMath'
-import { siteQuery } from '../src/lib/siteDb'
+import { siteQuery, siteQueryOne, siteExecute } from '../src/lib/siteDb'
+import { postBlockTest, getBlockTest } from '../src/lib/site/blockTests'
+import { reconcileStock } from '../src/lib/site/stockMovements'
+import { verifySequence } from '../src/lib/site/sequences'
+import { toNum } from '../src/lib/decimals'
 
 const SITE = 1
+const actor = { userId: 1, userName: 'Block Test' }
+const CODE_PATTERN = '^ZBT[A-Z]?[0-9]{8}'
+
+/**
+ * Anything a previous run left, swept BEFORE this one as well as after.
+ *
+ * ⚠ The SEQUENCE has to be put back too, and that is not tidiness. Deleting a
+ * posted block test while its number stays issued leaves a number with no
+ * document — which is precisely what `verifySequence` reports as MISSING, the
+ * one figure it exists to prove is zero. The next run then fails on the
+ * previous run's litter, in an assertion that has nothing to do with what
+ * broke. `restoreSequence` is snapshot-and-put-back, the same shape
+ * test-batches uses.
+ */
+async function sweepStrays() {
+  const where = "(SELECT id FROM products WHERE code REGEXP '" + CODE_PATTERN + "')"
+  await siteExecute(SITE, 'DELETE btl FROM block_test_lines btl JOIN block_tests bt ON bt.id = btl.block_test_id WHERE bt.input_product_id IN ' + where)
+  await siteExecute(SITE, 'DELETE FROM block_tests WHERE input_product_id IN ' + where)
+  await siteExecute(SITE, 'DELETE FROM stock_movements WHERE product_id IN ' + where)
+  await siteExecute(SITE, 'DELETE FROM product_location_stock WHERE product_id IN ' + where)
+  await siteExecute(SITE, "DELETE FROM products WHERE code REGEXP '" + CODE_PATTERN + "'")
+}
+
+async function snapshotSequence() {
+  return siteQueryOne<any>(
+    SITE,
+    "SELECT next_number, last_issued_number FROM document_sequences WHERE terminal_id = 0 AND doc_type = 'block_test'",
+  )
+}
+
+async function restoreSequence(snap: any) {
+  if (!snap) return
+  await siteExecute(
+    SITE,
+    "UPDATE document_sequences SET next_number = ?, last_issued_number = ? WHERE terminal_id = 0 AND doc_type = 'block_test'",
+    [snap.next_number, snap.last_issued_number],
+  )
+}
 let fails = 0
 const ok = (label: string, cond: boolean, extra = '') => {
   if (!cond) fails++
@@ -270,12 +312,207 @@ async function main() {
     String(status[0]?.Type),
   )
 
-  const { verifySequence } = await import('../src/lib/site/sequences')
   const check = await verifySequence(SITE, 'block_test')
   ok(
     '*** and verifySequence finds its OWN table, not sales_documents ***',
     check.missing === 0,
     `missing=${check.missing} issued=${check.issued}`,
+  )
+
+  /* ── 7. Posting: the carcass out, the cuts in ─────────────────────────── */
+
+  await sweepStrays()
+  const seqBefore = await snapshotSequence()
+  const stamp = Date.now().toString().slice(-8)
+  const vat = await siteQueryOne<any>(
+    SITE,
+    "SELECT id FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1",
+  )
+
+  const driftBefore = (await reconcileStock(SITE)).length
+
+  const mk = async (code: string, desc: string, stock: number, cost: number) => {
+    const res = await siteExecute(
+      SITE,
+      `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id)
+       VALUES (?,?,'normal',?,?,?,?)`,
+      [code, desc, stock, cost, cost, vat?.id ?? null],
+    )
+    const id = (res as any).insertId as number
+    if (stock !== 0) {
+      await siteExecute(
+        SITE,
+        "INSERT INTO stock_movements (product_id, location_id, movement_type, qty_change, qty_after, unit_cost_excl, source, user_id, user_name) VALUES (?,(SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1),'opening',?,?,?,'opening',1,'Block Test')",
+        [id, stock, stock, cost],
+      )
+      await siteExecute(
+        SITE,
+        'INSERT INTO product_location_stock (product_id, location_id, stock_on_hand) SELECT id,(SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1),stock_on_hand FROM products WHERE id=? ON DUPLICATE KEY UPDATE stock_on_hand=VALUES(stock_on_hand)',
+        [id],
+      )
+    }
+    return id
+  }
+
+  // A hindquarter at R83.45/kg, and the cuts that come off it.
+  const carcass = await mk(`ZBT${stamp}`, `Hindquarter ${stamp}`, 73.7, 83.45)
+  const filletId = await mk(`ZBTF${stamp}`, `Fillet ${stamp}`, 0, 0)
+  // Mince already has stock at a DIFFERENT cost, so the blend has something to
+  // weigh against rather than trivially taking the new figure.
+  const minceId = await mk(`ZBTM${stamp}`, `Mince ${stamp}`, 10, 60)
+
+  const posted = await postBlockTest(SITE, actor, {
+    documentDate: new Date().toISOString().slice(0, 10),
+    species: 'beef',
+    carcassNo: `CN${stamp}`,
+    inputProductId: carcass,
+    inputQty: 73.7,
+    lines: [
+      { productId: filletId, description: `Fillet ${stamp}`, qty: 3.2, costFactor: BEEF.fillet },
+      { productId: minceId, description: `Mince ${stamp}`, qty: 51.9, costFactor: BEEF.mince },
+      { productId: null, description: 'Bone and drip', qty: 18.6, costFactor: 0, isLoss: true },
+    ],
+  })
+  ok('*** a block test posts ***', posted.ok, posted.ok ? posted.documentNumber : posted.error)
+  if (!posted.ok) {
+    console.log(`\n${++fails} FAILURE(S)`)
+    process.exit(1)
+  }
+
+  const stockOf = async (id: number) =>
+    toNum((await siteQueryOne<any>(SITE, 'SELECT stock_on_hand FROM products WHERE id=?', [id]))?.stock_on_hand)
+  const costOf = async (id: number) =>
+    toNum((await siteQueryOne<any>(SITE, 'SELECT average_cost FROM products WHERE id=?', [id]))?.average_cost)
+
+  ok('*** the carcass is CONSUMED ***', (await stockOf(carcass)) === 0, String(await stockOf(carcass)))
+  ok('*** the fillet arrived ***', (await stockOf(filletId)) === 3.2, String(await stockOf(filletId)))
+  ok(
+    '  and bone became no stock at all — it is not a product',
+    (await siteQuery<any>(SITE, "SELECT id FROM products WHERE description = 'Bone and drip'")).length === 0,
+  )
+
+  /*
+   * The whole commercial point: the fillet is worth more per kilo than the
+   * carcass it came out of, and the mince less. If both came out at the
+   * carcass rate the document has done nothing.
+   */
+  const stored = await getBlockTest(SITE, posted.id)
+
+  const filletCost = await costOf(filletId)
+  ok(
+    '*** the fillet costs MORE per kilo than the carcass did ***',
+    filletCost > 83.45 * 2,
+    `R${filletCost}/kg vs carcass R83.45/kg`,
+  )
+
+  /*
+   * Mince had 10kg at R60 before; 51.9kg arrives cheaper than the carcass
+   * rate. The blend must land between the two, not simply take the new figure.
+   */
+  /*
+   * Mince held 10kg at R60 and receives 51.9kg from this carcass. The blended
+   * figure must sit strictly BETWEEN the two, which is the whole property —
+   * taking the arriving cost outright would throw away what the shop already
+   * paid for the stock on the shelf.
+   *
+   * Note the arriving cost is ABOVE the carcass rate here, not below: with
+   * bone taking a quarter of the weight and only two cuts sharing, normalising
+   * inflates every surviving factor. That is correct — the meat has to carry
+   * the bone's cost — and it is why this asserts against the ARRIVING figure
+   * rather than against a guess at the carcass rate.
+   */
+  const minceCost = await costOf(minceId)
+  const minceArrived = stored?.lines.find((l) => l.productId === minceId)?.unitCostExcl ?? 0
+  ok(
+    '*** and the mince BLENDS against what was already there ***',
+    minceCost > 60 && minceCost < minceArrived,
+    `R${minceCost}/kg, between the old R60 and the arriving R${minceArrived}/kg`,
+  )
+
+  const movements = await siteQuery<any>(
+    SITE,
+    `SELECT movement_type, qty_change FROM stock_movements
+      WHERE source = 'block_test' AND source_doc_id = ? ORDER BY id`,
+    [posted.id],
+  )
+  ok(
+    '*** the movements are a BALANCED PAIR, not adjustments ***',
+    movements.length === 3 &&
+      movements[0].movement_type === 'block_test_out' &&
+      movements.slice(1).every((m: any) => m.movement_type === 'block_test_in'),
+    movements.map((m: any) => `${m.movement_type} ${m.qty_change}`).join(', '),
+  )
+  ok(
+    '  the carcass goes out FIRST, so nothing briefly exists twice',
+    toNum(movements[0]?.qty_change) < 0,
+    String(movements[0]?.qty_change),
+  )
+
+  ok('the document reads back', !!stored, stored ? stored.test.documentNumber ?? '' : 'null')
+  ok(
+    '  with the yield it computed',
+    !!stored && stored.test.yieldPct > 70 && stored.test.yieldPct < 80,
+    String(stored?.test.yieldPct),
+  )
+  ok(
+    '*** and Σ(allocated) equals what the carcass cost ***',
+    !!stored && Math.abs(stored.test.outputCost - stored.test.inputCost) < 0.005,
+    `${stored?.test.outputCost} vs ${stored?.test.inputCost}`,
+  )
+
+  ok(
+    '*** stock invariants hold after posting ***',
+    (await reconcileStock(SITE)).length === driftBefore,
+    `${driftBefore} -> ${(await reconcileStock(SITE)).length}`,
+  )
+
+  const seqCheck = await verifySequence(SITE, 'block_test')
+  ok(
+    '*** and the number it issued is not reported missing ***',
+    seqCheck.missing === 0,
+    `missing=${seqCheck.missing} issued=${seqCheck.issued}`,
+  )
+
+  /* ── 8. What posting must refuse ──────────────────────────────────────── */
+
+  const noProduct = await postBlockTest(SITE, actor, {
+    documentDate: new Date().toISOString().slice(0, 10),
+    inputProductId: carcass,
+    inputQty: 10,
+    lines: [{ productId: null, description: 'Nameless cut', qty: 5, costFactor: 1 }],
+  })
+  ok(
+    '*** a cut with no product is refused — there is nothing to receive into ***',
+    !noProduct.ok,
+    noProduct.ok ? 'it posted' : noProduct.error,
+  )
+
+  const noAccount = await postBlockTest(SITE, actor, {
+    documentDate: new Date().toISOString().slice(0, 10),
+    inputProductId: carcass,
+    inputQty: 10,
+    normalise: false,
+    lines: [
+      { productId: filletId, description: 'Fillet', qty: 3, costFactor: 1 },
+      { productId: null, description: 'Bone', qty: 7, costFactor: 0, isLoss: true },
+    ],
+  })
+  ok(
+    '*** an under-recovering test with NO variance account is refused ***',
+    !noAccount.ok,
+    noAccount.ok ? 'it posted, losing the residual silently' : noAccount.error,
+  )
+
+  /* ── Cleanup ──────────────────────────────────────────────────────────── */
+
+  await sweepStrays()
+  await restoreSequence(seqBefore)
+  const left = await siteQuery<any>(SITE, `SELECT id FROM products WHERE code REGEXP '${CODE_PATTERN}'`)
+  ok('the run leaves nothing behind', left.length === 0, `${left.length} left`)
+  ok(
+    'and no drift behind it either',
+    (await reconcileStock(SITE)).length === driftBefore,
+    String((await reconcileStock(SITE)).length),
   )
 
   console.log(fails === 0 ? '\nALL PASS' : `\n${fails} FAILURE(S)`)
