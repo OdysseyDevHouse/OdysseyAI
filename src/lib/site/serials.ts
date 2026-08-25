@@ -176,6 +176,15 @@ export async function findSerial(siteId: number, serial: string): Promise<Serial
  * Pass a locationId to pick from a specific room instead; pass null explicitly
  * to see every in-stock unit wherever it is, which is what a stock take or a
  * transfer picker wants.
+ *
+ * ⚠ `undefined` MEANS MAIN AND `null` MEANS EVERYWHERE — and at a call site
+ * those two look identical. Anything holding a `number | null` that came from a
+ * TERMINAL is the dangerous case, because `terminalStockLocationId` returns
+ * null for a till with no room of its own, which is most tills: passed straight
+ * through, that flips a counter's picker from "this room" to "every room" and
+ * offers a cashier units standing in the back warehouse. Resolve such a value
+ * with `?? await mainLocationId(siteId)` BEFORE calling. See the till's
+ * `serialsForProductAction`, which had exactly this bug.
  */
 export async function availableSerials(
   siteId: number,
