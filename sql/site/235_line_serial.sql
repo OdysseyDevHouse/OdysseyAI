@@ -1,0 +1,52 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- WHICH UNIT a sale line sold, chosen at the till.
+--
+-- ── THE BUG THIS CLOSES ──────────────────────────────────────────────────
+--
+-- A serial-tracked product could be added to a till basket, rung through, and
+-- was only refused at the TENDER PAD -- after the customer had been asked to
+-- pay -- with "choose 1 serial number, 0 selected".
+--
+-- Not a broken guard. The guard is right and deliberately runs before any
+-- stock moves. The problem was that NOTHING at the till could ever satisfy
+-- it: `serials` arrives on the finalise INPUT, and the only caller that has
+-- ever populated it is job-card invoicing, which reads them off the
+-- technician's job card. There has never been a serial picker at a till.
+--
+-- So an offline till refused these items kindly at the tile, and an online
+-- one refused them confusingly at the pad. Same product, same shop, opposite
+-- experiences -- and the online one happens in front of the customer.
+--
+-- ── WHY THE LINE AND NOT THE FINALISE INPUT ──────────────────────────────
+--
+-- `serials` on FinaliseInput is documented as being supplied at finalise
+-- "because the cashier picks the actual box off the shelf at the moment of
+-- sale". True of a warehouse counter where somebody walks away to fetch it.
+-- It is not true of a till, where the box is already on the counter -- and it
+-- cost the feature its own workability, because a value that only exists at
+-- finalise cannot survive a park, a table save or a lay-by.
+--
+-- The gift-card precedent (147) is the right one: captured at ADD time, so it
+-- rides the LINE and a recalled draft still knows which unit it promised. 234
+-- made the same call for lots.
+--
+-- Both paths remain. `serials` on the input still works and job invoicing
+-- still uses it; a line that names its own unit simply does not need it.
+--
+-- ── ONE UNIT PER LINE ────────────────────────────────────────────────────
+--
+-- Three laptops are three lines, not one line of three. A serial IS the
+-- identity of one object, so a column holding one id says exactly what is
+-- true; a list would need its own table and would still have to answer what
+-- happens when the quantity is edited to 2. The basket already refuses to
+-- merge a line carrying an identity (234), so the rule is one it keeps.
+--
+-- NULL on every ordinary line, and on a serial line raised anywhere but a
+-- till -- job-card invoicing keeps supplying its units at finalise.
+ALTER TABLE sales_document_lines
+  ADD COLUMN IF NOT EXISTS serial_id INT UNSIGNED NULL AFTER batch_no;
+
+-- Plain column, no FK, matching product_batches.received_doc_id and the rest
+-- of the serial columns: a purged serial must not take a historic invoice
+-- line with it, and the line's own description already records what was sold.
+CREATE INDEX IF NOT EXISTS ix_sales_line_serial ON sales_document_lines (serial_id);

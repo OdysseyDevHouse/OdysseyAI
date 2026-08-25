@@ -150,6 +150,93 @@ async function main() {
   ok('*** and serials still agree with stock ***', (await reconcileSerials(SITE)).length === 0)
   ok('  Σ movements still equals stock_on_hand', (await reconcileStock(SITE)).length === driftBefore)
 
+  /* ── The TILL path: the unit rides on the LINE (235) ──────────────────────
+     Until this existed nothing at a till could name a serial, so an online
+     sale was refused at the tender pad with the customer's card already out.
+     What is proved here is that a line carrying its own unit needs no
+     `serials` on the finalise input at all. */
+  {
+    const left = await availableSerials(SITE, phone)
+    const draft = await saveDraft(SITE, actor, {
+      docType: 'invoice', customerName: 'Walk-in',
+      lines: [{ productId: phone, productCode: `SER${stamp}`, description: `Smartphone ${stamp}`,
+        productType: 'serial', qty: 1, unitPriceIncl: 6900, vatRatePct: rate, unitCostExcl: 4000,
+        serialId: left[0]!.id }],
+    } as never)
+    ok('a draft accepts a unit named on the line', draft.ok, draft.ok ? '' : draft.error)
+    if (draft.ok) {
+      const reread = await getDocument(SITE, draft.id)
+      ok('  and it survives the round trip to the database',
+        reread?.lines[0]?.serialId === left[0]!.id,
+        `stored=${reread?.lines[0]?.serialId} expected=${left[0]!.id}`)
+
+      const posted = await finaliseDocument(SITE, actor, {
+        documentId: draft.id,
+        tenders: [{ tenderTypeId: cash.id, amount: 6900 }],
+        // NO `serials` key — the whole point.
+      })
+      ok('*** a line-carried unit posts with NO serials on the input ***',
+        posted.ok, posted.ok ? posted.documentNumber : posted.error)
+      ok('  and that exact unit is the one marked sold',
+        (await listSerials(SITE, { productId: phone, status: 'sold' })).items
+          .some((s) => s.id === left[0]!.id))
+      ok('  stock dropped again', (await stockOf(phone)) === 1, String(await stockOf(phone)))
+      ok('  serials still agree with stock', (await reconcileSerials(SITE)).length === 0)
+
+      /*
+       * Put the unit back, so everything downstream sees the fixture it was
+       * written against.
+       *
+       * This section was inserted into the middle of an existing suite, and
+       * the sections after it count from three phones. Renumbering their
+       * assertions to make room would be editing somebody else's proof to fit
+       * my test — so this one cleans up after itself instead. `markReturned`
+       * resellable is the same door a real credit note uses; the movement
+       * mirrors it, because serials and stock must never disagree.
+       */
+      const undo = await markReturned(SITE, actor, [left[0]!.id], { resellable: true })
+      ok('  the fixture is restored for the sections after this one', undo.ok)
+      await siteExecute(SITE,
+        "INSERT INTO stock_movements (product_id, location_id, movement_type, qty_change, qty_after, unit_cost_excl, source, user_id, user_name, note) VALUES (?,(SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1),'sale_return',1,2,4000,'credit_sale',1,'Serial Test','235 fixture restore')",
+        [phone])
+      await siteExecute(SITE, 'UPDATE products SET stock_on_hand = stock_on_hand + 1 WHERE id = ?', [phone])
+      await siteExecute(SITE,
+        'UPDATE product_location_stock SET stock_on_hand = stock_on_hand + 1 WHERE product_id = ? AND location_id = (SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1)',
+        [phone])
+      ok('  and stock is back where the next section expects it',
+        (await stockOf(phone)) === 2, String(await stockOf(phone)))
+    }
+  }
+
+  /* ── The same unit on two lines of ONE sale ───────────────────────────────
+     Only reachable since a line can carry its own unit. checkSellable cannot
+     catch it: asked separately, every line's unit is still in stock, because
+     none of them has been sold yet. Posting would retire one machine twice. */
+  {
+    const left = await availableSerials(SITE, phone)
+    const dup = await saveDraft(SITE, actor, {
+      docType: 'invoice', customerName: 'Walk-in',
+      lines: [
+        { productId: phone, productCode: `SER${stamp}`, description: `Smartphone ${stamp}`,
+          productType: 'serial', qty: 1, unitPriceIncl: 6900, vatRatePct: rate, unitCostExcl: 4000,
+          serialId: left[0]!.id },
+        { productId: phone, productCode: `SER${stamp}`, description: `Smartphone ${stamp}`,
+          productType: 'serial', qty: 1, unitPriceIncl: 6900, vatRatePct: rate, unitCostExcl: 4000,
+          serialId: left[0]!.id },
+      ],
+    } as never)
+    if (dup.ok) {
+      const both = await finaliseDocument(SITE, actor, {
+        documentId: dup.id, tenders: [{ tenderTypeId: cash.id, amount: 13800 }],
+      })
+      ok('*** the same unit on two lines is REFUSED ***', !both.ok,
+        both.ok ? 'it posted — one machine retired twice' : both.error)
+      ok('  and nothing moved', (await stockOf(phone)) === 2, String(await stockOf(phone)))
+      await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [dup.id])
+      await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [dup.id])
+    }
+  }
+
   const soldOne = (await listSerials(SITE, { productId: phone, status: 'sold' })).items[0]
   ok('*** the sold serial knows its invoice ***', soldOne?.soldDocNumber !== null, String(soldOne?.soldDocNumber))
   ok('*** and knows WHO bought it — the warranty question ***',

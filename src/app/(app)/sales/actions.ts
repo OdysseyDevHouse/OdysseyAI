@@ -32,6 +32,7 @@ import { setOrderDetails } from '@/lib/site/salesOrders'
 import { searchForTill, browseForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
 import { terminalStockLocationId } from '@/lib/site/terminals'
 import { lotsForTill, type TillLot } from '@/lib/site/batches'
+import { availableSerials } from '@/lib/site/serials'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
 import {
   searchCustomersForTill,
@@ -163,6 +164,26 @@ export async function lotsForProductAction(
   const locationId = await tillLocation(siteId, terminalId)
   if (!locationId) return []
   return lotsForTill(siteId, productId, locationId)
+}
+
+/**
+ * The individual units a clerk may hand over for one product (235).
+ *
+ * Scoped to the till's own room, like the lots beside it: a unit in the back
+ * warehouse is owned but not sellable at this counter, and offering it would
+ * have somebody promise a laptop that is in another building.
+ *
+ * Only what is IN STOCK — `availableSerials` filters to that — so a unit
+ * already sold, returned faulty or written off can never be offered.
+ */
+export async function serialsForProductAction(
+  productId: number,
+  terminalId?: number | null,
+): Promise<{ id: number; serial: string }[]> {
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
+  const units = await availableSerials(siteId, productId, await tillLocation(siteId, terminalId))
+  return units.map((unit) => ({ id: unit.id, serial: unit.serial }))
 }
 
 export async function searchCustomersAction(term: string): Promise<TillCustomer[]> {

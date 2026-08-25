@@ -78,6 +78,7 @@ import {
   browseProductsAction,
   scanAction,
   lotsForProductAction,
+  serialsForProductAction,
   finaliseSaleAction,
   createCreditNoteAction,
   saveSaleAction,
@@ -214,6 +215,7 @@ import type { Capability } from '@/lib/site/permissions'
 import type { OfflineSale } from '@/lib/posOffline/types'
 import { WeighModal } from './WeighModal'
 import { LotModal } from './LotModal'
+import { SerialModal } from './SerialModal'
 import type { TillLot } from '@/lib/site/batches'
 import { lotCaptureFor, type LotCapture } from '@/lib/gs1'
 import { GiftCardModal, GiftCardBalanceModal } from './GiftCardModal'
@@ -862,6 +864,17 @@ export default function PosShell({
   const [lotting, setLotting] = useState<{ product: TillProduct; qty: number } | null>(null)
   const [lotOptions, setLotOptions] = useState<TillLot[]>([])
   const [lotsLoading, setLotsLoading] = useState(false)
+
+  /**
+   * A serial-tracked product waiting for its unit (235).
+   *
+   * No qty carried, unlike `lotting`: one unit is one line, so the modal always
+   * confirms a quantity of exactly one. Adding three laptops is three trips
+   * through here, which is the point — each names its own machine.
+   */
+  const [serialling, setSerialling] = useState<TillProduct | null>(null)
+  const [serialOptions, setSerialOptions] = useState<{ id: number; serial: string }[]>([])
+  const [serialsLoading, setSerialsLoading] = useState(false)
 
   /**
    * The product being asked about, if any. Null closes the dialog.
@@ -1761,6 +1774,32 @@ export default function PosShell({
      */
     if (product.productType === 'gift_card' && !product.giftCardCode) {
       setGiftSelling(product)
+      return
+    }
+
+    /*
+     * A serial-tracked item needs to say WHICH unit before the line exists (235).
+     *
+     * Until this existed, nothing at a till could name one — so the sale was
+     * refused at the tender pad, with the customer's card already out. The
+     * offline path never reaches here: serial items are blocked at the tile
+     * above, because picking a unit needs the serial table.
+     *
+     * One unit per line, so the modal always adds a quantity of ONE regardless
+     * of what was asked for. Three laptops means three trips through here.
+     */
+    if (product.productType === 'serial' && !product.pickedSerialId) {
+      setSerialling(product)
+      setSerialOptions([])
+      setSerialsLoading(true)
+      if (product.id !== null) {
+        void serialsForProductAction(product.id, terminal?.id ?? null)
+          .then((rows) => setSerialOptions(rows))
+          .catch(() => setSerialOptions([]))
+          .finally(() => setSerialsLoading(false))
+      } else {
+        setSerialsLoading(false)
+      }
       return
     }
 
@@ -6902,6 +6941,23 @@ export default function PosShell({
               1,
             )
             toast.info(`Card ${card.display} on the slip — it activates when the sale completes.`)
+          }}
+        />
+      )}
+
+      {serialling && (
+        <SerialModal
+          product={serialling}
+          units={serialOptions}
+          loading={serialsLoading}
+          onCancel={() => setSerialling(null)}
+          onConfirm={(unit) => {
+            const product = serialling
+            setSerialling(null)
+            // The unit rides back through add() the way a confirmed weight
+            // does: the guard passes, the serial lands on the line, and that
+            // line will not merge with another of the same product.
+            add({ ...product, pickedSerialId: unit.id, pickedSerial: unit.serial }, 1)
           }}
         />
       )}

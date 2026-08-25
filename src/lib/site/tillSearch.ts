@@ -101,6 +101,16 @@ export type TillProduct = {
    * something about it. The LOT decides what stock moves; this never does.
    */
   scannedExpiry?: string
+  /**
+   * The individual unit being sold, chosen at the till (235).
+   *
+   * Set by the serial modal on the way into add() — the giftCardCode
+   * mechanism, carrying capture through the one funnel every add path shares.
+   * An id and its text together: the id is what posts, the text is what the
+   * line shows and the slip prints.
+   */
+  pickedSerialId?: number
+  pickedSerial?: string
 }
 
 type Row = RowDataPacket & Record<string, unknown>

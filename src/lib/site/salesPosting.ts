@@ -696,6 +696,9 @@ export async function finaliseDocument(
 
   // Serial-tracked lines need one identified unit per item sold, checked here
   // so a sale is refused before any stock moves rather than halfway through.
+  // Every unit this sale claims, across all its lines — see the cross-line
+  // check below.
+  const claimedSerials = new Set<number>()
   for (const line of document.lines) {
     if (!line.productId || line.productType !== 'serial') continue
 
@@ -722,7 +725,20 @@ export async function finaliseDocument(
       }
     }
 
-    const picked = input.serials?.[line.id] ?? []
+    /*
+     * The units this line sells, from either of the two places they come from
+     * (235).
+     *
+     * The LINE's own serial first — captured at the till when the item was
+     * added, and the only one of the two that survives a park or a recall.
+     * Then the finalise input, which is how job-card invoicing supplies units
+     * read off a technician's job card.
+     *
+     * Both, rather than one replacing the other: the line-carried unit made
+     * till sales possible at all, and the input-carried one was already
+     * working for invoicing. Neither path needs to know about the other.
+     */
+    const picked = line.serialId ? [line.serialId] : (input.serials?.[line.id] ?? [])
     const needed = Math.abs(round(line.qty, 0))
 
     if (picked.length !== needed) {
@@ -733,6 +749,27 @@ export async function finaliseDocument(
     }
     if (new Set(picked).size !== picked.length) {
       return { ok: false, error: `${line.description}: the same serial number is selected twice.` }
+    }
+
+    /*
+     * The same unit named on two DIFFERENT lines (235).
+     *
+     * Only reachable since a line can carry its own serial: with one unit per
+     * line, three laptops are three lines, and nothing else stops all three
+     * naming the same one. `checkSellable` cannot catch it — each line asks
+     * about its unit separately and every answer is "in stock", because none
+     * of them has been sold yet. The sale would post, `markSold` would run
+     * three times over one unit, and the shop would have handed over one
+     * laptop while its books recorded three leaving.
+     */
+    for (const serialId of picked) {
+      if (claimedSerials.has(serialId)) {
+        return {
+          ok: false,
+          error: `${line.description}: that unit is already on another line of this sale.`,
+        }
+      }
+      claimedSerials.add(serialId)
     }
 
     const sellable = await checkSellable(siteId, line.productId, picked)
@@ -1041,7 +1078,9 @@ export async function finaliseDocument(
 
         // Which individual units went out. In the SAME transaction as the
         // movement, so stock and serials can never disagree about what left.
-        const picked = input.serials?.[line.id]
+        // The line's own unit first, then the finalise input — the same two
+        // sources the guard above accepted, resolved the same way round (235).
+        const picked = line.serialId ? [line.serialId] : input.serials?.[line.id]
         if (line.productType === 'serial' && picked && picked.length > 0) {
           await markSold(tx, actor, {
             serialIds: picked,

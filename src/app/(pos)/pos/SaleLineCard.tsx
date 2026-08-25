@@ -194,7 +194,7 @@ export function SaleLineCard({
                 being lines of their own — on a fifteen-line tab, a modifier
                 that reads as its own item is a modifier somebody tries to
                 void. */}
-            {(line.instructions.length > 0 || line.note) && (
+            {(line.instructions.length > 0 || line.note || line.serialNo || line.batchNo) && (
               /* Ink, not muted. What is ON the burger is not secondary detail —
                  it is the half of the line the kitchen acts on, and a cashier
                  checking a wrong tap before payment is reading exactly this.
@@ -226,6 +226,28 @@ export function SaleLineCard({
                       ↳
                     </span>
                     <span className="min-w-0 italic">“{line.note}”</span>
+                  </span>
+                )}
+                {/* WHICH one is going out (234/235). In the same ↳ idiom as the
+                    modifiers because it is the same kind of fact — part of what
+                    this line IS, and the thing a cashier checks against the box
+                    in their hand before taking payment. A wrong serial here is
+                    a warranty claim months from now against a machine the
+                    customer never received. */}
+                {line.serialNo && (
+                  <span className="flex items-start gap-1.5">
+                    <span aria-hidden className="mt-px shrink-0 leading-none text-faint">
+                      ↳
+                    </span>
+                    <span className="min-w-0 numeric">{line.serialNo}</span>
+                  </span>
+                )}
+                {line.batchNo && (
+                  <span className="flex items-start gap-1.5">
+                    <span aria-hidden className="mt-px shrink-0 leading-none text-faint">
+                      ↳
+                    </span>
+                    <span className="min-w-0">Lot {line.batchNo}</span>
                   </span>
                 )}
               </span>

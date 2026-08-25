@@ -119,6 +119,8 @@ export type SalesLine = {
    * distinction a recall trace turns on.
    */
   batchNo: string | null
+  /** The individual unit this line sold, chosen at the till (235). */
+  serialId: number | null
   /**
    * The answers given when the till asked this product's questions.
    *
@@ -313,6 +315,7 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
       r.gift_card_code === null || r.gift_card_code === undefined ? null : String(r.gift_card_code),
     // Tolerant of a site that has not run 234, like kitchenGroup below.
     batchNo: r.batch_no === null || r.batch_no === undefined ? null : String(r.batch_no),
+    serialId: r.serial_id === null || r.serial_id === undefined ? null : Number(r.serial_id),
     instructions,
     note: String(r.line_note ?? ''),
     // Joined from the product; absent on a line whose product is gone, which
@@ -735,6 +738,19 @@ export type LineInput = {
    */
   batchNo?: string | null
   /**
+   * The individual unit this line sells, chosen at the till (235).
+   *
+   * An ID here rather than the text, unlike `batchNo` above — and the two
+   * differ for a reason. A lot may legitimately not be on file yet, so its
+   * number is evidence even when it matches nothing. A serial is the opposite:
+   * a unit that is not on the shelf cannot be handed over, so it must resolve
+   * to a real row or the sale is wrong. Serial products are already blocked
+   * offline, so there is always a database to resolve against.
+   *
+   * One per line — three laptops are three lines. See 235.
+   */
+  serialId?: number | null
+  /**
    * The answers given when the till asked this product's questions.
    *
    * Optional because most callers have none — a quote, a credit note, an
@@ -1116,8 +1132,8 @@ export async function saveDraft(
             department_id, sales_rep_id, source_line_id, sales_rep_user_id,
             qty, unit_price_incl, discount_pct, discount_incl,
             vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,
-            special_id, discount_code_id, gift_card_code, batch_no, line_note, ordered_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            special_id, discount_code_id, gift_card_code, batch_no, serial_id, line_note, ordered_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
           index + 1,
@@ -1142,6 +1158,7 @@ export async function saveDraft(
           line.discountCodeId ?? null,
           line.giftCardCode ?? null,
           line.batchNo?.trim().slice(0, 64) || null,
+          line.serialId ?? null,
           (line.note ?? '').trim().slice(0, 190),
           orderedAtSql(line.orderedAt),
         ] as never,

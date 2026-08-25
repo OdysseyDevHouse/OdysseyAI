@@ -252,6 +252,11 @@ export function salePayloadLines(
          entirely when nothing was captured, so a FEFO shop's payload is
          byte-identical to before this existed. */
       ...(line.batchNo ? { batchNo: line.batchNo } : {}),
+      /* The unit this line sells (235). Whitelisted for the same reason as
+         everything above it — and here the cost of forgetting is not a lost
+         note but a sale refused at the tender pad, which is the bug this
+         whole change exists to close. */
+      ...(line.serialId ? { serialId: line.serialId } : {}),
       /* When the line was first rung (167). Whitelisted for the same reason,
          and it MATTERS most on the save path a table takes: that rewrites the
          bill's lines wholesale, so a line's order time is only preserved

@@ -109,6 +109,16 @@ export type BasketLine = {
    */
   batchNo?: string
   /**
+   * The individual unit this line sells (235).
+   *
+   * One per line — three laptops are three lines, which is why a line carrying
+   * one never merges. The id is what posts; the text is what the card and the
+   * slip show, because "SN-4471" means something to a customer and `1843`
+   * does not.
+   */
+  serialId?: number
+  serialNo?: string
+  /**
    * The special that PUT this line in the basket, for a deal that hands
    * something over rather than reducing a price.
    *
@@ -201,6 +211,9 @@ export function lineFromProduct(
     orderedAt: Date.now(),
     ...(product.giftCardCode ? { giftCardCode: product.giftCardCode } : {}),
     ...(product.scannedBatchNo ? { batchNo: product.scannedBatchNo } : {}),
+    ...(product.pickedSerialId
+      ? { serialId: product.pickedSerialId, serialNo: product.pickedSerial ?? '' }
+      : {}),
   }
 }
 
@@ -410,7 +423,16 @@ export function addToBasket(
        * above takes the same shape for the same kind of reason.
        */
       l.batchNo === undefined &&
-      !product.scannedBatchNo,
+      !product.scannedBatchNo &&
+      /*
+       * A line carrying a SERIAL never merges either (235), and the reason is
+       * stronger than the lot one above: a serial identifies ONE OBJECT. A
+       * merged line of qty 2 would name a single unit and claim two left the
+       * shop — so the customer walks out with one laptop while the books
+       * retire two, and the second unit is unsellable ever after.
+       */
+      l.serialId === undefined &&
+      !product.pickedSerialId,
   )
 
   // A gift card never merges: each line names ITS card, and two cards folded
