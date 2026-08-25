@@ -32,6 +32,7 @@ import { setOrderDetails } from '@/lib/site/salesOrders'
 import { searchForTill, browseForTill, resolveScan, type TillProduct } from '@/lib/site/tillSearch'
 import { terminalStockLocationId } from '@/lib/site/terminals'
 import { lotsForTill, type TillLot } from '@/lib/site/batches'
+import { mainLocationId } from '@/lib/site/stockLocations'
 import { availableSerials } from '@/lib/site/serials'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
 import {
@@ -161,8 +162,18 @@ export async function lotsForProductAction(
 ): Promise<TillLot[]> {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
-  const locationId = await tillLocation(siteId, terminalId)
-  if (!locationId) return []
+  /*
+   * Null from `tillLocation` means MAIN, not "nowhere".
+   *
+   * A till only carries a `stock_location_id` when it deliberately OVERRIDES
+   * the shop's main room, so null is the ordinary case for most counters —
+   * `terminalStockLocationId` says so in as many words. Reading it as "no
+   * location" and returning an empty list left the picker with nothing to show
+   * on every till that had never been given a room, which is nearly all of
+   * them: the modal fell back to a typed box for lots that were sitting right
+   * there on file.
+   */
+  const locationId = (await tillLocation(siteId, terminalId)) ?? (await mainLocationId(siteId))
   return lotsForTill(siteId, productId, locationId)
 }
 
@@ -182,7 +193,19 @@ export async function serialsForProductAction(
 ): Promise<{ id: number; serial: string }[]> {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
-  const units = await availableSerials(siteId, productId, await tillLocation(siteId, terminalId))
+  /*
+   * Resolved to a REAL location id before the call, never passed through as
+   * null.
+   *
+   * `availableSerials` reads an explicit null as "every room, wherever it is"
+   * — which is what a stock take wants and is the opposite of what a counter
+   * wants. Since a till with no override resolves to null, passing it straight
+   * through would offer the cashier units sitting in the back warehouse and
+   * have them promise a laptop that is in another building. Null means MAIN
+   * here, which is what the till actually sells from.
+   */
+  const locationId = (await tillLocation(siteId, terminalId)) ?? (await mainLocationId(siteId))
+  const units = await availableSerials(siteId, productId, locationId)
   return units.map((unit) => ({ id: unit.id, serial: unit.serial }))
 }
 
