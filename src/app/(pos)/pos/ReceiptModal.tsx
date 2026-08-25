@@ -2,6 +2,7 @@
 
 import { Button, Icons, Modal } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+import { SuccessBurst } from './SuccessBurst'
 
 /**
  * What happened, immediately after the sale posts.
@@ -142,6 +143,34 @@ export function ReceiptModal({
       }
     >
       <div className="flex flex-col gap-4">
+        {/*
+          ── THE TICK, DRAWN ───────────────────────────────────────────────
+          The header's static tick answers "did that go through?" the moment
+          the panel paints. This one answers it a beat later and LOUDER, in
+          the place the cashier's eye is already heading — dead centre, above
+          the change.
+
+          It runs once and stops (see SuccessBurst): a loop would still be
+          celebrating while the next customer is being served. Purely
+          decorative, so it is hidden from screen readers — the dialog's own
+          title already says "Sale complete", and this repeats nothing.
+
+          A SQUARE box, matching the artwork's square viewBox. An SVG letterboxes
+          to preserve its aspect ratio, so the first attempt — full width, `h-32`
+          — fit a wide canvas into a short row and drew the disc at 51px, SMALLER
+          than the static tick already in the header. Square in, square out: at
+          `size-28` the disc gets its full 112px.
+
+          `size-28` and not larger because the panel above the fold also has to
+          hold the change and the invoice number on a 768-high till.
+          `overflow-visible` so the burst, which is drawn outside the viewBox,
+          flies across the padding instead of being clipped at this box's edge —
+          which is why the negative margins are safe: nothing here needs the
+          room the particles pass through. */}
+        <div className="-mb-2 -mt-1 flex shrink-0 justify-center">
+          <SuccessBurst className="size-28 overflow-visible" />
+        </div>
+
         {/*
           ── ALWAYS SHOWN, EVEN AT ZERO ────────────────────────────────────
           This used to render only when `change > 0`, which meant the panel a

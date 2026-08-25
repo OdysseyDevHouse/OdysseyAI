@@ -1593,7 +1593,14 @@ function ItemsEditor({
             ) : results.length === 0 ? (
               <p className="px-3 py-2 text-sm text-muted">Nothing matching “{term.trim()}”.</p>
             ) : (
-              <ul className="max-h-40 overflow-y-auto divide-y divide-border">
+              /* KEPT bounded, deliberately — this is the one nested scroller
+                 that earns its place. These are SEARCH RESULTS inside a long
+                 form: unbounded, forty matches would shove the rest of the form
+                 off the screen and the person would lose the fields they were
+                 filling in. 40 (160px) showed barely three rows, so it grows
+                 with the viewport while still capping well short of the form
+                 around it. */
+              <ul className="max-h-[28vh] min-h-40 overflow-y-auto divide-y divide-border">
                 {results.map((product) => (
                   <li key={product.id}>
                     {/* Not a kit Button: a full-width result row with a code

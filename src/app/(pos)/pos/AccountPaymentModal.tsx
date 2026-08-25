@@ -182,6 +182,11 @@ export function AccountPaymentModal({
       title="Take a payment"
       description="Money against a customer's account. Nothing to do with the sale on screen."
       size="lg"
+      /* The body grows and the RESULTS LIST scrolls inside it. On a till the
+         search box above must stay put while the rows scroll past — with the
+         default cap the whole body scrolled as one and took the field the
+         cashier was typing into with it. */
+      bodyPins
       footer={
         <>
           <Button variant="ghost" size="touch" onClick={onClose} disabled={busy}>
@@ -200,7 +205,7 @@ export function AccountPaymentModal({
         </>
       }
     >
-      <div className="flex flex-col gap-3">
+      <div className="flex min-h-0 flex-col gap-3">
         {/* ── Who is paying ──────────────────────────────────────────────── */}
         {account ? (
           <div className="flex items-center justify-between gap-3 rounded-card border border-border bg-surface-2 px-4 py-3">
@@ -258,7 +263,7 @@ export function AccountPaymentModal({
             {/* Taller than it was, for the same reason as CustomerModal: the
                 list now opens on the book rather than on a few search hits. */}
             {results.length > 0 && (
-              <div className="till-pane flex max-h-96 flex-col gap-2 overflow-y-auto">
+              <div className="till-pane flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                 {results.map((result) => (
                   <TouchRow
                     key={result.id}

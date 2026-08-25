@@ -76,6 +76,11 @@ export function DetailModal({
       size="lg"
       title={dimension ? TITLES[dimension] : ''}
       description={description}
+      /* A ranked list is exactly the shape the default 60vh cap gets wrong:
+         on a tall screen it showed a dozen rows through a letterbox with empty
+         desktop above and below. Still a MAX, so a three-row list is a small
+         dialog. */
+      bodyGrows
     >
       {error ? (
         <EmptyState
@@ -86,11 +91,12 @@ export function DetailModal({
       ) : loading ? (
         <p className="py-10 text-center text-sm text-muted">Loading…</p>
       ) : config ? (
-        // Tall lists scroll inside the modal so its header and the page behind
-        // it stay put.
-        <div className="max-h-[60vh] overflow-auto">
-          <RankedTable rows={rows} config={config} />
-        </div>
+        /* No inner cap. It used to be `max-h-[60vh] overflow-auto` INSIDE a
+           body that was itself capped at 60vh — the same ceiling twice, so the
+           table scrolled within a pane that was already scrolling. The modal
+           body does the scrolling now; the header and the page behind it stay
+           put exactly as before, because the panel itself never scrolls. */
+        <RankedTable rows={rows} config={config} />
       ) : null}
     </Modal>
   )

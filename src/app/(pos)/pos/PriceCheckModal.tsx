@@ -115,6 +115,11 @@ export function PriceCheckModal({
       title="Price check"
       description="What something costs on each of the shop's price types. Nothing is added until you say so."
       size="lg"
+      /* The body grows and the RESULTS LIST scrolls inside it. On a till the
+         search box above must stay put while the rows scroll past — with the
+         default cap the whole body scrolled as one and took the field the
+         cashier was typing into with it. */
+      bodyPins
       footer={
         checked ? (
           <>
@@ -149,7 +154,7 @@ export function PriceCheckModal({
           }}
         />
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex min-h-0 flex-col gap-3">
           <Field label="Find a product">
             <Input
               size="touch"
@@ -184,7 +189,7 @@ export function PriceCheckModal({
           )}
 
           {results.length > 0 && (
-            <div className="till-pane flex max-h-96 flex-col gap-2 overflow-y-auto">
+            <div className="till-pane flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
               {results.map((product) => (
                 <TouchRow
                   key={product.id}

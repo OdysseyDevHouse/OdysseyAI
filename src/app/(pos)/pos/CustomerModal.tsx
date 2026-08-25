@@ -101,6 +101,12 @@ export function CustomerModal({
       onClose={onClose}
       title="Customer"
       size="lg"
+      /* The body grows and the RESULTS LIST scrolls inside it, rather than the
+         whole body scrolling as one. On a till the search box and the attached
+         account must stay put while a hundred names scroll past them — with
+         the default cap the search box scrolled away with the results, which
+         on a touch screen means losing the field you are typing into. */
+      bodyPins
       footer={
         <>
           <Button variant="ghost" size="touch" onClick={onClose}>
@@ -124,7 +130,10 @@ export function CustomerModal({
         </>
       }
     >
-      <div className="flex flex-col gap-3">
+      {/* `min-h-0` so the results pane below can shrink instead of pushing the
+          column taller than the panel — the flex default is `min-height:auto`,
+          which is what makes a scrolling child grow past its parent instead. */}
+      <div className="flex min-h-0 flex-col gap-3">
         {/* ── The attached account, when there is one ─────────────────────
             Shown first and shown fully: this is the state the cashier is
             checking, and its credit line is the reason they opened this. */}
@@ -186,11 +195,13 @@ export function CustomerModal({
           />
         )}
 
-        {/* Taller than it was: this pane used to hold a few search hits and now
-            opens on a hundred names, so the extra rows are the difference
-            between scrolling and scrolling twice. */}
+        {/* Takes whatever height is left rather than a fixed 384px, so a tall
+            till shows twenty names and a short one still works. `min-h-0` is
+            what lets it shrink; without it the pane grows to fit its rows and
+            the scrollbar lands on the whole body instead, taking the search
+            box with it. */}
         {results.length > 0 && (
-          <div className="till-pane flex max-h-96 flex-col gap-2 overflow-y-auto">
+          <div className="till-pane flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             {results.map((result) => (
               <CustomerRow
                 key={result.id}

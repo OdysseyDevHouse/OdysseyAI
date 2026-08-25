@@ -148,6 +148,11 @@ export function SavedSalesModal({
       onClose={onClose}
       title="Saved sales"
       size="lg"
+      /* The body grows and the RESULTS LIST scrolls inside it. On a till the
+         search box above must stay put while the rows scroll past — with the
+         default cap the whole body scrolled as one and took the field the
+         cashier was typing into with it. */
+      bodyPins
       footer={
         <Button variant="ghost" size="touch" onClick={onClose}>
           Close
@@ -167,7 +172,7 @@ export function SavedSalesModal({
           hint="Park a basket with Save when a customer needs to step away, and it will be here."
         />
       ) : (
-        <div className="till-pane flex max-h-[52vh] flex-col gap-2 overflow-y-auto">
+        <div className="till-pane flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           {saved.map((doc) => (
             <div key={doc.key} className="flex items-stretch gap-2">
               <TouchRow

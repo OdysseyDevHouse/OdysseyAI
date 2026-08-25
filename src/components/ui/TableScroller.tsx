@@ -1,8 +1,8 @@
-"use client";
+'use client'
 
-import { useRef, type ReactNode } from "react";
-import { TABLE_FRAME, TABLE_SCROLLER } from "./styles";
-import { useFitViewport } from "./useFitViewport";
+import { useRef, type ReactNode } from 'react'
+import { TABLE_FRAME, TABLE_SCROLLER } from './styles'
+import { useFitViewport } from './useFitViewport'
 
 /**
  * The scroll box a wide table sits in, capped to the room left below it.
@@ -16,14 +16,14 @@ import { useFitViewport } from "./useFitViewport";
  */
 export function TableScroller({
   children,
-  className = "",
+  className = '',
 }: {
-  children: ReactNode;
+  children: ReactNode
   /** Extra classes for the box — padding, mostly. */
-  className?: string;
+  className?: string
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const cap = useFitViewport(ref);
+  const ref = useRef<HTMLDivElement>(null)
+  const cap = useFitViewport(ref)
 
   return (
     /* Gutter on the static frame, scrolling on the box inside it. Keeping the
@@ -35,5 +35,5 @@ export function TableScroller({
         {children}
       </div>
     </div>
-  );
+  )
 }

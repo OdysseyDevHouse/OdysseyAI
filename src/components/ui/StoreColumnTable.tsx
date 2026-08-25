@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode } from 'react'
 import {
   TABLE,
   TABLE_HEAD_ROW,
@@ -8,8 +8,8 @@ import {
   TABLE_NUMERIC,
   TABLE_TOTAL_ROW,
   TABLE_HEAD_STICKY,
-} from "./styles";
-import { TableScroller } from "./TableScroller";
+} from './styles'
+import { TableScroller } from './TableScroller'
 
 /**
  * A row per thing, a column per store, a group total on the right.
@@ -43,59 +43,58 @@ import { TableScroller } from "./TableScroller";
  */
 
 export type StoreColumn = {
-  siteId: number;
-  name: string;
+  siteId: number
+  name: string
   /** Rendered muted, so a store that could not be read still holds its column. */
-  failed?: boolean;
-};
+  failed?: boolean
+}
 
 export type StoreRow = {
   /** Stable key — a product code, an account code, a department id. */
-  key: string;
+  key: string
   /** The row's identity, leftmost. A string, or a code-plus-name cell. */
-  label: ReactNode;
+  label: ReactNode
   /**
    * One entry per column, in the same order as `columns`. `null` is "not
    * carried here" and renders as a dash; `0` is a real zero.
    */
-  values: (number | null)[];
+  values: (number | null)[]
   /** Overrides the computed row total — for a row whose total is not a sum. */
-  total?: number;
-};
+  total?: number
+}
 
 export function StoreColumnTable({
   columns,
   rows,
   format,
-  firstHeading = "Item",
-  totalHeading = "Total",
+  firstHeading = 'Item',
+  totalHeading = 'Total',
   totalsRow,
-  totalsLabel = "All stores",
+  totalsLabel = 'All stores',
   emptyNote,
 }: {
-  columns: StoreColumn[];
-  rows: StoreRow[];
+  columns: StoreColumn[]
+  rows: StoreRow[]
   /** How a figure is written — money, a quantity, a percentage. */
-  format: (value: number) => string;
-  firstHeading?: string;
-  totalHeading?: string;
+  format: (value: number) => string
+  firstHeading?: string
+  totalHeading?: string
   /**
    * The footer, one figure per column. Passed in rather than summed here: a
    * column of percentages or averages does not foot by addition, and a table
    * that silently adds them up would print a confidently wrong number.
    */
-  totalsRow?: (number | null)[];
-  totalsLabel?: string;
+  totalsRow?: (number | null)[]
+  totalsLabel?: string
   /** Shown under the table — what a dash means, where the figures came from. */
-  emptyNote?: ReactNode;
+  emptyNote?: ReactNode
 }) {
   const totalOf = (row: StoreRow): number =>
-    row.total ??
-    row.values.reduce<number>((t, v) => (v === null ? t : t + v), 0);
+    row.total ?? row.values.reduce<number>((t, v) => (v === null ? t : t + v), 0)
 
   const footTotal =
     totalsRow?.reduce<number>((t, v) => (v === null ? t : t + v), 0) ??
-    rows.reduce((t, r) => t + totalOf(r), 0);
+    rows.reduce((t, r) => t + totalOf(r), 0)
 
   return (
     <>
@@ -107,7 +106,7 @@ export function StoreColumnTable({
               {columns.map((c) => (
                 <th
                   key={c.siteId}
-                  className={`${TABLE_TH} ${TABLE_NUMERIC} ${c.failed ? "text-faint" : ""}`}
+                  className={`${TABLE_TH} ${TABLE_NUMERIC} ${c.failed ? 'text-faint' : ''}`}
                 >
                   {c.name}
                 </th>
@@ -120,17 +119,11 @@ export function StoreColumnTable({
               <tr key={row.key} className={TABLE_ROW}>
                 <td className={TABLE_TD}>{row.label}</td>
                 {row.values.map((value, i) => (
-                  <td
-                    key={columns[i]?.siteId ?? i}
-                    className={`${TABLE_TD} ${TABLE_NUMERIC}`}
-                  >
+                  <td key={columns[i]?.siteId ?? i} className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                     {value === null ? (
                       /* Not carried here. Title text because a dash on its own
                          is ambiguous to anyone who has not read the note. */
-                      <span
-                        className="text-faint"
-                        title="Not carried at this store"
-                      >
+                      <span className="text-faint" title="Not carried at this store">
                         —
                       </span>
                     ) : (
@@ -138,9 +131,7 @@ export function StoreColumnTable({
                     )}
                   </td>
                 ))}
-                <td
-                  className={`${TABLE_TD} ${TABLE_NUMERIC} font-medium text-ink`}
-                >
+                <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-medium text-ink`}>
                   {format(totalOf(row))}
                 </td>
               </tr>
@@ -155,11 +146,7 @@ export function StoreColumnTable({
                     key={columns[i]?.siteId ?? i}
                     className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold`}
                   >
-                    {value === null ? (
-                      <span className="text-faint">—</span>
-                    ) : (
-                      format(value)
-                    )}
+                    {value === null ? <span className="text-faint">—</span> : format(value)}
                   </td>
                 ))}
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC} font-semibold`}>
@@ -173,7 +160,7 @@ export function StoreColumnTable({
 
       {emptyNote && <p className="px-4 py-3 text-xs text-muted">{emptyNote}</p>}
     </>
-  );
+  )
 }
 
 /**
@@ -182,20 +169,17 @@ export function StoreColumnTable({
  * A store that ranges none of these lines has no total — printing 0 would claim
  * it stocks them all and has none of any, which is the opposite of true.
  */
-function columnSums(
-  columns: StoreColumn[],
-  rows: StoreRow[],
-): (number | null)[] {
+function columnSums(columns: StoreColumn[], rows: StoreRow[]): (number | null)[] {
   return columns.map((_, i) => {
-    let sum = 0;
-    let sawValue = false;
+    let sum = 0
+    let sawValue = false
     for (const row of rows) {
-      const v = row.values[i];
+      const v = row.values[i]
       if (v !== null && v !== undefined) {
-        sum += v;
-        sawValue = true;
+        sum += v
+        sawValue = true
       }
     }
-    return sawValue ? sum : null;
-  });
+    return sawValue ? sum : null
+  })
 }

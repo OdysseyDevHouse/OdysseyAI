@@ -104,13 +104,18 @@ export function OutboxModal({
       onClose={onClose}
       title="Sales held on this till"
       size="lg"
+      /* The body grows and the RESULTS LIST scrolls inside it. On a till the
+         search box above must stay put while the rows scroll past — with the
+         default cap the whole body scrolled as one and took the field the
+         cashier was typing into with it. */
+      bodyPins
       footer={
         <Button variant="ghost" size="touch" onClick={onClose}>
           Close
         </Button>
       }
     >
-      <div className="flex flex-col gap-3">
+      <div className="flex min-h-0 flex-col gap-3">
         {/* The thing a cashier most needs to be told, and would otherwise learn from
             a cash-up that does not balance. closeShift derives its expected figure
             from posted sales, so an unsynced one makes the drawer read as over. */}
@@ -137,7 +142,7 @@ export function OutboxModal({
             hint="Every sale rung up on this till is on the books."
           />
         ) : (
-          <div className="till-pane flex max-h-[52vh] flex-col gap-2 overflow-y-auto">
+          <div className="till-pane flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
             {rows.map((row) => (
               <div key={row.saleUid} className="flex flex-col gap-2">
                 <div className="flex items-stretch gap-2">
