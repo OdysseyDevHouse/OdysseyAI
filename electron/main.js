@@ -8,7 +8,8 @@ const http = require('node:http')
 const runtimeConfig = require('./runtimeConfig')
 const localDb = require('./localDb')
 const replicationTunnel = require('./replicationTunnel')
-const { isPos, startPath, posNavigation } = require('./appRole')
+const { isPos, isDatabaseSetup, startPath, posNavigation, setupNavigation } = require('./appRole')
+const dbSetupBridge = require('./dbSetupBridge')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
@@ -41,6 +42,17 @@ let appOrigin = null
  * session has expired, and that screen belongs in the same window as the till
  * it is unlocking.
  */
+/**
+ * What this window is called, which is the one place the three builds announce
+ * themselves to the operating system — taskbar, alt-tab, and the title bar a
+ * technician reads before deciding they opened the wrong program.
+ */
+function windowTitle() {
+  if (isPos()) return 'Odyssey Point of Sale'
+  if (isDatabaseSetup()) return 'Odyssey Database Setup'
+  return 'Odyssey Back Office'
+}
+
 function isTillUrl(url) {
   try {
     const target = new URL(url)
@@ -153,11 +165,33 @@ async function createWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#0f1216',
-    title: isPos() ? 'Odyssey Point of Sale' : 'Odyssey Back Office',
+    title: windowTitle(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      /* ── WITHOUT THIS THE PRELOAD DOES NOT RUN AT ALL ──────────────────────
+       *
+       * Electron has sandboxed renderers by DEFAULT since v20, and a sandboxed
+       * preload gets a polyfilled `require` that knows `electron` and little
+       * else — no node:fs, no node:crypto, no relative files. preload.js needs
+       * all three: machineId() writes the device id, and appRole() reads the
+       * baked role out of package.json.
+       *
+       * So it threw on its first require and never reached
+       * exposeInMainWorld, leaving `window.odyssey` undefined in every
+       * PACKAGED build. Nothing complained, because everything reading it
+       * treats absence as "this is a browser" — a legal state with a sensible
+       * fallback. The cost was silent: the till build showed back-office
+       * buttons it should have hidden, and the device id fell back to a
+       * browser-generated one that a cleared profile would change.
+       *
+       * contextIsolation stays ON, which is the protection that matters: the
+       * renderer still cannot touch Node, and reaches only the named surface
+       * preload exposes. Turning the sandbox off gives the PRELOAD Node back,
+       * not the page.
+       */
+      sandbox: false,
     },
   })
 
@@ -187,7 +221,10 @@ async function createWindow() {
        would be a duplicate of the screen the cashier is looking at — with its
        own claim on a table and its own half-scanned basket. Everything external
        still goes to the browser, via the branch below. */
-    if (isTillUrl(url) && !isPos()) {
+    /* The setup wizard is excluded alongside the till, for the opposite
+       reason: the till already IS the till, and this build has no till to open
+       — nor a shop to open it against, until it has finished running. */
+    if (isTillUrl(url) && !isPos() && !isDatabaseSetup()) {
       /* One till, not one per press: the link carries a NAMED target, and a
          named target reuses the window already opened under that name. */
       return {
@@ -248,9 +285,13 @@ async function createWindow() {
    * being silently swallowed: a waiter following a help link should get the
    * help page, just not inside the till.
    */
-  if (isPos()) {
+  /* Odyssey Database Setup is guarded for the same reason and by the same
+     shape of rule: it ships without a back office, so a link into one must not
+     open a screen this machine has no business showing. */
+  const guard = isPos() ? posNavigation : isDatabaseSetup() ? setupNavigation : null
+  if (guard) {
     mainWindow.webContents.on('will-navigate', (event, url) => {
-      const verdict = posNavigation(url, appOrigin)
+      const verdict = guard(url, appOrigin)
       if (verdict === 'allow') return
 
       event.preventDefault()
@@ -266,6 +307,22 @@ async function createWindow() {
        have hung. */
     mainWindow.show()
     await mainWindow.loadFile(path.join(__dirname, 'starting.html'))
+
+    /* ── BEFORE THE SERVER STARTS, NOT AFTER ──────────────────────────────
+     *
+     * The wizard's routes authenticate on a key held in the environment the
+     * Next server inherits. Minting it afterwards would leave the server
+     * reading an unset variable, and every setup call would 404 against its own
+     * front end. Only this build mints one, which is also what decides that
+     * only this build HAS those routes.
+     */
+    if (isDatabaseSetup()) {
+      dbSetupBridge.installKey(process.env)
+      dbSetupBridge.register({
+        getOrigin: () => appOrigin,
+        getWindow: () => mainWindow,
+      })
+    }
 
     await prepareRuntime((message) => {
       /* Best-effort: a progress line that cannot be delivered must never be the
@@ -289,8 +346,9 @@ async function createWindow() {
     return
   }
 
-  /* The till lands on /pos; the back office on the root. See appRole.startPath
-     for why the till does not go to a sign-in page first. */
+  /* The till lands on /pos, the setup wizard on /database-setup, the back
+     office on the root. See appRole.startPath for why neither of the first two
+     goes to a sign-in page first. */
   await mainWindow.loadURL(`${url}${startPath()}`.replace(/\/$/, ''))
 }
 

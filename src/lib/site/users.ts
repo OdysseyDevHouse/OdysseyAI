@@ -169,8 +169,27 @@ async function validate(
   if (!name) return { ok: false, error: 'Enter a name.' }
   if (name.length > 120) return { ok: false, error: 'That name is too long.' }
 
+  /* ── WHAT A BACK-OFFICE USER SIGNS IN WITH DEPENDS ON THE INSTALL ─────────
+   *
+   * On a cloud site the credential is an email and a password held upstream in
+   * `cp2_users`, so a back-office user without an email has no way in and the
+   * screen should say so at the point of creation rather than later.
+   *
+   * A local Electron install has no upstream. Its credential is the name and
+   * PIN on this very row — see lib/localSignIn.ts — and an email there is a
+   * contact detail, not a way in. Insisting on one would block the shop's own
+   * Users screen, and block the store owner the setup wizard has to create
+   * before anybody can sign in at all.
+   */
   if (input.userType === 'back_office' && !input.email?.trim()) {
-    return { ok: false, error: 'A back office user needs an email address to sign in with.' }
+    const { resolveOfflineSite } = await import('../licence/offlineSite')
+    const local = await resolveOfflineSite()
+    if (!local) {
+      return { ok: false, error: 'A back office user needs an email address to sign in with.' }
+    }
+    if (input.pin === null) {
+      return { ok: false, error: 'A back office user needs a PIN to sign in with.' }
+    }
   }
 
   if (input.pin !== null) {

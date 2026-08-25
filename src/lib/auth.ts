@@ -675,9 +675,26 @@ export async function requireSiteUser(): Promise<{
   const session = await requireSession()
   const site = await requireSite()
 
-  let user = await getUserByControlId(site.id, session.userId)
-  if (!user) {
-    user = await adoptControlUser(site.id, session.userId, session.name, session.email)
+  let user
+  if (session.scope === 'site') {
+    /* ── A LOCAL INSTALL: `userId` IS ALREADY THIS TABLE'S OWN ──────────────
+     *
+     * Signed in with a name and a PIN against the shop's own `users` table, so
+     * there is no control account to look up and nothing to adopt. Falling
+     * through to the branch below would search `control_user_id` for a value
+     * that is a `users.id` — two small integers from different tables — and
+     * quietly return the wrong person, or adopt one who does not exist.
+     *
+     * A row that has gone is a signed-out session, not a reason to invent one:
+     * the account was deleted on this machine while its cookie was still live.
+     */
+    user = await getUser(site.id, session.userId)
+    if (!user) redirect('/login')
+  } else {
+    user = await getUserByControlId(site.id, session.userId)
+    if (!user) {
+      user = await adoptControlUser(site.id, session.userId, session.name, session.email)
+    }
   }
 
   if (!user.isActive) redirect('/select-site?inactive=1')

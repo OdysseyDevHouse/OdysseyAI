@@ -1,11 +1,24 @@
 import Image from 'next/image'
 import { ShieldCheck } from '@/components/ui/icons'
 import LoginForm from './login/LoginForm'
+import LocalLoginForm from './login/LocalLoginForm'
+import { localSiteId } from '@/lib/localSignIn'
 import styles from './login.module.css'
 
 /**
  * The landing page and the real sign-in. Authenticates against cp2_users in the
  * control database; on success the session opens the user's default site.
+ *
+ * ── EXCEPT ON A SHOP'S OWN MACHINE ─────────────────────────────────────────
+ *
+ * A local Electron install has no control database to ask. Its staff were
+ * created on the machine and exist nowhere else, so it signs in with a name and
+ * a PIN against the shop's own `users` table — see lib/localSignIn.ts, and
+ * docs/plans/database-setup-app.md for why the model settled that way.
+ *
+ * Decided on the SERVER, from whether this machine has been told which shop it
+ * is. A client-side check would flash the wrong form on every load, and the
+ * wrong form here is one whose credentials cannot work.
  *
  * Presentation is a pixel-for-pixel port of the Odyssey POS login so the two
  * products share one front door — hence the local CSS module rather than the
@@ -18,6 +31,7 @@ export default async function HomePage({
   searchParams: Promise<{ next?: string; kicked?: string }>
 }) {
   const { next, kicked } = await searchParams
+  const local = await localSiteId()
 
   return (
     <div className={styles.wrapper}>
@@ -33,7 +47,9 @@ export default async function HomePage({
             unoptimized
           />
           <h1 className={styles.title}>Welcome back</h1>
-          <p className={styles.subtitle}>Sign in to your back office</p>
+          <p className={styles.subtitle}>
+            {local ? 'Sign in with your name and PIN' : 'Sign in to your back office'}
+          </p>
         </div>
 
         {/* WHY they are back here, when they did not ask to be.
@@ -48,7 +64,7 @@ export default async function HomePage({
           </div>
         )}
 
-        <LoginForm next={next ?? ''} />
+        {local ? <LocalLoginForm /> : <LoginForm next={next ?? ''} />}
 
         <div className={styles.secureNote}>
           <ShieldCheck size={15} strokeWidth={1.8} aria-hidden="true" />

@@ -72,6 +72,19 @@ extraResources:
       - '!cache{,/**/*}'
   - from: public
     to: app/public
+  # ── THE SCHEMA, SO A NEW DATABASE CAN BE GIVEN ONE ────────────────────────
+  #
+  # Odyssey Database Setup creates an empty database and then has to fill it —
+  # 254 files in sql/site, applied once each by electron/siteMigrate.js. Until
+  # this entry existed they were not in the package at all, so the wizard would
+  # have created a database with no tables in it and reported success.
+  #
+  # Next to the asar rather than inside it: read once on a machine that will
+  # never read them again, and a technician can open the one that failed.
+  #
+  # Not under app/ — this is the installer's own material, not the Next server's.
+  - from: sql
+    to: sql
   - from: node_modules
     to: app/node_modules
   # ── A COPY, NOT THE FILE ITSELF ────────────────────────────────────────────
@@ -92,6 +105,24 @@ extraResources:
     to: app/package.json
   - from: next.config.mjs
     to: app/next.config.mjs
+
+# ── THE MARKER THAT SAYS WHICH KIND OF INSTALL THIS IS ──────────────────────
+#
+# resolveInitialBackend() reads `backend.txt` from the directory holding the
+# EXECUTABLE — deliberately, because it describes the installer rather than the
+# machine, and must therefore survive an upgrade that replaces the app folder.
+#
+# extraFiles, not extraResources: resources/ is one level down, and the file has
+# to sit beside the .exe for that lookup to find it. docs/local-backend.md tells
+# a builder to `echo local > build/backend.txt`, and until this entry existed
+# nothing carried it into the package — so a local build shipped, silently, as
+# a cloud one and pointed every site query at the customer's own machine.
+#
+# A `from` that does not exist is skipped, so a cloud build simply omits it and
+# resolveInitialBackend falls through to its documented default of cloud.
+extraFiles:
+  - from: build/backend.txt
+    to: backend.txt
 
 win:
   target:

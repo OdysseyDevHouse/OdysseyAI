@@ -1,7 +1,7 @@
 // Minimal surface. The renderer is the same Next app the browser runs, so it
 // must not depend on anything here — this only exposes facts the web build can
 // read from NEXT_PUBLIC_APP_MODE instead.
-const { contextBridge } = require('electron')
+const { contextBridge, ipcRenderer } = require('electron')
 const { app } = require('electron')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -56,4 +56,46 @@ contextBridge.exposeInMainWorld('odyssey', {
    * web build genuinely does have a back office.
    */
   role: appRole(),
+  /**
+   * Odyssey Database Setup's own channels, and the first IPC in this app.
+   *
+   * ── A NAMED SURFACE, NOT A GENERIC ONE ────────────────────────────────────
+   *
+   * Every method here is one verb the wizard needs. There is deliberately no
+   * `invoke(channel, args)` escape hatch: a generic bridge means anything that
+   * ends up running in the renderer — a dependency, an injected script — can
+   * reach every handler the main process will ever have. The whole value of
+   * contextIsolation is that the renderer's reach is a list somebody wrote
+   * down.
+   *
+   * Present on every build, because preload has no cheap way to know the role
+   * before appRole() resolves and a missing bridge is harder to diagnose than a
+   * refused call. It is harmless elsewhere: nothing registers these handlers
+   * unless the build is the installer, so calling one on a till rejects.
+   *
+   * Note what does NOT come back. `plan()` answers the redacted plan; the real
+   * one, with the shop's database password in it, stays in main. See
+   * electron/dbSetupBridge.js.
+   */
+  dbSetup: {
+    signIn: (email, password) => ipcRenderer.invoke('db-setup:sign-in', { email, password }),
+    sites: () => ipcRenderer.invoke('db-setup:sites'),
+    plan: (siteId, allowFrom) => ipcRenderer.invoke('db-setup:plan', { siteId, allowFrom }),
+    provision: () => ipcRenderer.invoke('db-setup:provision'),
+    createOwner: (name, pin) => ipcRenderer.invoke('db-setup:create-owner', { name, pin }),
+    /**
+     * Progress lines while the database installs.
+     *
+     * Returns its own unsubscribe rather than exposing removeListener: handing
+     * the renderer a way to detach arbitrary listeners is the same generic
+     * reach the rest of this surface avoids. The callback is wrapped so the
+     * Electron event object — which carries a `sender` — never reaches renderer
+     * code.
+     */
+    onProgress: (callback) => {
+      const handler = (_event, message) => callback(String(message))
+      ipcRenderer.on('db-setup:progress', handler)
+      return () => ipcRenderer.removeListener('db-setup:progress', handler)
+    },
+  },
 })

@@ -30,3 +30,11 @@ Thumbs.db
 # Baked cloud credentials for a packaged desktop build — never commit.
 electron/buildDefaults.json
 build/app-package.json
+
+# MariaDB binaries for the Database Setup build — ~300MB of third-party
+# binaries on their own release cadence. See docs/local-backend.md.
+vendor/mariadb/
+
+# Per-BUILD marker, not a repo fact: committed, it would silently make every
+# build a local one. See docs/local-backend.md.
+build/backend.txt

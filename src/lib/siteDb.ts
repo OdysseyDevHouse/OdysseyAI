@@ -101,10 +101,70 @@ export async function listSiteDatabases(siteId: number): Promise<SiteDatabase[]>
   return rows.map(mapRow)
 }
 
+/**
+ * The connection this machine was GIVEN, when it was given one.
+ *
+ * ── WHY A LOCAL INSTALL CANNOT LOOK THIS UP ─────────────────────────────────
+ *
+ * The lookup below reads cp2_site_databases, which lives in the CONTROL
+ * database. On a cloud site that is right and is the single source of truth.
+ * On a shop's own machine it is impossible: the whole promise of a local
+ * install is that it opens on a morning when the line is down, and there is no
+ * local copy of that table to read instead.
+ *
+ * So Odyssey Database Setup — which DID have the control panel in front of it —
+ * writes the connection where this install can find it, and
+ * electron/runtimeConfig.js hands it over in the environment. See
+ * docs/plans/database-setup-app.md.
+ *
+ * This is the same idea as SITE_DB_HOST_OVERRIDE, which has always existed for
+ * exactly this problem and only ever covered one field of four.
+ *
+ * The trade is real and worth naming: an install holding these no longer hears
+ * about a change made in the control panel. Re-running Odyssey Database Setup
+ * is what re-points it — the "Retrieve new details" path, which already exists
+ * and is already safe to re-run.
+ */
+function givenConnection(siteId: number, purpose: SitePurpose): SiteDatabase | null {
+  const host = process.env.ODYSSEY_SITE_DB_HOST?.trim()
+  const name = process.env.ODYSSEY_SITE_DB_NAME?.trim()
+  const user = process.env.ODYSSEY_SITE_DB_USER?.trim()
+  const password = process.env.ODYSSEY_SITE_DB_PASSWORD
+  if (!host || !name || !user || !password) return null
+
+  /* One machine, one shop. A request for some OTHER site is not something to
+     answer from here — it would hand back this shop's database under another
+     shop's id, which is the worst possible way to be wrong. Fall through and
+     let the ordinary lookup fail honestly. */
+  const own = Number(process.env.ODYSSEY_SITE_ID)
+  if (!Number.isFinite(own) || own !== siteId) return null
+
+  /* Only the site's own master. A hybrid spool box is a different record with a
+     different lifecycle, and this file describes the one database Setup made. */
+  if (purpose !== 'master') return null
+
+  return {
+    id: 0,
+    siteId,
+    purpose,
+    locationName: 'This machine',
+    host,
+    port: Number(process.env.ODYSSEY_SITE_DB_PORT) || 3306,
+    databaseName: name,
+    username: user,
+    engine: 'mariadb',
+    status: 'active',
+    credentialsUsable: true,
+  }
+}
+
 export async function getSiteDatabase(
   siteId: number,
   purpose: SitePurpose,
 ): Promise<SiteDatabase | null> {
+  const given = givenConnection(siteId, purpose)
+  if (given) return given
+
   const row = await queryOne<SiteDbRow>(
     `${SELECT_DB} WHERE site_id = ? AND purpose = ? AND status = 'active' LIMIT 1`,
     [siteId, purpose],
@@ -137,15 +197,33 @@ export async function sitePool(siteId: number, purpose: SitePurpose): Promise<Po
   const cached = poolCache().get(cacheKey)
   if (cached) return cached
 
-  const row = await queryOne<SiteDbRow>(
-    `${SELECT_DB} WHERE site_id = ? AND purpose = ? AND status = 'active' LIMIT 1`,
-    [siteId, purpose],
-  )
-  if (!row) {
+  /* ── THE CONNECTION THIS MACHINE WAS GIVEN, BEFORE ASKING FOR ONE ─────────
+   *
+   * Checked here as well as in getSiteDatabase, and not merely for symmetry:
+   * this is the path that actually opens a socket. Reading it from
+   * cp2_site_databases would put a control-database query in front of every
+   * single site query, which is exactly the dependency a local install exists
+   * to be free of — the shop would stop trading when the line dropped.
+   *
+   * The password comes straight from the environment rather than through
+   * readPassword: it was never ENCRYPTION_KEY-encrypted, because it did not
+   * come from the control database. runtimeConfig unsealed it from DPAPI on the
+   * way in. */
+  const given = givenConnection(siteId, purpose)
+
+  const row = given
+    ? null
+    : await queryOne<SiteDbRow>(
+        `${SELECT_DB} WHERE site_id = ? AND purpose = ? AND status = 'active' LIMIT 1`,
+        [siteId, purpose],
+      )
+  if (!given && !row) {
     throw new SiteDbError(`No active "${purpose}" database configured for site ${siteId}.`)
   }
 
-  const password = readPassword(row.db_password_enc)
+  const password = given
+    ? { ok: true as const, value: String(process.env.ODYSSEY_SITE_DB_PASSWORD) }
+    : readPassword(row!.db_password_enc)
   if (!password.ok) {
     throw new SiteDbError(
       `Stored credentials for site ${siteId} "${purpose}" could not be decrypted — ` +
@@ -154,11 +232,11 @@ export async function sitePool(siteId: number, purpose: SitePurpose): Promise<Po
   }
 
   const pool = mysql.createPool({
-    host: resolveHost(row.server_host),
-    port: row.server_port || 3306,
-    user: row.db_username || '',
+    host: given ? given.host : resolveHost(row!.server_host),
+    port: given ? given.port : row!.server_port || 3306,
+    user: given ? given.username || '' : row!.db_username || '',
     password: password.value,
-    database: row.database_name,
+    database: given ? given.databaseName : row!.database_name,
     connectionLimit: Number(process.env.SITE_DB_CONNECTION_LIMIT || 5),
     waitForConnections: true,
     /*

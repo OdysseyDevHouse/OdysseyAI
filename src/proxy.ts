@@ -21,7 +21,22 @@ import { MOBILE_SHELL_COOKIE, MOBILE_SHELL_HEADER } from '@/lib/mobileShellKeys'
 // and reads no store — every value on it comes from exported constants in the
 // source, and the page opens no database connection. Exact, so a future
 // '/api-docs-internal' does not become public by accident.
-const PUBLIC_EXACT = ['/', '/pos-unlock', '/api-docs']
+// '/database-setup' is Odyssey Database Setup's only screen, and '/api/db-setup'
+// is the wizard's own back end. Both run BEFORE there is anything to have a
+// session with: the technician is installing the database that the users table
+// will eventually live in, so requiring a session here is asking them to sign in
+// to a shop that does not exist yet. Without this the middleware answers the
+// wizard's first call with a 401 before the route is reached.
+//
+// The API is not unguarded, and is guarded by something a cookie could not do
+// here anyway: main.js mints a random key at startup into the environment the
+// Next server inherits, and a caller that cannot present it gets a 404 — see
+// src/app/api/db-setup/route.ts. Only Odyssey Database Setup ever mints one, so
+// on a back office or a till these routes answer nothing at all.
+//
+// Exact for the screen, so a future '/database-setup-report' is not public by
+// accident. The API is one route rather than a prefix, for the same reason.
+const PUBLIC_EXACT = ['/', '/pos-unlock', '/api-docs', '/database-setup', '/api/db-setup']
 // `/store` is the customer-facing shop and is public BY DESIGN: shoppers have
 // no account here. It is not unguarded — every route under it resolves an
 // opaque signed token to a site and then reads only what that store has

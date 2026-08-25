@@ -81,6 +81,37 @@ withEnv('database', () => {
   check('ODYSSEY_ROLE=database is the installer', m.appRole() === 'database')
   check('the installer reports isDatabaseSetup', m.isDatabaseSetup() === true)
   check('the installer is not the till', m.isPos() === false)
+  /* Not the root: on this machine the login form would ask for an account
+     whose database does not exist yet, which is the reason somebody is running
+     the installer in the first place. */
+  check('the installer boots to its wizard', m.startPath() === '/database-setup')
+
+  const ORIGIN = 'http://localhost:4100'
+  const at = (p) => `${ORIGIN}${p}`
+  check('installer allows its own wizard', m.setupNavigation(at('/database-setup'), ORIGIN) === 'allow')
+  check(
+    'installer allows a step under it',
+    m.setupNavigation(at('/database-setup/confirm'), ORIGIN) === 'allow',
+  )
+  /* The whole point of the guard: this build ships without a back office, so a
+     link into one must not open a screen the machine has no business showing. */
+  for (const path of ['/', '/dashboard', '/pos', '/setup/users']) {
+    check(`installer refuses ${path}`, m.setupNavigation(at(path), ORIGIN) === 'refuse')
+  }
+  check(
+    'installer sends a foreign link to the browser',
+    m.setupNavigation('https://mariadb.org/download', ORIGIN) === 'external',
+  )
+  /* Origin before path, same hole the till guard closes: somebody else's
+     /database-setup is not ours. */
+  check(
+    'a foreign /database-setup is not ours',
+    m.setupNavigation('https://evil.example/database-setup', ORIGIN) === 'external',
+  )
+  check(
+    'no appOrigin refuses everything',
+    m.setupNavigation(at('/database-setup'), null) === 'refuse',
+  )
 })
 
 /* ── Junk falls back rather than throwing ────────────────────────────────── */
@@ -231,10 +262,24 @@ for (const [role, productName] of CONFIGS) {
      objects rather than replacing them — which is what lets the database build
      add MariaDB without losing .next — but that is library behaviour this
      depends on, so it is worth pinning rather than assuming. */
+  /* Asserted on the DESTINATION rather than the source, because one of them is
+     deliberately not the file it looks like: naming the repo's own package.json
+     as an extraResources source excluded it from the asar ROOT — every `from`
+     here is added to the app copier's exclude list — and Electron needs it there
+     to find `main`. So the Next app dir gets a staged copy instead. What has to
+     survive the merge is the payload, which is what `to` describes. */
   const from = (merged.extraResources || []).map((r) => r.from)
+  const to = (merged.extraResources || []).map((r) => r.to)
   for (const need of ['.next', 'public', 'node_modules', 'package.json', 'next.config.mjs']) {
-    check(`${role} still ships ${need}`, from.includes(need))
+    check(`${role} still ships ${need}`, to.includes(`app/${need}`))
   }
+  /* The schema has to travel with the installer. Odyssey Database Setup
+     creates an empty database and fills it from sql/site — 254 files applied by
+     electron/siteMigrate.js — and until this shipped, the wizard would have
+     created a database with no tables and called it done. Silent success is
+     the failure mode worth a test. */
+  check(`${role} ships the schema`, to.includes('sql'))
+
   const hasDb = from.includes('vendor/mariadb')
   check(
     role === 'database' ? 'database ships MariaDB' : `${role} ships no MariaDB`,

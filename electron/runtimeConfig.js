@@ -35,6 +35,7 @@
 // it generates its own on first run, because nothing it holds needs to be
 // readable by anyone else.
 const { app, safeStorage } = require('electron')
+const { isDatabaseSetup } = require('./appRole')
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
@@ -188,6 +189,29 @@ function resolveEnv() {
        is no control database to ask, and verified against the lease before it
        is trusted. */
     set('ODYSSEY_SITE_ID', cfg.siteId)
+
+    /* ── THE SITE'S OWN DATABASE, WITHOUT ASKING THE CONTROL PANEL ──────────
+     *
+     * siteDb.ts normally resolves a site's connection by reading
+     * cp2_site_databases — in the CONTROL database. That is right for a cloud
+     * site and impossible for this one: a local install must open on a morning
+     * when the line is down, and there is no local copy of that table.
+     *
+     * So an adopted install carries the whole connection, not just the host.
+     * SITE_DB_HOST_OVERRIDE already existed for exactly this shape of problem
+     * and only ever covered one field of four; these are the rest.
+     *
+     * Set only when adoption happened. A local install that provisioned itself
+     * the old way has no site database of its own to describe, and siteDb
+     * falls through to its usual lookup — see resolveSiteConnection there.
+     */
+    if (cfg.siteDbSealed) {
+      set('ODYSSEY_SITE_DB_HOST', cfg.siteDbHost || '127.0.0.1')
+      set('ODYSSEY_SITE_DB_PORT', cfg.dbPort)
+      set('ODYSSEY_SITE_DB_NAME', cfg.siteDbName)
+      set('ODYSSEY_SITE_DB_USER', cfg.siteDbUser)
+      set('ODYSSEY_SITE_DB_PASSWORD', unseal(cfg.siteDbSealed))
+    }
   } else {
     // Cloud: our servers, our shared secrets, baked at build time.
     const d = resolveBuildDefaults()
@@ -295,14 +319,85 @@ function resolveInitialBackend() {
  * already chosen keeps its choice and its credentials.
  */
 function ensureBackend() {
+  /* ── ODYSSEY DATABASE SETUP IS ALWAYS A CLOUD CLIENT ──────────────────────
+   *
+   * Whatever marker this build carries, the setup wizard's entire job is to
+   * authenticate against the CONTROL PANEL and read a site's connection
+   * details — on a machine where the local database does not exist yet, which
+   * is precisely why somebody is running it.
+   *
+   * Left to the branch below, a build marked `local` would resolve DB_HOST to
+   * 127.0.0.1 and try to sign the technician in against the very server it has
+   * been sent to install. And provisionLocal() would mint a database password
+   * before anybody had typed anything — credentials the control panel has never
+   * heard of, on a machine whose credentials are supposed to come FROM it.
+   *
+   * It is installing a local database; it is not itself a local install.
+   */
+  if (isDatabaseSetup()) {
+    const cfg = readConfig()
+    if (!cfg.backend) setCloudBackend()
+    return 'cloud'
+  }
+
   const chosen = resolveInitialBackend()
   if (chosen === 'local') {
+    /* ── ADOPT WHAT SETUP LEFT, RATHER THAN MINTING OUR OWN ─────────────────
+     *
+     * There are two ways a machine can come to have a local database, and only
+     * one of them may win on any given machine.
+     *
+     *   · Odyssey Database Setup created it, from credentials the control panel
+     *     already held. It left them in ProgramData for us — see machineConfig.
+     *   · provisionLocal() invents its own on first run, seals them under
+     *     DPAPI, and picks a port in 33060–33359.
+     *
+     * If both ran, the app would hold credentials for a database that does not
+     * exist and ignore the one that does. So the shared file wins whenever it
+     * is there: it describes a database that has actually been created, with a
+     * password the control panel can still tell support.
+     *
+     * provisionLocal stays for the machine nobody ran Setup on — see
+     * docs/local-backend.md, which is still how a self-provisioning install
+     * works — but it must never overwrite an adopted credential.
+     */
+    if (adoptMachineConfig()) return 'local'
     if (!isProvisioned()) provisionLocal()
     return 'local'
   }
   const cfg = readConfig()
   if (!cfg.backend) setCloudBackend()
   return 'cloud'
+}
+
+/**
+ * Take what Odyssey Database Setup left in ProgramData into this install's own
+ * config, sealing the password per Windows account on the way in.
+ *
+ * Idempotent, and deliberately one-way: once adopted, the sealed copy is the
+ * authority. Re-reading the shared file on every start would mean a stale copy
+ * left by an older run could quietly replace credentials that work.
+ *
+ * Returns whether this install now has an adopted local database.
+ */
+function adoptMachineConfig() {
+  const cfg = readConfig()
+  if (cfg.siteDbSealed && cfg.siteId) return true
+
+  const machineConfig = require('./machineConfig')
+  const shared = machineConfig.read()
+  if (!shared) return false
+
+  cfg.backend = 'local'
+  cfg.siteId = Number(shared.siteId)
+  cfg.siteCode = shared.siteCode || null
+  cfg.dbPort = Number(shared.port)
+  cfg.siteDbHost = shared.host
+  cfg.siteDbName = shared.databaseName
+  cfg.siteDbUser = shared.username
+  cfg.siteDbSealed = seal(String(shared.password))
+  writeConfig(cfg)
+  return true
 }
 
 /** Which backend this install points at. */

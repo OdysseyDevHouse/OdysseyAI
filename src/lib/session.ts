@@ -30,6 +30,29 @@ export type SessionPayload = {
    *      instead — see src/lib/control/devices.ts.
    */
   sid?: string
+  /**
+   * WHICH TABLE `userId` points at.
+   *
+   * Absent — the overwhelming majority — means `cp2_users.id`, in the control
+   * database, which is what every caller assumed when there was only one kind
+   * of sign-in. `requireSiteUser` reads it that way: it looks the person up by
+   * `control_user_id`, and adopts a local row when it finds none.
+   *
+   * `'site'` means `users.id` in the SHOP's own database. That is the only
+   * thing it can mean on a local Electron install, where sign-in is a name and
+   * a PIN checked against the shop's own table and there is no control account
+   * behind it at all — nothing was copied down from the cloud, and nothing is
+   * written back. See docs/plans/database-setup-app.md.
+   *
+   * Optional rather than required, for the same reason `sid` is: a token minted
+   * before this shipped keeps working, and keeps working as what it was.
+   *
+   * Getting this wrong is quiet rather than loud, which is why it is a field
+   * and not an inference: `control_user_id` and `users.id` are both small
+   * integers from different tables, so reading one as the other does not throw
+   * — it returns somebody else, or adopts a person who does not exist.
+   */
+  scope?: 'site'
 }
 
 function secret(): Uint8Array {

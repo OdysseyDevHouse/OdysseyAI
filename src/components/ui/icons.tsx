@@ -159,6 +159,9 @@ export {
   Landmark,
   Warehouse,
   Shapes,
+  // A single person, for the name field a local install signs in with —
+  // `Users` is the plural and reads as a list of staff, not as one identity.
+  User,
   // trading — sales documents, debtors and creditors
   Mail,
   Send,

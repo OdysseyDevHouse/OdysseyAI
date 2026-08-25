@@ -5,14 +5,17 @@
 // Connection details come from cp2_site_databases in the control database, with
 // the password decrypted exactly as the app does — so this runner and the
 // running app can never disagree about where a site's data lives.
-import { readdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createDecipheriv, scryptSync } from 'node:crypto'
 import mysql from 'mysql2/promise'
 
+/* The applying half lives beside the app rather than here, so the setup wizard
+   and this script cannot drift into two ideas of what "migrated" means. See
+   electron/siteMigrate.js for why it moved. */
+import { applyMigrations, ensureDatabase } from '../electron/siteMigrate.js'
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const migrationsDir = path.join(root, 'sql', 'site')
 
 const siteId = Number(process.argv[2])
 const probeOnly = process.argv.includes('--probe')
@@ -106,15 +109,14 @@ const base = {
 }
 
 // Create the database if it isn't there yet, so a brand-new site works.
-if (!/^[A-Za-z0-9_]+$/.test(cfg.database_name)) {
-  console.error(`Refusing to use database name with unexpected characters: ${cfg.database_name}`)
+const server = await mysql.createConnection(base)
+try {
+  await ensureDatabase(server, cfg.database_name)
+} catch (e) {
+  console.error(e.message)
+  await server.end()
   process.exit(1)
 }
-
-const server = await mysql.createConnection(base)
-await server.query(
-  `CREATE DATABASE IF NOT EXISTS \`${cfg.database_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
-)
 await server.end()
 
 const db = await mysql.createConnection({ ...base, database: cfg.database_name })
@@ -128,37 +130,13 @@ if (probeOnly) {
   process.exit(0)
 }
 
-await db.query(`
-  CREATE TABLE IF NOT EXISTS schema_migrations (
-    name       VARCHAR(190) NOT NULL,
-    applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (name)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-`)
-
-const [applied] = await db.query('SELECT name FROM schema_migrations')
-const done = new Set(applied.map((r) => r.name))
-const files = (await readdir(migrationsDir)).filter((f) => f.endsWith('.sql')).sort()
-
-let ran = 0
-for (const file of files) {
-  if (done.has(file)) continue
-  const sql = await readFile(path.join(migrationsDir, file), 'utf8')
-  process.stdout.write(`  applying ${file} ... `)
-  try {
-    // DDL auto-commits in MySQL, so a wrapping transaction would not roll a
-    // failed migration back. Each file must be safe to fix and re-run by hand;
-    // it is recorded only once it fully succeeds.
-    await db.query(sql)
-    await db.query('INSERT INTO schema_migrations (name) VALUES (?)', [file])
-    console.log('ok')
-    ran++
-  } catch (err) {
-    console.log('FAILED')
-    console.error('  ' + err.message)
-    await db.end()
-    process.exit(1)
-  }
+let ran
+try {
+  ran = await applyMigrations(db, { onProgress: (m) => console.log('  ' + m) })
+} catch (err) {
+  console.error(err.message)
+  await db.end()
+  process.exit(1)
 }
 
 console.log(ran ? `${ran} migration(s) applied` : 'already up to date')

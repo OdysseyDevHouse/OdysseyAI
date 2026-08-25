@@ -99,7 +99,13 @@ function isDatabaseSetup() {
  * auth gate, precisely so it can do that when a session has lapsed overnight.
  */
 function startPath() {
-  return isPos() ? '/pos' : '/'
+  if (isPos()) return '/pos'
+  /* Odyssey Database Setup is not a back office that happens to install a
+     database — it is a wizard, and it is the ONLY thing that build does. It
+     therefore opens on its own screen rather than the login form, which on this
+     machine would ask for an account whose database does not exist yet. */
+  if (isDatabaseSetup()) return '/database-setup'
+  return '/'
 }
 
 /**
@@ -134,6 +140,74 @@ function isPosPath(url) {
 }
 
 /**
+ * Where the database-setup build is allowed to go.
+ *
+ * Narrower than the till's list, because this build has fewer legitimate
+ * destinations than any other: there is no shop yet, no session, and nothing to
+ * sign in to. Everything the wizard needs lives under one path.
+ *
+ * `/not-allowed` is not here for the reason it is on the till list — nothing in
+ * this build checks a capability — but a refusal has to land somewhere, and a
+ * blank window is worse than a page that explains itself.
+ */
+function isSetupPath(url) {
+  try {
+    const { pathname, protocol } = new URL(url)
+    if (protocol !== 'http:' && protocol !== 'https:') return false
+    return pathname === '/database-setup' || pathname.startsWith('/database-setup/')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The origin reasoning both role guards need, kept in one place.
+ *
+ * Extracted rather than copied: the ORDER of these checks is the whole point —
+ * see posNavigation — and two copies would eventually disagree about it.
+ * `isAllowedPath` is the only thing that varies between roles.
+ */
+function navigationFor(url, appOrigin, isAllowedPath) {
+  /* Origin not yet known — the app is still starting. Nothing can be judged
+     foreign, so nothing may be sent to a browser: doing so would open the shop
+     itself in Chrome, in a different profile with no session and no outbox.
+     Refuse everything until startup has said where we live. */
+  if (!appOrigin) return 'refuse'
+
+  let sameOrigin = false
+  try {
+    sameOrigin = new URL(url).origin === appOrigin
+  } catch {
+    sameOrigin = false
+  }
+
+  if (sameOrigin) return isAllowedPath(url) ? 'allow' : 'refuse'
+
+  /* Not ours, and not parseable as a web URL either — a javascript: or file:
+     target has no business replacing the window, and must not be handed to the
+     shell. Refuse rather than externalise. */
+  try {
+    const { protocol } = new URL(url)
+    if (protocol !== 'http:' && protocol !== 'https:') return 'refuse'
+  } catch {
+    return 'refuse'
+  }
+
+  return 'external'
+}
+
+/**
+ * What the database-setup build should do with a main-window navigation.
+ *
+ * Same three verdicts as the till, and the same reason for having them: this
+ * build ships without a back office, so a link into one must not open a window
+ * the machine has no business showing.
+ */
+function setupNavigation(url, appOrigin) {
+  return navigationFor(url, appOrigin, isSetupPath)
+}
+
+/**
  * What the till build should do with a main-window navigation.
  *
  *   'allow'    — one of our own screens a till may show.
@@ -155,32 +229,7 @@ function isPosPath(url) {
  * open the shop in the user's browser.
  */
 function posNavigation(url, appOrigin) {
-  /* Origin not yet known — the app is still starting. Nothing can be judged
-     foreign, so nothing may be sent to a browser: doing so would open the shop
-     itself in Chrome, in a different profile with no session and no outbox.
-     Refuse everything until startup has said where we live. */
-  if (!appOrigin) return 'refuse'
-
-  let sameOrigin = false
-  try {
-    sameOrigin = new URL(url).origin === appOrigin
-  } catch {
-    sameOrigin = false
-  }
-
-  if (sameOrigin) return isPosPath(url) ? 'allow' : 'refuse'
-
-  /* Not ours, and not parseable as a web URL either — a javascript: or file:
-     target has no business replacing the till, and must not be handed to the
-     shell. Refuse rather than externalise. */
-  try {
-    const { protocol } = new URL(url)
-    if (protocol !== 'http:' && protocol !== 'https:') return 'refuse'
-  } catch {
-    return 'refuse'
-  }
-
-  return 'external'
+  return navigationFor(url, appOrigin, isPosPath)
 }
 
 /** Test seam. The role is decided once per process everywhere else. */
@@ -195,6 +244,8 @@ module.exports = {
   startPath,
   isPosPath,
   posNavigation,
+  isSetupPath,
+  setupNavigation,
   resetForTests,
   ROLES,
   POS_ALLOWED_EXACT,
