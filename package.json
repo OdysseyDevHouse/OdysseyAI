@@ -164,6 +164,7 @@
     "test:gift-cards": "tsx --conditions=react-server --env-file=.env scripts/test-gift-cards.ts",
     "test:batches": "tsx --conditions=react-server --env-file=.env scripts/test-batches.ts",
     "test:lot-capture": "tsx --conditions=react-server --env-file=.env scripts/test-lot-capture.ts",
+    "test:block-tests": "tsx --conditions=react-server --env-file=.env scripts/test-block-tests.ts",
     "test:online-phase10": "tsx --conditions=react-server --env-file=.env scripts/test-online-phase10.ts",
     "test:totp": "tsx scripts/test-totp.ts",
     "test:two-factor": "tsx --conditions=react-server --env-file=.env scripts/test-two-factor.ts",
