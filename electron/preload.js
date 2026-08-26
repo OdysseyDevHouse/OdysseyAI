@@ -77,6 +77,18 @@ contextBridge.exposeInMainWorld('odyssey', {
    * one, with the shop's database password in it, stays in main. See
    * electron/dbSetupBridge.js.
    */
+  /**
+   * What went wrong, for the app's own error screen.
+   *
+   * Present on every build. Absent in a browser, where the error screen falls
+   * back to showing the digest alone — which is all the web build could offer
+   * anyway.
+   */
+  diagnostics: {
+    recentErrors: () => ipcRenderer.invoke('diagnostics:recent-errors'),
+    logPath: () => ipcRenderer.invoke('diagnostics:log-path'),
+    openLog: () => ipcRenderer.invoke('diagnostics:open-log'),
+  },
   dbSetup: {
     signIn: (email, password) => ipcRenderer.invoke('db-setup:sign-in', { email, password }),
     sites: () => ipcRenderer.invoke('db-setup:sites'),

@@ -2,7 +2,7 @@
 // packaged build it boots Next's production server in-process and loads
 // localhost. Either way the app is the same Next build as the web deployment —
 // that's the whole point of this shell.
-const { app, BrowserWindow, shell, dialog } = require('electron')
+const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron')
 const path = require('node:path')
 const http = require('node:http')
 const runtimeConfig = require('./runtimeConfig')
@@ -381,6 +381,27 @@ if (!app.requestSingleInstanceLock()) {
       platform: `${process.platform} ${process.arch}`,
     })
     if (file) console.log(`[odyssey] logging to ${file}`)
+
+    /* ── LET THE ERROR SCREEN SHOW THE ERROR ────────────────────────────────
+     *
+     * Next strips a server error's message before the browser sees it, leaving
+     * a digest number. That is right for a public web app, where the reader
+     * might be anybody. Here the only person who can read the screen is the one
+     * standing at the machine — hiding the cause from them buys nothing and
+     * costs a phone call.
+     *
+     * Over IPC rather than an HTTP route, deliberately: a route that serves log
+     * text would be readable by anything else on the machine that can reach
+     * localhost, and this is only ever for the app's own error screen.
+     */
+    ipcMain.handle('diagnostics:recent-errors', () => log.recent())
+    ipcMain.handle('diagnostics:log-path', () => log.pathOf())
+    ipcMain.handle('diagnostics:open-log', () => {
+      const file = log.pathOf()
+      if (file) shell.showItemInFolder(file)
+      return file
+    })
+
     return createWindow()
   })
 

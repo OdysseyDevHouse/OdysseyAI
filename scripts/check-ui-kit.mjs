@@ -60,8 +60,18 @@ const RULES = [
 /** Only these are UI files; a .ts lib module has no business being checked. */
 const UI_FILE = /\.(?:tsx|jsx)$/
 
-/** The kit itself defines the primitives, so it is exempt by definition. */
-const EXEMPT = /[\\/]components[\\/]ui[\\/]|[\\/]app[\\/]globals\.css$/
+/**
+ * The kit itself defines the primitives, so it is exempt by definition.
+ *
+ * `global-error.tsx` is the one screen that cannot use the kit at all. It
+ * REPLACES the root layout — that is what makes it the global error boundary —
+ * and the app's stylesheet is linked from that layout, so no Tailwind class
+ * reaches it and no token is defined. It renders its own <html> and <body> with
+ * inline styles because those are the only styles that survive the failure it
+ * exists to report. Exempt as a file rather than line by line, so the reason is
+ * written down once instead of repeated at every colour.
+ */
+const EXEMPT = /[\\/]components[\\/]ui[\\/]|[\\/]app[\\/]globals\.css$|[\\/]app[\\/]global-error\.tsx$/
 
 function stripComments(source) {
   // Rules match on code, not prose: a comment saying "never write bg-blue-600"

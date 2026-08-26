@@ -26,6 +26,18 @@ const path = require('node:path')
 let stream = null
 let logPath = null
 
+/* The last few failures, kept in memory so a screen can show them.
+ *
+ * Next strips the message from a server error before the browser sees it —
+ * correctly, for a public web app, where the reader might be anybody. A desktop
+ * install is the opposite case: the only person who can read this screen is the
+ * one standing at the machine, and hiding the cause from them buys nothing and
+ * costs a support call.
+ *
+ * Bounded, because this is a diagnostic and not a history. */
+const recentErrors = []
+const RECENT_LIMIT = 25
+
 /** Keep the last few runs, so "it broke yesterday" is still answerable. */
 function rotate(file) {
   try {
@@ -85,7 +97,12 @@ function start(userDataDir, meta = {}) {
       const original = console[level]
       console[level] = (...args) => {
         try {
-          stream?.write(line(level.toUpperCase(), args))
+          const text = line(level.toUpperCase(), args)
+          stream?.write(text)
+          if (level === 'error') {
+            recentErrors.push(text.trimEnd())
+            if (recentErrors.length > RECENT_LIMIT) recentErrors.shift()
+          }
         } catch {
           /* Never let logging break the thing being logged. */
         }
@@ -93,20 +110,18 @@ function start(userDataDir, meta = {}) {
       }
     }
 
-    process.on('uncaughtException', (err) => {
+    const fatal = (label) => (payload) => {
       try {
-        stream?.write(line('FATAL', ['uncaughtException', err]))
+        const text = line('FATAL', [label, payload])
+        stream?.write(text)
+        recentErrors.push(text.trimEnd())
+        if (recentErrors.length > RECENT_LIMIT) recentErrors.shift()
       } catch {
         /* as above */
       }
-    })
-    process.on('unhandledRejection', (reason) => {
-      try {
-        stream?.write(line('FATAL', ['unhandledRejection', reason]))
-      } catch {
-        /* as above */
-      }
-    })
+    }
+    process.on('uncaughtException', fatal('uncaughtException'))
+    process.on('unhandledRejection', fatal('unhandledRejection'))
 
     return logPath
   } catch {
@@ -121,4 +136,9 @@ function pathOf() {
   return logPath
 }
 
-module.exports = { start, pathOf }
+/** The most recent failures, newest last. Empty when nothing has gone wrong. */
+function recent() {
+  return recentErrors.slice()
+}
+
+module.exports = { start, pathOf, recent }
