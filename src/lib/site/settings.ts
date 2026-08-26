@@ -986,6 +986,20 @@ export const SETTING_DEFAULTS = {
   document_logo_file: '',
 
   /**
+   * The picture behind the till's SIGN-IN screen, as a stored disk name.
+   *
+   * A different file from `document_logo_file` above, and deliberately so: one
+   * is a logo printed small and dark on white paper, the other is a wide
+   * photograph read across a room. A shop asked to use one file for both would
+   * have to pick which of the two to be bad at.
+   *
+   * Empty means no photograph, which the gate renders as its brand gradient
+   * rather than as a gap — see PosSignInArt. That is why this can ship without
+   * anybody uploading anything.
+   */
+  pos_signin_backdrop_file: '',
+
+  /**
    * Where a "scan to rate us" QR code points.
    *
    * A shop's review page lives somewhere we do not host — Google, Facebook,

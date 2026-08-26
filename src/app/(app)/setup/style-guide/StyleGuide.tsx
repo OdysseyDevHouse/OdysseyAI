@@ -135,7 +135,7 @@ import type { VoidType } from '@/lib/site/posVoids'
 import { SplitPreview } from './SplitPreview'
 import { ReceiptReturnPreview } from './ReceiptReturnPreview'
 import { BillPreview } from './BillPreview'
-import { GatePreview, FloorPreview, OpenTillPreview } from './GatePreview'
+import { GatePreview, FloorPreview, OpenTillPreview, PosGatePreview } from './GatePreview'
 import { ModuleMenuPreview } from './ModuleMenuPreview'
 import { TenderPreview } from './TenderPreview'
 import type { TillInstructionGroup } from '@/lib/site/instructions'
@@ -3055,6 +3055,13 @@ function TableGateSection() {
         />
       </Row>
       <OpenTillPreview />
+      <Row>
+        <Spec
+          name="<PosGate backdropUrl logoUrl specials>"
+          note="The clerk PIN screen — the one screen in the product a CUSTOMER reads, and the thing a counter displays all day between sales. Two halves holding different kinds of thing: a showcase nobody touches, and the one job on the right. The showcase is assembled from three independently optional pieces, so it has a designed appearance at every level of setup; with none of them it is a brand gradient and our own wordmark, which is deliberately a finished state rather than a placeholder. Specials are filtered to the shapes that state ONE price for ONE product — a buy-two-get-one has no figure a board can honestly show."
+        />
+      </Row>
+      <PosGatePreview />
     </Card>
   )
 }

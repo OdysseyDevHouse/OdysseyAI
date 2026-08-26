@@ -3,7 +3,13 @@
 import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { Card, PinPad, TextLink, Icons } from '@/components/ui'
+import {
+  PinPad,
+  TextLink,
+  Icons,
+  PosSignInArt,
+  type PosSignInSpecial,
+} from '@/components/ui'
 import { tillSignInAction } from './pinActions'
 import {
   signInOffline,
@@ -37,10 +43,25 @@ import { ensureWindowId } from '@/lib/windowSession'
 export default function PosGate({
   siteId,
   siteName,
+  backdropUrl = '',
+  logoUrl = '',
+  specials = [],
   onOfflineSignIn,
 }: {
   siteId: number
   siteName: string
+  /**
+   * The shop's own picture behind the showcase half, or '' for the brand
+   * gradient. Resolved by the server page — see lib/site/posSignInArt.
+   */
+  backdropUrl?: string
+  /** The shop's logo, or '' to fall back to the Odyssey wordmark. */
+  logoUrl?: string
+  /**
+   * What the showcase cycles through. Empty is the ordinary case and the
+   * panel simply omits the section — see PosSignInArt.
+   */
+  specials?: PosSignInSpecial[]
   /**
    * Called when somebody signed in against this device's own verifiers.
    *
@@ -134,38 +155,80 @@ export default function PosGate({
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
-      {/* The wordmark ABOVE the card, not inside it.
-          This is the same front door as the back-office login, and a till standing
-          unattended on a counter is the one screen in the product a customer sees
-          from across the room. The logo is what it says at that distance. */}
-      {/* The plate is the same fix the back-office login makes (see .logo in
-          login.module.css): the wordmark in the artwork is dark navy, and on
-          the till's dark canvas it all but disappears — on the ONE screen that
-          is read from across the room. Light mode needs nothing, so the plate
-          is dark-mode only. */}
-      <Image
-        src="/logo-full.png"
-        alt="Odyssey Point of Sale"
-        width={1109}
-        height={304}
-        className="logo-plate h-20 w-auto object-contain"
-        priority
-        unoptimized
-      />
+    /*
+     * TWO HALVES: a showcase the customer sees, and the pad the cashier uses.
+     *
+     * The showcase is `hidden lg:flex` inside PosSignInArt, so this collapses to
+     * the pad alone on a narrow screen. That is not a fallback — a 1024px counter
+     * display shows both, and a small hand-held till has no customer-facing side
+     * to speak of, so giving half its width to a photograph would shrink the only
+     * thing on the screen anybody has to hit.
+     */
+    <div className="flex flex-1 gap-4 p-4">
+      {/* No wrapper: the panel hides itself below `lg` and fills its half
+          above it, so a div doing either of those here would be saying it
+          twice — and the two said it differently, which is how the showcase
+          ended up a narrow strip with a dead gap beside it. */}
+      <PosSignInArt backdropUrl={backdropUrl} logoUrl={logoUrl} specials={specials} />
 
-      <Card>
-        {/* The card is sized by the PAD and nothing else.
-            Two earlier attempts got this wrong and the measurements say why:
-            w-fit alone resolved to the widest CHILD, and since the text has no
-            width of its own a one-line paragraph stretched the card to 689px
-            around a 510px pad — 130px of dead space down the right. Setting
-            w-[510px] then overflowed the other way, because border-box counts
-            the p-6 INSIDE that width and left the content box at 462px.
-            w-fit with the text capped at the pad's width is what holds: the pad
-            is the widest child at 510px, the paragraphs wrap to it rather than
-            past it, and the padding sits outside on all four sides. */}
-        <div className="w-fit p-6">
+      {/*
+        The sign-in half.
+
+        A fixed 560px beside a flexible showcase, rather than the two sharing the
+        width evenly. The pad has ONE correct size — it is sized by the finger,
+        not by the display — so every pixel past what it needs belongs to the
+        picture. On a very wide counter screen an even split would leave the pad
+        marooned in the middle of its own half.
+      */}
+      {/* A FIXED half, not a flexible one. The pad has one correct size — it is
+          sized by the finger, not by the display — so every pixel past what it
+          needs belongs to the picture beside it. `lg:w-[560px]` with `lg:grow-0`
+          so the width is a ceiling as well as a floor: `w-full` alone let the
+          pad's own `w-fit` content push this half out to most of the screen. */}
+      <div className="flex w-full shrink-0 flex-col items-center justify-center gap-6 p-2 lg:w-[560px] lg:grow-0">
+        {/* The way out, top-right of its own half — matching where a window's
+            close affordance lives, and out of the pad's way. It used to sit
+            below the card with the clock; on the split screen that put the exit
+            at the bottom of the one column somebody is reaching into. */}
+        <div className="flex w-full justify-end">
+          <TextLink
+            href="/dashboard"
+            className="inline-flex items-center gap-1 text-[13px] font-semibold"
+          >
+            <Icons.ChevronLeft size={15} />
+            Back to Back Office
+          </TextLink>
+        </div>
+
+        {/*
+          NO CARD around the pad any more.
+
+          The whole half is already a surface with the showcase beside it, and a
+          bordered card floating inside it was the double frame — a box drawn on
+          a box. The pad's own keys carry the structure; see the measurements in
+          the old card comment for why sizing it by anything but the pad went
+          wrong twice.
+        */}
+        <div className="flex w-fit flex-col items-center">
+          {/* The wordmark, above the pad rather than above the whole screen.
+              The customer-facing half now carries the SHOP's identity, so ours
+              belongs over the part the staff use. */}
+          <Image
+            src="/logo-full.png"
+            alt="Odyssey Point of Sale"
+            width={1109}
+            height={304}
+            className="logo-plate mb-6 h-14 w-auto object-contain"
+            priority
+            unoptimized
+          />
+
+          {/* A tinted lock disc, so the heading has something to sit under and
+              the column has a top. Same idiom as the kit's empty states. */}
+          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-brand-soft text-brand">
+            <Icons.Lock size={20} />
+          </span>
+
           <h2 className="mb-1 max-w-[510px] text-center text-[17px] font-bold text-ink">
             Clerk sign-in
           </h2>
@@ -180,32 +243,22 @@ export default function PosGate({
               needs to fix before the line drops, not after — and while it is true
               there is nothing useful to announce. */}
           {offlineReady === false && (
-            <p className="mt-3 max-w-[510px] text-center text-[12px] text-muted">
-              This till needs a connection to sign in. Each person should enter their
-              PIN once while online so it works offline afterwards.
-            </p>
+            <div className="mt-3 flex max-w-[510px] items-start gap-2 text-[12px] text-muted">
+              <Icons.Offline size={15} className="mt-0.5 shrink-0" />
+              <p>
+                This till needs a connection to sign in. Each person should enter their
+                PIN once while online so it works offline afterwards.
+              </p>
+            </div>
           )}
         </div>
-      </Card>
 
-      {/* Both below the card, and quiet.
-          The way out first — a till with no exit is a machine somebody has to
-          restart to get back to the back office — then the clock, which is the
-          one fact a cashier checks against the till before they start a shift.
-
-          A LINK rather than a button: it navigates, and a bordered button down
-          here would sit at the same visual weight as the keys it is trying not
-          to compete with. */}
-      <div className="flex flex-col items-center gap-3">
-        <TextLink
-          href="/dashboard"
-          className="inline-flex items-center gap-1 text-[13px] font-semibold"
-        >
-          <Icons.ChevronLeft size={15} />
-          Back to Back Office
-        </TextLink>
-        <p className="text-[13px] text-muted">{siteName}</p>
-        <TillClock />
+        {/* The shop and the clock, quiet, at the foot of the column. The one
+            fact a cashier checks against the till before starting a shift. */}
+        <div className="flex flex-col items-center gap-1">
+          <p className="text-[13px] text-muted">{siteName}</p>
+          <TillClock />
+        </div>
       </div>
     </div>
   )

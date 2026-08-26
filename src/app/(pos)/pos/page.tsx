@@ -15,6 +15,10 @@ import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { livePosMenus } from '@/lib/site/posMenus'
 import { listDepartments } from '@/lib/site/departments'
 import { tillProductCounts } from '@/lib/site/tillSearch'
+import { backdropUrl } from '@/lib/site/posSignInArt'
+import { logoFileName, LOGO_URL } from '@/lib/site/documentLogo'
+import { signInSpecials } from '@/lib/site/posSignInSpecials'
+import type { PosSignInSpecial } from '@/components/ui'
 import { listAllQuickKeys } from '@/lib/site/quickKeys'
 import { listTables } from '@/lib/site/posTables'
 import { listRooms, listFeatures } from '@/lib/site/posFloor'
@@ -93,6 +97,7 @@ export default async function PosPage({
     posMenus,
     departments,
     departmentCounts,
+    signInArt,
     quickKeys,
     tables,
     floorRooms,
@@ -150,6 +155,11 @@ export default async function PosPage({
          behind it opens on. tillProductCounts owns the rule, and its WHERE
          clause is browseForTill's. */
       tillProductCounts(site.id),
+      /* What the SIGN-IN screen shows before anybody has signed in: the shop's
+         backdrop, its logo, and the promotions worth putting on a board. All
+         three degrade to nothing on their own, so this never keeps a cashier
+         off a till — see posSignInArt and posSignInSpecials. */
+      signInArtFor(site.id),
       /* The shop's own till buttons. Shipped with the page rather than fetched by the
          client: they are the DEFAULT pane, so a till that had to wait for them would
          open on an empty grid — and one that lost them when the line dropped would lose
@@ -347,6 +357,64 @@ export default async function PosPage({
          would be the wrong way round. */
       undoLimit={Number.isFinite(undoLimitSetting) && (undoLimitSetting ?? 0) > 0 ? Number(undoLimitSetting) : 0}
       quickKeyDepartmentNames={quickKeyDepartmentNames}
+      /* The showcase half of the sign-in screen. Spread rather than passed as
+         one object so PosEntry relays three ordinary props — it is a
+         pass-through, and a bag of state it never reads into would be one more
+         shape to keep in step. */
+      backdropUrl={signInArt.backdropUrl}
+      logoUrl={signInArt.logoUrl}
+      signInSpecials={signInArt.specials}
     />
   )
+}
+
+/**
+ * Everything the sign-in showcase needs, resolved together.
+ *
+ * One helper rather than three entries in the Promise.all above, because all
+ * three belong to one screen and each is INDIVIDUALLY optional — a shop with a
+ * logo and no backdrop, or promotions and neither, is ordinary. Grouping them
+ * keeps that "any of these may be absent" in one place instead of spread
+ * across three defaults at the call site.
+ *
+ * Every branch degrades to empty. This screen stands between a cashier and the
+ * till at the start of a shift, so nothing decorative on it may ever be able to
+ * stop somebody signing in.
+ */
+async function signInArtFor(siteId: number): Promise<{
+  backdropUrl: string
+  logoUrl: string
+  specials: PosSignInSpecial[]
+}> {
+  const [backdrop, logoFile, specials] = await Promise.all([
+    backdropUrl(siteId).catch(() => ''),
+    logoFileName(siteId).catch(() => ''),
+    /* NOW, from the server's clock rather than the till's: this decides whether
+       a happy hour is on the board, and a counter machine whose clock has
+       drifted would advertise the five o'clock price at half past four. */
+    signInSpecials(siteId, new Date()).catch(() => []),
+  ])
+
+  return {
+    backdropUrl: backdrop,
+    /* Cache-busted on the stored NAME, matching what logoImgTag does for
+       printed documents: the URL is constant per site, so without it a
+       replaced logo would stay on screen until somebody hard-refreshed a
+       machine that is never refreshed. */
+    logoUrl: logoFile ? `${LOGO_URL}?v=${encodeURIComponent(logoFile)}` : '',
+    specials: specials.map((s) => ({
+      productId: s.productId,
+      description: s.description,
+      blurb: s.blurb,
+      priceIncl: s.priceIncl,
+      wasIncl: s.wasIncl,
+      /* The id becomes a URL HERE rather than in the panel, so the kit
+         component stays a dumb renderer that knows no routes — the same
+         reason TillProduct ships an image id rather than a path. */
+      imageUrl:
+        s.imageId === null
+          ? undefined
+          : `/api/pos/special-image?id=${s.imageId}&productId=${s.productId}`,
+    })),
+  }
 }

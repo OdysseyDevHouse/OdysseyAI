@@ -14,6 +14,7 @@
 export { Button, ButtonLink, type ButtonSize, type ButtonVariant } from './Button'
 export { TintButton } from './TintButton'
 export { PromoArt, type PromoArtKind } from './PromoArt'
+export { PosSignInArt, type PosSignInSpecial } from './PosSignInArt'
 export { WeekHours, WeekHoursDay, WEEK_DAYS, type HoursRange } from './WeekHours'
 export {
   buttonClass,

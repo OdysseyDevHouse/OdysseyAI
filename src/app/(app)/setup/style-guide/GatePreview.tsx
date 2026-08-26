@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui'
 import OpenTillGate from '@/app/(pos)/pos/OpenTillGate'
+import PosGate from '@/app/(pos)/pos/PosGate'
 import { TableGate } from '@/app/(pos)/pos/TableGate'
 import type { OpenTab } from '@/app/(pos)/pos/actions'
 import type { PosTable } from '@/lib/site/posTables'
@@ -329,6 +330,138 @@ export function OpenTillPreview() {
             online={state !== 'offline'}
             onOpened={() => {}}
             onExit={() => {}}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── The clerk PIN screen ─────────────────────────────────────────────────── */
+
+/**
+ * PosGate, on the Style Guide.
+ *
+ * The same argument as every preview above, and the strongest case of the lot:
+ * this is the one screen in the product that faces the CUSTOMER rather than the
+ * operator — it is what a shop's counter shows all day between sales — and it
+ * is also the hardest to look at, because reaching it means signing a real till
+ * out.
+ *
+ * ── WHY THE FIXTURES ARE THE INTERESTING PART ─────────────────────────────
+ *
+ * The showcase half has three inputs and each is INDIVIDUALLY optional, so the
+ * screen has a designed appearance at four different levels of setup. The
+ * toggle below walks them, because the one almost every shop sees — nothing
+ * configured at all — is the one nobody remembers to check.
+ *
+ * Signing in does nothing here. `tillSignInAction` refuses a preview session,
+ * and the button is left live precisely so that refusal renders in the pad's
+ * own error state where it belongs.
+ */
+const PREVIEW_SPECIALS = [
+  {
+    productId: 1,
+    description: 'Classic Beef Burger',
+    blurb: 'Juicy beef patty with cheddar, lettuce, tomato & our special sauce.',
+    priceIncl: 89,
+    wasIncl: 109,
+  },
+  {
+    productId: 2,
+    description: 'Creamy Chicken Pasta',
+    blurb: 'Tender chicken, creamy mushroom sauce with parmesan.',
+    priceIncl: 79,
+    wasIncl: null,
+  },
+  {
+    productId: 3,
+    description: 'Chocolate Fudge Cake',
+    blurb: 'Rich chocolate cake served with vanilla ice cream.',
+    priceIncl: 49,
+    wasIncl: 65,
+  },
+  /* A fourth, so the pager dots appear and the cycle has somewhere to go —
+     three per page is the panel's own rule. */
+  {
+    productId: 4,
+    description: 'Flat White',
+    blurb: 'Double shot, silky milk.',
+    priceIncl: 32,
+    wasIncl: 38,
+  },
+]
+
+export function PosGatePreview() {
+  const [state, setState] = useState<'bare' | 'specials' | 'logo' | 'full'>('bare')
+
+  const STATES = [
+    { key: 'bare', label: 'Nothing set up' },
+    { key: 'specials', label: 'Specials running' },
+    { key: 'logo', label: 'Logo uploaded' },
+    { key: 'full', label: 'Logo + backdrop' },
+  ] as const
+
+  /* A data URI rather than a real upload: the preview must not depend on this
+     shop having set a backdrop, and a remote URL would be one more thing that
+     can fail on a screen whose job is to show what things look like. A flat
+     tone is enough — what is being checked is that the scrim keeps the text
+     readable over an arbitrary picture. */
+  const BACKDROP =
+    'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600">
+         <rect width="400" height="600" fill="#5b4636"/>
+         <circle cx="90" cy="120" r="70" fill="#7a6047"/>
+         <circle cx="310" cy="380" r="110" fill="#6b523c"/>
+       </svg>`,
+    )
+  const LOGO =
+    'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+         <circle cx="100" cy="100" r="92" fill="none" stroke="#1b2432" stroke-width="6" stroke-dasharray="10 6"/>
+         <text x="100" y="92" text-anchor="middle" font-family="sans-serif" font-size="30" font-weight="700" fill="#1b2432">YOUR</text>
+         <text x="100" y="128" text-anchor="middle" font-family="sans-serif" font-size="30" font-weight="700" fill="#1b2432">LOGO</text>
+       </svg>`,
+    )
+
+  const showLogo = state === 'logo' || state === 'full'
+  const showBackdrop = state === 'full'
+  const showSpecials = state !== 'bare'
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-[13px] text-muted">
+        What a counter shows between sales. The showcase half is built from three
+        independent optional pieces, so step through them — “Nothing set up” is what
+        almost every shop sees on its first day, and it has to look finished rather
+        than empty.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {STATES.map((s) => (
+          <Button
+            key={s.key}
+            variant={state === s.key ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setState(s.key)}
+          >
+            {s.label}
+          </Button>
+        ))}
+      </div>
+      {/* Tall enough for the pad at its full height, and wide is the point — the
+          showcase half only appears from `lg`, so a cramped frame would show the
+          fallback rather than the screen this preview exists for. */}
+      <div className="h-[720px] overflow-hidden rounded-card border border-border bg-canvas">
+        <div className="flex h-full flex-col">
+          <PosGate
+            siteId={0}
+            siteName="Odyssey Cafe — Sea Point"
+            backdropUrl={showBackdrop ? BACKDROP : ''}
+            logoUrl={showLogo ? LOGO : ''}
+            specials={showSpecials ? PREVIEW_SPECIALS : []}
+            onOfflineSignIn={() => {}}
           />
         </div>
       </div>

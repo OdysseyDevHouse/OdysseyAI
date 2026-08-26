@@ -22,7 +22,7 @@ import type { FloorRoom, FloorFeature } from '@/lib/site/posFloor'
 import type { VisitType } from '@/lib/site/visitTypes'
 import type { ServiceTier } from '@/lib/tipMath'
 import type { Department } from './types'
-import type { PickableReason } from '@/components/ui'
+import type { PickableReason, PosSignInSpecial } from '@/components/ui'
 
 /**
  * Gate or till, decided on the CLIENT when the server could not decide it.
@@ -56,6 +56,9 @@ export default function PosEntry({
   terminals,
   departments,
   departmentCounts,
+  backdropUrl = '',
+  logoUrl = '',
+  signInSpecials = [],
   priceStructureId,
   priceStructures,
   tenders,
@@ -104,6 +107,12 @@ export default function PosEntry({
   departments: Department[]
   /** Per-department product counts for the tile captions. Relayed unchanged. */
   departmentCounts?: Record<number, number>
+  /* The showcase half of the sign-in screen. Relayed unchanged to PosGate,
+     which is the only thing that renders them — once somebody has signed in
+     the gate is gone and so is the picture. */
+  backdropUrl?: string
+  logoUrl?: string
+  signInSpecials?: PosSignInSpecial[]
   priceStructureId: number | null
   /** Every active price type, for the price-change key. Relayed unchanged. */
   priceStructures: PriceStructure[]
@@ -274,7 +283,16 @@ export default function PosEntry({
   if (!operator && session === undefined && !serverOperator) return null
 
   if (!operator) {
-    return <PosGate siteId={siteId} siteName={siteName} onOfflineSignIn={setSession} />
+    return (
+      <PosGate
+        siteId={siteId}
+        siteName={siteName}
+        backdropUrl={backdropUrl}
+        logoUrl={logoUrl}
+        specials={signInSpecials}
+        onOfflineSignIn={setSession}
+      />
+    )
   }
 
   /* ── IS THIS MACHINE LICENSED? ────────────────────────────────────────────

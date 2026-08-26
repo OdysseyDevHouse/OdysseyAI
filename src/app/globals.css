@@ -621,6 +621,42 @@ body {
   box-sizing: content-box;
 }
 
+/* The customer-facing logo disc on the till's sign-in screen.
+
+   ALWAYS light, in both themes, and that is the whole point of it being here
+   rather than a `bg-surface` at the call site. `surface` follows the OPERATOR's
+   theme, and this disc is not for the operator — it sits on the half of the
+   screen a customer reads, over a photograph the shop chose. A shop's logo is
+   almost always dark ink drawn for white paper, so a disc that turned dark
+   because a cashier prefers dark mode would swallow the logo entirely on the
+   one screen it most needs to be legible.
+
+   Not `#ffffff` outright: a hair off white so a logo with a white background of
+   its own still reads as sitting ON something. */
+.logo-disc {
+  background: #fbfcfe;
+}
+
+/* The scrim over the till sign-in showcase, so its white text stays legible
+   on whatever is behind it.
+
+   A FIXED dark, not the `ink` token, and that is the whole reason it is here.
+   `ink` is the theme's text colour — near-black in light mode and near-WHITE
+   in dark — so a scrim built from it painted a white veil the moment a
+   cashier switched theme, washing the panel out instead of darkening it.
+   Like .logo-disc above, this half of the screen belongs to the customer and
+   must not follow the operator's preference.
+
+   Heavier at the foot, where the specials board sits over it. */
+.signin-scrim {
+  background: linear-gradient(
+    to bottom,
+    rgb(9 14 24 / 0.55),
+    rgb(9 14 24 / 0.45) 45%,
+    rgb(9 14 24 / 0.78)
+  );
+}
+
 /* Consistent focus ring — keyboard users navigate this back office all day. */
 :focus-visible {
   outline: 2px solid var(--color-brand);

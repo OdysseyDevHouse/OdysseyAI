@@ -16,6 +16,7 @@ import {
 } from '@/lib/site/terminals'
 import { releaseSpot, claimSpot } from '@/lib/control/devices'
 import { setSetting } from '@/lib/site/settings'
+import { setBackdrop, clearBackdrop } from '@/lib/site/posSignInArt'
 
 export type TerminalActionResult = { ok: true; message: string } | { ok: false; error: string }
 
@@ -340,4 +341,46 @@ export async function setOfflineAccountSalesAction(on: boolean): Promise<Termina
       ? 'A till with no connection may now put a sale on account — against the balance it last saw.'
       : 'A till with no connection will refuse account sales until the line is back.',
   }
+}
+
+/* ── The sign-in screen's backdrop ───────────────────────────────────────── */
+
+/**
+ * Upload the picture behind the till's sign-in screen.
+ *
+ * `setup.edit` rather than `setup.stationery`, which gates the document logo:
+ * that permission is about what PRINTS, and this is about what a machine on the
+ * shop floor displays. They are the same job in a small shop and different
+ * people in a large one, and the till screens are already this permission's.
+ */
+export async function uploadSignInBackdropAction(
+  form: FormData,
+): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const file = form.get('backdrop')
+  if (!(file instanceof File)) return { ok: false, error: 'Choose an image to upload.' }
+
+  const result = await setBackdrop(ctx.siteId, file)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/terminals')
+  /* Names where it shows up. A manager who has just uploaded a picture is not
+     standing at a till, so "saved" alone leaves them with no way to tell
+     whether it worked without walking to one. */
+  revalidatePath('/pos')
+  return { ok: true, message: 'Backdrop uploaded. Tills show it on the sign-in screen.' }
+}
+
+export async function clearSignInBackdropAction(): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await clearBackdrop(ctx.siteId)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/terminals')
+  revalidatePath('/pos')
+  return { ok: true, message: 'Backdrop removed. Tills show the standard background.' }
 }
