@@ -22,10 +22,14 @@ import {
  *
  * ── WHAT THIS COMPONENT NEVER HOLDS ─────────────────────────────────────────
  *
- * The shop's database password. `plan()` answers `redact()`'s output, where it
- * has already become the string `(set)`. The real one lives in the main process
- * for the length of the install and is never sent here. See
- * electron/dbSetupBridge.js for why the sequence is the other way up from the
+ * Any part of the connection. Not the password, and not the host, port,
+ * database name or username either — `plan()` answers which SHOP this is and
+ * nothing more. The rest stays in the main process for the length of the
+ * install.
+ *
+ * Withheld rather than hidden: a screen cannot leak to a screenshot, a devtools
+ * window or a crash report what it was never sent. See
+ * electron/dbSetupBridge.js for why the sequence runs the other way up from the
  * obvious one.
  */
 
@@ -42,7 +46,27 @@ export default function SetupWizard() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [lines, setLines] = useState<string[]>([])
-  const bridge = dbSetup()
+
+  /* ── THE BRIDGE IS LOOKED FOR AFTER MOUNTING, NOT DURING RENDER ───────────
+   *
+   * dbSetup() reads `window`, which does not exist while this is rendered on
+   * the server — so calling it in the render body made the SERVER decide "no
+   * bridge" and the CLIENT decide "bridge", which is a hydration mismatch. It
+   * showed as "Not running as Odyssey Database Setup" flashing before the real
+   * card, in the packaged app as well as in dev.
+   *
+   * `undefined` is therefore a third state and not laziness: not-yet-looked.
+   * The server and the first client render agree on it, and only then does the
+   * effect answer. Same shape as DesktopLicenceGate, for the same reason.
+   */
+  const [bridge, setBridge] = useState<ReturnType<typeof dbSetup> | undefined>(undefined)
+  useEffect(() => {
+    setBridge(dbSetup())
+  }, [])
+
+  /* Deliberately blank rather than a spinner: this resolves in one tick, and
+     something that appears and vanishes reads as a fault. */
+  if (bridge === undefined) return null
 
   /* A browser, not the installer. Said once and plainly rather than letting
      every button fail — `npm run dev` serves this route with no preload. */
@@ -388,23 +412,10 @@ function ConfirmStep({
                 {plan.connectionType === 'hybrid' ? 'Hybrid — in-store box' : 'Local — this machine'}
               </Badge>
             </Row>
-            <Row label="Database">
-              <span className="numeric">{plan.databaseName}</span>
-            </Row>
-            <Row label="Server">
-              <span className="numeric">
-                {plan.host}:{plan.port}
-              </span>
-            </Row>
-            <Row label="Username">
-              <span className="numeric">{plan.username}</span>
-            </Row>
-            {/* `(set)` rather than the password. redact() replaced it before it
-                left the main process — the technician never learns it, which is
-                the point of provisioning this way at all. */}
-            <Row label="Password">
-              <span className="text-muted">from the control panel</span>
-            </Row>
+            {/* Where the database goes, what it is called and who connects to it
+                are all decided by the control panel and none of them are this
+                screen's business. They are not hidden here — they are never sent
+                to it. See SafePlan in lib/dbSetupClient.ts. */}
           </dl>
 
           {error && <p className="text-danger-ink text-sm">{error}</p>}

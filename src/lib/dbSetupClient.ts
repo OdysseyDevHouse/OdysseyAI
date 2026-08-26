@@ -22,20 +22,26 @@ export type SetupSignIn =
 
 export type SetupSite = { id: number; code: string; displayName: string }
 
-/** `redact(plan)` — the same three shapes, with the password replaced. */
+/** What may cross to the screen. Three shapes, none carrying a credential. */
 export type SafePlan =
+  /**
+   * What the SCREEN is told, which is deliberately less than the plan.
+   *
+   * No host, no port, no database name, no username, no password. A technician
+   * confirming "yes, this is the right shop" needs the shop; they do not need
+   * an address on somebody's network, and whoever is standing behind them needs
+   * it less still.
+   *
+   * Withheld rather than hidden: a renderer cannot leak to a screenshot or a
+   * crash report what it was never sent. The full plan never leaves the main
+   * process — see electron/dbSetupBridge.js.
+   */
   | {
       action: 'provision'
       siteId: number
       siteCode: string
       siteName: string
       connectionType: 'hybrid' | 'local'
-      purpose: string
-      host: string
-      port: number
-      databaseName: string
-      username: string
-      password: string
       alreadyInstalled: boolean
     }
   | { action: 'nothing'; siteId: number; siteCode: string; siteName: string; reason: string }

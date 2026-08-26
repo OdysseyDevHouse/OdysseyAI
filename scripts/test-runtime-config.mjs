@@ -33,6 +33,18 @@ function check(name, ok, detail = '') {
 const userData = mkdtempSync(path.join(tmpdir(), 'odyssey-cfg-'))
 const exeDir = mkdtempSync(path.join(tmpdir(), 'odyssey-exe-'))
 
+/* ── AND ProgramData, WHICH IS NOT THIS PROCESS'S TO READ ──────────────────
+ *
+ * runtimeConfig now adopts what Odyssey Database Setup left in
+ * ProgramData\Odyssey\site.json. Left pointing at the real one, this suite
+ * reads whatever the developer's own machine happens to have been provisioned
+ * with — and it silently did, resolving a "fresh local install" against a live
+ * shop's credentials and reporting failures that were nothing to do with the
+ * code.
+ *
+ * A test that reads real machine state is not testing the code. */
+process.env.ProgramData = mkdtempSync(path.join(tmpdir(), 'odyssey-pd-'))
+
 const electronStub = {
   app: {
     isPackaged: false,

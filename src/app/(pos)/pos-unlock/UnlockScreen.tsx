@@ -116,7 +116,9 @@ export default function UnlockScreen() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center p-6">
+    /* Column, so the card and the way-out below it stack. It was a row while the
+       card was the only child; a sibling added to that would have sat beside it. */
+    <div className="flex flex-1 flex-col items-center justify-center p-6">
       <Card className="w-full max-w-sm">
         <div className="flex flex-col items-center gap-5 px-6 py-8">
           <div className="text-center">
@@ -181,14 +183,22 @@ export default function UnlockScreen() {
           )}
 
           <PinPad onSubmit={submit} error={error} busy={pending} />
-
-          {/* The way out for somebody who is not a cashier. Not a link to the login
-              form — this is a till, and the person here may not have an account. */}
-          <Button variant="ghost" size="sm" onClick={() => router.push('/')}>
-            Sign in to the back office instead
-          </Button>
         </div>
       </Card>
+
+      {/* ── THE WAY OUT, BELOW THE CARD RATHER THAN INSIDE IT ──────────────────
+          Not a link to the login form: this is a till, and the person standing
+          at it may well not have an account.
+
+          Outside the card because it is not part of unlocking. Inside, it sat
+          directly under the PIN pad and read as the next step after typing —
+          which for a cashier it never is. Below and apart, it reads as the
+          alternative it actually is, and the card is left with one job. */}
+      <div className="mt-4 flex w-full max-w-sm justify-center">
+        <Button variant="ghost" size="sm" onClick={() => router.push('/')}>
+          Sign in to the back office instead
+        </Button>
+      </div>
     </div>
   )
 }

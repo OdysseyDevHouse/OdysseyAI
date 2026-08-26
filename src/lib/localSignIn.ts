@@ -1,7 +1,6 @@
 import 'server-only'
 import { redirect } from 'next/navigation'
 import { createSessionToken, setSessionCookie } from './session'
-import { resolveOfflineSite } from './licence/offlineSite'
 import { signInWithPin } from './site/users'
 
 /**
@@ -49,14 +48,37 @@ export type LocalSignInResult = { ok: true } | { ok: false; error: string }
 /**
  * Is this install one that signs in against its own database?
  *
- * `resolveOfflineSite` already answers the underlying question — it returns a
- * site only when APP_MODE is desktop and this machine has been told which shop
- * it is — so this reuses it rather than growing a second opinion about what
- * "local" means.
+ * ── WHY NOT resolveOfflineSite ──────────────────────────────────────────────
+ *
+ * It looks like the same question and is not. That function answers "may this
+ * machine trade on its own right now", and it earns the answer by reading
+ * `licence_lease` — a row carrying licence status, entitlements and an expiry,
+ * written when the machine last checked in with the control panel.
+ *
+ * A freshly provisioned shop has never checked in, so that table is empty. Ask
+ * it which sign-in form to draw and it says "no site", the login screen falls
+ * back to the CLOUD email form, and the shop owner signs in against cp2_users
+ * and lands on somebody's default site — a different shop entirely. Which is
+ * exactly what happened.
+ *
+ * The right question here is narrower: did Odyssey Database Setup give this
+ * machine a database of its own? That is what the adopted connection means, and
+ * it is a stronger claim than an environment variable on its own — those values
+ * are not typed by anybody, they are unsealed from a DPAPI-sealed config that
+ * only this install could have written, describing a database Setup had just
+ * finished creating.
+ *
+ * Both are required. `ODYSSEY_SITE_ID` alone is also set by the older
+ * self-provisioning backend, which has no local users table to sign anybody in
+ * against; the database NAME is set only by the adopted branch.
  */
 export async function localSiteId(): Promise<number | null> {
-  const site = await resolveOfflineSite()
-  return site?.siteId ?? null
+  if (process.env.APP_MODE !== 'desktop') return null
+  if (!process.env.ODYSSEY_SITE_DB_NAME?.trim()) return null
+
+  const raw = Number(process.env.ODYSSEY_SITE_ID)
+  if (!Number.isFinite(raw) || raw <= 0) return null
+  return raw
 }
 
 /**

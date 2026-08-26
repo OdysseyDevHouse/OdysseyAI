@@ -66,6 +66,7 @@ check('no key configured refuses everything', keyMatches('', '') === false)
 
 /* ── The route ────────────────────────────────────────────────────────────── */
 
+const bridge = read('electron/dbSetupBridge.js')
 const route = read('src/app/api/db-setup/route.ts')
 check('the key is compared in constant time', /timingSafeEqual/.test(route))
 check('a length mismatch is guarded before comparing', /a\.length !== b\.length/.test(route))
@@ -73,19 +74,42 @@ check('a length mismatch is guarded before comparing', /a\.length !== b\.length/
    lives here is itself information. */
 check('an unknown caller gets 404, not 403', /status: 404/.test(route) && !/status: 403/.test(route))
 check('the guard runs before the body is read', route.indexOf('keyMatches') < route.indexOf('request.json'))
-check('the site is resolved through sitesForSetup, not trusted', /sitesForSetup\(userId\)\)\.find/.test(route))
+/* The renderer sends a site id. It must be resolved against what the LOGIN
+   actually returned, never trusted on its own — otherwise a shop this person
+   cannot open is one edited request away. */
+check(
+  'the site is resolved against the signed-in payload, not trusted',
+  /state\.payload\.stores \|\| \[\]\)\.find/.test(bridge),
+)
+/* A suspended store is returned by the API deliberately, so the wizard can say
+   WHICH kind of no it is. It must still refuse to provision one. */
+check('a store that is not accessible is refused', /!store\.isAccessible/.test(bridge))
 check('the LAN widening is opt-in', /const allowFrom = \['127\.0\.0\.1'\]/.test(route))
 
 /* ── What crosses back ────────────────────────────────────────────────────── */
 
-const bridge = read('electron/dbSetupBridge.js')
 const planHandler = bridge.slice(
   bridge.indexOf("ipcMain.handle('db-setup:plan'"),
   bridge.indexOf("ipcMain.handle('db-setup:provision'"),
 )
-check('the plan handler returns only the redacted half', /return safe/.test(planHandler))
-check('it never returns the full plan', !/return plan\b/.test(planHandler))
+/* The password is stripped before anything crosses back. Asserted on the
+   handler's own text rather than on a helper elsewhere, because this is the
+   single line deciding whether a shop's database password reaches a browser. */
+/* An explicit allow-list, not a redaction. Stripping fields off the plan means
+   anything ADDED to the plan later crosses back by default; naming what may
+   cross means it does not. The host, port, database name and username are as
+   unwelcome on that screen as the password. */
+const answered = planHandler.slice(planHandler.lastIndexOf('return {'))
+check("the plan handler answers an explicit allow-list", /action: 'provision',/.test(answered))
+check(
+  'and that list carries no part of the connection',
+  !/(password|databaseName|username|host|port)\s*:/.test(answered),
+)
+check('it never returns the plan itself', !/return plan\b/.test(planHandler))
 check('the full plan is kept in main', /state\.plan = plan/.test(planHandler))
+/* The decrypted password must not be logged either — progress lines go to the
+   log file, which a tester is asked to send. */
+check('the password never reaches a progress line', !/progress\(.*password/i.test(planHandler))
 
 /* ── The renderer's reach is a list somebody wrote down ───────────────────── */
 

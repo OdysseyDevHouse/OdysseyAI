@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import {
   PinPad,
-  TextLink,
+  ButtonLink,
+  Card,
   Icons,
   PosSignInArt,
   type PosSignInSpecial,
@@ -42,14 +43,12 @@ import { ensureWindowId } from '@/lib/windowSession'
  */
 export default function PosGate({
   siteId,
-  siteName,
   backdropUrl = '',
   logoUrl = '',
   specials = [],
   onOfflineSignIn,
 }: {
   siteId: number
-  siteName: string
   /**
    * The shop's own picture behind the showcase half, or '' for the brand
    * gradient. Resolved by the server page — see lib/site/posSignInArt.
@@ -163,141 +162,164 @@ export default function PosGate({
      * display shows both, and a small hand-held till has no customer-facing side
      * to speak of, so giving half its width to a photograph would shrink the only
      * thing on the screen anybody has to hit.
+     *
+     * ── ALL THE SPACING IS ON THIS ELEMENT ───────────────────────────────────
+     *
+     * `p-8` is the screen's edge and `gap-8` is the middle, and both can be read
+     * off the class list rather than added up. It used to be split between here
+     * and the column below, which made it neither: the column's own padding
+     * added to this one's on the outer side and to the gap on the inner, so the
+     * picture sat 16px off the glass while the pad sat 32px off it.
+     *
+     * ── AND BOTH HALVES ARE NOW FIXED, SO THE PAIR IS CENTRED ─────────────────
+     *
+     * Neither side grows any more — the showcase is 574 wide and so is the card.
+     * Something has to take up the slack on a wide counter screen, and centring
+     * the pair is the only answer that keeps them looking like two halves of one
+     * thing rather than a block shoved against the left edge.
+     *
+     * ── WHY THE CENTRING AND THE ROW ARE TWO ELEMENTS ─────────────────────────
+     *
+     * Because the pad column is TALLER than the card inside it — the way out sits
+     * beneath the card, so the column is 706 + 24 + 40 = 770 while the showcase is
+     * 706. One element doing both jobs centred a 706 pane against a 770 column and
+     * dropped the picture 32px below the card it is supposed to sit beside.
+     *
+     * So: this element centres the block on the screen, and the row inside it
+     * aligns the two panes by their TOPS. The button then hangs below the card
+     * without having any say in where the picture sits.
      */
-    <div className="flex flex-1 gap-4 p-4">
-      {/* No wrapper: the panel hides itself below `lg` and fills its half
-          above it, so a div doing either of those here would be saying it
-          twice — and the two said it differently, which is how the showcase
-          ended up a narrow strip with a dead gap beside it. */}
-      <PosSignInArt backdropUrl={backdropUrl} logoUrl={logoUrl} specials={specials} />
-
-      {/*
-        The sign-in half.
-
-        A fixed 560px beside a flexible showcase, rather than the two sharing the
-        width evenly. The pad has ONE correct size — it is sized by the finger,
-        not by the display — so every pixel past what it needs belongs to the
-        picture. On a very wide counter screen an even split would leave the pad
-        marooned in the middle of its own half.
-      */}
-      {/* A FIXED half, not a flexible one. The pad has one correct size — it is
-          sized by the finger, not by the display — so every pixel past what it
-          needs belongs to the picture beside it. `lg:w-[560px]` with `lg:grow-0`
-          so the width is a ceiling as well as a floor: `w-full` alone let the
-          pad's own `w-fit` content push this half out to most of the screen. */}
-      <div className="flex w-full shrink-0 flex-col items-center justify-center gap-6 p-2 lg:w-[560px] lg:grow-0">
-        {/* The way out, top-right of its own half — matching where a window's
-            close affordance lives, and out of the pad's way. It used to sit
-            below the card with the clock; on the split screen that put the exit
-            at the bottom of the one column somebody is reaching into. */}
-        <div className="flex w-full justify-end">
-          <TextLink
-            href="/dashboard"
-            className="inline-flex items-center gap-1 text-[13px] font-semibold"
-          >
-            <Icons.ChevronLeft size={15} />
-            Back to Back Office
-          </TextLink>
-        </div>
+    <div className="flex flex-1 items-center justify-center p-8">
+      <div className="flex w-full items-start justify-center gap-8">
+        {/* No wrapper: the panel hides itself below `lg` and states its own
+            574×706 above it, so a div doing either of those here would be saying
+            it twice — and the two said it differently, which is how the showcase
+            once ended up a narrow strip with a dead gap beside it. */}
+        <PosSignInArt backdropUrl={backdropUrl} logoUrl={logoUrl} specials={specials} />
 
         {/*
-          NO CARD around the pad any more.
+          The sign-in half.
 
-          The whole half is already a surface with the showcase beside it, and a
-          bordered card floating inside it was the double frame — a box drawn on
-          a box. The pad's own keys carry the structure; see the measurements in
-          the old card comment for why sizing it by anything but the pad went
-          wrong twice.
+          A fixed 560px beside a flexible showcase, rather than the two sharing the
+          width evenly. The pad has ONE correct size — it is sized by the finger,
+          not by the display — so every pixel past what it needs belongs to the
+          picture. On a very wide counter screen an even split would leave the pad
+          marooned in the middle of its own half.
         */}
-        <div className="flex w-fit flex-col items-center">
-          {/* The wordmark, above the pad rather than above the whole screen.
-              The customer-facing half now carries the SHOP's identity, so ours
-              belongs over the part the staff use. */}
-          <Image
-            src="/logo-full.png"
-            alt="Odyssey Point of Sale"
-            width={1109}
-            height={304}
-            className="logo-plate mb-6 h-14 w-auto object-contain"
-            priority
-            unoptimized
-          />
+        {/* 574px, the same as the showcase — and the same as the card inside it,
+            which is the PIN pad's 510 plus its own padding. The pad has one correct
+            size, sized by the finger rather than by the display, and stating that
+            width here rather than letting the card's `w-fit` set it is what keeps
+            the button below centred on the card rather than on the column.
 
-          {/* A tinted lock disc, so the heading has something to sit under and
-              the column has a top. Same idiom as the kit's empty states. */}
-          <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-brand-soft text-brand">
-            <Icons.Lock size={20} />
-          </span>
+            It was 560 while the card had no padding of its own, which left the card
+            14px wider than the half containing it. */}
+        {/* `justify-center` on the column, centring the PAIR — the card and the
+            way out beneath it now read as one stack, so one rule for both is the
+            honest description. It was one rule per child while the exit was pinned
+            to the top of the half.
 
-          <h2 className="mb-1 max-w-[510px] text-center text-[17px] font-bold text-ink">
-            Clerk sign-in
-          </h2>
-          <p className="mb-4 max-w-[510px] text-center text-[12.5px] text-muted">
-            Enter your PIN to open the till
-          </p>
+            In flow, with a gap, rather than either of them positioned absolutely:
+            on a short counter screen the two must push each other rather than
+            overlap, and an absolutely placed exit let a tall pad slide underneath
+            it. */}
+        <div className="flex w-full max-w-full shrink-0 flex-col items-center gap-6 lg:w-[574px]">
+          {/*
+            A CARD around the pad.
 
-          <PinPad wide onSubmit={submit} error={error} busy={pending} rejectedAt={rejects} />
+            The half it sits in is `bg-canvas` — the till shell's grey — so this
+            lifts the one part of the screen a cashier touches onto white, the way
+            every other block of content in the product sits on a surface. The
+            kit's own `Card`, not a hand-rolled box, so its radius, border and
+            shadow move when the kit's do.
 
-          {/* Said only when it is FALSE and known.
-              A till that cannot sign anybody in without the network is one somebody
-              needs to fix before the line drops, not after — and while it is true
-              there is nothing useful to announce. */}
-          {offlineReady === false && (
-            <div className="mt-3 flex max-w-[510px] items-start gap-2 text-[12px] text-muted">
-              <Icons.Offline size={15} className="mt-0.5 shrink-0" />
-              <p>
-                This till needs a connection to sign in. Each person should enter their
-                PIN once while online so it works offline afterwards.
+            `w-fit` stays on it rather than moving inside: the card is sized by the
+            PAD, which has one correct width. Sizing it by anything but the pad
+            went wrong twice before — a percentage width left the keys marooned in
+            a card far wider than they were. The vertical centring is the column's
+            now, not this element's, because there are two things to centre.
+          */}
+          <Card className="w-fit">
+            <div className="flex flex-col items-center p-8">
+              {/* The wordmark, above the pad rather than above the whole screen.
+                  The customer-facing half now carries the SHOP's identity, so ours
+                  belongs over the part the staff use. */}
+              <Image
+                src="/logo-full.png"
+                alt="Odyssey Point of Sale"
+                width={1109}
+                height={304}
+                className="logo-plate mb-6 h-14 w-auto object-contain"
+                priority
+                unoptimized
+              />
+
+              {/* A tinted lock disc, so the heading has something to sit under and
+                  the column has a top. Same idiom as the kit's empty states. */}
+              <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-brand-soft text-brand">
+                <Icons.Lock size={20} />
+              </span>
+
+              <h2 className="mb-1 max-w-[510px] text-center text-[17px] font-bold text-ink">
+                Clerk sign-in
+              </h2>
+              <p className="mb-4 max-w-[510px] text-center text-[12.5px] text-muted">
+                Enter your PIN to open the till
               </p>
-            </div>
-          )}
-        </div>
 
-        {/* The shop and the clock, quiet, at the foot of the column. The one
-            fact a cashier checks against the till before starting a shift. */}
-        <div className="flex flex-col items-center gap-1">
-          <p className="text-[13px] text-muted">{siteName}</p>
-          <TillClock />
+              <PinPad wide onSubmit={submit} error={error} busy={pending} rejectedAt={rejects} />
+
+              {/* Said only when it is FALSE and known.
+                  A till that cannot sign anybody in without the network is one somebody
+                  needs to fix before the line drops, not after — and while it is true
+                  there is nothing useful to announce. */}
+              {offlineReady === false && (
+                <div className="mt-4 flex max-w-[510px] items-center gap-3 text-[12.5px] text-muted">
+                  {/* On a tinted disc, the same idiom as the lock above it. A 15px
+                      glyph loose beside three lines of grey text read as a bullet
+                      point; this is the one standing condition on the screen that a
+                      manager has to notice and act on before the queue arrives.
+
+                      `Wifi` rather than `Offline`: the till is not offline right now
+                      — it is being told it will not COPE with being offline, because
+                      nobody here has signed in while connected yet. */}
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand">
+                    <Icons.Wifi size={20} />
+                  </span>
+                  <p className="leading-relaxed">
+                    This till needs a connection to sign in. Each person should enter their
+                    PIN once while online so it works offline afterwards.
+                  </p>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* The way out, UNDER the card and centred on it — the last thing in the
+              column rather than the first. A cashier standing at this screen is
+              here to sign in; the exit is the rarer act, and reading order should
+              put the thing somebody came to do above the thing they occasionally
+              want instead.
+
+              A BUTTON rather than a text link, and `contrast` rather than any of
+              the blues. This is a touch screen — a 13px underlined link is not a
+              target a finger can take — and it is the only control on the half
+              besides the pad, so it has to be found without being hunted for. The
+              blues are all spoken for: the confirm key, the lock disc and the
+              showcase beside it. Dark-on-light (and light-on-dark under a
+              cashier's dark theme) is the one register nothing else here uses.
+
+              The chevron points RIGHT, following the words rather than leading
+              them — this is a departure to another place, not a step back through
+              a screen the cashier came from. Landmark is the back office as an
+              institution, matching the sidebar's own mark for it. */}
+          <ButtonLink href="/dashboard" variant="contrast">
+            <Icons.Landmark size={17} />
+            Back to Back Office
+            <Icons.ChevronRight size={16} />
+          </ButtonLink>
         </div>
       </div>
     </div>
-  )
-}
-
-/**
- * The date and time under the sign-in card.
- *
- * Rendered as nothing on the server and filled in after mount, deliberately.
- * The server's clock formatted into HTML is the server's SECOND, and by the time
- * the browser hydrates it is a different one — which React reports as a mismatch
- * on the one screen that is open all day. It also would not tick.
- *
- * A till sitting on a counter overnight has to still be right in the morning, so
- * this re-reads the clock every 30 seconds rather than trusting the value it was
- * first given.
- */
-function TillClock() {
-  const [now, setNow] = useState<Date | null>(null)
-
-  useEffect(() => {
-    setNow(new Date())
-    const timer = setInterval(() => setNow(new Date()), 30_000)
-    return () => clearInterval(timer)
-  }, [])
-
-  // Holds the line's height before the clock resolves, so the card above does
-  // not jump a few pixels the moment it does.
-  if (!now) return <p className="text-[13px] text-muted">&nbsp;</p>
-
-  return (
-    <p className="text-[13px] text-muted">
-      {/* Explicit locale — the server and the browser disagree otherwise, and
-          this is a South African till. */}
-      {now.toLocaleDateString('en-ZA', { weekday: 'short', day: '2-digit', month: 'short' })}
-      {' · '}
-      {/* toTimeString rather than toLocaleTimeString: it is 24-hour with no
-          locale in play, so the till reads the same on every machine. */}
-      {now.toTimeString().slice(0, 5)}
-    </p>
   )
 }

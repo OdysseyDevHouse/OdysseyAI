@@ -14,7 +14,12 @@
 export { Button, ButtonLink, type ButtonSize, type ButtonVariant } from './Button'
 export { TintButton } from './TintButton'
 export { PromoArt, type PromoArtKind } from './PromoArt'
-export { PosSignInArt, type PosSignInSpecial } from './PosSignInArt'
+export {
+  PosSignInArt,
+  type PosSignInSpecial,
+  type PosSignInPriceRow,
+  type PosSignInOfferRow,
+} from './PosSignInArt'
 export { WeekHours, WeekHoursDay, WEEK_DAYS, type HoursRange } from './WeekHours'
 export {
   buttonClass,
@@ -114,6 +119,9 @@ export { StatTile, StatStrip, MiniStat, SearchBar } from './Stats'
 export { SummaryList, SummaryRow, SummaryTotal } from './Summary'
 export { RowTile } from './RowTile'
 export { PickerResults, type PickerResult } from './PickerResults'
+/* The loaders. A <Skeleton> is still the first choice for a first load whose
+   shape is known — these are for the waits it cannot cover. */
+export { Orbit, Sweep, LoadingBar, LoadingDots, LoadingVeil } from './Loader'
 export {
   Skeleton,
   TableSkeleton,

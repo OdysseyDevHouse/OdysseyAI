@@ -83,6 +83,12 @@ import {
   SummaryRow,
   SummaryTotal,
   Switch,
+  Orbit,
+  Sweep,
+  LoadingBar,
+  LoadingDots,
+  LoadingVeil,
+  Skeleton,
   TableSkeleton,
   PageHeaderSkeleton,
   StatStripSkeleton,
@@ -222,6 +228,7 @@ export default function StyleGuidePage() {
         <PaginationSection />
         <EmptyStateSection />
         <SkeletonSection />
+        <LoaderSection />
         <ChartSection />
         <LayoutSection />
         <WordmarkSection />
@@ -273,6 +280,12 @@ function ButtonsSection() {
       variant: 'bare',
       note: 'Chromeless icon — inside other chrome (editor toolbar, sidebar)',
       label: 'Bold',
+      icon: false,
+    },
+    {
+      variant: 'contrast',
+      note: 'The inverse of the page — for the one control that must be found on a screen the brand already owns (the till sign-in’s way out)',
+      label: 'Back to Back Office',
       icon: false,
     },
   ] as const
@@ -1398,7 +1411,23 @@ function SkeletonSection() {
     <div className="flex flex-col gap-5">
       <Card>
         <CardHeader
-          title="Loading skeleton"
+          title="Skeleton"
+          description="<Skeleton className> — the atom every skeleton below is built from, and the sixth member of the loader family. A pale band travels left to right across each bar, going the same way the text that replaces it will. It sets no height or radius on purpose: give it the shape of the thing it stands in for."
+        />
+        <Row>
+          <Spec name="<Skeleton>" note="A bar, a medallion, a control. One class, any shape." />
+          <div className="flex items-center gap-4">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="size-11 rounded-pill" />
+            <Skeleton className="h-control w-32" />
+          </div>
+        </Row>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Loading table"
           description="<TableSkeleton columns rows tile> — holds a table's real row rhythm while data loads, instead of a spinner that collapses the page. A plain row measures 33px; pass `tile` for lists with a leading thumbnail, which measure 49px."
         />
         <TableSkeleton columns={4} rows={3} />
@@ -1451,6 +1480,135 @@ function SkeletonSection() {
           <p className="text-xs text-muted">
             &lt;PageSkeleton&gt; wraps a header and a PageBody-shaped column around these — it is
             what a generated loading.tsx returns.
+          </p>
+        </CardBody>
+      </Card>
+    </div>
+  )
+}
+
+function LoaderSection() {
+  const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  /* Both demos run on a timer so the loaders can be watched arriving and
+     leaving, which is the half of a loading state that a static swatch cannot
+     show — a veil that snaps on and off looks broken, and this is where you
+     find that out. */
+  const run = (set: (v: boolean) => void) => {
+    set(true)
+    setTimeout(() => set(false), 2400)
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Card>
+        <CardHeader
+          title="Loaders"
+          description="Five members of one family, all drawn from the --color-load-* tokens, so they follow the brand and the theme without a variant. Reach for a <Skeleton> first whenever the shape of what is coming is known — these cover the waits it cannot: a panel with no known shape, a control mid-action, and figures being replaced."
+        />
+        <Row>
+          <Spec name="<Orbit size>" note="A whole panel or page waiting on its first payload. The full mark, in motion." />
+          <div className="flex items-end gap-6">
+            <Orbit size={52} label="Loading products" />
+            <Orbit size={36} label={null} />
+            <Orbit size={24} label={null} />
+          </div>
+          <p className="text-xs text-muted">
+            Below ~32px the grey ribbon stops reading — use a &lt;Sweep&gt; at that size instead.
+          </p>
+        </Row>
+        <Row>
+          <Spec name="<Sweep size onFill>" note="Inside a button, or beside a single field. Small enough for a control." />
+          <div className="flex items-center gap-6">
+            <Sweep size={28} label="Loading" />
+            <Sweep size={18} label={null} />
+            <Button
+              variant="primary"
+              disabled={saving}
+              onClick={() => run(setSaving)}
+            >
+              {saving ? (
+                <>
+                  <Sweep size={15} onFill label={null} /> Saving…
+                </>
+              ) : (
+                'Save product'
+              )}
+            </Button>
+            <Button variant="danger" disabled>
+              <Sweep size={15} onFill label={null} /> Deleting…
+            </Button>
+          </div>
+          <p className="text-xs text-muted">
+            <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">onFill</code>{' '}
+            takes its colour from the button&rsquo;s own ink, so one sweep works on brand, success
+            and danger alike. The label goes to{' '}
+            <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-xs text-ink">null</code>{' '}
+            because the button already says &ldquo;Saving…&rdquo;.
+          </p>
+        </Row>
+        <Row>
+          <Spec name="<LoadingBar>" note="The top edge of a panel that is refreshing. 3px, full-bleed, moves nothing." />
+          <div className="min-w-64 flex-1">
+            <LoadingBar label="Loading" />
+          </div>
+        </Row>
+        <Row>
+          <Spec name="<LoadingDots>" note="Inline, mid-sentence — the small frequent waits inside a line of text." />
+          <p className="text-sm text-ink-2">
+            Recalculating totals <LoadingDots label="Recalculating totals" />
+          </p>
+        </Row>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Refreshing figures"
+          description="<LoadingVeil show message> — the pattern for a panel that ALREADY has content and is fetching new content. It keeps last run's figures on screen, washes over them and orbits on top, instead of clearing the panel and collapsing the layout twice. It wraps its children, so no screen has to remember position:relative."
+          action={
+            <Button variant="secondary" onClick={() => run(setBusy)} disabled={busy}>
+              <Icons.Refresh size={15} /> Refresh
+            </Button>
+          }
+        />
+        <CardBody>
+          <LoadingVeil show={busy} message="Fetching figures">
+            <StatStrip columns={3}>
+              <StatTile label="Sales today" value="R 48 210.00" icon={<Icons.Money size={18} />} />
+              <StatTile label="Transactions" value="312" icon={<Icons.Receipt size={18} />} />
+              <StatTile label="Average basket" value="R 154.52" icon={<Icons.BarChart size={18} />} />
+            </StatStrip>
+          </LoadingVeil>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Which loader"
+          description="The choice is about what is on screen when the wait starts, not about how long it lasts."
+        />
+        <CardBody className="flex flex-col gap-2 text-sm text-ink-2">
+          <p>
+            <strong className="text-ink">Nothing yet, shape known</strong> — &lt;Skeleton&gt; and its
+            family. A table at its real 33px row height keeps the page still; a spinner collapses it
+            and then shoves it back down.
+          </p>
+          <p>
+            <strong className="text-ink">Nothing yet, shape unknown</strong> — &lt;Orbit&gt;, centred
+            in the panel.
+          </p>
+          <p>
+            <strong className="text-ink">Figures already on screen</strong> — &lt;LoadingVeil&gt;.
+            Never clear them.
+          </p>
+          <p>
+            <strong className="text-ink">One control is working</strong> — &lt;Sweep onFill&gt; in the
+            button, with its label changed to the verb.
+          </p>
+          <p>
+            <strong className="text-ink">Under a second, inside a sentence</strong> —
+            &lt;LoadingDots&gt;.
           </p>
         </CardBody>
       </Card>

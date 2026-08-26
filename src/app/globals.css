@@ -50,6 +50,58 @@
      It needs no dark override for the same reason — brand already has one. */
   --color-brand-rule: var(--color-brand);
 
+  /* --- Loading ----------------------------------------------------------- */
+  /* The loaders — Orbit, Sweep, LoadingBar, LoadingDots, LoadingVeil — are
+     drawn from these four steps and nothing else, so a change of brand carries
+     every spinner in the app with it on the same paint.
+
+     Written as references rather than as copies of the hexes, for the same
+     reason --color-brand-rule is: a spinner that stayed the OLD blue after a
+     rebrand is the most visible kind of drift, because it is the one thing on
+     screen that MOVES. It also means they need no dark override — every
+     variable underneath them already has one.
+
+       core   the still centre / the leading half of a gradient
+       arc    the moving element, and the only saturated colour
+       ribbon the slow counter-rotating grey
+       track  the unfilled ring or bar behind the movement */
+  --color-load-core: var(--color-brand-ink);
+  --color-load-arc: var(--color-brand);
+  --color-load-ribbon: var(--color-muted);
+  --color-load-track: var(--color-border-strong);
+
+  /* The wash a LoadingVeil lays over figures that are being refreshed. Mixed
+     from `surface` rather than written as a white with alpha, so it comes out
+     a dark wash on a dark theme instead of fogging the panel white. */
+  --color-veil: color-mix(in srgb, var(--color-surface) 74%, transparent);
+
+  /* The skeleton bar, and the sheen that travels across it.
+
+     BOTH ARE LITERALS, and neither is a reference to another token — which is
+     unusual enough in this file to be worth the explanation.
+
+     The pair only works if the sheen sits far enough on the LIGHT side of the
+     bar, and that rules out every reference available. `surface` is lighter
+     than the bar in the light theme and DARKER than it in the dark one, so it
+     would invert the shimmer into a shadow exactly where the theme changed.
+     `border` sits at 228, which leaves only 27 values of headroom before pure
+     white — and the first version of this spent even less than that: written
+     as color-mix(skel 55%, sheen), the band landed twelve values off the bar
+     in the light theme and nine in the dark. Measured on the painted pixels,
+     not guessed. An animation that ran perfectly and could not be seen.
+
+     So the bar takes its own value, three per cent below `border`, which costs
+     nothing in how heavy a loading screen looks and buys back sixty per cent
+     more range for the band to travel through. 220 to 255 in the light theme,
+     42 to 72 in the dark. Those numbers are the whole reason the shimmer
+     reads, so if a skeleton ever looks static again, check the DELTA between
+     these two before looking at the animation.
+
+     (220,228,236 is also the track from the loader sheet these came from, so
+     the bar is the weight that design was drawn against.) */
+  --color-skel: #dce4ec;
+  --color-skel-sheen: #ffffff;
+
   /* --- Status ------------------------------------------------------------ */
   --color-success: #17a34a;
   --color-success-ink: #0f7b37;
@@ -323,6 +375,10 @@
     --color-surface: #171b21;
     --color-surface-2: #1f242c;
     --color-border: #262c35;
+    /* The skeleton pair. Both literals — see the note at the tokens for why,
+       and keep the gap between them: it is what makes the shimmer visible. */
+    --color-skel: #2a313b;
+    --color-skel-sheen: #48525f;
     --color-border-strong: #39414d;
 
     --color-ink: #e8ebef;
@@ -413,6 +469,9 @@
   --color-surface: #171b21;
   --color-surface-2: #1f242c;
   --color-border: #262c35;
+  /* See the block above. */
+  --color-skel: #2a313b;
+  --color-skel-sheen: #48525f;
   --color-border-strong: #39414d;
 
   --color-ink: #e8ebef;
@@ -657,6 +716,23 @@ body {
   );
 }
 
+/* The specials board on the till sign-in showcase — the navy card the shop's
+   promotions sit inside.
+
+   Here for the SAME reason .signin-scrim is, and it was the same bug: the board
+   was `bg-ink/45`, and `ink` is near-WHITE in dark mode, so the moment a cashier
+   switched theme the customer-facing panel grew a pale veil with white heading
+   text on it. This half of the screen belongs to the customer and must not
+   follow the operator's preference.
+
+   A gradient rather than a flat fill so the card reads as lit from the top-left
+   the way the scrim behind it does, instead of as a grey rectangle laid on the
+   photograph. */
+.signin-board {
+  background: linear-gradient(135deg, rgb(9 20 42 / 0.88), rgb(12 38 84 / 0.82));
+  border: 1px solid rgb(255 255 255 / 0.1);
+}
+
 /* Consistent focus ring — keyboard users navigate this back office all day. */
 :focus-visible {
   outline: 2px solid var(--color-brand);
@@ -847,6 +923,297 @@ input[type='range'] {
   .drawer-from-right[open],
   .drawer-from-left[open] {
     animation: none;
+  }
+}
+
+/* ============================================================================
+   LOADING — every way this app says "wait".
+
+   Six rules for six states: the five loaders in @/components/ui/Loader, and
+   the shimmer worn by <Skeleton> in @/components/ui/Skeleton — which is where
+   the page skeletons under every route's loading.tsx get their movement, so
+   this block is what animates a loading screen anywhere in OdysseyAI.
+
+   They live here rather than in styles.ts because none of them can be said in
+   Tailwind: they are keyframes, conic gradients, a radial mask and a
+   travelling background-position. The components are thin wrappers that supply
+   the markup, the size and the aria — the appearance is entirely these rules,
+   so restyling a spinner is an edit in this file, exactly like every other
+   colour in the app.
+
+   Colour comes from the --color-load-* and --color-skel* tokens at the top, so
+   nothing below names a colour of its own. Size comes from --ody-size, which
+   each component writes as an inline custom property — except the skeleton,
+   which takes its shape from the caller, for the reason written on it.
+
+   WHICH ONE. Skeleton whenever the SHAPE of what is coming is known, which on
+   a first load it usually is. Orbit for a whole panel or page where it is not.
+   Sweep inside a button or beside a field. LoadingBar along the top edge of a
+   panel that is refreshing. LoadingDots inline with a sentence. LoadingVeil
+   over figures that are ALREADY on screen and are being replaced.
+   ========================================================================= */
+
+/* --- 1 · Orbit ----------------------------------------------------------- */
+/* The mark in motion: a still core, a fast blue arc, and a slow grey ribbon
+   turning the other way. The counter-rotation is what stops it reading as a
+   plain spinner — two speeds in opposite directions look deliberate where one
+   looks like a stock throbber. */
+.ody-orbit {
+  display: block;
+  width: var(--ody-size, 44px);
+  height: var(--ody-size, 44px);
+}
+.ody-orbit .track {
+  fill: none;
+  stroke: var(--color-load-track);
+  stroke-width: 4;
+}
+.ody-orbit .ribbon {
+  fill: none;
+  stroke: var(--color-load-ribbon);
+  stroke-width: 4;
+  transform-origin: 32px 32px;
+  animation: ody-spin 2.4s linear infinite reverse;
+}
+.ody-orbit .arc {
+  fill: none;
+  stroke: var(--color-load-arc);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 44 200;
+  transform-origin: 32px 32px;
+  animation: ody-spin 0.95s linear infinite;
+}
+.ody-orbit .core {
+  fill: var(--color-load-core);
+}
+
+@keyframes ody-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- 2 · Sweep ----------------------------------------------------------- */
+/* One ring, core into arc, small enough to sit inside a control. The ring is a
+   conic gradient with a radial mask punched out of the middle rather than a
+   bordered box, so the stroke stays even at every size — a `border-top` spinner
+   goes visibly lumpy below about 16px, which is exactly the size a button
+   needs. */
+.ody-sweep {
+  /* A <span>, so it needs a box: an inline element ignores width, and a sweep
+     with no width is a sweep with no ring. `flex: none` keeps it from being
+     squashed when it sits beside a label inside a button. */
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  width: var(--ody-size, 28px);
+  height: var(--ody-size, 28px);
+  border-radius: 50%;
+  background:
+    conic-gradient(
+      from 0turn,
+      transparent 0 0.08turn,
+      var(--color-load-core) 0.55turn,
+      var(--color-load-arc) 0.92turn,
+      transparent 0.92turn
+    ),
+    conic-gradient(var(--color-load-track) 0 1turn);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3.5px));
+  animation: ody-spin 0.8s linear infinite;
+}
+
+/* On a filled button, where the page's blues would vanish into the fill. The
+   track has to be a wash of the button's own text colour rather than the
+   page's track token, so it works on brand, success and danger alike without a
+   variant per tone. */
+.ody-sweep-on-fill {
+  --color-load-track: color-mix(in srgb, currentColor 26%, transparent);
+  --color-load-core: color-mix(in srgb, currentColor 60%, transparent);
+  --color-load-arc: currentColor;
+}
+
+/* --- 3 · LoadingBar ------------------------------------------------------ */
+/* An indeterminate sweep for the top edge of a panel. Deliberately 3px and
+   full-bleed: it belongs to the panel's edge, not to its content, so it can
+   appear and disappear without moving a single row underneath it. */
+.ody-bar {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--color-load-track);
+}
+.ody-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--color-load-core), var(--color-load-arc));
+  animation: ody-slide 1.25s cubic-bezier(0.62, 0.04, 0.34, 1) infinite;
+}
+
+@keyframes ody-slide {
+  0% {
+    transform: translateX(-105%);
+  }
+  100% {
+    transform: translateX(368%);
+  }
+}
+
+/* --- 4 · LoadingDots ----------------------------------------------------- */
+/* Inline with a line of text — "Recalculating totals …". The three dots take
+   the three loader colours in order so it is recognisably the same family as
+   the ring, and each lags the one before it, which is what makes it read as a
+   wave rather than a blink. */
+.ody-dots {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  vertical-align: middle;
+}
+.ody-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  animation: ody-pulse 1.05s ease-in-out infinite;
+}
+.ody-dots i:nth-child(1) {
+  background: var(--color-load-core);
+}
+.ody-dots i:nth-child(2) {
+  background: var(--color-load-arc);
+  animation-delay: 0.14s;
+}
+.ody-dots i:nth-child(3) {
+  background: var(--color-load-ribbon);
+  animation-delay: 0.28s;
+}
+
+@keyframes ody-pulse {
+  0%,
+  70%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  35% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* --- 5 · Skeleton -------------------------------------------------------- */
+/* The shimmer worn by <Skeleton> and every page skeleton built from it.
+
+   Only the FILL lives here. Height, width and radius stay with the caller,
+   because a skeleton's whole job is to be the shape of the thing it stands in
+   for — TableSkeleton's 20px cell bar and StatStripSkeleton's 44px medallion
+   are the same class at different sizes. Setting a height here would flatten
+   all of them into one.
+
+   Why a travelling band rather than the pulse this used to be: a pulse fades
+   the whole page's placeholders in and out together, which at eight rows reads
+   as the screen breathing. A band that crosses each bar left to right is going
+   somewhere, and it moves the eye the same way the incoming text will.
+
+   The two numbers that decide whether it reads. The background is 280% of the
+   bar, and the sheen spans 34%–66% of THAT — so the lit part is roughly nine
+   tenths of a bar wide, with flat bar either side of it. Widen the stops and
+   the whole placeholder brightens and dims as one, which is the pulse again by
+   another route; narrow them much further and the band turns into a hard
+   glint. The contrast between --color-skel and --color-skel-sheen is the other
+   half, and the note at those tokens explains why it is as high as it is.
+
+   The bar keeps a background-COLOR as well as the gradient, so a skeleton is
+   still visible if the animation never starts — a paint-holding placeholder
+   that renders as nothing is worse than one that does not move. */
+.ody-skel {
+  background-color: var(--color-skel);
+  background-image: linear-gradient(
+    90deg,
+    var(--color-skel) 34%,
+    var(--color-skel-sheen) 50%,
+    var(--color-skel) 66%
+  );
+  background-size: 280% 100%;
+  animation: ody-shimmer 1.3s ease-in-out infinite;
+}
+
+@keyframes ody-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -40% 0;
+  }
+}
+
+/* --- 6 · LoadingVeil ----------------------------------------------------- */
+/* The REFRESH pattern, and the reason this file has a veil at all: keep last
+   run's figures on screen, wash over them, orbit on top. A panel that empties
+   itself back to a spinner every time a filter changes tells the user nothing
+   except that their numbers are gone; a panel that dims the old ones says
+   "these are being replaced" and keeps the shape of the page while it happens.
+   For a FIRST load, where there is nothing to keep, use a <Skeleton> instead.
+
+   The blur is 1.5px on purpose — just enough that the figures underneath read
+   as out of date rather than merely faded. */
+.ody-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  background: var(--color-veil);
+  backdrop-filter: blur(1.5px);
+}
+
+/* --- Reduced motion ------------------------------------------------------ */
+/* Everything settles into a slow fade instead of turning. The loaders keep
+   their colour and their footprint, so a panel that reserved room for one does
+   not reflow — only the travel goes.
+
+   Note the fade is still an animation. A loader that stopped dead would be
+   indistinguishable from a jammed one, and "reduce" does not mean "none". */
+@media (prefers-reduced-motion: reduce) {
+  .ody-orbit .ribbon,
+  .ody-orbit .arc,
+  .ody-sweep,
+  .ody-bar::before,
+  .ody-dots i,
+  .ody-skel {
+    animation: none;
+  }
+  /* The skeleton keeps its flat bar and simply breathes. It is the one loader
+     that already occupies the shape of what is coming, so it needs no movement
+     to say what it is — and a full-width band frozen mid-travel would leave a
+     permanent pale streak down one side of every placeholder. */
+  .ody-skel {
+    background-image: none;
+    animation: ody-fade 1.6s ease-in-out infinite;
+  }
+  .ody-orbit,
+  .ody-sweep,
+  .ody-dots i {
+    animation: ody-fade 1.4s ease-in-out infinite;
+  }
+  .ody-bar::before {
+    width: 100%;
+    animation: ody-fade 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes ody-fade {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

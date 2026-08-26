@@ -2,15 +2,17 @@
 // packaged build it boots Next's production server in-process and loads
 // localhost. Either way the app is the same Next build as the web deployment —
 // that's the whole point of this shell.
-const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron')
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
 const path = require('node:path')
 const http = require('node:http')
 const runtimeConfig = require('./runtimeConfig')
 const localDb = require('./localDb')
+const mariaService = require('./mariaService')
 const replicationTunnel = require('./replicationTunnel')
 const { isPos, isDatabaseSetup, startPath, posNavigation, setupNavigation } = require('./appRole')
 const dbSetupBridge = require('./dbSetupBridge')
 const log = require('./log')
+const updater = require('./updater')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
@@ -103,10 +105,40 @@ async function prepareRuntime(onProgress) {
 
   if (mode !== 'local') return { mode }
 
-  /* A local backend brings its own server up. Provisioning is idempotent and
-     cheap after the first run: an existing data directory is detected and
-     started, never re-initialised, because re-initialising is indistinguishable
-     from erasing the shop's trading history. */
+  /* ── AN ADOPTED INSTALL DOES NOT OWN THE SERVER ─────────────────────────────
+   *
+   * Odyssey Database Setup registered MariaDB as a Windows service, running as
+   * the machine and started at boot. This app connects to it and nothing more:
+   * it must not try to start a server it did not install, and it must certainly
+   * not initialise a data directory that already holds the shop's trading
+   * history.
+   *
+   * The check is for the SERVICE rather than for our own config, because the
+   * service is the thing that either answers or does not. If it is registered
+   * but stopped — a machine that has just booted, or somebody who stopped it —
+   * say so plainly rather than failing later with a connection error that names
+   * nothing.
+   */
+  const serviceState = await mariaService.status()
+  if (serviceState !== 'absent') {
+    if (serviceState === 'stopped') {
+      onProgress?.('Waiting for the database service…')
+      /* Not started from here: this app is not elevated and has no business
+         being. Windows starts it at boot; a stopped one is a support question,
+         not something to paper over. */
+    }
+    onProgress?.('Connecting to the shop’s database…')
+    await mariaService.waitForPort(Number(process.env.DB_PORT)).catch(() => {
+      throw new Error(
+        `The Odyssey Database service is not answering on port ${process.env.DB_PORT}. ` +
+          `Open Services, start "${mariaService.SERVICE_NAME}", and try again.`,
+      )
+    })
+    return { mode }
+  }
+
+  /* No service on this machine: the older self-provisioning local backend, where
+     this app does own the server. See docs/local-backend.md. */
   const secrets = runtimeConfig.revealSecrets()
   await localDb.ensureRunning({
     port: Number(process.env.DB_PORT),
@@ -158,6 +190,42 @@ async function startNextServer() {
   return `http://127.0.0.1:${PORT}`
 }
 
+/**
+ * No File / Edit / View / Window / Help.
+ *
+ * ── WHY THE DEFAULT MENU IS WRONG HERE ─────────────────────────────────────
+ *
+ * Electron ships one when an app sets none, and it is built for a general
+ * desktop program: Reload, Force Reload, Toggle Developer Tools, Zoom,
+ * Minimise. On a till it is a row of ways for somebody standing at a counter
+ * to make the screen behave strangely, and none of them are things a cashier
+ * should be doing mid-sale. It also makes the app look like a browser, which is
+ * exactly what a point of sale should not look like.
+ *
+ * ── EXCEPT THE ONE THING WORTH KEEPING ─────────────────────────────────────
+ *
+ * Developer tools. Removing the menu removes its accelerator with it, and that
+ * is the difference between diagnosing a customer's screen over the telephone
+ * and asking them to send a log file. So the shortcut is re-registered on the
+ * window itself — the tools stay reachable by somebody who knows the keys, and
+ * invisible to somebody who does not.
+ *
+ * Cut, copy and paste are untouched: Chromium handles those in text fields
+ * itself on Windows, without a menu to hang them from.
+ */
+function hideApplicationMenu(win) {
+  Menu.setApplicationMenu(null)
+  win.setMenuBarVisibility(false)
+  win.autoHideMenuBar = true
+
+  win.webContents.on('before-input-event', (_event, input) => {
+    if (input.type !== 'keyDown') return
+    const devtools =
+      input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i')
+    if (devtools) win.webContents.toggleDevTools()
+  })
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -167,6 +235,10 @@ async function createWindow() {
     show: false,
     backgroundColor: '#0f1216',
     title: windowTitle(),
+    /* Belt and braces with hideApplicationMenu below: this stops the bar being
+       painted for the moment between the window appearing and the menu being
+       cleared, which is visible as a flicker on a slow machine. */
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -195,6 +267,8 @@ async function createWindow() {
       sandbox: false,
     },
   })
+
+  hideApplicationMenu(mainWindow)
 
   /* Belt and braces. createWindow() shows the window itself as soon as the
      splash is loaded, because a first-run database init takes long enough that
@@ -400,6 +474,15 @@ if (!app.requestSingleInstanceLock()) {
       const file = log.pathOf()
       if (file) shell.showItemInFolder(file)
       return file
+    })
+
+    /* Started after the window, deliberately: the first half-minute belongs to
+       opening the shop. A download competing with the Next server starting is
+       felt on a counter PC. */
+    updater.start({
+      onStatus: (message) => {
+        if (message) console.log('[updater]', message)
+      },
     })
 
     return createWindow()

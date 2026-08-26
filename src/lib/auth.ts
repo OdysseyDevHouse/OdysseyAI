@@ -12,7 +12,7 @@ import {
 } from './control/modules'
 import { moduleLabelFor } from './control/moduleMessages'
 import { verifyPassword, hashPassword } from './password'
-import { getSiteForUser, listSitesForUser, type Site } from './sites'
+import { getSite, getSiteForUser, listSitesForUser, type Site } from './sites'
 import { siteExecute } from './siteDb'
 import { getTillSession } from './tillSession'
 import { getUserByControlId, getUser, type SiteUser } from './site/users'
@@ -537,6 +537,42 @@ export async function requireSession(): Promise<SessionPayload> {
   // The login page is '/', not '/login' — there is no route at the latter.
   if (!session) redirect('/')
 
+  /* ── A SESSION FOR A DIFFERENT SHOP IS NOT A SESSION ────────────────────────
+   *
+   * This machine may have been set up for one shop, or re-pointed at another.
+   * Either way it serves exactly one, and a token naming a different site is a
+   * leftover: signed in against the cloud before the machine was provisioned,
+   * or belonging to the shop it used to be.
+   *
+   * It has to be refused rather than tolerated, because cookies live in
+   * userData and userData survives reinstalling — deliberately, so an upgrade
+   * cannot lose a database password. So a stale session outlives every remedy a
+   * person would naturally try. It sends them to the site picker for a shop
+   * this machine cannot open, and "uninstall and reinstall", the universal
+   * first instinct, changes nothing at all.
+   *
+   * Only ever narrows: on a cloud install there is no local site and this is
+   * skipped entirely.
+   *
+   * No clearSessionCookie() here, for the same reason as the eviction below —
+   * a cookie write during a render throws, and the login page clears it in a
+   * context where writing is allowed.
+   */
+  const localSite = Number(process.env.ODYSSEY_SITE_ID)
+  const isLocalInstall =
+    process.env.APP_MODE === 'desktop' &&
+    Boolean(process.env.ODYSSEY_SITE_DB_NAME?.trim()) &&
+    Number.isFinite(localSite) &&
+    localSite > 0
+  if (isLocalInstall && (session.scope !== 'site' || session.siteId !== localSite)) {
+    /* Both halves matter. `scope` catches a token minted against the CONTROL
+       panel — which on a local install can only be a leftover, and whose
+       `siteId` is often null, sending the holder to a site picker for shops
+       this machine cannot open. `siteId` catches a local token from the shop
+       this machine used to be. */
+    redirect('/?kicked=1')
+  }
+
   /* SUPERSEDED BY A NEWER SIGN-IN?
      A token with no `sid` is not enrolled and is skipped — a session minted
      before this shipped, or one minted by the till's PIN unlock. See the field's
@@ -572,7 +608,22 @@ export async function requireSite(): Promise<Site> {
   const session = await requireSession()
   if (session.siteId === null) redirect('/select-site')
 
-  const site = await getSiteForUser(session.userId, session.siteId)
+  /* ── A LOCAL INSTALL HAS NO "WHICH OF YOUR SITES" QUESTION ────────────────
+   *
+   * `session.userId` is a row in the SHOP'S OWN users table, not a control
+   * account — see SessionPayload.scope. Handing it to getSiteForUser compares
+   * it against cp2_user_sites.user_id, two unrelated id spaces that are both
+   * small integers, so it matches nothing and the shop owner is bounced to a
+   * picker offering shops this machine cannot open.
+   *
+   * The access decision was made earlier and more strictly than this check
+   * could: the machine was provisioned for this site, and the session was
+   * minted against that site's own users.
+   */
+  const site =
+    session.scope === 'site'
+      ? await getSite(session.siteId)
+      : await getSiteForUser(session.userId, session.siteId)
   if (!site) redirect('/select-site')
 
   return site
@@ -724,6 +775,8 @@ export async function requireCapabilities(): Promise<CapabilitySet> {
  */
 export async function requireCapability(capability: Capability): Promise<{
   siteId: number
+  /** What kind of shop this is — see Site.siteTypeId. Null when unclassified. */
+  siteTypeId: number | null
   actor: { userId: number; userName: string }
   capabilities: CapabilitySet
   modules: ModuleEntitlements
@@ -732,6 +785,10 @@ export async function requireCapability(capability: Capability): Promise<{
   if (!can(capabilities, capability)) redirect('/not-allowed')
   return {
     siteId: site.id,
+    /* Handed back rather than left for a caller to fetch: the site is already
+       loaded here, and the alternative is a screen making a second trip to the
+       control database for one integer it was two lines away from. */
+    siteTypeId: site.siteTypeId,
     actor: { userId: user.id, userName: user.name },
     capabilities,
     modules,

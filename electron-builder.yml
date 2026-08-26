@@ -169,6 +169,25 @@ extraFiles:
   - from: build/backend.txt
     to: backend.txt
 
+# ── WHERE UPDATES COME FROM ─────────────────────────────────────────────────
+#
+# Deliberately NOT a `publish:` block. electron-builder expands ${env.X} at
+# build time and treats an unset variable as a FATAL error — so putting the feed
+# URL here made every build depend on an environment variable that only matters
+# to a released one, and a developer building locally got "cannot expand
+# pattern" instead of an installer.
+#
+# The updater sets its own feed at runtime instead, from a URL baked alongside
+# the other build defaults — see electron/updater.js and
+# scripts/make-build-defaults.mjs. A build made without one still runs and says
+# so; it simply cannot update itself.
+#
+# What the build DOES emit either way is what the updater consumes: latest.yml
+# and a .blockmap per installer. Publishing is then a matter of copying the
+# contents of release/ to the host. Upload the .blockmap alongside the .exe or
+# every shop re-downloads the whole installer rather than the parts that
+# changed.
+
 win:
   target:
     - target: nsis
@@ -181,3 +200,23 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # ── UNINSTALLING ODYSSEY MUST NEVER TAKE THE SHOP'S DATA WITH IT ──────────
+  #
+  # This is already the default. It is written down anyway, because the failure
+  # it prevents is unrecoverable and the person who would trip it is not being
+  # careless: a technician uninstalls Odyssey to install a newer version, which
+  # is an entirely ordinary thing to do, and expects to find the shop exactly as
+  # they left it.
+  #
+  # The database does not live under the install directory or in userData — it
+  # is in ProgramData\Odyssey\mariadb, written at runtime by mariaService.js,
+  # and no uninstaller has ever heard of it. That is the real protection. This
+  # flag closes the other door: the one where somebody switches it on to tidy up
+  # after a test machine and ships it.
+  #
+  # There is deliberately NO prompt offering to remove the data either. A
+  # question with an irreversible wrong answer, asked of somebody halfway
+  # through an update, is a data-loss incident waiting for a distracted
+  # afternoon. Removing a shop's database is a separate, deliberate act — see
+  # docs/local-backend.md.
+  deleteAppDataOnUninstall: false

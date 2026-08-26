@@ -78,6 +78,87 @@ export const SHAPE_LABEL: Record<SpecialShape, string> = {
 }
 
 /**
+ * What a promotion GIVES, in one line of plain English.
+ *
+ * ── WHY THE NOUNS ARE INJECTED RATHER THAN BUILT HERE ────────────────────
+ *
+ * Two screens say what a deal is and they are talking to different people. The
+ * back office's list is read by a manager auditing what is running, so "Buy 2
+ * products, get 1 product free" is exactly right — the COUNT is the fact being
+ * checked. The till's sign-in board is read by a customer across a counter, to
+ * whom "2 products" is noise; it wants the products' or departments' actual
+ * names.
+ *
+ * What must NOT differ between them is the arithmetic — which percentage, which
+ * tier, whether 100% off is phrased as "free". Two copies of that switch is two
+ * chances for the board facing the queue to advertise a deal the manager's
+ * screen describes differently, which is an argument at the counter.
+ *
+ * So the shape switch lives here once and the naming is the caller's.
+ *
+ * `money` is injected for the same reason nothing above is imported: this
+ * module has no imports at all and is run in the browser, on the server and in
+ * tests with no database. A currency formatter reaching in would end that.
+ */
+export type DealWords = {
+  money: (amount: number) => string
+  /** How to name the products a `scope` special applies to. */
+  scope: (special: Special) => string
+  /** How to name what has to be bought. */
+  trigger: (special: Special) => string
+  /** How to name what is handed back. */
+  reward: (special: Special) => string
+}
+
+export function describeDeal(s: Special, words: DealWords): string {
+  const { money } = words
+  switch (s.shape) {
+    case 'happy_hour':
+      /* No scope at all IS the whole store — see 210 on why the separate
+         applies_to_all flag went. */
+      return s.items.some((i) => i.role === 'scope')
+        ? `${s.discountPct}% off ${words.scope(s)}`
+        : `${s.discountPct}% off everything`
+    case 'special_price':
+      return `Marked-down price on ${words.scope(s)}`
+    case 'cheapest_free':
+      return s.discountPct > 0 && s.discountPct < 100
+        ? `Buy ${s.triggerQty}, cheapest at ${s.discountPct}% off`
+        : `Buy ${s.triggerQty}, cheapest free`
+    case 'free_item':
+      return `Buy ${words.trigger(s)}, get ${words.reward(s)} free`
+    case 'percent_off':
+      return `${s.discountPct}% off when you buy ${words.trigger(s)}`
+    case 'bundle_price':
+      return `${words.trigger(s)} for ${money(s.bundlePriceIncl)}`
+    case 'multibuy':
+      return s.tiers.length === 1
+        ? `${s.tiers[0].qty} for ${money(s.tiers[0].priceIncl)}`
+        : `${s.tiers.length} quantity tiers on ${words.trigger(s)}`
+    case 'spend':
+      return s.discountPct > 0
+        ? `Spend ${money(s.spendAmountIncl)}, get ${s.discountPct}% off`
+        : `Spend ${money(s.spendAmountIncl)}, get something free`
+    case 'bonus_points':
+      return `${s.pointsMultiplier ?? 1}x loyalty points`
+    case 'quantity_break': {
+      const smallest = [...s.tiers].sort((a, b) => a.qty - b.qty)[0]
+      return smallest
+        ? `${smallest.qty}+ at ${smallest.discountPct}% off${s.tiers.length > 1 ? `, ${s.tiers.length} breaks` : ''}`
+        : 'Quantity breaks'
+    }
+    case 'second_at_pct':
+      return s.discountPct >= 100
+        ? 'Buy one, get one free'
+        : `Second one at ${s.discountPct}% off`
+    case 'mix_and_match':
+      return `Any ${s.triggerQty} for ${money(s.bundlePriceIncl)}`
+    case 'free_delivery':
+      return `Free delivery over ${money(s.spendAmountIncl)}`
+  }
+}
+
+/**
  * How the form groups the shapes into its two questions.
  *
  * PRESENTATION ONLY. Nothing in the engine reads this — the arithmetic switches

@@ -2,9 +2,19 @@ import type { ReactNode } from 'react'
 import { Card } from './Card'
 import { TABLE, TABLE_HEAD_ROW, TABLE_TD, TABLE_TH } from './styles'
 
-/** A pulsing placeholder bar. Compose into layouts that must not collapse. */
+/**
+ * A shimmering placeholder bar — the atom every skeleton below is built from.
+ * Compose into layouts that must not collapse.
+ *
+ * The fill is `.ody-skel` in globals.css: a pale band that travels left to
+ * right across the bar, which is the same family the loaders belong to. Give it
+ * a height and width — every caller here does — because the class deliberately
+ * sets neither, so one rule can dress a 20px cell bar and a 44px medallion
+ * alike. `rounded-control` is the default and any radius in `className`
+ * overrides it.
+ */
 export function Skeleton({ className = '' }: { className?: string }) {
-  return <span className={`block animate-pulse rounded-control bg-surface-2 ${className}`} />
+  return <span className={`ody-skel block rounded-control ${className}`} />
 }
 
 /*

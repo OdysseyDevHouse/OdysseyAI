@@ -15,7 +15,7 @@ import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { livePosMenus } from '@/lib/site/posMenus'
 import { listDepartments } from '@/lib/site/departments'
 import { tillProductCounts } from '@/lib/site/tillSearch'
-import { backdropUrl } from '@/lib/site/posSignInArt'
+import { backdropUrl, stockBackdropUrl } from '@/lib/site/posSignInArt'
 import { logoFileName, LOGO_URL } from '@/lib/site/documentLogo'
 import { signInSpecials } from '@/lib/site/posSignInSpecials'
 import type { PosSignInSpecial } from '@/components/ui'
@@ -159,7 +159,7 @@ export default async function PosPage({
          backdrop, its logo, and the promotions worth putting on a board. All
          three degrade to nothing on their own, so this never keeps a cashier
          off a till — see posSignInArt and posSignInSpecials. */
-      signInArtFor(site.id),
+      signInArtFor(site.id, site.siteTypeId),
       /* The shop's own till buttons. Shipped with the page rather than fetched by the
          client: they are the DEFAULT pane, so a till that had to wait for them would
          open on an empty grid — and one that lost them when the line dropped would lose
@@ -381,7 +381,10 @@ export default async function PosPage({
  * till at the start of a shift, so nothing decorative on it may ever be able to
  * stop somebody signing in.
  */
-async function signInArtFor(siteId: number): Promise<{
+async function signInArtFor(
+  siteId: number,
+  siteTypeId: number | null,
+): Promise<{
   backdropUrl: string
   logoUrl: string
   specials: PosSignInSpecial[]
@@ -396,25 +399,41 @@ async function signInArtFor(siteId: number): Promise<{
   ])
 
   return {
-    backdropUrl: backdrop,
+    /* The shop's OWN photograph if it uploaded one, and the stock picture for
+       its trade otherwise. Never neither: `stockBackdropUrl` always answers, so
+       the brand gradient is now only what shows through while a picture loads or
+       when its bytes have gone missing. */
+    backdropUrl: backdrop || stockBackdropUrl(siteTypeId),
     /* Cache-busted on the stored NAME, matching what logoImgTag does for
        printed documents: the URL is constant per site, so without it a
        replaced logo would stay on screen until somebody hard-refreshed a
        machine that is never refreshed. */
     logoUrl: logoFile ? `${LOGO_URL}?v=${encodeURIComponent(logoFile)}` : '',
-    specials: specials.map((s) => ({
-      productId: s.productId,
-      description: s.description,
-      blurb: s.blurb,
-      priceIncl: s.priceIncl,
-      wasIncl: s.wasIncl,
-      /* The id becomes a URL HERE rather than in the panel, so the kit
-         component stays a dumb renderer that knows no routes — the same
-         reason TillProduct ships an image id rather than a path. */
-      imageUrl:
-        s.imageId === null
-          ? undefined
-          : `/api/pos/special-image?id=${s.imageId}&productId=${s.productId}`,
-    })),
+    /* Two row shapes, and only one of them has a picture to point at. The id
+       becomes a URL HERE rather than in the panel, so the kit component stays a
+       dumb renderer that knows no routes — the same reason TillProduct ships an
+       image id rather than a path. */
+    specials: specials.map((s) =>
+      s.kind === 'price'
+        ? {
+            kind: 'price' as const,
+            productId: s.productId,
+            description: s.description,
+            blurb: s.blurb,
+            priceIncl: s.priceIncl,
+            wasIncl: s.wasIncl,
+            imageUrl:
+              s.imageId === null
+                ? undefined
+                : `/api/pos/special-image?id=${s.imageId}&productId=${s.productId}`,
+          }
+        : {
+            kind: 'offer' as const,
+            specialId: s.specialId,
+            description: s.description,
+            blurb: s.blurb,
+            appliesTo: s.appliesTo,
+          },
+    ),
   }
 }

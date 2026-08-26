@@ -286,7 +286,6 @@ export default function PosEntry({
     return (
       <PosGate
         siteId={siteId}
-        siteName={siteName}
         backdropUrl={backdropUrl}
         logoUrl={logoUrl}
         specials={signInSpecials}

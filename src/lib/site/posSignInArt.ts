@@ -19,10 +19,15 @@ import { storeImageUpload, deleteStoredFile, readStoredFile, sniffImage } from '
  * ── A MISSING PICTURE IS THE NORMAL CASE, NOT AN ERROR ────────────────────
  *
  * Almost every shop will never upload one. So empty is not a broken state to be
- * reported: the gate paints its brand gradient instead and looks deliberate
- * rather than unfinished. Everything here degrades to '' the way documentLogo
- * does — a database restored without its uploads directory shows the gradient,
- * not a broken image on the one screen customers see.
+ * reported: the gate falls back to a STOCK photograph chosen by what kind of
+ * shop this is — see `stockBackdropUrl` — and looks finished rather than
+ * unfinished. Everything here degrades to '' the way documentLogo does, and ''
+ * is what tells the caller to reach for the stock picture. A database restored
+ * without its uploads directory shows a bakery, not a broken image on the one
+ * screen customers see.
+ *
+ * The two are ordered, and only one way round makes sense: a shop that took the
+ * trouble to photograph its own room must beat anything we shipped.
  *
  * ── WHAT IS STORED IS THE DISK NAME, NEVER A PATH ─────────────────────────
  *
@@ -31,6 +36,80 @@ import { storeImageUpload, deleteStoredFile, readStoredFile, sniffImage } from '
  * ever downloaded under its original name, so there is nothing to keep it for,
  * and the sent name is attacker-controlled.
  */
+
+/* ────────────────────────────────────────────────────────────────────────────
+   THE STOCK PICTURE, CHOSEN BY WHAT KIND OF SHOP THIS IS
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Where the bundled sign-in photographs live.
+ *
+ * `public/`, not the uploads directory, and the difference matters. These ship
+ * WITH the application: they are the same eight files on every installation,
+ * they are not a shop's data, and a till that has never reached the server must
+ * still paint one. An upload lives on a disk the desktop build may not have; a
+ * file under `public/` is served by the Next server running on the till itself,
+ * so this works with the line down — which is the whole condition this screen is
+ * designed around.
+ */
+const STOCK_DIR = '/signin'
+
+/**
+ * Which photograph each kind of shop gets.
+ *
+ * Keyed on `cp2_site_types.id` rather than on the type's NAME, deliberately. The
+ * name is editable in the control panel — somebody renaming "Bottle Store" to
+ * "Liquor Store" is a reasonable afternoon's admin, and it must not silently
+ * blank the picture on every one of those tills. The id is what the foreign key
+ * actually holds.
+ *
+ * Absent ids are NOT an error and not a gap to be filled with a placeholder:
+ * eighteen of the twenty-six types have no photograph yet, a brand new type
+ * added in the control panel tomorrow will have none either, and all of them
+ * fall to the default below. See `stockBackdrop`.
+ */
+const STOCK_BY_SITE_TYPE: Record<number, string> = {
+  1: 'bakery',
+  2: 'bar',
+  3: 'beauty-salon',
+  4: 'biltong-deli',
+  5: 'bottle-store',
+  6: 'boutique',
+  7: 'butchery',
+  8: 'clothing-shoes',
+}
+
+/**
+ * What an unclassified shop shows.
+ *
+ * The bottle store, by instruction rather than by inference — it is a warm,
+ * well-lit room full of stock that reads as "a shop" from across a counter
+ * without claiming to be any particular trade. Every failure lands here: no site
+ * type set, a type with no photograph, a type id that no longer exists.
+ */
+const STOCK_FALLBACK = 'bottle-store'
+
+/**
+ * The bundled photograph for this kind of shop.
+ *
+ * Never returns '' — unlike `backdropUrl` below, which returns '' to mean "this
+ * shop uploaded nothing". There is always a stock picture; the question is only
+ * which one.
+ *
+ * If the FILE is missing the panel degrades on its own and needs no help here:
+ * PosSignInArt paints the brand gradient underneath every backdrop precisely so
+ * that a picture which fails to load leaves the screen looking deliberate rather
+ * than broken. That is what makes it safe to ship this mapping before all
+ * twenty-six photographs exist.
+ */
+export function stockBackdropUrl(siteTypeId: number | null): string {
+  const slug = (siteTypeId !== null && STOCK_BY_SITE_TYPE[siteTypeId]) || STOCK_FALLBACK
+  /* WebP, and one extension for the whole set rather than a per-entry filename.
+     The map then says which SHOP gets which picture and nothing about file
+     formats, and a slug that has no file yet still produces a URL that simply
+     404s onto the gradient — see the docblock. */
+  return `${STOCK_DIR}/${slug}.webp`
+}
 
 export type BackdropResult = { ok: true } | { ok: false; error: string }
 

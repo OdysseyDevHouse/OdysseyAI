@@ -19,6 +19,7 @@ import {
 import { formatMoney } from '@/lib/decimals'
 import {
   SHAPE_LABEL,
+  describeDeal,
   AUDIENCE_LABEL,
   specialActiveAt,
   type Special,
@@ -92,53 +93,23 @@ function typeLabel(s: Special): string {
   return SHAPE_LABEL[s.shape]
 }
 
-/** A one-line summary of what the customer actually gets. */
-function dealSummary(s: Special): string {
-  switch (s.shape) {
-    case 'happy_hour':
-      // No scope at all IS the whole store — see 210 on why the separate
-      // applies_to_all flag went.
-      return s.items.some((i) => i.role === 'scope')
-        ? `${s.discountPct}% off ${countScope(s)}`
-        : `${s.discountPct}% off everything`
-    case 'special_price':
-      return `Marked-down price on ${countScope(s)}`
-    case 'cheapest_free':
-      return s.discountPct > 0 && s.discountPct < 100
-        ? `Buy ${s.triggerQty}, cheapest at ${s.discountPct}% off`
-        : `Buy ${s.triggerQty}, cheapest free`
-    case 'free_item':
-      return `Buy ${countRole(s, 'trigger')}, get ${countRole(s, 'reward')} free`
-    case 'percent_off':
-      return `${s.discountPct}% off when you buy ${countRole(s, 'trigger')}`
-    case 'bundle_price':
-      return `${countRole(s, 'trigger')} for ${formatMoney(s.bundlePriceIncl)}`
-    case 'multibuy':
-      return s.tiers.length === 1
-        ? `${s.tiers[0].qty} for ${formatMoney(s.tiers[0].priceIncl)}`
-        : `${s.tiers.length} quantity tiers on ${countRole(s, 'trigger')}`
-    case 'spend':
-      return s.discountPct > 0
-        ? `Spend ${formatMoney(s.spendAmountIncl)}, get ${s.discountPct}% off`
-        : `Spend ${formatMoney(s.spendAmountIncl)}, get something free`
-    case 'bonus_points':
-      return `${s.pointsMultiplier ?? 1}x loyalty points`
-    case 'quantity_break': {
-      const smallest = [...s.tiers].sort((a, b) => a.qty - b.qty)[0]
-      return smallest
-        ? `${smallest.qty}+ at ${smallest.discountPct}% off${s.tiers.length > 1 ? `, ${s.tiers.length} breaks` : ''}`
-        : 'Quantity breaks'
-    }
-    case 'second_at_pct':
-      return s.discountPct >= 100
-        ? 'Buy one, get one free'
-        : `Second one at ${s.discountPct}% off`
-    case 'mix_and_match':
-      return `Any ${s.triggerQty} for ${formatMoney(s.bundlePriceIncl)}`
-    case 'free_delivery':
-      return `Free delivery over ${formatMoney(s.spendAmountIncl)}`
-  }
-}
+/**
+ * A one-line summary of what the customer actually gets.
+ *
+ * The shape switch is `describeDeal` in the engine — the till's sign-in board
+ * says the same things to a customer and the two must not drift on which
+ * percentage or which tier. What is LOCAL here is the naming: this list is read
+ * by a manager auditing what is running, so a count is the useful fact. The
+ * board names the actual products, because "2 products" means nothing to
+ * somebody standing at a counter.
+ */
+const dealSummary = (s: Special) =>
+  describeDeal(s, {
+    money: formatMoney,
+    scope: countScope,
+    trigger: (x) => countRole(x, 'trigger'),
+    reward: (x) => countRole(x, 'reward'),
+  })
 
 const countScope = (s: Special) => {
   const n = s.items.filter((i) => i.role === 'scope').length

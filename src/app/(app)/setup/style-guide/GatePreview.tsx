@@ -7,6 +7,7 @@ import PosGate from '@/app/(pos)/pos/PosGate'
 import { TableGate } from '@/app/(pos)/pos/TableGate'
 import type { OpenTab } from '@/app/(pos)/pos/actions'
 import type { PosTable } from '@/lib/site/posTables'
+import type { PosSignInSpecial } from '@/components/ui'
 
 /**
  * The till's table gate, on the Style Guide.
@@ -352,15 +353,22 @@ export function OpenTillPreview() {
  *
  * The showcase half has three inputs and each is INDIVIDUALLY optional, so the
  * screen has a designed appearance at four different levels of setup. The
- * toggle below walks them, because the one almost every shop sees — nothing
- * configured at all — is the one nobody remembers to check.
+ * toggle below walks them, because the states nobody remembers to check are the
+ * ones every shop actually meets.
+ *
+ * The backdrop cases are the pair worth understanding. A real till is never
+ * without a picture — `stockBackdropUrl` picks one from the shop's site type and
+ * always answers — so “No picture at all” here is not a shop's first day. It is
+ * the gradient underneath: what shows while the photograph loads, and what is
+ * left if its bytes have gone missing.
  *
  * Signing in does nothing here. `tillSignInAction` refuses a preview session,
  * and the button is left live precisely so that refusal renders in the pad's
  * own error state where it belongs.
  */
-const PREVIEW_SPECIALS = [
+const PREVIEW_SPECIALS: PosSignInSpecial[] = [
   {
+    kind: 'price',
     productId: 1,
     description: 'Classic Beef Burger',
     blurb: 'Juicy beef patty with cheddar, lettuce, tomato & our special sauce.',
@@ -368,6 +376,7 @@ const PREVIEW_SPECIALS = [
     wasIncl: 109,
   },
   {
+    kind: 'price',
     productId: 2,
     description: 'Creamy Chicken Pasta',
     blurb: 'Tender chicken, creamy mushroom sauce with parmesan.',
@@ -375,20 +384,45 @@ const PREVIEW_SPECIALS = [
     wasIncl: null,
   },
   {
+    kind: 'price',
     productId: 3,
     description: 'Chocolate Fudge Cake',
     blurb: 'Rich chocolate cake served with vanilla ice cream.',
     priceIncl: 49,
     wasIncl: 65,
   },
-  /* A fourth, so the pager dots appear and the cycle has somewhere to go —
+  /*
+   * The OTHER row type, and the reason it is in the default fixture rather than
+   * behind its own toggle: a combo deal has no single price, and a shop running
+   * only combos used to get a blank showcase with no clue why. It has to be
+   * possible to see the two kinds sitting together and tell them apart at a
+   * glance — which is the whole design brief for the offer row.
+   */
+  {
+    kind: 'offer',
+    specialId: 91,
+    description: 'Combo test',
+    blurb: 'Buy 2, cheapest at 10% off',
+    appliesTo: 'On Beverages, Snacks',
+  },
+  /* A fifth, so the pager dots appear and the cycle has somewhere to go —
      three per page is the panel's own rule. */
   {
+    kind: 'price',
     productId: 4,
     description: 'Flat White',
     blurb: 'Double shot, silky milk.',
     priceIncl: 32,
     wasIncl: 38,
+  },
+  /* An offer with nowhere brief to say it applies — `appliesTo` is '' and the
+     row must still look finished rather than short a line. */
+  {
+    kind: 'offer',
+    specialId: 92,
+    description: 'Spend & save',
+    blurb: 'Spend R500.00, get 10% off',
+    appliesTo: '',
   },
 ]
 
@@ -396,10 +430,10 @@ export function PosGatePreview() {
   const [state, setState] = useState<'bare' | 'specials' | 'logo' | 'full'>('bare')
 
   const STATES = [
-    { key: 'bare', label: 'Nothing set up' },
+    { key: 'bare', label: 'No picture at all' },
     { key: 'specials', label: 'Specials running' },
     { key: 'logo', label: 'Logo uploaded' },
-    { key: 'full', label: 'Logo + backdrop' },
+    { key: 'full', label: 'Logo + own backdrop' },
   ] as const
 
   /* A data URI rather than a real upload: the preview must not depend on this
@@ -434,9 +468,12 @@ export function PosGatePreview() {
     <div className="flex flex-col gap-3">
       <p className="text-[13px] text-muted">
         What a counter shows between sales. The showcase half is built from three
-        independent optional pieces, so step through them — “Nothing set up” is what
-        almost every shop sees on its first day, and it has to look finished rather
-        than empty.
+        independent optional pieces, so step through them. “No picture at all” is the
+        gradient the panel paints while a photograph loads or when its bytes have gone
+        missing — a shop that has uploaded nothing gets a stock picture for its trade
+        instead, so this is a fallback rather than a first day. The board carries two
+        row types: priced items a customer can act on, and — for combos and
+        spend-and-gets, which have no one price — the deal said in words.
       </p>
       <div className="flex flex-wrap gap-2">
         {STATES.map((s) => (
@@ -450,14 +487,16 @@ export function PosGatePreview() {
           </Button>
         ))}
       </div>
-      {/* Tall enough for the pad at its full height, and wide is the point — the
-          showcase half only appears from `lg`, so a cramped frame would show the
-          fallback rather than the screen this preview exists for. */}
-      <div className="h-[720px] overflow-hidden rounded-card border border-border bg-canvas">
+      {/* 706 for the showcase pane plus 64 of screen padding, rounded up. Short
+          of that the pane's `max-h-full` kicks in and the preview quietly shows a
+          squashed version rather than the real one — which is the specific way a
+          preview becomes worse than no preview. Wide matters for the same reason:
+          the showcase only appears from `lg`, so a cramped frame would show the
+          fallback rather than the screen this exists to show. */}
+      <div className="h-[800px] overflow-hidden rounded-card border border-border bg-canvas">
         <div className="flex h-full flex-col">
           <PosGate
             siteId={0}
-            siteName="Odyssey Cafe — Sea Point"
             backdropUrl={showBackdrop ? BACKDROP : ''}
             logoUrl={showLogo ? LOGO : ''}
             specials={showSpecials ? PREVIEW_SPECIALS : []}

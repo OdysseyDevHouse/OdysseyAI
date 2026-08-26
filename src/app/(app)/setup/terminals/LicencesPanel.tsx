@@ -262,12 +262,33 @@ export default function LicencesPanel({
                           will be refused. Re-link it from the machine that should be using it.
                         </>
                       ) : (
-                        <>
-                          {till.code} has no machine registered to it — this licence names it,
-                          but the till itself is still unclaimed, so it will be refused.
-                          Press <b className="font-semibold">Unlink</b> and then{' '}
-                          <b className="font-semibold">Use this machine</b> to set both together.
-                        </>
+                        /* ── ONLY OFFER THE BUTTON THAT IS ACTUALLY THERE ──────
+                           `Use this machine` renders on the same condition as
+                           `entitled(spot)` — a licence that cannot trade does not
+                           get one, because linking a machine to an expired
+                           licence walks it into a refusal.
+
+                           This sentence used to name it unconditionally. On a
+                           licence with no entitlement that sent somebody to
+                           press a button that was not on the screen, and the
+                           Unlink half of the advice worked — leaving them worse
+                           off than before they read it. */
+                        entitled(spot) ? (
+                          <>
+                            {till.code} has no machine registered to it — this licence names it,
+                            but the till itself is still unclaimed, so it will be refused.
+                            Press <b className="font-semibold">Unlink</b> and then{' '}
+                            <b className="font-semibold">Use this machine</b> to set both together.
+                          </>
+                        ) : (
+                          <>
+                            {till.code} has no machine registered to it, and this licence cannot
+                            trade — it is neither paid for nor on a live trial. Linking a machine
+                            would only move the refusal. Buy a till licence for this shop, or
+                            start a trial from the till itself, and then set the two together
+                            here.
+                          </>
+                        )
                       )}
                     </p>
                   )}

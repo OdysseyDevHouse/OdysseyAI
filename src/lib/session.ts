@@ -86,6 +86,13 @@ export async function readSessionToken(token: string): Promise<SessionPayload | 
          and a dropped `sid` reads as "not enrolled", which means the eviction
          check never fires and nothing anywhere looks broken. */
       sid: typeof payload.sid === 'string' ? payload.sid : undefined,
+      /* Same rule, and it caught the next person straight away: `scope` was
+         added to the type and to the minting and not to this list, so every
+         locally-minted session read back as un-scoped. requireSession then
+         treated a perfectly good sign-in as a leftover from another shop and
+         bounced it to the login form — the guard rejecting exactly what it
+         exists to protect. */
+      scope: payload.scope === 'site' ? 'site' : undefined,
     }
   } catch {
     // Expired, tampered, or signed with a rotated secret — all mean "no session".

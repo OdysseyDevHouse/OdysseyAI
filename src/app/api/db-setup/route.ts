@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
-import { signInForSetup } from '@/lib/dbSetup/signIn'
-import { planFor, redact, sitesForSetup } from '@/lib/dbSetup/plan'
 import { provisionStatements } from '@/lib/dbSetup/sql'
 import { createStoreOwner, hasAnyUser } from '@/lib/dbSetup/firstUser'
 
@@ -68,58 +66,39 @@ export async function POST(request: Request) {
   const action = String(body.action || '')
 
   switch (action) {
-    case 'sign-in': {
-      const result = await signInForSetup(String(body.email || ''), String(body.password || ''))
-      return NextResponse.json(result)
-    }
+    /* ── WHAT IS LEFT HERE, AND WHY ────────────────────────────────────────
+     *
+     * sign-in, sites and plan have moved to the POS API — see
+     * electron/posApi.js. They asked the control DATABASE questions that a
+     * customer's machine can no longer ask, and should never have been asking
+     * over a MySQL socket from a shop's counter.
+     *
+     * These two remain because they are not control-panel questions at all.
+     * Both act on the SHOP'S OWN database, on this machine, which is exactly
+     * what this route can reach and the API cannot. */
 
-    case 'sites': {
-      const sites = await sitesForSetup(Number(body.userId))
-      return NextResponse.json({ ok: true, sites })
-    }
-
-    case 'plan': {
-      /* Resolved through sitesForSetup rather than trusting the id: that
-         function is the ONE place site access is decided, and a caller naming a
-         site this user cannot open must get nothing rather than a plan. */
-      const userId = Number(body.userId)
-      const siteId = Number(body.siteId)
-      const site = (await sitesForSetup(userId)).find((s) => s.id === siteId)
-      if (!site) {
-        return NextResponse.json({ action: 'refuse', reason: 'That shop is not yours to set up.' })
-      }
-      const plan = await planFor(site, Boolean(body.alreadyInstalled))
-      /* Three parts in one answer.
-         · `safe` is all the SCREEN ever sees — putting the redaction here means
-           the rule about what may be displayed lives next to the type that
-           carries the secret.
-         · `plan` and `statements` go to Electron main and no further.
-         The statements are built HERE rather than in main because generating
-         GRANTs is the one thing a second copy would be genuinely dangerous to
-         get subtly different, and sql.ts is not requireable from CommonJS. */
-      /* ── THE LAN WIDENING IS OPT-IN, NEVER A DEFAULT ───────────────────────
+    case 'statements': {
+      /* ── THE LAN WIDENING IS OPT-IN, NEVER A DEFAULT ─────────────────────
        *
        * Loopback alone serves a LOCAL site: one machine, its own app, nothing
        * else reaching the database. A HYBRID box is different — ten tills on
        * the shop network connect to it — but that is a real widening of who can
-       * reach a shop's data, so `sql.ts` requires the caller to ask for it
-       * rather than handing it out. The wizard asks; this only passes it on. */
+       * reach a shop's data, so sql.ts requires the caller to ask for it rather
+       * than handing it out. The wizard asks; this only passes it on. */
       const allowFrom = ['127.0.0.1']
       const extra = typeof body.allowFrom === 'string' ? body.allowFrom.trim() : ''
       if (extra) allowFrom.push(extra)
 
+      /* Generated HERE rather than in the main process because writing GRANTs
+         is the one thing a second copy would be genuinely dangerous to get
+         subtly different, and sql.ts is not requireable from CommonJS. */
       return NextResponse.json({
-        plan,
-        safe: redact(plan),
-        statements:
-          plan.action === 'provision'
-            ? provisionStatements({
-                databaseName: plan.databaseName,
-                username: plan.username,
-                password: plan.password,
-                allowFrom,
-              })
-            : [],
+        statements: provisionStatements({
+          databaseName: String(body.databaseName || ''),
+          username: String(body.username || ''),
+          password: String(body.password || ''),
+          allowFrom,
+        }),
       })
     }
 

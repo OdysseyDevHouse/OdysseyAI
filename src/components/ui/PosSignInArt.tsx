@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Tag } from './icons'
+import { Tag, Gift } from './icons'
 import { formatMoney } from '@/lib/decimals'
 
 /**
@@ -76,13 +76,29 @@ export function PosSignInArt({
   const shown = specials.slice(current * perPage, current * perPage + perPage)
 
   return (
-    /* `w-full` and `flex-1`: this panel FILLS the half it is given rather
-       than sizing to its content. Every child of it is either absolutely
-       positioned (the backdrop, the scrim) or optional (the board), so its
-       intrinsic width is close to nothing — without this it rendered as a
-       narrow strip with a dead gap beside it whenever the shop had no
-       specials to widen it. */
-    <div className="relative isolate hidden w-full flex-1 overflow-hidden rounded-card bg-brand lg:flex lg:flex-col">
+    /*
+     * A FIXED 574×706 pane, matching the sign-in card beside it.
+     *
+     * Those are not arbitrary: 574 is the PIN pad's 510 plus the card's padding,
+     * and 706 is that card's height with the offline notice showing. Two panes
+     * of one size read as a pair; one pane stretched to whatever the screen left
+     * over read as a photograph with the pad parked next to it.
+     *
+     * It also replaces an explicit `w-full flex-1`, which was there because every
+     * child here is either absolutely positioned (the backdrop, the scrim) or
+     * optional (the board) — so the pane's intrinsic width is close to nothing,
+     * and without a stated width it collapsed to a narrow strip whenever the shop
+     * had no specials to widen it. A fixed width answers that just as well.
+     *
+     * ── max-h-full IS NOT OPTIONAL ────────────────────────────────────────────
+     *
+     * 706 plus the screen's padding is 770, and a very common counter display is
+     * 1366×768. Without this the pane would hang 2px off the bottom of the
+     * commonest till in the field. It shrinks instead, which the inside of this
+     * pane already handles: the logo block is `min-h-0 flex-1` precisely so that
+     * it yields and the specials board does not get clipped.
+     */
+    <div className="relative isolate hidden h-[706px] max-h-full w-[574px] shrink-0 overflow-hidden rounded-card bg-brand lg:flex lg:flex-col">
       {/* ── The backdrop ────────────────────────────────────────────────── */}
       {/* A gradient ALWAYS, with the photograph over it. Two reasons: a picture
           that is still loading shows brand colour rather than a white flash on
@@ -158,9 +174,19 @@ export function PosSignInArt({
           empty state for this audience. */}
       {specials.length > 0 && (
         <div className="relative z-[2] shrink-0 p-6">
-          <div className="rounded-card bg-ink/45 p-4 backdrop-blur-sm">
-            <div className="flex items-center gap-2 pb-3">
-              <Tag size={16} className="text-white/80" />
+          {/* `.signin-board` rather than a token fill — see the class in
+              globals.css. Same trap as the scrim: `ink` inverts with the
+              operator's theme and this card faces the queue. */}
+          <div className="signin-board rounded-card p-4 backdrop-blur-sm">
+            <div className="flex items-center gap-2.5 pb-3">
+              {/* The glyph on its own disc rather than loose beside the words.
+                  The heading is small caps at 13px and the tag on its own sat
+                  as a speck against a photograph; the disc gives it a ground to
+                  be legible on from across the room, and matches the lock disc
+                  the operator half wears over its own heading. */}
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white">
+                <Tag size={15} />
+              </span>
               <h2 className="text-[13px] font-bold uppercase tracking-wide text-white/90">
                 Specials of the day
               </h2>
@@ -181,10 +207,20 @@ export function PosSignInArt({
               )}
             </div>
 
-            <div className="flex flex-col gap-2">
-              {shown.map((s) => (
-                <SpecialRow key={s.productId} special={s} />
-              ))}
+            {/* ONE card holding every item, not a card each.
+                Three separately-bordered tiles stacked two millimetres apart
+                read as three unrelated offers; the board is a single thing a
+                customer scans top to bottom. The rows carry their own padding
+                and need no rule between them — the product pictures already
+                mark where each one starts. */}
+            <div className="flex flex-col rounded-card bg-surface p-2">
+              {shown.map((s) =>
+                s.kind === 'price' ? (
+                  <SpecialRow key={`p${s.productId}`} special={s} />
+                ) : (
+                  <OfferRow key={`o${s.specialId}`} offer={s} />
+                ),
+              )}
             </div>
           </div>
         </div>
@@ -193,13 +229,14 @@ export function PosSignInArt({
   )
 }
 
-/** One item on the board. */
-function SpecialRow({ special }: { special: PosSignInSpecial }) {
+/** One item on the board, at a price a customer can act on. */
+function SpecialRow({ special }: { special: PosSignInPriceRow }) {
   return (
-    /* A light card on the dark scrim rather than more translucency: the price
-       is the thing being read from a distance, and dark-on-light at this size
-       beats white-on-photograph every time. */
-    <div className="flex items-center gap-3 rounded-control bg-surface p-2.5">
+    /* No fill of its own: the light card is the BOARD's, above. The light-on-dark
+       reasoning still holds — the price is read from a distance and dark-on-light
+       beats white-on-photograph every time — it is just carried one level up so
+       three items read as one list. */
+    <div className="flex items-center gap-3 p-2.5">
       {special.imageUrl ? (
         <img
           src={special.imageUrl}
@@ -242,14 +279,61 @@ function SpecialRow({ special }: { special: PosSignInSpecial }) {
 }
 
 /**
- * One item on the sign-in board.
+ * A promotion with no single price to show — a combo, a spend-and-get, a
+ * multibuy — said in words instead.
+ *
+ * ── WHY IT LOOKS DELIBERATELY UNLIKE THE ROW ABOVE ───────────────────────
+ *
+ * The priced row is a menu line: photograph, name, number. This one cannot be,
+ * and dressing it to match would be the lie. A customer scanning the board has
+ * to be able to tell at a glance which rows they can act on without asking
+ * anybody and which need a word at the counter — so this carries a tinted glyph
+ * where the photograph goes, and the space the price occupied is simply left to
+ * the words.
+ *
+ * No price, ever, including a computed one. See posSignInSpecials: "Chicken
+ * Wings — R0.00" because the promotion was really a buy-two-get-one is the
+ * failure this whole row type exists to avoid.
+ */
+function OfferRow({ offer }: { offer: PosSignInOfferRow }) {
+  return (
+    <div className="flex items-center gap-3 p-2.5">
+      {/* A tinted disc rather than a product photograph. The deal covers several
+          things, so any one picture would be a claim about which item it is
+          really about — and that is the one the customer would come to the
+          counter holding. */}
+      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+        <Gift size={22} />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[15px] font-bold text-ink">{offer.description}</p>
+        {/* The DEAL, at the size the price wears on the row above — it is the
+            same fact for this row, and the thing being read from a distance. */}
+        <p className="text-[13.5px] font-semibold leading-snug text-brand">{offer.blurb}</p>
+        {offer.appliesTo && (
+          <p className="truncate text-[12px] leading-snug text-muted">{offer.appliesTo}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One row on the sign-in board.
  *
  * Declared here rather than imported from lib/site so the kit component stays
  * server-free — the Style Guide renders this with literals, and a type reaching
  * back into a `server-only` module would drag that module into the client
  * bundle.
+ *
+ * A UNION rather than one shape with optional fields, so a row can never be
+ * half of each: an offer with a stray price on it is exactly the invented
+ * number the board must not show, and the compiler is a better guard against
+ * that than a comment.
  */
-export type PosSignInSpecial = {
+export type PosSignInPriceRow = {
+  kind: 'price'
   productId: number
   description: string
   blurb: string
@@ -258,3 +342,16 @@ export type PosSignInSpecial = {
   /** Already a URL — the panel does no id-to-route mapping of its own. */
   imageUrl?: string
 }
+
+export type PosSignInOfferRow = {
+  kind: 'offer'
+  specialId: number
+  /** The shop's own name for the promotion. */
+  description: string
+  /** What it gives, in words. */
+  blurb: string
+  /** "On Beverages, Snacks", or '' where that cannot be said briefly. */
+  appliesTo: string
+}
+
+export type PosSignInSpecial = PosSignInPriceRow | PosSignInOfferRow

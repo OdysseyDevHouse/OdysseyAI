@@ -91,6 +91,11 @@ export {
      will reach the server now or sit in a queue. */
   Cloud as Online,
   CloudOff as Offline,
+  /* A connection REQUIRED, which is not the same as a connection lost. The till
+     sign-in screen uses it to say this device cannot check a PIN on its own —
+     `Offline` there would read as a fault to be waited out rather than as the
+     standing condition it is. */
+  Wifi,
   RefreshCw as Syncing,
   // domain
   LayoutDashboard,

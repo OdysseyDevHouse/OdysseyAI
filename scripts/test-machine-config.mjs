@@ -104,6 +104,35 @@ check('only the master purpose is answered from the file', /purpose !== 'master'
    a control-database query in front of every site query. */
 check('sitePool honours it too', siteDb.split('givenConnection').length - 1 >= 3)
 
+
+/* ── UNINSTALLING ODYSSEY MUST NOT TAKE THE SHOP'S DATA ───────────────────── */
+
+/* The failure this prevents is unrecoverable, and the person who would trip it
+   is not being careless: a technician uninstalls Odyssey to install a newer
+   version — an entirely ordinary thing to do — and expects the shop to be
+   exactly as they left it.
+
+   Three separate things have to stay true, so all three are checked. */
+
+const builder = readFileSync(path.join(root, 'electron-builder.yml'), 'utf8')
+check('uninstall never deletes app data', /deleteAppDataOnUninstall:\s*false/.test(builder))
+
+const service = readFileSync(path.join(root, 'electron', 'mariaService.js'), 'utf8')
+/* The real protection is WHERE the data lives: ProgramData is written by us at
+   runtime, so no uninstaller has ever heard of it. If this ever moves under the
+   install directory or userData, the uninstaller starts owning it. */
+check('the data directory is machine-level', /ProgramData/.test(service))
+check('and is not under userData', !/getPath\('userData'\)/.test(service))
+
+/* Nothing in the codebase may delete it. A "clean up" helper written in six
+   months is exactly how this guarantee gets quietly revoked. */
+const destructive = /rmSync|rmdirSync|unlinkSync|rimraf/.test(service)
+check('nothing in the service layer deletes anything', !destructive)
+
+/* And it explains itself to whoever finds a large unexplained folder while
+   tidying up a machine — which is the other way a shop loses its records. */
+check('a do-not-delete notice is written beside it', /DO-NOT-DELETE\.txt/.test(service))
+
 rmSync(sandbox, { recursive: true, force: true })
 
 console.log(`\n${failures === 0 ? 'All machine-handoff checks passed.' : `${failures} FAILED`}\n`)

@@ -169,7 +169,49 @@ function resolveEnv() {
     env[k] = String(v)
   }
 
-  if (mode === 'local') {
+  if (mode === 'local' && cfg.siteDbSealed) {
+    /* ── ADOPTED: THE SHOP IS LOCAL, THE CONTROL PANEL IS NOT ────────────────
+     *
+     * Odyssey Database Setup created ONE database on this machine — the shop's
+     * own, ODY10003_master and a user granted on it alone. It did not create a
+     * control database, and there is no schema in this repository to create one
+     * from.
+     *
+     * The branch below assumes otherwise, because it was written for the older
+     * model where the app provisions everything itself and mints its own
+     * credentials. Applied to an adopted install it points the CONTROL
+     * connection at 127.0.0.1 as a user called `odyssey` with no password,
+     * against a server that has never heard of either — which is exactly the
+     * "Access denied for user 'odyssey'@'127.0.0.1' (using password: NO)" that
+     * sent us looking.
+     *
+     * So an adopted install splits them. The shop's data is local: sign-in,
+     * stock, sales, everything a till or a counter touches. The control panel
+     * stays in the cloud, where it always was, for the questions only it can
+     * answer — the licence, the modules the shop has bought, the site record.
+     *
+     * The honest consequence, worth writing down rather than discovering: those
+     * cloud reads still need a line. Sign-in no longer does, and neither does
+     * trading data, which is the larger half. Closing the rest means deciding
+     * what a local install should believe about its licence when it cannot ask,
+     * and that is a product question rather than a plumbing one.
+     */
+    const d = resolveBuildDefaults()
+    set('DB_HOST', d.DB_HOST)
+    set('DB_PORT', d.DB_PORT)
+    set('DB_USER', d.DB_USER)
+    set('DB_PASSWORD', d.DB_PASSWORD)
+    set('DB_NAME', d.DB_NAME)
+    set('SESSION_SECRET', d.SESSION_SECRET)
+    set('ENCRYPTION_KEY', d.ENCRYPTION_KEY)
+    set('BACKUP_DIR', path.join(app.getPath('userData'), 'backups'))
+    set('ODYSSEY_SITE_ID', cfg.siteId)
+    set('ODYSSEY_SITE_DB_HOST', cfg.siteDbHost || '127.0.0.1')
+    set('ODYSSEY_SITE_DB_PORT', cfg.dbPort)
+    set('ODYSSEY_SITE_DB_NAME', cfg.siteDbName)
+    set('ODYSSEY_SITE_DB_USER', cfg.siteDbUser)
+    set('ODYSSEY_SITE_DB_PASSWORD', unseal(cfg.siteDbSealed))
+  } else if (mode === 'local') {
     // The shop's own MariaDB, on this machine, on the port we recorded.
     set('DB_HOST', '127.0.0.1')
     set('DB_PORT', cfg.dbPort)
@@ -190,28 +232,12 @@ function resolveEnv() {
        is trusted. */
     set('ODYSSEY_SITE_ID', cfg.siteId)
 
-    /* ── THE SITE'S OWN DATABASE, WITHOUT ASKING THE CONTROL PANEL ──────────
-     *
-     * siteDb.ts normally resolves a site's connection by reading
-     * cp2_site_databases — in the CONTROL database. That is right for a cloud
-     * site and impossible for this one: a local install must open on a morning
-     * when the line is down, and there is no local copy of that table.
-     *
-     * So an adopted install carries the whole connection, not just the host.
-     * SITE_DB_HOST_OVERRIDE already existed for exactly this shape of problem
-     * and only ever covered one field of four; these are the rest.
-     *
-     * Set only when adoption happened. A local install that provisioned itself
-     * the old way has no site database of its own to describe, and siteDb
-     * falls through to its usual lookup — see resolveSiteConnection there.
-     */
-    if (cfg.siteDbSealed) {
-      set('ODYSSEY_SITE_DB_HOST', cfg.siteDbHost || '127.0.0.1')
-      set('ODYSSEY_SITE_DB_PORT', cfg.dbPort)
-      set('ODYSSEY_SITE_DB_NAME', cfg.siteDbName)
-      set('ODYSSEY_SITE_DB_USER', cfg.siteDbUser)
-      set('ODYSSEY_SITE_DB_PASSWORD', unseal(cfg.siteDbSealed))
-    }
+    /* No ODYSSEY_SITE_DB_* here. A self-provisioned install put its control
+       database and its site databases on the SAME server it minted credentials
+       for, so SITE_DB_HOST_OVERRIDE above is the whole of what siteDb needs;
+       the rest it reads from cp2_site_databases, which on this model exists
+       locally. The adopted branch is the one with a site database and no
+       control panel to describe it. */
   } else {
     // Cloud: our servers, our shared secrets, baked at build time.
     const d = resolveBuildDefaults()
@@ -223,6 +249,14 @@ function resolveEnv() {
     set('SESSION_SECRET', d.SESSION_SECRET)
     set('ENCRYPTION_KEY', d.ENCRYPTION_KEY)
   }
+
+  /* ── WHERE UPDATES COME FROM, WHATEVER KIND OF INSTALL THIS IS ────────────
+   *
+   * Outside the cloud/local branches on purpose. Every build should be able to
+   * replace itself — a local shop most of all, since it is the one nobody can
+   * reach to fix by other means. Absent on a dev checkout, and the updater says
+   * so rather than failing quietly. */
+  set('ODYSSEY_UPDATE_URL', resolveBuildDefaults().ODYSSEY_UPDATE_URL)
 
   set('APP_MODE', 'desktop')
   set('NEXT_PUBLIC_APP_MODE', 'desktop')

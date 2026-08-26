@@ -242,7 +242,18 @@ function SegmentedBar({
            width to divide. `surface-2` because at this size the bar is a band
            across the dialog rather than a control tucked in a toolbar, and on
            `surface` it would be an outline around nothing. */
-        touch ? 'flex w-full bg-surface-2' : 'inline-flex'
+        /* A BAR NEVER SPILLS OUT OF WHAT HOLDS IT.
+
+           `inline-flex` sizes to its labels, and every segment is
+           `whitespace-nowrap`, so a bar with enough choices — the specials form
+           offers eight ways a combo can work — simply grew past the card it sat
+           in and ran off over the page beside it. Capped at the space available
+           and allowed to wrap, it takes a second row instead. Wrapping rather
+           than scrolling because a choice a shopkeeper cannot see is a choice
+           they will never make; the bar getting taller says "there are more",
+           a hidden scroller says nothing at all. Three chips in a wide toolbar
+           are unaffected — there is nothing to wrap. */
+        touch ? 'flex w-full bg-surface-2' : 'inline-flex max-w-full flex-wrap'
       } ${className}`}
     >
       {children}

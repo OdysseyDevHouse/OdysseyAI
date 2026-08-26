@@ -32,7 +32,18 @@ import { uploadSignInBackdropAction, clearSignInBackdropAction } from './actions
  * nothing — a manager would trust it and be wrong. What this panel shows is the
  * ASSET: the picture as uploaded, cropped the way the till crops it.
  */
-export default function SignInArtPanel({ backdropUrl }: { backdropUrl: string }) {
+export default function SignInArtPanel({
+  backdropUrl,
+  stockUrl,
+}: {
+  backdropUrl: string
+  /**
+   * The picture the till falls back to for this trade — always a real file, see
+   * `stockBackdropUrl`. Passed in rather than derived here so this stays a dumb
+   * panel: the page already knows what kind of shop this is.
+   */
+  stockUrl: string
+}) {
   const toast = useToast()
   const [pending, start] = useTransition()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -81,7 +92,7 @@ export default function SignInArtPanel({ backdropUrl }: { backdropUrl: string })
     <Card>
       <CardHeader
         title="Till sign-in screen"
-        description="The picture customers see beside the PIN pad, while nobody is signed in."
+        description="The picture customers see beside the PIN pad, while nobody is signed in. Yours if you upload one, otherwise a stock picture for your kind of shop."
       />
       <CardBody>
         <div className="flex flex-wrap items-start gap-5">
@@ -90,20 +101,17 @@ export default function SignInArtPanel({ backdropUrl }: { backdropUrl: string })
               that uploads a wide landscape shot should be able to see here that
               its edges are lost, rather than discovering it at a counter. */}
           <div className="h-40 w-32 shrink-0 overflow-hidden rounded-card border border-border bg-surface-2">
-            {shown ? (
-              <img src={shown} alt="" className="h-full w-full object-cover" />
-            ) : (
-              /* What the till ACTUALLY shows with no picture — the same brand
-                 gradient, not a grey "no image" box. The point is that having
-                 uploaded nothing is a finished state, and a panel implying
-                 otherwise would push shops into uploading something. */
-              <div className="h-full w-full bg-gradient-to-br from-brand to-brand-ink" />
-            )}
+            {/* What the till ACTUALLY shows, either way — never a grey "no
+                image" box. Having uploaded nothing is a finished state: the
+                stock photograph for this shop's trade is already on the screen
+                at the counter, and a frame implying emptiness would push shops
+                into uploading something they do not need to. */}
+            <img src={shown || stockUrl} alt="" className="h-full w-full object-cover" />
           </div>
 
           <div className="min-w-0 flex-1">
             <Field
-              label="Replace the picture"
+              label={shown ? 'Replace the picture' : 'Use your own picture'}
               hint="A tall photograph works best — the panel is a portrait shape beside the PIN pad. PNG, JPEG, GIF or WebP."
             >
               <FileInput
@@ -127,8 +135,9 @@ export default function SignInArtPanel({ backdropUrl }: { backdropUrl: string })
                 </Button>
               )}
               <p className="text-sm text-muted">
-                Your logo appears over this picture, from Setup → Stationery. Any specials
-                you are running today appear beneath it automatically.
+                {shown
+                  ? 'Your logo appears over this picture, from Setup → Stationery. Any specials you are running today appear beneath it automatically.'
+                  : 'Until you upload one, the till shows a stock picture matched to your kind of shop. Your logo appears over it, from Setup → Stationery, and any specials you are running today appear beneath it automatically.'}
               </p>
             </div>
           </div>

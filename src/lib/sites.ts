@@ -32,6 +32,18 @@ export type Site = {
   email: string | null
   contactName: string | null
   connectionType: ConnectionType
+  /**
+   * What KIND of shop this is — a row in cp2_site_types, set in the control
+   * panel. Null on a site nobody has classified, which is most of them.
+   *
+   * Carried on the session's site rather than fetched where it is wanted,
+   * because the first thing that wants it is the till's sign-in screen: it
+   * picks the stock photograph behind the PIN pad from this. That screen stands
+   * between a cashier and the till at 07:00, and a second round trip to the
+   * control database to decide which picture to paint is a round trip somebody
+   * waits through. It costs one more column on a SELECT that already runs.
+   */
+  siteTypeId: number | null
   isPaid: boolean
   status: 'active' | 'suspended' | 'archived'
   /** From cp2_user_sites — this user's role at this site. */
@@ -54,6 +66,7 @@ type SiteRow = RowDataPacket & {
   email: string | null
   contact_name: string | null
   connection_type: ConnectionType
+  site_type_id: number | null
   is_paid: number
   status: 'active' | 'suspended' | 'archived'
   site_role: SiteRole
@@ -77,6 +90,10 @@ function mapSite(r: SiteRow): Site {
     email: r.email,
     contactName: r.contact_name,
     connectionType: r.connection_type,
+    /* Coerced, not passed through: the column is a nullable int and MySQL hands
+       it back as a string in some driver configurations, which would make
+       `siteTypeId === 5` quietly false and every shop show the default picture. */
+    siteTypeId: r.site_type_id === null ? null : Number(r.site_type_id) || null,
     isPaid: !!r.is_paid,
     status: r.status,
     role: r.site_role,
@@ -87,7 +104,8 @@ function mapSite(r: SiteRow): Site {
 const SELECT_SITE = `
   SELECT s.id, s.site_code, s.company_name, s.trading_name, s.registration_number,
          s.vat_number, s.address1, s.address2, s.address3, s.postal_code,
-         s.phone, s.email, s.contact_name, s.connection_type, s.is_paid, s.status,
+         s.phone, s.email, s.contact_name, s.connection_type, s.site_type_id,
+         s.is_paid, s.status,
          us.site_role, us.is_default
     FROM cp2_user_sites us
     INNER JOIN cp2_sites s ON s.id = us.site_id
@@ -116,6 +134,45 @@ export async function listSitesForUser(userId: number): Promise<Site[]> {
  * One site, but only if this user may open it. Returns null otherwise — which
  * is what makes a tampered site id in a cookie harmless.
  */
+/**
+ * One site, without asking which user may open it.
+ *
+ * ── WHY THIS IS NOT A HOLE IN THE ONE PLACE ACCESS IS DECIDED ──────────────
+ *
+ * `listSitesForUser` is that place and stays that place. This exists for the
+ * one caller where the question does not apply: a LOCAL install, where the
+ * machine serves exactly one shop and the person signing in is a row in that
+ * shop's own `users` table — not a control-panel account at all.
+ *
+ * Asking cp2_user_sites there compares a site `users.id` against
+ * `cp2_user_sites.user_id`, two unrelated id spaces that happen to both be
+ * small integers. It matches nothing, and the shop owner is bounced to a
+ * picker offering shops this machine cannot open. Which is exactly what it did.
+ *
+ * The access decision has already been made, earlier and more strictly: this
+ * machine was provisioned for this site, and the session was minted against
+ * that site's own users. Re-asking the control panel adds nothing and, on a
+ * shop with no line that morning, cannot be answered at all.
+ *
+ * Suspended sites are still returned so a caller can say WHICH kind of no it
+ * is; archived ones are gone rather than withheld.
+ */
+export async function getSite(siteId: number): Promise<Site | null> {
+  const row = await queryOne<SiteRow>(
+    `SELECT s.id, s.site_code, s.company_name, s.trading_name, s.registration_number,
+            s.vat_number, s.address1, s.address2, s.address3, s.postal_code,
+            s.phone, s.email, s.contact_name, s.connection_type, s.site_type_id,
+            s.is_paid, s.status,
+            NULL AS site_role, 1 AS is_default
+       FROM cp2_sites s
+      WHERE s.id = ?
+        AND s.status IN ('active','suspended')
+      LIMIT 1`,
+    [siteId],
+  )
+  return row ? mapSite(row) : null
+}
+
 export async function getSiteForUser(userId: number, siteId: number): Promise<Site | null> {
   const row = await queryOne<SiteRow>(
     `${SELECT_SITE}

@@ -87,6 +87,23 @@ check(
   /pinIsCredential: true/.test(read('src/lib/dbSetup/firstUser.ts')),
 )
 
+/* ── A session from somewhere else must not survive here ──────────────────── */
+
+/* Cookies live in userData, and userData survives reinstalling — deliberately,
+   so an upgrade cannot lose a database password. The consequence is that a
+   session signed in against the CLOUD, before this machine was provisioned,
+   outlives every remedy a person would naturally try: it skips the login form
+   entirely and lands them on a site picker for shops this machine cannot open,
+   and "uninstall and reinstall" changes nothing.
+
+   Cost an afternoon to recognise, twice. */
+check('a session for another shop is refused', /session\.scope !== 'site' \|\| session\.siteId !== localSite/.test(auth))
+/* Only ever narrows: a cloud install has no local site and skips the check. */
+check('the check only applies to a local install', /isLocalInstall &&/.test(auth))
+/* The cookie is cleared by the login page, not here: a cookie write during a
+   render throws, and surfaces as "a server error occurred". */
+check('it redirects rather than writing a cookie mid-render', /redirect\('\/\?kicked=1'\)/.test(auth))
+
 /* ── The first user ───────────────────────────────────────────────────────── */
 
 const first = read('src/lib/dbSetup/firstUser.ts')

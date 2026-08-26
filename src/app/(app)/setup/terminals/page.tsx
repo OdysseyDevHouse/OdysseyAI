@@ -16,13 +16,13 @@ import OfflineAccountPanel from './OfflineAccountPanel'
 
 import UnlockPanel from './UnlockPanel'
 import { siteHasLocalBackend } from '@/lib/licence/grantUnlock'
-import { backdropUrl } from '@/lib/site/posSignInArt'
+import { backdropUrl, stockBackdropUrl } from '@/lib/site/posSignInArt'
 
 export const dynamic = 'force-dynamic'
 
 export default async function TerminalsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('setup.edit')
+  const { siteId, siteTypeId } = await requireCapability('setup.edit')
   const terminals = await listTerminals(siteId, true)
   /* The rooms a till may be pointed at. Active only, and no transit pile — a
      register cannot sell out of a truck, and setTerminalStockLocation refuses
@@ -68,6 +68,10 @@ export default async function TerminalsPage() {
   /* '' where the shop has uploaded nothing, which is the common case and the
      panel's designed state rather than an empty one. */
   const signInBackdrop = await backdropUrl(siteId)
+  /* What the till shows when this shop has uploaded nothing — which is what the
+     panel's empty frame has to draw, or it is a preview of something that does
+     not happen. See stockBackdropUrl. */
+  const signInStock = stockBackdropUrl(siteTypeId)
 
   return (
     <>
@@ -102,7 +106,7 @@ export default async function TerminalsPage() {
               DO once somebody has. It is the one panel here a manager opens for
               appearance rather than behaviour, so it sits at the end of the
               behaviour run rather than interrupting it. */}
-          <SignInArtPanel backdropUrl={signInBackdrop} />
+          <SignInArtPanel backdropUrl={signInBackdrop} stockUrl={signInStock} />
           {/* BELOW the tills, because a manager comes here to add a till far
               more often than to release a licence — and the licence list is the
               one they need when something is already wrong. */}

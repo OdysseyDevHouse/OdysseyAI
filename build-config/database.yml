@@ -28,6 +28,23 @@ appId: za.co.pointofsale.odyssey.database
 extraMetadata:
   odysseyRole: database
 
+# ── THE ONE BUILD THAT ASKS FOR ADMINISTRATOR ───────────────────────────────
+#
+# Registering a Windows service is a machine-level act, and Windows will not let
+# a normal user do it. This build installs MariaDB as a service so the shop's
+# database starts at boot and outlives whichever app happened to open it — see
+# electron/mariaService.js.
+#
+# So it asks for elevation the moment it launches, rather than getting halfway
+# through provisioning and failing on the one step that needed it. That is the
+# honest shape for a program that IS an installer.
+#
+# Deliberately NOT set on the back office or the till. Those only ever connect
+# to the service, and an everyday application that demands administrator rights
+# to open a shop's stock screen is one somebody will eventually turn off.
+win:
+  requestedExecutionLevel: requireAdministrator
+
 extraResources:
   - from: vendor/mariadb
     to: mariadb

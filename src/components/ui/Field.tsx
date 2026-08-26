@@ -200,17 +200,18 @@ export function Input({
   }
   const inner = innerClasses.join(' ')
   const outer = outerClasses.join(' ')
+  const width = icon ? 'w-full' : outer
 
   const input = (
     <input
       id={wiring.id}
       aria-invalid={wiring.invalid || undefined}
       aria-describedby={wiring.describedBy}
-      className={`${CONTROL} ${size === 'touch' ? CONTROL_H_TOUCH : CONTROL_H} ${
+      className={`${skin(width)} ${size === 'touch' ? CONTROL_H_TOUCH : CONTROL_H} ${
         /* The glyph is inset further at till size so it clears the wider box
            without crowding the text. */
         icon ? (size === 'touch' ? 'pl-11' : 'pl-9') : ''
-      } ${wiring.invalid ? INVALID : quietFocus ? CONTROL_QUIET_FOCUS : ''} ${icon ? 'w-full' : outer} ${inner}`}
+      } ${wiring.invalid ? INVALID : quietFocus ? CONTROL_QUIET_FOCUS : ''} ${width} ${inner}`}
       {...rest}
     />
   )
@@ -239,6 +240,24 @@ export function Input({
  */
 const LAYOUT_CLASS =
   /^(flex-\d|flex-auto|flex-initial|flex-none|grow|grow-0|shrink|shrink-0|basis-|w-|min-w-|max-w-|col-span-|self-|order-)/
+
+/**
+ * CONTROL, minus its `w-full`, when the caller has named a width of its own.
+ *
+ * A CONTROL WIDTH CANNOT SIMPLY BE APPENDED. `CONTROL` opens with `w-full`, and
+ * Tailwind decides between two width utilities by STYLESHEET order, not by the
+ * order they appear in the class attribute — `.w-full` is emitted after every
+ * `.w-<n>`, so it wins every time. A `w-28` passed to a price box therefore did
+ * nothing: the box stretched to fill its flex row and squeezed the item name
+ * beside it down to nothing (the specials price table, where five of them sat
+ * in a row). Both widths cannot live on the element, so the base one gives way
+ * to the specific one.
+ *
+ * Callers that want the full width say nothing and keep it.
+ */
+function skin(width: string) {
+  return /(^|\s)w-/.test(width) ? CONTROL.replace('w-full ', '') : CONTROL
+}
 
 /**
  * Selects the whole value on focus.
@@ -443,7 +462,7 @@ export function Textarea({
       rows={rows}
       aria-invalid={wiring.invalid || undefined}
       aria-describedby={wiring.describedBy}
-      className={`${CONTROL} resize-y py-2 ${wiring.invalid ? INVALID : ''} ${className}`}
+      className={`${skin(className)} resize-y py-2 ${wiring.invalid ? INVALID : ''} ${className}`}
       {...rest}
     />
   )
@@ -477,7 +496,7 @@ export function CodeArea({
       autoCapitalize="off"
       aria-invalid={wiring.invalid || undefined}
       aria-describedby={wiring.describedBy}
-      className={`${CONTROL} resize-y py-2 font-mono text-xs leading-relaxed ${wiring.invalid ? INVALID : ''} ${className}`}
+      className={`${skin(className)} resize-y py-2 font-mono text-xs leading-relaxed ${wiring.invalid ? INVALID : ''} ${className}`}
       {...rest}
     />
   )

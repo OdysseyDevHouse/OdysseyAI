@@ -30,6 +30,21 @@ export type ButtonVariant =
   | 'ghost' /* low emphasis, toolbars */
   | 'key' /* a keypad key — neutral fill, till PIN pad */
   | 'bare' /* chromeless icon affordance — editor toolbars, sidebar/topbar */
+  /*
+   * A filled button in the INVERSE of the page — dark on a light theme, light on
+   * a dark one.
+   *
+   * For the one control that has to be found instantly on a screen the brand blue
+   * already owns: the till sign-in's way back to the back office, sitting above a
+   * blue-keyed PIN pad and beside a blue-lit showcase. `primary` there would be a
+   * third blue thing competing with the confirm key, and `secondary`/`ghost` sit
+   * so quietly that a cashier locked out of a till cannot find the exit.
+   *
+   * Built from `ink`/`canvas` rather than a fixed navy precisely BECAUSE both
+   * tokens flip with the theme — so this stays the inverse in dark mode instead
+   * of becoming a dark button on a dark page.
+   */
+  | 'contrast'
 
 /**
  * `touch` and `touch-lg` exist for the till and should not appear in the back
@@ -82,6 +97,11 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   bare:
     'border-transparent bg-transparent text-muted hover:bg-surface-2 hover:text-ink ' +
     'disabled:bg-transparent disabled:text-faint',
+  /* `text-canvas` rather than `text-white`: white on the LIGHT pill this becomes
+     in dark mode would be invisible. The pair has to flip together or not at
+     all. Hover lightens toward `ink-2`, which is the same direction in both
+     themes — a step away from the extreme, not a fixed colour. */
+  contrast: 'border-transparent bg-ink text-canvas hover:bg-ink-2 disabled:bg-ink/40',
 }
 
 /* Icon-only buttons go square at the same height, so a toolbar of mixed
