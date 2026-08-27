@@ -914,6 +914,20 @@ export async function receiveGoods(
       const priceRows: PriceRow[] = []
 
       /*
+       * Whose cost this receipt moved, for the refer cascade after the commit.
+       *
+       * A case of 24 costs 24 singles, so a delivery that reprices the single
+       * has repriced every pack drawing on it — but the packs' own stored
+       * figures are written nowhere in this loop, and under subtract pack the
+       * receipt lands on the base rather than the pack that was keyed. Left
+       * alone the case keeps yesterday's cost and reports a margin nobody
+       * earned. Collected here and spent below, for the same reason priceRows
+       * is: the cascade re-reads what this transaction wrote, so it cannot run
+       * until the transaction is committed.
+       */
+      const costMoved = new Set<number>()
+
+      /*
        * Which price the GRV moves: the DEFAULT structure, resolved once.
        *
        * The same one the receiving grid displays and prices against (see
@@ -1036,6 +1050,7 @@ export async function receiveGoods(
               'UPDATE products SET average_cost = ?, last_cost = ?, last_purchase_date = NOW() WHERE id = ?',
               [componentAverage.toFixed(4), unitCost.toFixed(4), component.productId] as never,
             )
+            costMoved.add(component.productId)
           }
 
           /*
@@ -1131,6 +1146,7 @@ export async function receiveGoods(
           'UPDATE products SET average_cost = ?, last_cost = ?, last_purchase_date = NOW() WHERE id = ?',
           [newAverage.toFixed(4), c.landedUnitCost.toFixed(4), line.productId] as never,
         )
+        costMoved.add(line.productId)
 
         /*
          * THE PRICE MOVE (193) — queued here, written once after the loop.
@@ -1232,8 +1248,27 @@ export async function receiveGoods(
         )
       }
 
-      return { documentId, documentNumber }
+      // costMoved rides out with the result rather than being hoisted above
+      // the transaction: it is only meaningful once these writes committed.
+      return { documentId, documentNumber, costMoved: [...costMoved] }
     })
+
+    /*
+     * The pack costs above whatever this receipt repriced.
+     *
+     * After the commit, on the same terms as the GL mirror below: a pack whose
+     * derived cost could not be rewritten is a reporting gap, never a reason to
+     * un-receive goods that are on the shelf. cascadeReferCosts swallows its
+     * own failures for that reason; the catch is belt and braces.
+     *
+     * It re-reads the base's committed cost, which is why it cannot be done
+     * inside the transaction above — it would either deadlock on the rows just
+     * written or read the pre-receipt figure and spread that.
+     */
+    const { cascadeReferCosts } = await import('./referRange')
+    for (const productId of posted.costMoved) {
+      await cascadeReferCosts(siteId, productId).catch(() => 0)
+    }
 
     // The supplier ledger, after the receipt is safely committed — the same
     // reasoning as a sale. A failure to post there must not un-receive goods

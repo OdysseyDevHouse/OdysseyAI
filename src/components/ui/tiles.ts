@@ -14,6 +14,79 @@ import type { CategoryTone } from './CategoryTile'
 
 export type TileSwatch = { token: string; className: string }
 
+/**
+ * A category colour: a swatch that also carries the name it was drawn for.
+ *
+ * `hex` duplicates the value in globals.css deliberately — the picker shows it
+ * so a shop can match a tile to signage, and CSS custom properties cannot be
+ * read back as text. Keep the two in step; globals.css is the source of truth
+ * for what actually paints.
+ */
+export type CategorySwatch = TileSwatch & { label: string; hex: string; tone: CategoryTone }
+
+/**
+ * The 20 flat category colours — the palette every tile picker now offers.
+ *
+ * ── WHY THESE REPLACED THE GRADIENTS ──────────────────────────────────────
+ *
+ * The `pic-*` ramps are still defined below and still render, because a stored
+ * row may name one and must keep looking like itself. They are simply no longer
+ * OFFERED: a wall of till buttons is read at arm's length, where twenty flat
+ * colours separate and twenty two-stop ramps smear together.
+ *
+ * ── THE NAMES ─────────────────────────────────────────────────────────────
+ *
+ * Each is named for the department it was drawn for. Nothing enforces the
+ * pairing — any record may take any colour — but the name is what makes a
+ * twenty-swatch grid pickable: "Bakery" is a colour a person can ask for, where
+ * "amber" is one they have to hunt for.
+ *
+ * ── INK ───────────────────────────────────────────────────────────────────
+ *
+ * All twenty carry white text, matching the supplied palette. Measured against
+ * white on the WCAG curve, nine land below 3:1 — Household (#C2A878) is the
+ * worst at 2.29 — so this is a chosen trade, not an unchecked one. If these are
+ * ever meant to meet contrast, the pale end needs darkening rather than the ink
+ * flipping, since the label sits on the tile in the product grid too.
+ *
+ * Class strings written out in full, never interpolated: Tailwind scans source
+ * text, so a computed `bg-${token}` is not emitted and the swatch renders bare.
+ */
+export const CATEGORY_SWATCHES: readonly CategorySwatch[] = [
+  { token: 'cat-butchery', label: 'Butchery', hex: '#DC4C4C', className: 'bg-cat-butchery', tone: 'rose' },
+  { token: 'cat-hot-food', label: 'Hot Food', hex: '#EF6F4E', className: 'bg-cat-hot-food', tone: 'orange' },
+  { token: 'cat-snacks', label: 'Snacks', hex: '#E08A3C', className: 'bg-cat-snacks', tone: 'orange' },
+  { token: 'cat-bakery', label: 'Bakery', hex: '#D2A032', className: 'bg-cat-bakery', tone: 'amber' },
+  {
+    token: 'cat-fresh-produce',
+    label: 'Fresh Produce',
+    hex: '#9AB43F',
+    className: 'bg-cat-fresh-produce',
+    tone: 'emerald',
+  },
+  { token: 'cat-fruit-veg', label: 'Fruit & Veg', hex: '#4CAF6D', className: 'bg-cat-fruit-veg', tone: 'emerald' },
+  { token: 'cat-deli', label: 'Deli', hex: '#2FA98C', className: 'bg-cat-deli', tone: 'teal' },
+  { token: 'cat-health', label: 'Health', hex: '#8CA98F', className: 'bg-cat-health', tone: 'emerald' },
+  { token: 'cat-frozen', label: 'Frozen', hex: '#2C9AA6', className: 'bg-cat-frozen', tone: 'teal' },
+  { token: 'cat-dairy', label: 'Dairy', hex: '#3C9FD6', className: 'bg-cat-dairy', tone: 'sky' },
+  { token: 'cat-beverages', label: 'Beverages', hex: '#4272D9', className: 'bg-cat-beverages', tone: 'indigo' },
+  { token: 'cat-cleaning', label: 'Cleaning', hex: '#5C7B94', className: 'bg-cat-cleaning', tone: 'slate' },
+  { token: 'cat-airtime', label: 'Airtime', hex: '#5D5BD4', className: 'bg-cat-airtime', tone: 'indigo' },
+  { token: 'cat-stationery', label: 'Stationery', hex: '#8A5CD1', className: 'bg-cat-stationery', tone: 'violet' },
+  {
+    token: 'cat-confectionery',
+    label: 'Confectionery',
+    hex: '#A855C4',
+    className: 'bg-cat-confectionery',
+    tone: 'violet',
+  },
+  { token: 'cat-baby', label: 'Baby', hex: '#DB5A9B', className: 'bg-cat-baby', tone: 'rose' },
+  { token: 'cat-alcohol', label: 'Alcohol', hex: '#8E3B5A', className: 'bg-cat-alcohol', tone: 'rose' },
+  { token: 'cat-pet', label: 'Pet', hex: '#B4674A', className: 'bg-cat-pet', tone: 'orange' },
+  { token: 'cat-household', label: 'Household', hex: '#C2A878', className: 'bg-cat-household', tone: 'amber' },
+  { token: 'cat-tobacco', label: 'Tobacco', hex: '#5A6470', className: 'bg-cat-tobacco', tone: 'slate' },
+]
+
 export const TILE_SWATCHES: readonly TileSwatch[] = [
   { token: 'tile-1', className: 'bg-tile-1' },
   { token: 'tile-2', className: 'bg-tile-2' },
@@ -149,6 +222,9 @@ const PIC_TONES: Record<string, CategoryTone> = {
 /**
  * The text colour a till tile needs over `token` — dark on the pale ramps,
  * white on everything else. Returns a full class string, never a fragment.
+ *
+ * The `cat-*` palette is uniformly white and never reaches PIC_DARK_INK, which
+ * only ever held `pic-*` tokens — see the ink note on CATEGORY_SWATCHES.
  */
 export function tileInkClass(token: string | null | undefined): string {
   return token && PIC_DARK_INK.has(token) ? 'text-pic-ink-dark' : 'text-white'
@@ -193,6 +269,13 @@ export const TILE_NONE = { token: 'tile-none', className: 'bg-surface-2' } as co
 export function toneForTileToken(token: string | null | undefined): CategoryTone | null {
   if (!token) return null
 
+  /* The category colours carry their own tone, so the POS edge matches the
+     tile rather than being re-derived by hue. Checked first: `cat-` and the
+     `cat-*` CategoryTone names are different namespaces that would otherwise
+     be easy to confuse. */
+  const category = CATEGORY_SWATCHES.find((c) => c.token === token)
+  if (category) return category.tone
+
   /*
    * The picture ramps map by hue to the nearest cat-* tone.
    *
@@ -229,6 +312,7 @@ export function toneForTileToken(token: string | null | undefined): CategoryTone
 export function tileClass(token: string | null | undefined): string {
   if (token === TILE_NONE.token) return TILE_NONE.className
   return (
+    CATEGORY_SWATCHES.find((t) => t.token === token)?.className ??
     TILE_SWATCHES.find((t) => t.token === token)?.className ??
     TILE_GRADIENTS.find((t) => t.token === token)?.className ??
     PICTURE_TILE_GRADIENTS.find((t) => t.token === token)?.className ??

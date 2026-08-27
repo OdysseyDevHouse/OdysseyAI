@@ -27,6 +27,7 @@ import {
   SummaryTotal,
   Textarea,
   useToast,
+  usePrintDocument,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_NUMERIC,
@@ -261,6 +262,9 @@ export default function InvoiceEditor({
   hasSectionsBelow?: boolean
 }) {
   const toast = useToast()
+  /* Named `printDoc` because this file already has a `printDocument` function
+     that saves first and then calls this. */
+  const printDoc = usePrintDocument()
   const router = useRouter()
   const [pending, startTransition] = useTransition()
 
@@ -826,32 +830,33 @@ export default function InvoiceEditor({
    * item they just asked for. Same reasoning as takePayment below.
    *
    * A FINALISED document has nothing to save — it is immutable, and
-   * saveInvoiceAction would refuse — so that case opens the tab directly.
+   * saveInvoiceAction would refuse — so that case prints straight away.
    *
-   * The tab is opened BEFORE the await when there is a save to do: a popup
-   * blocker allows `window.open` only inside the gesture that asked for it,
-   * and opening it after an awaited action is what gets a print silently
-   * swallowed. It is pointed at the route once the save succeeds, and closed
-   * again if the save fails, so a refusal never leaves a blank tab behind.
+   * ── NO TAB, AND THEREFORE NO POPUP DANCE ──────────────────────────────
+   *
+   * This used to open a tab up front and point it at the route after the save,
+   * because a popup blocker only allows `window.open` inside the gesture that
+   * asked for it. Printing through a hidden frame removes the popup entirely,
+   * so the frame can simply be pointed at the route once the save lands — and
+   * a failed save now leaves nothing behind to close.
+   *
+   * The button says "Print", so it prints: the reader has already decided.
    */
   function printDocument() {
     const href = `/sales/${document.id}/document`
 
     if (!editable) {
-      window.open(href, '_blank')
+      printDoc(href)
       return
     }
 
-    const tab = window.open('', '_blank')
     startTransition(async () => {
       const saved = await saveInvoiceAction(payload())
       if (!saved.ok) {
-        tab?.close()
         toast.error(saved.error)
         return
       }
-      if (tab) tab.location.href = href
-      else window.open(href, '_blank')
+      printDoc(href)
       router.refresh()
     })
   }
@@ -1621,9 +1626,10 @@ export default function InvoiceEditor({
                 </Button>
 
                 {/* Print leads: on a posted invoice it is what most of these
-                    dialogs are for. Opened in its own tab so the printed page
-                    is the DOCUMENT — window.print() here would print the
-                    capture screen behind the dialog.
+                    dialogs are for. Rendered into a hidden frame so the printed
+                    page is the DOCUMENT — window.print() here would print the
+                    capture screen behind the dialog — and so the counter gets
+                    the print dialog rather than a tab to dismiss first.
 
                     The A4 route, not the slip, and for the same reason the
                     toolbar's Print above uses it: this screen writes invoices
@@ -1640,7 +1646,7 @@ export default function InvoiceEditor({
                   variant="secondary"
                   onClick={() => {
                     if (!receipt) return
-                    window.open(`/sales/${receipt.documentId}/document?auto=1`, '_blank')
+                    printDoc(`/sales/${receipt.documentId}/document`)
                   }}
                 >
                   <Icons.Printer size={15} />

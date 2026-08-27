@@ -85,7 +85,10 @@ export default function ProductTypePanel({
   }
 
   return (
-    <div className="p-6">
+    /* No padding of its own. It carried p-6 from when it filled a Card of its
+       own; it now sits under a field label inside one, where that inset only
+       pushed it out of line with the fields either side of it. */
+    <div>
       <input type="hidden" name="productType" value={selected} />
 
       {/* The type in force. A plain readout on a hairline, not a brand-tinted
@@ -96,7 +99,13 @@ export default function ProductTypePanel({
         <span className="flex size-11 shrink-0 items-center justify-center rounded-full border border-brand/25 bg-brand-soft text-brand">
           <CurrentIcon size={20} />
         </span>
-        <div className="min-w-0 flex-1">
+        {/* basis-48 rather than min-w-0: the buttons beside it are shrink-0, so
+            a zero minimum let the text give up ALL its width to keep them on
+            one line — in a half-width column the name broke to "Serial /
+            product" over a ~90px ribbon. With a floor, the row wraps the whole
+            action group onto its own line instead, which is what a narrow
+            column wants. */}
+        <div className="flex-1 basis-48">
           <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
             {current.name}
             {current.onlineOnly && (
@@ -108,7 +117,9 @@ export default function ProductTypePanel({
           </div>
           <p className="mt-0.5 text-xs text-muted">{current.summary}</p>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {/* ml-auto so the group still sits hard right once it has wrapped onto
+            a line of its own. */}
+        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
           {current.setupLabel && onSetupClick && (
             <Button variant="ghost" size="sm" onClick={() => onSetupClick(current.id)}>
               {current.setupLabel}

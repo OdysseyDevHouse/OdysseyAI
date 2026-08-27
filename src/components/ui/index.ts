@@ -25,6 +25,7 @@ export {
   buttonClass,
   buttonShape,
   CONTROL,
+  FIELD_CONTROL_OFFSET,
   FIELD_LABEL,
   CONTROL_H,
   CONTROL_H_TOUCH,
@@ -60,6 +61,7 @@ export {
 } from './styles'
 export { TableScroller } from './TableScroller'
 export { useFitViewport } from './useFitViewport'
+export { usePrintDocument } from './usePrintDocument'
 
 export {
   Field,
@@ -89,12 +91,15 @@ export {
   TILE_SWATCHES,
   TILE_GRADIENTS,
   PICTURE_TILE_GRADIENTS,
+  CATEGORY_SWATCHES,
   TILE_NONE,
   tileClass,
   tileInkClass,
   toneForTileToken,
   type TileSwatch,
+  type CategorySwatch,
 } from './tiles'
+export { ColourPickerModal } from './ColourPickerModal'
 export { SwatchPicker } from './SwatchPicker'
 export {
   GeneratedPictureGallery,

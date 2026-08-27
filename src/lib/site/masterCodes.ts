@@ -1,5 +1,10 @@
 import 'server-only'
-import { nextMasterCode, previewMasterCode, type CodeDocType } from './sequences'
+import {
+  nextMasterCode,
+  previewMasterCode,
+  previewMasterCodes,
+  type CodeDocType,
+} from './sequences'
 import { getBooleanSetting } from './settings'
 
 /**
@@ -101,4 +106,20 @@ export async function suggestedMasterCode(
 ): Promise<string | null> {
   if (!(await getBooleanSetting(siteId, SETTING_FOR[docType]))) return null
   return previewMasterCode(siteId, docType)
+}
+
+/**
+ * The codes to pre-fill a form that creates `count` entities at once.
+ *
+ * Claims nothing — see previewMasterCodes. Returns [] when auto-numbering is
+ * off for this type, which is the caller's cue to leave the boxes blank and
+ * make the user type their own; the server refuses a blank code either way.
+ */
+export async function suggestedMasterCodes(
+  siteId: number,
+  docType: CodeDocType,
+  count: number,
+): Promise<string[]> {
+  if (!(await getBooleanSetting(siteId, SETTING_FOR[docType]))) return []
+  return previewMasterCodes(siteId, docType, count)
 }

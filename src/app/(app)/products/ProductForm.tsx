@@ -19,6 +19,7 @@ import SerialsPanel from '@/components/SerialsPanel'
 import ProductSuppliersPanel from '@/components/ProductSuppliersPanel'
 import ProductKitchenPanel from '@/components/ProductKitchenPanel'
 import ProductReportingPanel, { type ProductReportChoice } from '@/components/ProductReportingPanel'
+import { formatMoney } from '@/lib/decimals'
 import type { InstructionGroup } from '@/lib/site/instructions'
 import type { KitchenPrinter } from '@/lib/site/kitchenPrinters'
 import type { RecipeLine } from '@/lib/site/productComposition'
@@ -298,6 +299,12 @@ export default function ProductForm({
   // reachable once it is saved, because the range chains onto its id.
   const [wizardOpen, setWizardOpen] = useState(false)
 
+  // Bumped when the wizard creates a range, so the Refer panel re-reads the
+  // ladder. The wizard is a sibling of that panel — it commits its own
+  // transaction and hands back ids, not a chain — so without this the pack
+  // sizes only showed up after saving the product, which navigated.
+  const [referRefresh, setReferRefresh] = useState(0)
+
   // The rate the wizard prices against, so its markup column agrees with the
   // Pricing panel's. This product's own rate, or the site default.
   const sellingVatPercent =
@@ -504,38 +511,61 @@ export default function ProductForm({
                 </Field>
               </div>
 
-              <TillTilePanel
-                productId={product?.id ?? null}
-                initial={initial}
-                color={color}
-                onColorChange={setColor}
-                initialIcon={product?.imageIcon ?? null}
-                /* Live state, not the saved record: the generated icon should
-                   carry the name the user is typing now, not the one that was
-                   last saved. */
-                productName={description}
-                pictureFont={pictureFont}
-              />
+              {/* Till tile and product type share a row rather than stacking.
+                  The tile is a short block that leaves the right half of the
+                  card empty, and product type sat beneath it as a full-width
+                  band — two rows spent saying what fits in one. Paired, they
+                  read as one answer to "what IS this product": how it looks,
+                  and how it behaves.
 
-              {/* Product type, moved up from the foot of the tab.
-                  It sat last, below Pricing and Inventory, which put the choice
-                  that DECIDES whether Recipe, Refer and Serials tabs exist at
-                  all after everything it governs. It belongs with identity.
-
-                  It carries its own caption now: the panel renders the type's
-                  NAME ("Standard product"), never the words "Product type" —
-                  those came from the card heading this replaced, so without a
-                  label here the control lost the only thing saying what it is. */}
-              <div>
-                <span className={FIELD_LABEL}>Product type</span>
-                <ProductTypePanel
-                  defaultValue={product?.productType ?? DEFAULT_PRODUCT_TYPE}
-                  onChange={setProductType}
-                  onSetupClick={(type) => {
-                    const target = SETUP_TAB[type]
-                    if (target) setTab(target)
-                  }}
+                  Two columns only from sm up — below that the swatch grid and
+                  the type panel each need the full width. */}
+              <div className="grid items-start gap-5 sm:grid-cols-2">
+                <TillTilePanel
+                  productId={product?.id ?? null}
+                  initial={initial}
+                  color={color}
+                  onColorChange={setColor}
+                  initialIcon={product?.imageIcon ?? null}
+                  /* Live state, not the saved record: the generated icon should
+                     carry the name the user is typing now, not the one that was
+                     last saved. */
+                  productName={description}
+                  pictureFont={pictureFont}
+                  /* The tile is a live preview of the till, so it takes what the
+                     till shows: the name as it is being typed, the code, the
+                     default-structure price, and the department whose tone a
+                     product with no colour of its own falls back to. */
+                  description={description}
+                  code={product?.code ?? suggestedCode ?? ''}
+                  price={formatMoney(
+                    defaultPrices[structures.find((s) => s.isDefault)?.id ?? 0] ?? 0,
+                  )}
+                  departmentId={product?.departmentId ?? null}
                 />
+
+                {/* Product type, moved up from the foot of the tab.
+                    It sat last, below Pricing and Inventory, which put the
+                    choice that DECIDES whether Recipe, Refer and Serials tabs
+                    exist at all after everything it governs. It belongs with
+                    identity.
+
+                    It carries its own caption now: the panel renders the type's
+                    NAME ("Standard product"), never the words "Product type" —
+                    those came from the card heading this replaced, so without a
+                    label here the control lost the only thing saying what it
+                    is. */}
+                <div>
+                  <span className={FIELD_LABEL}>Product type</span>
+                  <ProductTypePanel
+                    defaultValue={product?.productType ?? DEFAULT_PRODUCT_TYPE}
+                    onChange={setProductType}
+                    onSetupClick={(type) => {
+                      const target = SETUP_TAB[type]
+                      if (target) setTab(target)
+                    }}
+                  />
+                </div>
               </div>
 
               <Field label="Extra description">
@@ -812,6 +842,11 @@ export default function ProductForm({
                   initialChain={referChain}
                   autoCode={autoCode}
                   onOpenWizard={() => setWizardOpen(true)}
+                  refreshToken={referRefresh}
+                  // What this product IS, for the panel to name itself as the
+                  // base before anything is linked — the chain is empty then,
+                  // so it cannot read its own description off it.
+                  self={{ description: product.description, code: product.code }}
                 />
               ) : (
                 <p className="p-6 text-sm text-muted">
@@ -865,6 +900,11 @@ export default function ProductForm({
         <ReferWizard
           open={wizardOpen}
           onClose={() => setWizardOpen(false)}
+          // The range is already committed by the time this fires. Telling the
+          // panel to re-read is what puts it on screen — the products exist
+          // either way, so a missed refresh looked like the wizard had done
+          // nothing until the product was saved.
+          onCreated={() => setReferRefresh((n) => n + 1)}
           vatPercent={sellingVatPercent}
           autoCode={autoCode}
           // Already linked? The range joins that ladder's method rather than

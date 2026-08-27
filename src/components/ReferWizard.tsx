@@ -1,9 +1,11 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import {
   Button,
+  CurrencyInput,
   Field,
+  FIELD_CONTROL_OFFSET,
   Input,
   Modal,
   NumberInput,
@@ -19,7 +21,10 @@ import { Trash } from '@/components/ui/icons'
 import { PACK_DESCRIPTIONS } from '@/lib/productProperties'
 import { addVat, markupPercent, removeVat, sellExclFromMarkup } from '@/lib/pricing'
 import type { ReferMethod } from '@/lib/site/productComposition'
-import { createReferRangeAction } from '@/app/(app)/products/referRangeActions'
+import {
+  createReferRangeAction,
+  suggestedProductCodesAction,
+} from '@/app/(app)/products/referRangeActions'
 
 /**
  * Building a pack range in one dialog — single, six-pack, case.
@@ -48,11 +53,41 @@ const METHOD_HINT: Record<ReferMethod, string> = {
 /** A sensible ladder for a new range, so the table is never blank. */
 const DEFAULT_SIZES = [1, 6, 12, 24, 48, 96]
 
+/**
+ * The name a rung gets when nobody types one — "Beer 340ml × 6".
+ *
+ * ONE definition, because three things have to agree about it: the pre-filled
+ * description box, the chain sentence under the table, and what is actually
+ * created on submit. They were three copies of the same template, and a change
+ * to one was a silent disagreement with the other two.
+ */
+function derivedName(baseName: string, packSize: number) {
+  return `${baseName.trim() || 'Product'} × ${packSize || '?'}`
+}
+
+/** How many rows still need a product code invented for them. */
+function rowsNeedingCode(rows: Row[]) {
+  return rows.filter((r) => !r.productId && !r.code.trim()).length
+}
+
 type Row = {
   key: string
   /** Set when this rung already exists — its inputs are then read-only. */
   productId: number | null
   description: string
+  /**
+   * Whether `description` was typed rather than derived.
+   *
+   * The name of every rung above the base is built FROM the base and its own
+   * pack size, and the boxes are pre-filled with it rather than showing it as
+   * a placeholder — a suggestion nobody can edit down to nothing is worse than
+   * one that is simply there. But a derived name has to keep following what it
+   * derives from: renaming the base, or changing a pack size, must re-name the
+   * rows that never got their own name. So the two cases are tracked rather
+   * than guessed at — "is this still the string we last generated?" breaks the
+   * moment a user types exactly what was offered.
+   */
+  descriptionEdited: boolean
   code: string
   barcode: string
   packSize: number
@@ -67,6 +102,7 @@ function blankRow(index: number, base: string): Row {
     key: `r${index}-${base}`,
     productId: null,
     description: '',
+    descriptionEdited: false,
     code: '',
     barcode: '',
     packSize: DEFAULT_SIZES[index] ?? 0,
@@ -141,18 +177,87 @@ export default function ReferWizard({
       first.costExcl = base.costExcl
       first.sellIncl = base.sellIncl
     }
-    return [first, { ...blankRow(1, stamp), description: '' }, blankRow(2, stamp)]
+    const rest = [blankRow(1, stamp), blankRow(2, stamp)].map((r) => ({
+      ...r,
+      description: derivedName(first.description, r.packSize),
+    }))
+    return [first, ...rest]
   })
   const [saving, startSave] = useTransition()
   const toast = useToast()
 
+  // Read by the open-effect below, which must see the rows as they are without
+  // re-running every time one changes.
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+
+  /**
+   * Pre-fills the product codes with the next few the sequence would hand out.
+   *
+   * Fetched rather than computed here: the format lives in the site's sequence
+   * row (prefix, padding, next number) and a client that guessed at it would
+   * drift the first time a site was set up differently.
+   *
+   * These are SUGGESTIONS — nothing is claimed until Create, so an abandoned
+   * wizard burns no codes and two people building a range see the same
+   * numbers. resolveMasterCode recognises an accepted suggestion on save and
+   * claims a real one then, so a race resolves to the next free code rather
+   * than to a collision.
+   *
+   * Only rows that need one are filled: a row for a product that already
+   * exists keeps its own code, and anything typed is left alone.
+   */
+  useEffect(() => {
+    if (!open || !autoCode) return
+    let live = true
+    void (async () => {
+      const wanted = rowsNeedingCode(rowsRef.current)
+      if (!wanted) return
+      const codes = await suggestedProductCodesAction(wanted)
+      if (!live || !codes.length) return
+      setRows((current) => {
+        let next = 0
+        return current.map((r) =>
+          r.productId || r.code.trim() || next >= codes.length
+            ? r
+            : { ...r, code: codes[next++] },
+        )
+      })
+    })()
+    return () => {
+      live = false
+    }
+    // Deliberately keyed on the dialog opening, not on rows: re-running as the
+    // user edits would overwrite a code they had just cleared.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, autoCode])
+
+  /**
+   * Applies an edit, then re-derives every name that is still automatic.
+   *
+   * Runs on EVERY patch rather than only on the base's name, because a pack
+   * size carries into the name too — changing line 3 from 12 to 24 has to turn
+   * "Beer × 12" into "Beer × 24" in the box, not just in the chain sentence
+   * underneath it.
+   */
   const patch = (key: string, next: Partial<Row>) =>
-    setRows((current) => current.map((r) => (r.key === key ? { ...r, ...next } : r)))
+    setRows((current) => {
+      const edited = current.map((r) => (r.key === key ? { ...r, ...next } : r))
+      const baseName = edited[0]?.description ?? ''
+      return edited.map((r, i) =>
+        i === 0 || r.productId || r.descriptionEdited
+          ? r
+          : { ...r, description: derivedName(baseName, r.packSize) },
+      )
+    })
 
   const addRow = () =>
-    setRows((current) =>
-      current.length >= 6 ? current : [...current, blankRow(current.length, stamp)],
-    )
+    setRows((current) => {
+      if (current.length >= 6) return current
+      const added = blankRow(current.length, stamp)
+      added.description = derivedName(current[0]?.description ?? '', added.packSize)
+      return [...current, added]
+    })
 
   const removeRow = (key: string) =>
     setRows((current) => (current.length <= 2 ? current : current.filter((r) => r.key !== key)))
@@ -172,7 +277,7 @@ export default function ReferWizard({
     // The same fallback the submit uses, so the chain reads as the names the
     // products will actually be created with rather than "Line 2".
     const nameOf = (i: number) =>
-      rows[i].description.trim() || (i === 0 ? 'Line 1' : `${base || 'Product'} × ${rows[i].packSize || '?'}`)
+      rows[i].description.trim() || (i === 0 ? 'Line 1' : derivedName(base ?? '', rows[i].packSize))
 
     for (let i = 0; i < rows.length; i++) {
       const size = rows[i].packSize
@@ -256,8 +361,7 @@ export default function ReferWizard({
           // An untouched row takes the name its placeholder was offering, so
           // "Beer × 6" does not have to be typed to be accepted.
           description:
-            r.description.trim() ||
-            (i === 0 ? '' : `${rows[0].description.trim()} × ${r.packSize}`),
+            r.description.trim() || (i === 0 ? '' : derivedName(rows[0].description, r.packSize)),
           code: r.code,
           barcode: r.barcode,
           packSize: r.packSize,
@@ -286,7 +390,10 @@ export default function ReferWizard({
       onClose={onClose}
       title="Refer code wizard"
       description="Set up how each pack size refers to the one below it, then create the linked products."
-      size="xl"
+      /* Nine editable columns. At xl the headings wrapped to two lines each
+         and the inputs were too narrow to read a price in, which is the one
+         thing this dialog exists to let someone check before creating. */
+      size="full"
       /* The generated-rows table grows with the number of pack sizes, and it is
          what the person is checking before the products are created. */
       bodyGrows
@@ -327,11 +434,14 @@ export default function ReferWizard({
             </Select>
           </Field>
 
-          <div className="flex items-end gap-2 pb-1">
-            <Button type="button" variant="ghost" size="sm" onClick={fillPrices}>
+          {/* Dropped to the Select beside them rather than bottom-aligned: that
+              Field carries a hint, so its BOTTOM sits a line below the control
+              and `items-end` floated these up level with the label. */}
+          <div className={`flex gap-2 ${FIELD_CONTROL_OFFSET}`}>
+            <Button type="button" variant="ghost" onClick={fillPrices}>
               Fill prices down
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={addRow} disabled={rows.length >= 6}>
+            <Button type="button" variant="ghost" onClick={addRow} disabled={rows.length >= 6}>
               Add pack size
             </Button>
           </div>
@@ -370,15 +480,18 @@ export default function ReferWizard({
                     <td className={TABLE_TD_INPUT}>
                       <Input
                         value={row.description}
-                        onChange={(e) => patch(row.key, { description: e.target.value })}
-                        readOnly={locked}
-                        // Suggests the name this rung would get, built off the
-                        // base and its own pack size — "Beer 340ml × 6".
-                        placeholder={
-                          index === 0
-                            ? 'Single'
-                            : `${rows[0].description.trim() || 'Product'} × ${row.packSize || '?'}`
+                        onChange={(e) =>
+                          patch(row.key, {
+                            description: e.target.value,
+                            // Clearing the box hands the row back to the
+                            // automatic name rather than leaving it blank —
+                            // otherwise wiping a name to retype it would strand
+                            // the row with nothing and block Create.
+                            ...(index > 0 && { descriptionEdited: e.target.value.trim() !== '' }),
+                          })
                         }
+                        readOnly={locked}
+                        placeholder={index === 0 ? 'Single' : derivedName(rows[0].description, row.packSize)}
                         aria-label={`Description line ${index + 1}`}
                       />
                     </td>
@@ -421,7 +534,7 @@ export default function ReferWizard({
                       </Select>
                     </td>
                     <td className={TABLE_TD_INPUT}>
-                      <NumberInput
+                      <CurrencyInput
                         value={row.costExcl}
                         onChange={(e) => patch(row.key, { costExcl: Number(e.target.value) })}
                         aria-label={`Cost line ${index + 1}`}
@@ -442,7 +555,7 @@ export default function ReferWizard({
                       />
                     </td>
                     <td className={TABLE_TD_INPUT}>
-                      <NumberInput
+                      <CurrencyInput
                         value={row.sellIncl}
                         onChange={(e) => patch(row.key, { sellIncl: Number(e.target.value) })}
                         aria-label={`Selling price line ${index + 1}`}

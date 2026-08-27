@@ -50,9 +50,11 @@ export function PosSignInArt({
    */
   cycleMs?: number
 }) {
-  /* Three at a time: the mockup's proportion, and the most that stay legible at
-     room distance on the narrowest screen this panel appears on. */
-  const perPage = 3
+  /* Four at a time, which is what the 706px pane holds without squeezing the
+     logo above it: four 76px rows plus the board's own chrome is 444px, leaving
+     262px for the logo block — enough for the h-32 disc it shrinks to whenever
+     there is a board. A fifth would have to come out of the logo. */
+  const perPage = 4
   const pages = Math.max(1, Math.ceil(specials.length / perPage))
   const [page, setPage] = useState(0)
 
@@ -140,7 +142,16 @@ export function PosSignInArt({
          flex children; without it the logo keeps its content height and the
          specials card is the one that gets clipped — which is what happened,
          cutting the third item in half on a short panel. */}
-      <div className="relative z-[2] flex min-h-0 flex-1 items-center justify-center p-8">
+      {/* Centred with no board, but pushed UP the moment there is one: four
+          specials is a tall card, and a logo still sitting on the vertical
+          centre of what is left ends up crowding the board's top edge. `pt-10`
+          with `items-start` parks it in the upper third instead, which is where
+          a mark belongs on a panel whose lower half is a list. */}
+      <div
+        className={`relative z-[2] flex min-h-0 flex-1 justify-center p-8 ${
+          specials.length > 0 ? 'items-start pt-10' : 'items-center'
+        }`}
+      >
         {logoUrl ? (
           /* On its own light disc, because a shop's logo is drawn for white
              paper and most have dark ink. Dropping it straight onto a
@@ -153,7 +164,17 @@ export function PosSignInArt({
              invisible on the screen facing the queue. */
           /* Capped by the room available as well as by a fixed size, so a
              short panel shrinks the disc instead of squeezing the board. */
-          <div className="logo-disc flex h-40 max-h-full w-40 items-center justify-center rounded-full p-6 shadow-pop">
+          /* Two sizes rather than one. With no board the disc has the whole
+             pane and reads small at h-40, so it takes h-52; with a board it
+             steps back to h-32, because the shop's offers are what the person
+             in the queue is there to read and the mark only has to be
+             recognised. Both keep `max-h-full` for the 768px-tall counter
+             screen. */
+          <div
+            className={`logo-disc flex max-h-full items-center justify-center rounded-full shadow-pop ${
+              specials.length > 0 ? 'h-32 w-32 p-5' : 'h-52 w-52 p-7'
+            }`}
+          >
             <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" />
           </div>
         ) : (

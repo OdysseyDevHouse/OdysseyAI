@@ -442,6 +442,21 @@ export const DRAWER_SIZE: Record<DrawerSize, string> = {
  */
 export const FIELD_LABEL = 'mb-1.5 block text-sm font-medium text-ink-2'
 
+/**
+ * Top margin that drops an UNLABELLED control into line with labelled Fields
+ * beside it — the "Add" button at the end of an add-a-row form.
+ *
+ * It is exactly FIELD_LABEL's height: text-sm line-height (1.25rem) plus its
+ * mb-1.5 (0.375rem). A constant rather than a number typed at the call site, so
+ * restyling the label keeps every add-row button aligned instead of leaving
+ * each form its own pixel off.
+ *
+ * Reach for this rather than `items-end` on the row: a Field carrying a hint
+ * is TALLER below its control than one without, so bottom-aligning a mixed row
+ * lifts the hinted input above its neighbours. Align the controls, not the box.
+ */
+export const FIELD_CONTROL_OFFSET = 'mt-[1.625rem]'
+
 /** The one skin every single-line control wears. Edit here, every form follows. */
 export const CONTROL =
   'w-full rounded-control border border-border-strong bg-surface px-3 text-sm text-ink ' +

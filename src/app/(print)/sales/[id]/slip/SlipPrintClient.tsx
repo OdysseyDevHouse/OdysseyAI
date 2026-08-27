@@ -28,12 +28,26 @@ export default function SlipPrintClient({
     window.print()
   }
 
-  /* ?auto=1 — the till's Print button opened this tab to print, not to read. */
+  /* ?auto=1 — the till's Print button opened this to print, not to read. */
   useEffect(() => {
     if (!auto || printed.current) return
-    printed.current = true
+
+    /*
+     * The guard is claimed when the print HAPPENS, not when it is scheduled.
+     *
+     * Claiming it up front looks equivalent and silently disabled `auto`
+     * entirely: Strict Mode runs an effect, tears it down, and runs it again,
+     * so the first pass took the ref and then had its own cleanup clear the
+     * timer, and the second pass saw the ref already true and returned. The
+     * slip never printed itself and — because printNow also counts the print —
+     * the till's reprints were never counted either. The bug hid behind the
+     * toolbar's Print button, which still worked.
+     */
     // A beat for fonts/layout — printing a half-painted slip cuts it off.
-    const timer = setTimeout(printNow, 150)
+    const timer = setTimeout(() => {
+      printed.current = true
+      printNow()
+    }, 150)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auto])

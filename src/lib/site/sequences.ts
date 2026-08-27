@@ -521,6 +521,32 @@ export async function previewMasterCode(
   return formatNumber(sequence.prefix, sequence.nextNumber, sequence.padding, null)
 }
 
+/**
+ * The next `count` codes the sequence WOULD hand out, consecutively.
+ *
+ * For a form that creates SEVERAL things at once — the refer wizard builds a
+ * whole pack range — where previewing one code and repeating it would offer
+ * the same number on every line.
+ *
+ * Claims nothing, exactly like previewMasterCode, with the same trade: these
+ * are a suggestion, not a reservation. The codes are resolved for real, one at
+ * a time, inside the save. So a range created while somebody else was also
+ * adding products may land on different numbers than were shown — which is
+ * why each line stays editable.
+ */
+export async function previewMasterCodes(
+  siteId: number,
+  docType: CodeDocType,
+  count: number,
+): Promise<string[]> {
+  if (count <= 0) return []
+  const sequence = await getSequence(siteId, docType)
+  if (!sequence) return []
+  return Array.from({ length: count }, (_, i) =>
+    formatNumber(sequence.prefix, sequence.nextNumber + i, sequence.padding, null),
+  )
+}
+
 export type SequenceCheck = {
   docType: string
   /** 0 for the site-wide run, else the till whose own run this is. */

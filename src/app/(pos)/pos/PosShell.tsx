@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from 'next/navigation'
 import {
   useToast,
+  usePrintDocument,
   Button,
   ConfirmModal,
   EmptyState,
@@ -1033,6 +1034,9 @@ export default function PosShell({
   }, [receipt, siteId])
 
   const toast = useToast()
+  /* Named printPaper: this file's `openSalePaper` and `printBillPaper` both
+     route through it, and `printDocument` would read as a third one. */
+  const printPaper = usePrintDocument()
   const router = useRouter()
 
   /*
@@ -4397,7 +4401,11 @@ export default function PosShell({
    * no caller adds `recordPrintAction` on top of this.
    */
   function openSalePaper(documentId: number) {
-    window.open(`/sales/${documentId}/${salePaperRoute(posMode)}?auto=1`, '_blank')
+    /* A hidden frame rather than a tab. On a till that matters more than
+       anywhere else: a second tab takes the screen away from the basket the
+       next customer is already being rung up on, and leaves the operator to
+       find their way back. */
+    printPaper(`/sales/${documentId}/${salePaperRoute(posMode)}`)
   }
 
   /**
@@ -4409,6 +4417,12 @@ export default function PosShell({
    * stylesheet. The fallback route lives in the bare `(print)` group, which is
    * the only place laid out for paper, and `auto=1` prints it on arrival the way
    * the slip reprint does.
+   *
+   * Through a hidden frame rather than a tab: a till that opens a second tab
+   * has taken itself off the screen it exists to be, which is the same reason
+   * BillModal refuses window.print(). The bill route only moved INTO the
+   * (print) group with this change — it was rendering inside the back office
+   * layout, so the "bare group" this comment describes was aspirational.
    */
   function printBillPaper(data: BillData) {
     const documentId = state.documentId
@@ -4424,7 +4438,7 @@ export default function PosShell({
           }
           toast.error(printed.error)
         }
-        if (documentId) window.open(`/sales/${documentId}/bill`, '_blank')
+        if (documentId) printPaper(`/sales/${documentId}/bill`)
       } finally {
         setBillPrinting(false)
       }
@@ -7114,7 +7128,7 @@ export default function PosShell({
           invoicing
             ? undefined
             : () => {
-                if (receipt) window.open(`/sales/${receipt.documentId}/slip?gift=1`, '_blank')
+                if (receipt) printPaper(`/sales/${receipt.documentId}/slip?gift=1`)
               }
         }
         /* The back-office document — still the void/credit surface. */

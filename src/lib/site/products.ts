@@ -625,6 +625,15 @@ export type ProductPick = {
    */
   sellingIncl: number
   departmentId: number | null
+  /**
+   * How many base units the product is packed in, or 0 for "never stated".
+   *
+   * Carried so the refer panel can link a pack without asking twice: a product
+   * imported as a six-pack already answers the question the pack-size box was
+   * going to put. 0 is a real answer meaning nobody has said — the column
+   * defaults to it (006) — so it must stay distinguishable from a genuine size.
+   */
+  packSize: number
 }
 
 /**
@@ -666,7 +675,7 @@ export async function searchProductsForPicker(
   const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
     siteId,
     `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand,
-            p.average_cost, p.department_id,
+            p.average_cost, p.department_id, p.pack_size,
             -- The DEFAULT structure's price. A picker shows one number, so it
             -- shows the shelf price rather than making the caller choose.
             (SELECT pp.selling_price_incl FROM product_prices pp
@@ -689,6 +698,7 @@ export async function searchProductsForPicker(
     averageCost: toNum(r.average_cost),
     sellingIncl: toNum(r.selling_incl),
     departmentId: r.department_id === null ? null : Number(r.department_id),
+    packSize: toNum(r.pack_size),
   }))
 }
 
@@ -1114,6 +1124,33 @@ export async function updateProduct(
     if (input.imageIcon !== undefined) {
       imageAssignments.push('image_icon = ?')
       imageValues.push(input.imageIcon)
+    }
+
+    /*
+     * A REFER WITH NOTHING UNDER IT IS UNSELLABLE, SO IT IS NOT SAVED AS ONE.
+     *
+     * resolveComponents refuses a refer product that has no link — rightly,
+     * since selling one would take stock off a pile it does not have. But the
+     * type is a dropdown on this form, so it can be set to Refer before any
+     * link exists, and the refusal then lands at the till rather than here.
+     *
+     * Worse, it does not stop at the one product: every pack size pointing at
+     * it resolves THROUGH it, so one mistyped base silently makes the whole
+     * ladder unsellable — which is exactly how it was found.
+     *
+     * The two paths that build a ladder (createReferRange and addReferRung)
+     * write the link in the same transaction as the type and already keep this
+     * rule; this closes the one path that could set the type on its own. A
+     * product genuinely becoming a refer gets its type from those, on the
+     * Refer tab, where the link is made at the same moment.
+     */
+    let savedType = toProductType(input.productType)
+    if (savedType === 'refer') {
+      const [linkRows] = (await tx.execute(
+        'SELECT product_id FROM product_refers WHERE product_id = ?',
+        [id] as never,
+      )) as unknown as [RowDataPacket[]]
+      if (!linkRows?.length) savedType = 'normal'
     }
 
     const [res] = await tx.execute(

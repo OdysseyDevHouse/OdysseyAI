@@ -16,6 +16,7 @@ import {
   Select,
   SwatchPicker,
   useToast,
+  usePrintDocument,
   type BulkOptionGroup,
 } from '@/components/ui'
 import type { ProductBulkChange } from '@/lib/site/products'
@@ -77,6 +78,7 @@ export default function ProductListClient({
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
+  const printDocument = usePrintDocument()
 
   const count = selected.size
 
@@ -124,12 +126,14 @@ export default function ProductListClient({
     <>
       <BulkActionBar count={count} onClear={() => setSelected(new Set())}>
         {/* Shelf labels for the picked products — a print run, not a change,
-            so it opens the sheet rather than a form. */}
+            so it goes to the printer rather than to a form. Straight to the
+            print dialog: the button says Print labels, so a tab of rendered
+            label sheet in between is a page nobody asked to read. */}
         <Button
           variant="ghost"
           size="sm"
           disabled={pending || count === 0}
-          onClick={() => window.open(`/labels/a4?ids=${[...selected].join(',')}`, '_blank')}
+          onClick={() => printDocument(`/labels/a4?ids=${[...selected].join(',')}`)}
         >
           <Icons.Printer size={15} />
           Print labels

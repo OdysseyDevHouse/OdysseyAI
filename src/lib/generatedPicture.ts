@@ -28,35 +28,45 @@ export interface PictureGradient {
 }
 
 /**
- * The gradient set — 20 Material-derived ramps, each a two-stop diagonal within
- * one hue family so a picture reads as one solid colour rather than a rainbow.
+ * The 20 category colours a generated picture can wear.
  *
- * These run DARK → LIGHT (the deep stop at the top-left corner). The ink is not
- * fixed: `inkFor()` measures the light stop and flips the text to near-black on
- * the pale ramps (yellow, gold, amber, lime), so a new entry of any lightness
- * stays legible without hand-tuning.
+ * ── FLAT, THOUGH THE TYPE STILL SAYS "GRADIENT" ───────────────────────────
+ *
+ * `from` and `to` are the SAME value on every entry. These replaced a set of
+ * two-stop ramps when the palette moved to the twenty named category colours in
+ * components/ui/tiles.ts, and an icon must be able to match the flat tile a
+ * shop picked beside it — a ramp next to its flat twin looks like one of the
+ * two is broken.
+ *
+ * The pair is kept rather than collapsed to one field because the canvas
+ * renderer, inkFor() and every caller are written against it, and because a
+ * future palette may want ramps again. A degenerate gradient paints identically
+ * to a fill, so nothing downstream needs to know.
+ *
+ * These ARE the hex values in globals.css and CATEGORY_SWATCHES — the canvas
+ * cannot read a CSS custom property. Keep all three in step.
  */
 export const PICTURE_GRADIENTS: readonly PictureGradient[] = [
-  { id: 'green', label: 'Green', from: '#1E7F3D', to: '#43B02A' },
-  { id: 'lime', label: 'Lime green', from: '#7BC043', to: '#C5E86A' },
-  { id: 'teal', label: 'Teal', from: '#00897B', to: '#26A69A' },
-  { id: 'aqua', label: 'Aqua', from: '#00BCD4', to: '#4DD0E1' },
-  { id: 'blue', label: 'Blue', from: '#1565C0', to: '#42A5F5' },
-  { id: 'deep-blue', label: 'Deep blue', from: '#0D47A1', to: '#1976D2' },
-  { id: 'indigo', label: 'Indigo', from: '#3949AB', to: '#5C6BC0' },
-  { id: 'purple', label: 'Purple', from: '#6A1B9A', to: '#AB47BC' },
-  { id: 'violet', label: 'Violet', from: '#7E57C2', to: '#B388FF' },
-  { id: 'magenta', label: 'Magenta', from: '#AD1457', to: '#EC407A' },
-  { id: 'pink', label: 'Pink', from: '#D81B60', to: '#FF4081' },
-  { id: 'rose', label: 'Rose', from: '#F06292', to: '#FF80AB' },
-  { id: 'red', label: 'Red', from: '#C62828', to: '#EF5350' },
-  { id: 'orange', label: 'Orange', from: '#EF6C00', to: '#FFA726' },
-  { id: 'deep-orange', label: 'Deep orange', from: '#E65100', to: '#FF7043' },
-  { id: 'amber', label: 'Amber', from: '#FFB300', to: '#FFD54F' },
-  { id: 'yellow', label: 'Yellow', from: '#FDD835', to: '#FFF176' },
-  { id: 'gold', label: 'Gold', from: '#FFC107', to: '#FFD54F' },
-  { id: 'brown', label: 'Brown', from: '#6D4C41', to: '#A1887F' },
-  { id: 'slate', label: 'Slate grey', from: '#455A64', to: '#78909C' },
+  { id: 'butchery', label: 'Butchery', from: '#DC4C4C', to: '#DC4C4C' },
+  { id: 'hot-food', label: 'Hot Food', from: '#EF6F4E', to: '#EF6F4E' },
+  { id: 'snacks', label: 'Snacks', from: '#E08A3C', to: '#E08A3C' },
+  { id: 'bakery', label: 'Bakery', from: '#D2A032', to: '#D2A032' },
+  { id: 'fresh-produce', label: 'Fresh Produce', from: '#9AB43F', to: '#9AB43F' },
+  { id: 'fruit-veg', label: 'Fruit & Veg', from: '#4CAF6D', to: '#4CAF6D' },
+  { id: 'deli', label: 'Deli', from: '#2FA98C', to: '#2FA98C' },
+  { id: 'health', label: 'Health', from: '#8CA98F', to: '#8CA98F' },
+  { id: 'frozen', label: 'Frozen', from: '#2C9AA6', to: '#2C9AA6' },
+  { id: 'dairy', label: 'Dairy', from: '#3C9FD6', to: '#3C9FD6' },
+  { id: 'beverages', label: 'Beverages', from: '#4272D9', to: '#4272D9' },
+  { id: 'cleaning', label: 'Cleaning', from: '#5C7B94', to: '#5C7B94' },
+  { id: 'airtime', label: 'Airtime', from: '#5D5BD4', to: '#5D5BD4' },
+  { id: 'stationery', label: 'Stationery', from: '#8A5CD1', to: '#8A5CD1' },
+  { id: 'confectionery', label: 'Confectionery', from: '#A855C4', to: '#A855C4' },
+  { id: 'baby', label: 'Baby', from: '#DB5A9B', to: '#DB5A9B' },
+  { id: 'alcohol', label: 'Alcohol', from: '#8E3B5A', to: '#8E3B5A' },
+  { id: 'pet', label: 'Pet', from: '#B4674A', to: '#B4674A' },
+  { id: 'household', label: 'Household', from: '#C2A878', to: '#C2A878' },
+  { id: 'tobacco', label: 'Tobacco', from: '#5A6470', to: '#5A6470' },
 ]
 
 /** Look a gradient up by id, falling back to the first. */

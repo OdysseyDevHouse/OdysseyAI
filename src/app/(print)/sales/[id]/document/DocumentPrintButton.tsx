@@ -35,9 +35,22 @@ export default function DocumentPrintButton({
 
   useEffect(() => {
     if (!auto || printed.current) return
-    printed.current = true
+
+    /*
+     * The guard is set when the print HAPPENS, not when it is scheduled.
+     *
+     * Setting it up front looks equivalent and silently disabled `auto`
+     * altogether: Strict Mode runs an effect, tears it down, and runs it
+     * again, so the first pass claimed the ref and then had its timer cleared
+     * by its own cleanup, and the second pass saw the ref already true and
+     * returned. Nothing ever printed — in a tab or an iframe — and the flag
+     * looked like it worked because the toolbar's Print button still did.
+     */
     // A beat for fonts/layout — printing a half-painted page splits it.
-    const timer = setTimeout(() => window.print(), 150)
+    const timer = setTimeout(() => {
+      printed.current = true
+      window.print()
+    }, 150)
     return () => clearTimeout(timer)
   }, [auto])
 

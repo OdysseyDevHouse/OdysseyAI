@@ -44,13 +44,16 @@ export const metadata = { title: 'Delivery note' }
  */
 export default async function DeliveryNotePrintPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ auto?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { capabilities } = await requireCapability('sales.view')
   const site = await requireSite()
   const { id: raw } = await params
+  const { auto } = await searchParams
 
   const id = Number(raw)
   if (!Number.isFinite(id) || id <= 0) notFound()
@@ -114,7 +117,7 @@ export default async function DeliveryNotePrintPage({
 
   return (
     <div className="px-6 py-6">
-      <DocumentPrintButton doc={{ id: doc.id, docType: doc.docType }} />
+      <DocumentPrintButton doc={{ id: doc.id, docType: doc.docType }} auto={auto === '1'} />
       {/* Sanitised at save and re-validated at resolve; the values inside it are
           escaped by the renderer. See lib/stationery/sanitise.ts. */}
       <div dangerouslySetInnerHTML={{ __html: html }} />

@@ -31,7 +31,7 @@ export default async function ShelfTalkerPage({
 
   return (
     <div className="p-4">
-      <LabelsPrintButton count={items.length} />
+      <LabelsPrintButton count={items.length} auto={params.auto === '1'} />
       <div className="flex flex-col items-center gap-4">
         {items.map((item, i) => (
           <article

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import Link from 'next/link'
 import {
   Badge,
@@ -8,6 +8,7 @@ import {
   Combobox,
   EmptyState,
   Field,
+  FIELD_CONTROL_OFFSET,
   Input,
   NumberInput,
   Select,
@@ -26,6 +27,7 @@ import type { ProductPick } from '@/lib/site/products'
 import { searchProductsAction } from '@/app/(app)/products/pickerActions'
 import {
   addReferRungAction,
+  referChainAction,
   removeReferRungAction,
   setReferMethodAction,
 } from '@/app/(app)/products/referRangeActions'
@@ -78,6 +80,8 @@ export default function ReferPanel({
   initialChain,
   autoCode = false,
   onOpenWizard,
+  refreshToken = 0,
+  self,
 }: {
   /** The product whose screen this is. */
   productId: number | null
@@ -86,10 +90,45 @@ export default function ReferPanel({
   /** Whether a blank product code will be numbered automatically. */
   autoCode?: boolean
   onOpenWizard?: () => void
+  /**
+   * Bumped by the screen when something OUTSIDE this panel changed the ladder.
+   *
+   * The wizard builds a whole pack range in its own transaction, and it is a
+   * SIBLING of this panel rather than a child — so what it creates reaches
+   * `chain` through nothing, and `revalidatePath` cannot carry it either: this
+   * state is the client's. Without this the range only appeared after saving
+   * the product, because that navigation was what re-read the chain.
+   */
+  refreshToken?: number
+  /**
+   * This product's own name and code.
+   *
+   * Only needed before anything is linked: `chain` is empty then, so the panel
+   * has nothing to read its own description off, and the manual link form has
+   * to say what the pack will be counted in.
+   */
+  self?: { description: string; code: string }
 }) {
   const toast = useToast()
   const [busy, startAction] = useTransition()
   const [chain, setChain] = useState<ChainRung[]>(initialChain)
+
+  // Re-read the ladder when the screen says it moved underneath us. Skipped on
+  // the first render — `initialChain` is the page's own read of these same
+  // rows, and refetching it would only be a second trip for what we have.
+  useEffect(() => {
+    if (!refreshToken || !productId) return
+    let live = true
+    void (async () => {
+      const result = await referChainAction(productId)
+      // A dead panel must not write state, and a refused read must leave the
+      // chain showing what is actually on file rather than blanking it.
+      if (live && result.ok) setChain(result.chain)
+    })()
+    return () => {
+      live = false
+    }
+  }, [refreshToken, productId])
 
   // The new rung.
   const [existing, setExisting] = useState<ProductPick | null>(null)
@@ -102,6 +141,20 @@ export default function ReferPanel({
 
   const top = chain.length ? chain[chain.length - 1] : null
   const base = chain.length ? chain[0] : null
+
+  /*
+   * The rung a new pack goes on top of, and what the ladder is counted in.
+   *
+   * With nothing linked yet the chain is EMPTY — the page sends [] rather than
+   * one rung — so these fall back to the product itself. That is what makes
+   * the same add form work from the empty state: linking the first pack is
+   * the identical operation as linking the fifth, and addReferRung already
+   * accepts an existing product for either.
+   */
+  const onTopOf = top ?? (productId && self
+    ? { productId, description: self.description, code: self.code, packSize: 1 }
+    : null)
+  const countedIn = base ?? onTopOf
 
   // Read off the chain, not held in state: the server decides what the group
   // is on, and a refused change must leave the control showing the truth
@@ -161,16 +214,26 @@ export default function ReferPanel({
     setResults([])
   }
 
-  function add() {
-    if (!top || !productId) return
+  /**
+   * Links one rung on top of the one below.
+   *
+   * Takes what to link rather than reading it all off state, because the
+   * one-click path calls this from inside the picker's own onSelect — the
+   * setExisting/setPackSize it would otherwise depend on have not been applied
+   * yet at that point, and it would link the PREVIOUS selection.
+   */
+  function add(pick?: { product: ProductPick; packSize: number }) {
+    if (!onTopOf || !productId) return
+    const linkId = pick ? pick.product.id : existing?.id ?? null
+    const size = pick ? pick.packSize : packSize
     startAction(async () => {
       const result = await addReferRungAction(
         {
-          belowId: top.productId,
-          productId: existing?.id ?? null,
-          code,
-          description,
-          packSize,
+          belowId: onTopOf.productId,
+          productId: linkId,
+          code: pick ? '' : code,
+          description: pick ? '' : description,
+          packSize: size,
           method,
         },
         productId,
@@ -181,7 +244,11 @@ export default function ReferPanel({
       }
       setChain(result.chain)
       reset()
-      toast.success('Pack size added')
+      toast.success(
+        // The first link makes a ladder out of two loose products, which reads
+        // differently from adding a fifth pack to one that already exists.
+        chain.length < 2 ? 'Linked — this is now a pack ladder' : 'Pack size added',
+      )
     })
   }
 
@@ -219,10 +286,163 @@ export default function ReferPanel({
     })
   }
 
-  // Nothing linked yet: the chain has to start somewhere, and starting it means
-  // saying what one of these IS. That is still the wizard's job — it creates
-  // the base and the packs together — so this points at it rather than
-  // half-doing it.
+  /*
+   * Linking one pack onto the rung below it.
+   *
+   * Defined once and rendered from BOTH states. The wizard's job is to create a
+   * range that does not exist yet; this is the other half — a shop that
+   * imported its catalogue already HAS the single, the six-pack and the case as
+   * three ordinary products, and needs to say how they relate, not make them
+   * again. That is the same operation whether it is the first link or the
+   * fifth, so it must not be a second form that can drift from this one.
+   */
+  const addForm = (
+      <div className="flex flex-col gap-4 rounded-card border border-border p-4">
+        <div>
+          <span className="text-sm font-medium text-ink">
+            {chain.length < 2 ? 'Link a pack size' : 'Add a bigger pack size'}
+          </span>
+          <p className="text-sm text-muted">
+            It sits on top of {onTopOf?.description} and joins the ladder&rsquo;s refer method.
+            Search for a product that already exists, or leave the search empty and type a code to
+            create one.
+          </p>
+        </div>
+
+        <div className="max-w-md">
+          <Combobox
+            options={options}
+            query={query}
+            onQueryChange={search}
+            onSelect={(option) => {
+              if (!option.data) return
+              const picked = option.data
+              setQuery('')
+              setResults([])
+
+              /*
+               * A product that already states its pack size answers the only
+               * question the box below was going to ask, so linking it is one
+               * click rather than three. A 0 means nobody has ever said — the
+               * column defaults to it — so that still has to be asked for.
+               *
+               * The size must also be bigger than the rung it sits on, or
+               * addReferRung refuses it. Falling through to the box in that
+               * case shows the refusal against an editable field instead of a
+               * toast the person cannot act on.
+               */
+              const stated = picked.packSize
+              if (stated > 0 && stated > (onTopOf?.packSize ?? 0)) {
+                setExisting(null)
+                setDescription('')
+                setPackSize(0)
+                add({ product: picked, packSize: stated })
+                return
+              }
+
+              setExisting(picked)
+              setDescription(picked.description)
+            }}
+            loading={searching}
+            placeholder="Search an existing product, or leave empty to create one…"
+            emptyText="No products match — type a code below to create one"
+          />
+        </div>
+
+        {existing && (
+          <p className="text-sm text-muted">
+            Linking <span className="text-ink">{existing.description}</span> ({existing.code}).{' '}
+            <button
+              type="button"
+              className="text-brand hover:underline"
+              onClick={() => {
+                setExisting(null)
+                setDescription('')
+              }}
+            >
+              Create a new product instead
+            </button>
+          </p>
+        )}
+
+        {/* Nothing to fill in until there is something to link. A pack-size box
+            and an Add button sitting there before a product is chosen ask a
+            question about nothing — and the one-click path means most links
+            never need them at all. Typing a code (to create a product instead)
+            brings the row back, because that IS the choice being made. */}
+        {(existing || code.trim() || description.trim()) && (
+          <div className="flex flex-wrap items-start gap-3">
+            {!existing && (
+              <>
+                <Field label="Product code" className="w-44">
+                  <Input
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder={autoCode ? 'Auto' : 'Required'}
+                    aria-label="New pack product code"
+                  />
+                </Field>
+                <Field label="Description" className="w-56">
+                  <Input
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder={`${countedIn?.description ?? 'Product'} × ${packSize || '?'}`}
+                    aria-label="New pack description"
+                  />
+                </Field>
+              </>
+            )}
+
+            <Field
+              label="Pack size"
+              hint={`How many ${countedIn?.description ?? 'base units'} are in one`}
+              className="w-52"
+            >
+              <NumberInput
+                value={packSize || ''}
+                onChange={(e) => setPackSize(Number(e.target.value))}
+                aria-label="New pack size"
+              />
+            </Field>
+
+            {/* Full size, not `sm`: it stands beside a control wearing
+                h-control, and h-control-sm left it visibly short of the box. */}
+            <Button
+              type="button"
+              variant="primary"
+              className={FIELD_CONTROL_OFFSET}
+              disabled={busy || packSize <= 0 || (!existing && !code.trim() && !autoCode)}
+              /* Wrapped: a bare `onClick={add}` hands the click EVENT to the
+                 pick parameter, which would link whatever the event object
+                 coerced to rather than the chosen product. */
+              onClick={() => add()}
+            >
+              {busy ? (chain.length < 2 ? 'Linking…' : 'Adding…') : chain.length < 2 ? 'Link' : 'Add'}
+            </Button>
+          </div>
+        )}
+
+        {onTopOf && packSize > 0 && packSize % (onTopOf.packSize || 1) === 0 &&
+          packSize > onTopOf.packSize && (
+            <p className="text-sm text-muted">
+              Stored as{' '}
+              <span className="numeric text-ink">{packSize / (onTopOf.packSize || 1)}</span> ×{' '}
+              {onTopOf.description}, so {packSize} {countedIn?.description} in total.
+            </p>
+          )}
+      </div>
+  )
+
+  /*
+   * Nothing linked yet.
+   *
+   * Two ways on from here, and they answer different questions. The wizard
+   * BUILDS a range — three products created and linked in one transaction, for
+   * a shop setting beer up from scratch. The form below LINKS what is already
+   * there, which is what an imported catalogue needs: the products exist, only
+   * the relationship is missing. Offering only the wizard made that second case
+   * impossible without creating duplicates of products the shop already had.
+   */
   if (chain.length < 2) {
     return (
       <div className="flex flex-col gap-4 p-6">
@@ -237,6 +457,18 @@ export default function ReferPanel({
             )
           }
         />
+
+        {/* Only once the product is saved: a link needs an id on both ends. */}
+        {onTopOf && (
+          <>
+            <p className="text-sm text-muted">
+              Already have the pack sizes on the system? Link one to{' '}
+              <span className="text-ink">{onTopOf.description}</span> instead of building a range —
+              search for it below and say how many it holds.
+            </p>
+            {addForm}
+          </>
+        )}
       </div>
     )
   }
@@ -390,105 +622,7 @@ export default function ReferPanel({
         </div>
       )}
 
-      {/* ── Adding one more, on top ─────────────────────────────────────── */}
-      <div className="flex flex-col gap-4 rounded-card border border-border p-4">
-        <div>
-          <span className="text-sm font-medium text-ink">Add a bigger pack size</span>
-          <p className="text-sm text-muted">
-            It sits on top of {top?.description} and joins the ladder&rsquo;s refer method. Search
-            for a product that already exists, or leave the search empty and type a code to create
-            one.
-          </p>
-        </div>
-
-        <div className="max-w-md">
-          <Combobox
-            options={options}
-            query={query}
-            onQueryChange={search}
-            onSelect={(option) => {
-              if (!option.data) return
-              setExisting(option.data)
-              setDescription(option.data.description)
-              setQuery('')
-              setResults([])
-            }}
-            loading={searching}
-            placeholder="Search an existing product, or leave empty to create one…"
-            emptyText="No products match — type a code below to create one"
-          />
-        </div>
-
-        {existing && (
-          <p className="text-sm text-muted">
-            Linking <span className="text-ink">{existing.description}</span> ({existing.code}).{' '}
-            <button
-              type="button"
-              className="text-brand hover:underline"
-              onClick={() => {
-                setExisting(null)
-                setDescription('')
-              }}
-            >
-              Create a new product instead
-            </button>
-          </p>
-        )}
-
-        <div className="flex flex-wrap items-end gap-3">
-          {!existing && (
-            <>
-              <Field label="Product code" className="w-44">
-                <Input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder={autoCode ? 'Auto' : 'Required'}
-                  aria-label="New pack product code"
-                />
-              </Field>
-              <Field label="Description" className="w-56">
-                <Input
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder={`${base?.description ?? 'Product'} × ${packSize || '?'}`}
-                  aria-label="New pack description"
-                />
-              </Field>
-            </>
-          )}
-
-          <Field
-            label="Pack size"
-            hint={`How many ${base?.description ?? 'base units'} are in one`}
-            className="w-40"
-          >
-            <NumberInput
-              value={packSize || ''}
-              onChange={(e) => setPackSize(Number(e.target.value))}
-              aria-label="New pack size"
-            />
-          </Field>
-
-          <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            className="mb-1"
-            disabled={busy || packSize <= 0 || (!existing && !code.trim() && !autoCode)}
-            onClick={add}
-          >
-            {busy ? 'Adding…' : 'Add'}
-          </Button>
-        </div>
-
-        {top && packSize > 0 && packSize % (top.packSize || 1) === 0 && packSize > top.packSize && (
-          <p className="text-sm text-muted">
-            Stored as{' '}
-            <span className="numeric text-ink">{packSize / (top.packSize || 1)}</span> ×{' '}
-            {top.description}, so {packSize} {base?.description} in total.
-          </p>
-        )}
-      </div>
+      {addForm}
     </div>
   )
 }

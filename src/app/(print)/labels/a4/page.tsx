@@ -38,7 +38,7 @@ export default async function LabelsA4Page({
 
   return (
     <div className="p-4">
-      <LabelsPrintButton count={cells.length} />
+      <LabelsPrintButton count={cells.length} auto={params.auto === '1'} />
       <div
         className="grid"
         style={{ gridTemplateColumns: 'repeat(3, 70mm)', gridAutoRows: '36mm' }}

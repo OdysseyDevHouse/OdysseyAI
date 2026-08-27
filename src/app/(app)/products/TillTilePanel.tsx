@@ -3,21 +3,39 @@
 import { useRef, useState, useTransition } from 'react'
 import {
   Button,
+  CATEGORY_SWATCHES,
+  ColourPickerModal,
   GeneratedPictureModal,
   Icons,
-  PICTURE_TILE_GRADIENTS,
+  ProductTile,
+  TileGlyph,
   TILE_NONE,
   FIELD_LABEL,
-  tileInkClass,
+  buttonShape,
   tileClass,
+  toneForId,
+  toneForTileToken,
   useToast,
 } from '@/components/ui'
+
 import { IMAGE_ACCEPT, IMAGE_EXTENSIONS_LABEL } from '@/lib/productImageModel'
 import {
   removeProductIconAction,
   setGeneratePictureFontAction,
   uploadProductIconAction,
 } from './imageActions'
+
+/**
+ * How tall the preview stands.
+ *
+ * Above SHORT_TILE_MAX so the kit tile takes its TALL layout — glyph and name on
+ * the top line, code and price beneath — which is the arrangement the till uses
+ * at its default size. Below the threshold the kit flips to a one-line row and
+ * drops the subtitle, and this preview would then be showing a till the shop has
+ * not configured. The menu designer picks its own height for the same reason;
+ * see TILE_H there.
+ */
+const TILE_H = 136
 
 /**
  * How a product looks on the till: an icon, over a colour or gradient.
@@ -51,11 +69,32 @@ export default function TillTilePanel({
   initialIcon,
   productName = '',
   pictureFont = '',
+  description = '',
+  code = '',
+  price,
+  departmentId = null,
 }: {
   /** Null while the product is being created — see the note above. */
   productId: number | null
-  /** The letter shown when there is no icon. */
+  /**
+   * The letter shown when there is no icon.
+   *
+   * Still taken because the GENERATED icon is drawn from it. The preview no
+   * longer shows it — the till draws a package glyph, not an initial, for a
+   * product with no picture.
+   */
   initial: string
+  /** The description as it stands in the form, so the tile renames as it is typed. */
+  description?: string
+  /** The product code, shown as the tile's subtitle the way the till does. */
+  code?: string
+  /** Pre-formatted, like every other ProductTile caller. */
+  price?: string
+  /**
+   * The chosen department, for the tone a product with NO colour of its own
+   * falls back to — which is what the till does.
+   */
+  departmentId?: number | null
   /** The selected tile token, flat or gradient. Owned by the form. */
   color: string
   onColorChange: (token: string) => void
@@ -73,6 +112,22 @@ export default function TillTilePanel({
   const [busy, startAction] = useTransition()
   const [icon, setIcon] = useState(initialIcon)
   const [generateOpen, setGenerateOpen] = useState(false)
+  const [colourOpen, setColourOpen] = useState(false)
+  const currentColour = CATEGORY_SWATCHES.find((c) => c.token === color)
+
+  /*
+   * The tile's tone, by the till's OWN rule — see productTile() in
+   * pos/CatalogPane, which this deliberately mirrors: the stored colour where a
+   * shop has set one, otherwise the department's.
+   *
+   * "No background" is the one case that is not a colour at all. The till has no
+   * concept of a toneless tile, so it falls back to the department exactly as an
+   * unset product does — showing a grey tile here would promise a till that does
+   * not exist.
+   */
+  const tone =
+    (color === TILE_NONE.token ? null : toneForTileToken(color)) ??
+    toneForId(departmentId ?? productId ?? 0)
   // Held locally so a typeface chosen while generating is already in place the
   // next time the dialog opens, without waiting for the page to revalidate.
   const [font, setFont] = useState(pictureFont ?? '')
@@ -135,7 +190,10 @@ export default function TillTilePanel({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    /* No gap between label and body: FIELD_LABEL brings its own mb-1.5, and a
+       flex gap on top of it pushed this heading lower than "Product type"
+       beside it, so the two labels missed the same baseline. */
+    <div>
       {/* How the chosen colour reaches the server. The swatches are buttons, so
           without this the form submits no imageColor at all and every save
           writes null — the picker would look like it worked and change
@@ -143,130 +201,168 @@ export default function TillTilePanel({
           which is why only the colour needs a field here. */}
       <input type="hidden" name="imageColor" value={color} />
 
-      <span className={FIELD_LABEL}>How this product looks on the till</span>
+      <span className={FIELD_LABEL}>Product preview in POS</span>
 
-      <div className="flex flex-wrap items-start gap-5">
-        {/* The preview. The icon sits ON the colour rather than replacing it,
-            so a transparent glyph keeps its background. */}
-        <div
-          /* Ink follows the ramp: the pale ones (yellow, gold, amber, lime)
-             take dark text, exactly as the generated icon does. Hard-coded
-             white here left the letter invisible on four of the twenty. */
-          className={`relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-card ${tileInkClass(color)} ${tileClass(color)}`}
-        >
-          {icon && productId !== null ? (
-            <img
-              src={`/api/product-icon/${productId}?v=${version}`}
-              alt=""
-              className="size-full object-contain p-1.5"
-            />
-          ) : (
-            <span className="text-2xl font-semibold">{initial}</span>
+      {/* Boxed on the same hairline as the product type panel opposite. The two
+          sit side by side under matching labels, so an unboxed picker beside a
+          bordered card read as an unfinished half of one row. */}
+      <div className="flex flex-wrap items-start gap-5 rounded-card border border-border bg-surface p-4">
+        {/* ── The live till tile ───────────────────────────────────────────
+            The REAL kit ProductTile the till draws, not a drawing of one.
+
+            It used to be a plain coloured square, which quietly misdescribed
+            the till twice over: the colour filled the whole tile (on the till
+            it only tints the leading edge and the icon disc), and the name,
+            code and price a cashier actually reads were not there at all. The
+            menu designer already previews the till by mounting this same
+            component — see setup/menu-designer/tiles.tsx — and this follows it
+            for the same reason: a preview that is a COPY of the till drifts
+            from it, a preview that IS the till cannot.
+
+            Wrapped in a fixed-width, pointer-inert box: the tile is a drawing
+            here, so it must not look pressable. */}
+        <div aria-hidden className="pointer-events-none w-[210px] shrink-0">
+          <ProductTile
+            title={description.trim() || 'New product'}
+            /* The till shows a stock note where it has one and falls back to
+               the code — see productNote() in pos/CatalogPane. This screen has
+               no live stock figure, so it shows the code, which is the branch a
+               cashier sees on any product that is in stock. */
+            subtitle={code || undefined}
+            price={price}
+            /* The saved icon by the SAME kit helper the till calls, so an
+               uploaded picture appears here exactly as it will on the counter.
+               `version` busts the cache after a replace, as the old preview
+               did. */
+            icon={
+              <TileGlyph
+                src={
+                  icon && productId !== null
+                    ? `/api/product-icon/${productId}?v=${version}`
+                    : null
+                }
+                fallback={<Icons.Package size={20} />}
+              />
+            }
+            /* Colour reaches the tile ONLY as a tone — the disc tint and the
+               leading edge — which is the whole of what a stored colour does on
+               the till. Falling back to the department is the till's own rule
+               (CatalogPane): a product with no colour of its own is not
+               grey there, it wears its department's. */
+            tone={tone}
+            edge={tone}
+            tileHeight={TILE_H}
+          />
+        </div>
+
+        {/* min-w-0 flex-1: without a flex basis this block claimed a whole line
+            of the outer row and bumped the preview tile onto its own line
+            above it. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-start gap-5">
+          <div className="flex flex-col items-start gap-2">
+            {/* ── Background ─────────────────────────────────────────────── */}
+            {/* One button, not a grid of twenty. The colours are named now, and
+                twenty labelled tiles cannot sit in a form field without
+                dominating the screen — so the choice moves to a dialog and the
+                trigger carries the current answer, which is the only part worth
+                standing room once it is made. */}
+            {/* buttonShape() rather than a hand-written box, so this sits at
+                exactly the kit's `sm` geometry — the same height, radius and
+                type scale as Add icon and Remove icon beneath it. It had its
+                own px-2 py-1 text-xs and stood visibly shorter than the pair it
+                stacks with.
+
+                Not a kit <Button>: the swatch inside is a runtime colour, which
+                is the case buttonShape exists for — see the note on it in
+                styles.ts. The border and text colours are written here because
+                no ButtonVariant means "neutral outline". */}
+            <button
+              data-kit-ok
+              type="button"
+              onClick={() => setColourOpen(true)}
+              className={`${buttonShape({ size: 'sm' })} border-border text-muted hover:bg-surface-2`}
+            >
+              <span
+                /* The chosen colour itself, so the trigger answers "what is it
+                   now?" without being opened. */
+                className={`size-4 shrink-0 rounded-[4px] ${tileClass(color)}`}
+              />
+              {currentColour?.label ?? (color === TILE_NONE.token ? 'No background' : 'Colour')}
+            </button>
+
+            {/* ── The icon ───────────────────────────────────────────────── */}
+            {/* A column, matching the stack it now lives in: side by side these
+                three ran wider than the space beside the tile and wrapped. */}
+            <div className="flex flex-col items-start gap-2">
+              <input
+                ref={fileInput}
+                type="file"
+                accept={IMAGE_ACCEPT}
+                hidden
+                onChange={(e) => upload(e.target.files)}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy || productId === null}
+                onClick={() => fileInput.current?.click()}
+              >
+                <Icons.Upload size={15} />
+                {busy ? 'Working…' : icon ? 'Replace icon' : 'Add icon'}
+              </Button>
+
+              {/* HIDDEN FOR NOW — the button only. Everything behind it is
+                  still wired: GeneratedPictureModal is still mounted below,
+                  still saves through the ordinary icon upload, and the site's
+                  typeface setting is still read and written. Restoring the
+                  feature means deleting this comment and nothing else.
+
+                  It sat beside the upload, never instead of it — a real picture
+                  is better when there is one. This was for the long tail of
+                  products nobody will ever photograph, where a coloured tile
+                  carrying the name still beats a bare glyph on the till.
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy || productId === null}
+                onClick={() => setGenerateOpen(true)}
+              >
+                Generate icon
+              </Button>
+              */}
+
+              {icon && (
+                <Button variant="danger-ghost" size="sm" disabled={busy} onClick={remove}>
+                  <Icons.Trash size={15} />
+                  Remove icon
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Create only. The standing caption that used to sit here — what the
+              tile is for, and where online-store photographs go instead — is
+              gone; the label above says what this is. This one stays because it
+              is not a caption but the REASON the icon buttons above it are
+              disabled, and without it they read as broken.
+
+              basis-full so it runs under both columns rather than being
+              squeezed into one. */}
+          {productId === null && (
+            <p className="basis-full text-xs text-muted">
+              Save this product first, then add its till icon. {IMAGE_EXTENSIONS_LABEL}.
+            </p>
           )}
         </div>
-
-        <div className="flex flex-col gap-3">
-          {/* ── Backgrounds ──────────────────────────────────────────────── */}
-          {/* The SAME twenty ramps the generator offers, so choosing a colour
-              here and generating an icon there are one palette rather than two
-              that nearly match. Ten per row, as in the dialog. Squares, not
-              circles: these are gradients, and a two-stop ramp is far easier to
-              read across a square than around a disc. */}
-          {/* A ten-column grid rather than a wrapping row: the twenty ramps are
-              meant to read as two even rows of ten, and with "no colour" in the
-              same flex line the wrap fell 10/9/1. */}
-          <div className="grid w-fit grid-cols-10 gap-1.5">
-            {PICTURE_TILE_GRADIENTS.map((c) => (
-              /* Not a kit control: a colour swatch is a coloured target with no
-                 label, which no Button variant should ever become. */
-              <button
-                key={c.token}
-                data-kit-ok
-                type="button"
-                title={c.token.replace('pic-', '').replace('-', ' ')}
-                aria-label={`Colour ${c.token.replace('pic-', '')}`}
-                aria-pressed={color === c.token}
-                onClick={() => onColorChange(c.token)}
-                className={`size-7 rounded-control border-2 transition ${c.className} ${
-                  color === c.token ? 'border-ink' : 'border-transparent'
-                }`}
-              />
-            ))}
-
-          </div>
-
-          {/* No colour, on its own line BELOW the grid — "none" is a different
-              KIND of answer from the twenty ramps, and sitting in the grid it
-              read as a twenty-first colour while also breaking the 10/10 wrap. */}
-          <button
-            data-kit-ok
-            type="button"
-            title="No background colour"
-            aria-label="No background colour"
-            aria-pressed={color === TILE_NONE.token}
-            onClick={() => onColorChange(TILE_NONE.token)}
-            className={`flex w-fit items-center gap-1.5 rounded-control border px-2 py-1 text-xs transition ${
-              color === TILE_NONE.token
-                ? 'border-ink text-ink'
-                : 'border-border text-muted hover:bg-surface-2'
-            }`}
-          >
-            <Icons.Ban size={13} />
-            No background
-          </button>
-
-          {/* ── The icon ─────────────────────────────────────────────────── */}
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileInput}
-              type="file"
-              accept={IMAGE_ACCEPT}
-              hidden
-              onChange={(e) => upload(e.target.files)}
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={busy || productId === null}
-              onClick={() => fileInput.current?.click()}
-            >
-              <Icons.Upload size={15} />
-              {busy ? 'Working…' : icon ? 'Replace icon' : 'Add icon'}
-            </Button>
-
-            {/* Beside the upload, never instead of it — a real picture is
-                better when there is one. This is for the long tail of products
-                nobody will ever photograph, where a coloured tile carrying the
-                name still beats a bare letter on the till button. */}
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy || productId === null}
-              onClick={() => setGenerateOpen(true)}
-            >
-              Generate icon
-            </Button>
-
-            {icon && (
-              <Button variant="danger-ghost" size="sm" disabled={busy} onClick={remove}>
-                <Icons.Trash size={15} />
-                Remove icon
-              </Button>
-            )}
-          </div>
-
-          <p className="max-w-80 text-xs text-muted">
-            {productId === null ? (
-              <>Save this product first, then add its till icon. {IMAGE_EXTENSIONS_LABEL}.</>
-            ) : (
-              <>
-                Shown on the point-of-sale button. Photographs for your online store are separate —
-                add those under <span className="font-medium text-ink">Photographs</span> below.
-              </>
-            )}
-          </p>
-        </div>
       </div>
+
+      <ColourPickerModal
+        open={colourOpen}
+        onClose={() => setColourOpen(false)}
+        value={color}
+        onChange={onColorChange}
+        title="Product picture colour"
+      />
 
       {/* An icon built from the product's own initial and name on a gradient.
           The rendered PNG rides the ordinary icon upload, so the till receives

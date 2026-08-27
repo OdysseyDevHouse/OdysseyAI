@@ -101,7 +101,8 @@ import {
   Textarea,
   TextLink,
   TextLinkButton,
-  TILE_SWATCHES,
+  CATEGORY_SWATCHES,
+  ColourPickerModal,
   TileGrid,
   toneForId,
   toneForTileToken,
@@ -124,6 +125,7 @@ import {
   ToolbarSearch,
   useChartColors,
   useToast,
+  usePrintDocument,
 } from '@/components/ui'
 import type { Column } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -199,6 +201,7 @@ export default function StyleGuidePage() {
         <TileSwatchSection />
         <GeneratedPictureSection />
         <ToastSection />
+        <PrintDocumentSection />
         <MenuSection />
         <ColumnPickerSection />
         <TabsSection />
@@ -848,13 +851,14 @@ function ReasonPickerSection() {
 }
 
 function TileSwatchSection() {
-  const [picked, setPicked] = useState<string | null>(TILE_SWATCHES[0].token)
+  const [picked, setPicked] = useState<string | null>(CATEGORY_SWATCHES[0].token)
+  const [swatchDialog, setSwatchDialog] = useState(false)
 
   return (
     <Card>
       <CardHeader
         title="Tile swatches"
-        description="<SwatchPicker> over TILE_SWATCHES / tileClass() — the colour palette for records with no image (products, departments)"
+        description="<SwatchPicker> and <ColourPickerModal> over CATEGORY_SWATCHES / tileClass() — the 20 named colours a record with no image can wear (products, departments, quick keys). The inline picker suits a dense form row; the dialog suits a screen with no room for twenty labelled tiles."
       />
       <CardBody className="flex flex-wrap items-center gap-4">
         <div
@@ -865,9 +869,18 @@ function TileSwatchSection() {
         <div className="flex flex-col gap-2">
           <SwatchPicker value={picked} onChange={setPicked} />
           <SwatchPicker value={picked} onChange={setPicked} size="sm" />
+          <Button variant="secondary" size="sm" onClick={() => setSwatchDialog(true)}>
+            Open colour picker
+          </Button>
         </div>
+        <ColourPickerModal
+          open={swatchDialog}
+          onClose={() => setSwatchDialog(false)}
+          value={picked}
+          onChange={setPicked}
+        />
         <p className="max-w-80 text-xs text-muted">
-          Records store the token name (<code>tile-3</code>), never a hex — so restyling the
+          Records store the token name (<code>cat-bakery</code>), never a hex — so restyling the
           palette in globals.css repaints every existing record. The leading swatch clears the
           colour; a record with none falls back to a tile derived from its name.
         </p>
@@ -1634,6 +1647,27 @@ function ToastSection() {
         <Button variant="secondary" onClick={() => toast.info('Export queued — we will email it.')}>
           toast.info
         </Button>
+      </CardBody>
+    </Card>
+  )
+}
+
+function PrintDocumentSection() {
+  const printDocument = usePrintDocument()
+  return (
+    <Card>
+      <CardHeader
+        title="Printing a document"
+        description="usePrintDocument() — sends one of the (print) routes straight to the printer. It loads the route into a hidden A4-sized frame and lets that page's own ?auto=1 print it, so the reader gets the print dialog and never a tab of HTML to dismiss. Use it anywhere a dialog or a row offers Print: window.print() there would put the SCREEN on paper, not the document."
+      />
+      <CardBody className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={() => printDocument('/sales/1/document')}>
+          <Icons.Printer size={15} />
+          Print document #1
+        </Button>
+        <span className="text-sm text-muted">
+          Opens the printer dialog for whatever sale id 1 is on this site.
+        </span>
       </CardBody>
     </Card>
   )

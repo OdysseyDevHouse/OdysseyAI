@@ -1,7 +1,7 @@
 'use client'
 
 import { Close } from './icons'
-import { TILE_SWATCHES } from './tiles'
+import { CATEGORY_SWATCHES } from './tiles'
 
 /**
  * The colour palette offered wherever a record is tinted — a department in the
@@ -50,12 +50,17 @@ export function SwatchPicker({
         <Close size={size === 'sm' ? 12 : 14} />
       </button>
 
-      {TILE_SWATCHES.map((swatch) => (
+      {/* The named category palette. `title` and `aria-label` carry the NAME
+          rather than the token, so a swatch is "Bakery" to a person and to a
+          screen reader alike — twenty unlabelled discs are otherwise
+          indistinguishable to anyone not looking at them. */}
+      {CATEGORY_SWATCHES.map((swatch) => (
         <button
           key={swatch.token}
           data-kit-ok
           type="button"
-          aria-label={`Colour ${swatch.token}`}
+          title={swatch.label}
+          aria-label={swatch.label}
           aria-pressed={current === swatch.token}
           disabled={disabled}
           onClick={() => onChange(swatch.token)}

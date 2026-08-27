@@ -406,7 +406,7 @@ const PREVIEW_SPECIALS: PosSignInSpecial[] = [
     appliesTo: 'On Beverages, Snacks',
   },
   /* A fifth, so the pager dots appear and the cycle has somewhere to go —
-     three per page is the panel's own rule. */
+     four per page is the panel's own rule. */
   {
     kind: 'price',
     productId: 4,
@@ -427,12 +427,17 @@ const PREVIEW_SPECIALS: PosSignInSpecial[] = [
 ]
 
 export function PosGatePreview() {
-  const [state, setState] = useState<'bare' | 'specials' | 'logo' | 'full'>('bare')
+  const [state, setState] = useState<'bare' | 'specials' | 'logo' | 'quiet' | 'full'>('bare')
 
   const STATES = [
     { key: 'bare', label: 'No picture at all' },
     { key: 'specials', label: 'Specials running' },
     { key: 'logo', label: 'Logo uploaded' },
+    /* A logo and NO promotions — the commonest real shop, and the only state
+       that shows the logo at its full size. The panel gives the disc the whole
+       pane when there is no board to share it with, so this is the one case
+       where getting that size wrong is invisible in every other toggle. */
+    { key: 'quiet', label: 'Logo, no specials' },
     { key: 'full', label: 'Logo + own backdrop' },
   ] as const
 
@@ -460,9 +465,9 @@ export function PosGatePreview() {
        </svg>`,
     )
 
-  const showLogo = state === 'logo' || state === 'full'
+  const showLogo = state === 'logo' || state === 'quiet' || state === 'full'
   const showBackdrop = state === 'full'
-  const showSpecials = state !== 'bare'
+  const showSpecials = state !== 'bare' && state !== 'quiet'
 
   return (
     <div className="flex flex-col gap-3">

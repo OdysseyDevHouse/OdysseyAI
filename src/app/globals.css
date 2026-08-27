@@ -173,7 +173,46 @@
   --color-tile-6: #0e7490;
   --color-tile-7: #475569;
 
+  /* --- Category palette --------------------------------------------------- */
+  /* The 20 flat colours a tile can wear — products, departments, quick keys.
+     Named for the department each was drawn for, because a shop picking a
+     colour for "Bakery" wants the bakery colour rather than "amber": the name
+     IS the affordance. Nothing enforces the pairing — a product may take any
+     of them.
+
+     Flat, not two-stop: these are picked to be told apart at a glance across a
+     wall of till buttons, and a gradient blurs the very distinction that makes
+     twenty of them legible side by side.
+
+     Every one carries WHITE ink. Nine sit below 3:1 against white measured on
+     the WCAG curve (Household is the worst at 2.29), so this is a deliberate
+     choice to match the supplied palette rather than an unchecked one — see
+     CATEGORY_SWATCHES in components/ui/tiles.ts. */
+  --color-cat-butchery: #dc4c4c;
+  --color-cat-hot-food: #ef6f4e;
+  --color-cat-snacks: #e08a3c;
+  --color-cat-bakery: #d2a032;
+  --color-cat-fresh-produce: #9ab43f;
+  --color-cat-fruit-veg: #4caf6d;
+  --color-cat-deli: #2fa98c;
+  --color-cat-health: #8ca98f;
+  --color-cat-frozen: #2c9aa6;
+  --color-cat-dairy: #3c9fd6;
+  --color-cat-beverages: #4272d9;
+  --color-cat-cleaning: #5c7b94;
+  --color-cat-airtime: #5d5bd4;
+  --color-cat-stationery: #8a5cd1;
+  --color-cat-confectionery: #a855c4;
+  --color-cat-baby: #db5a9b;
+  --color-cat-alcohol: #8e3b5a;
+  --color-cat-pet: #b4674a;
+  --color-cat-household: #c2a878;
+  --color-cat-tobacco: #5a6470;
+
   /* --- Picture gradients -------------------------------------------------- */
+  /* KEPT, no longer offered in the pickers. The generated-picture dialog still
+     paints from these, and any row already storing a `pic-*` token must keep
+     rendering as the colour it was saved as. */
   /* The 20 ramps a product's till tile can wear, shared with the generated
      picture dialog (lib/generatedPicture) so a shop that generates an icon and
      a shop that only picks a colour are choosing from ONE palette.

@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { PrintDocumentButton } from '@/components/PrintDocumentButton'
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { approvalGate, getPurchaseDocument, purchaseAudit } from '@/lib/site/purchaseDocuments'
@@ -14,7 +15,6 @@ import { formatMoney, formatQty, round } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
-  ButtonLink,
   Callout,
   Card,
   CardHeader,
@@ -147,26 +147,18 @@ export default async function PurchaseDocumentPage({
                 out what a supplier was sent is exactly when the cancelled one
                 needs looking at, and the paper says CANCELLED across it. */}
             {doc.docType === 'purchase_order' && (
-              <ButtonLink
+              <PrintDocumentButton
                 href={`/purchasing/${doc.id}/order`}
-                variant="secondary"
-                target="_blank"
-              >
-                <Icons.Printer size={15} />
-                Print order
-              </ButtonLink>
+                label="Print order"
+              />
             )}
 
             {/* Labels for what just arrived — the moment shelf edges go stale. */}
             {doc.docType === 'grv' && doc.status === 'finalised' && (
-              <ButtonLink
+              <PrintDocumentButton
                 href={`/labels/a4?source=grv&id=${doc.id}`}
-                variant="secondary"
-                target="_blank"
-              >
-                <Icons.Printer size={15} />
-                Shelf labels
-              </ButtonLink>
+                label="Shelf labels"
+              />
             )}
             <PurchaseActions
               documentId={doc.id}

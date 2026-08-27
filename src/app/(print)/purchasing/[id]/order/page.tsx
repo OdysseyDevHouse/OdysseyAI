@@ -28,13 +28,16 @@ export const dynamic = 'force-dynamic'
  */
 export default async function PurchaseOrderPrintPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>
+  searchParams: Promise<{ auto?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId, capabilities } = await requireCapability('purchasing.view')
   const site = await requireSite()
   const { id: raw } = await params
+  const { auto } = await searchParams
 
   const id = Number(raw)
   if (!Number.isFinite(id) || id <= 0) notFound()
@@ -133,7 +136,7 @@ export default async function PurchaseOrderPrintPage({
 
   return (
     <div className="px-6 py-6">
-      <OrderPrintButton documentId={doc.id} />
+      <OrderPrintButton documentId={doc.id} auto={auto === '1'} />
       {/* Sanitised at save and re-validated at resolve; the values inside it are
           escaped by the renderer. See lib/stationery/sanitise.ts. */}
       <div dangerouslySetInnerHTML={{ __html: html }} />

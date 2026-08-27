@@ -5,6 +5,10 @@ import { requireCapability } from '@/lib/auth'
 import { toggleFavorite } from '@/lib/site/reportFavorites'
 import { deleteSavedReport } from '@/lib/site/savedReports'
 import { loadSaleRecord, type SaleRecordSnapshot } from '@/lib/site/saleRecord'
+import { getDocument } from '@/lib/site/salesDocuments'
+import { getCustomer } from '@/lib/site/customers'
+import { lastEmailed } from '@/lib/site/invoiceEmail'
+import { isConfigured as mailIsConfigured } from '@/lib/mail'
 
 /**
  * Hub actions.
@@ -79,4 +83,67 @@ export async function reportSaleRecordAction(
   const { siteId } = await requireCapability('sales.view')
   if (!Number.isInteger(documentId) || documentId <= 0) return null
   return loadSaleRecord(siteId, documentId)
+}
+
+/**
+ * What the report's document dialog needs to OFFER emailing, beside the record.
+ *
+ * The record itself carries nothing about who to send to: `SaleRecordSnapshot`
+ * is the reading shape three surfaces share, and a customer's email address is
+ * not part of reading a sale. So the dialog asks for these separately, exactly
+ * as `DocumentActionBar` resolves them for the sale's own screen — same facts,
+ * resolved on the server, so the report and that screen can never disagree
+ * about whether a document may be emailed.
+ *
+ * `emailable` is false on anything that is not a finalised invoice or credit
+ * note: a quote or a cancelled sale has nothing a customer should be sent.
+ */
+export type ReportSaleEmailContext = {
+  emailable: boolean
+  /** False shows the button disabled with the reason, never a dead dialog. */
+  mailConfigured: boolean
+  /** The customer's address, empty on a walk-in or an account without one. */
+  defaultTo: string
+  /** The last 'emailed' audit entry, for informed resends. */
+  lastEmailedNote: string | null
+}
+
+export async function reportSaleEmailContextAction(
+  documentId: number,
+): Promise<ReportSaleEmailContext | null> {
+  /* The same gate as the record read beside it: somebody who may not read the
+     sale has no business learning its customer's email address. Sending is
+     gated separately, and more strictly, by emailInvoiceAction itself — this
+     one only decides whether to OFFER it. */
+  const { siteId } = await requireCapability('sales.view')
+  if (!Number.isInteger(documentId) || documentId <= 0) return null
+
+  const document = await getDocument(siteId, documentId)
+  if (!document) return null
+
+  const emailable =
+    document.status === 'finalised' &&
+    (document.docType === 'invoice' || document.docType === 'credit_sale')
+
+  /* Answered without the two extra reads when there is nothing to send. */
+  if (!emailable) {
+    return {
+      emailable: false,
+      mailConfigured: mailIsConfigured(),
+      defaultTo: '',
+      lastEmailedNote: null,
+    }
+  }
+
+  const [customer, lastSend] = await Promise.all([
+    document.customerId ? getCustomer(siteId, document.customerId) : Promise.resolve(null),
+    lastEmailed(siteId, documentId),
+  ])
+
+  return {
+    emailable: true,
+    mailConfigured: mailIsConfigured(),
+    defaultTo: customer?.email ?? '',
+    lastEmailedNote: lastSend ? `${lastSend.detail ?? ''} · ${lastSend.userName}` : null,
+  }
 }

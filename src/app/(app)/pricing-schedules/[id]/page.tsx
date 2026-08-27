@@ -1,9 +1,10 @@
 import { notFound } from 'next/navigation'
+import { PrintDocumentButton } from '@/components/PrintDocumentButton'
 import { requireCapability } from '@/lib/auth'
 import { getSchedule, staleLines } from '@/lib/site/priceSchedules'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
-import { PageHeader, PageBody, ButtonLink, Icons } from '@/components/ui'
+import { PageHeader, PageBody } from '@/components/ui'
 import ScheduleEditor from './ScheduleEditor'
 
 /**
@@ -41,14 +42,10 @@ export default async function SchedulePage({ params }: { params: Promise<{ id: s
           /* Labels for THIS change — printed at five, showing the six o'clock
              price, because labelItems reads the schedule's own lines. */
           schedule.status === 'armed' || schedule.status === 'applied' ? (
-            <ButtonLink
+            <PrintDocumentButton
               href={`/labels/a4?source=schedule&id=${schedule.id}`}
-              variant="secondary"
-              target="_blank"
-            >
-              <Icons.Printer size={15} />
-              Print labels
-            </ButtonLink>
+              label="Print labels"
+            />
           ) : undefined
         }
       />

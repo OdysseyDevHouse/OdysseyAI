@@ -452,7 +452,21 @@ export async function saveProductAction(
    * Serials do — see ReferPanel.tsx. This form never carries referTarget, and
    * a branch here reading a field nothing submits would look live while doing
    * nothing, which is worse than its absence.
+   *
+   * The COST is the exception, and it moves the other way — down the form and
+   * up the ladder. A case of 24 costs 24 singles, so repricing the single has
+   * to reprice every pack drawing on it; nothing on the Refer tab offers a
+   * cost box precisely because the factor already decides the answer. Without
+   * this the packs kept whatever they were seeded with — usually 0.00 — and
+   * reported a 100% margin on every sale.
+   *
+   * Runs for EVERY product, not just one typed 'refer': the base of a ladder
+   * is deliberately an ordinary product (see createReferRange), so a type
+   * check here would skip the one rung people actually reprice. A product with
+   * nothing above it costs one cheap query and writes nothing.
    */
+  const { cascadeReferCosts } = await import('@/lib/site/referRange')
+  await cascadeReferCosts(siteId, result.id).catch(() => 0)
 
   // This store's own database is now saved. Everything below concerns the OTHER
   // linked stores, and must never turn a successful save into a failed one — a

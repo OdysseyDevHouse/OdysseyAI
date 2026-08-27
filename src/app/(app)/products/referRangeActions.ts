@@ -13,6 +13,7 @@ import {
   type ChainRung,
 } from '@/lib/site/referRange'
 import type { ReferMethod } from '@/lib/site/productComposition'
+import { suggestedMasterCodes } from '@/lib/site/masterCodes'
 
 /**
  * The refer wizard's one action.
@@ -35,6 +36,26 @@ export async function createReferRangeAction(
 
   revalidatePath('/products')
   return result
+}
+
+/**
+ * The product codes to pre-fill the wizard's rows with.
+ *
+ * Suggestions, not reservations — nothing is claimed until the range is
+ * saved, so an abandoned wizard burns no codes. Two people building a range
+ * at the same time therefore see the same numbers, and the second one saves
+ * under the next ones up; every row stays editable for exactly that reason.
+ *
+ * Returns [] when the site does not auto-number products, which leaves the
+ * boxes empty for the user to fill in themselves.
+ */
+export async function suggestedProductCodesAction(count: number): Promise<string[]> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return []
+
+  // A suggestion is a convenience: if the sequence cannot be read the wizard
+  // should still open with empty codes rather than fail to open at all.
+  return suggestedMasterCodes(ctx.siteId, 'product', count).catch(() => [])
 }
 
 /*
