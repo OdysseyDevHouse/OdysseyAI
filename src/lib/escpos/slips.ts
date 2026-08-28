@@ -111,6 +111,27 @@ export function renderReceipt(data: ReceiptData, opts: SlipOptions = {}): Uint8A
     }
   }
 
+  /*
+   * The sale's custom comments, above the footer.
+   *
+   * Already filtered to the ones marked to print and already formatted — see
+   * ReceiptData.comments. This lays them out and decides nothing.
+   *
+   * Wrapped, because a label and an answer together can exceed 40 columns on a
+   * narrow roll and an un-wrapped line is silently truncated by the printer
+   * rather than by anything that could warn about it.
+   *
+   * NOT on a gift slip. That slip exists to hide what the sale was worth, and
+   * an answer captured at the pad is exactly the sort of thing — a name, an
+   * account reference — the giver did not mean to send along with it.
+   */
+  if (!data.gift && data.comments?.length) {
+    job.line('-'.repeat(columns))
+    for (const c of data.comments) {
+      for (const piece of wrapText(`${c.label}: ${c.value}`, columns)) job.line(piece)
+    }
+  }
+
   if (data.footerText) {
     job.align('center')
     for (const piece of wrapText(data.footerText, columns)) job.line(piece)

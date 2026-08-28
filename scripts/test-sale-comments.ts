@@ -34,6 +34,7 @@ import {
   setValues,
   valuesFor,
   missingRequired,
+  slipComments,
 } from '../src/lib/site/customFields'
 import { listTenderTypes } from '../src/lib/site/tenderTypes'
 import { FIELD_ENTITIES, ENTITY_LABEL } from '../src/lib/customFieldModel'
@@ -77,6 +78,7 @@ async function main() {
       unit: null,
       isRequired: required,
       isPublic: false,
+      printsOnSlip: false,
       isActive: true,
     })
     if (!result.ok) throw new Error(`could not define ${name}: ${result.error}`)
@@ -153,6 +155,40 @@ async function main() {
     'and a split across two unflagged tenders does not',
     asks([{ tenderTypeId: cash.id }, { tenderTypeId: cash.id }], asking),
     false,
+  )
+
+  console.log('\n── What reaches the slip ──────────────────────────────────────')
+  /* Only the fields MARKED to print, only when answered, already formatted.
+     Neither renderer may decide this — see slipComments for why. */
+  await setValues(SITE, ACTOR, 'sale', documentId, [
+    { fieldId: created[0], value: 'Thabo' },
+    { fieldId: created[1], value: 'Plumber' },
+  ])
+  check('nothing prints while no field is marked', (await slipComments(SITE, documentId)).length, 0)
+
+  await siteExecute(SITE, 'UPDATE custom_field_defs SET prints_on_slip = 1 WHERE id = ?', [
+    created[0],
+  ])
+  const printed = await slipComments(SITE, documentId)
+  check('the marked field prints', printed.length, 1)
+  check('with its label', printed[0]?.label, 'Test Name')
+  check('and its answer', printed[0]?.value, 'Thabo')
+  check('and the unmarked one stays off', printed.some((c) => c.label === 'Test Surname'), false)
+
+  /* Marked but never answered: dropped, not printed as an empty caption. A
+     caption over nothing reads as something the cashier forgot.
+
+     Test Age carries '34' from the section above, so it is cleared first —
+     otherwise this would assert nothing, because the field WOULD legitimately
+     print. */
+  await setValues(SITE, ACTOR, 'sale', documentId, [{ fieldId: created[2], value: '' }])
+  await siteExecute(SITE, 'UPDATE custom_field_defs SET prints_on_slip = 1 WHERE id = ?', [
+    created[2],
+  ])
+  check(
+    'a marked but unanswered field is dropped rather than printed blank',
+    (await slipComments(SITE, documentId)).length,
+    1,
   )
 
   console.log('\n── A field with values cannot be deleted ──────────────────────')

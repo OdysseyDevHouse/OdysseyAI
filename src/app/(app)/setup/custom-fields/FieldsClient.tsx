@@ -60,6 +60,7 @@ export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
   const [unit, setUnit] = useState('')
   const [isRequired, setIsRequired] = useState(false)
   const [isPublic, setIsPublic] = useState(false)
+  const [printsOnSlip, setPrintsOnSlip] = useState(false)
   const [isActive, setIsActive] = useState(true)
 
   const shown = fields.filter((f) => f.entity === entity)
@@ -74,6 +75,7 @@ export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
       setUnit('')
       setIsRequired(false)
       setIsPublic(false)
+      setPrintsOnSlip(false)
       setIsActive(true)
     } else {
       setName(field.name)
@@ -83,6 +85,7 @@ export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
       setUnit(field.unit ?? '')
       setIsRequired(field.isRequired)
       setIsPublic(field.isPublic)
+      setPrintsOnSlip(field.printsOnSlip)
       setIsActive(field.isActive)
     }
   }
@@ -104,6 +107,7 @@ export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
     unit: unit.trim() || null,
     isRequired,
     isPublic,
+    printsOnSlip,
     isActive,
   }
   // The same function the server calls, so the button explains the refusal
@@ -200,6 +204,9 @@ export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
                           fields a customer can see is the thing somebody scans
                           this list for. */}
                       {field.isPublic && <Badge tone="brand">Customer sees it</Badge>}
+                      {/* Same reasoning as the badge above: what leaves the
+                          building is the thing somebody scans this list for. */}
+                      {field.printsOnSlip && <Badge tone="brand">On the slip</Badge>}
                       {!field.isActive && <Badge tone="neutral">Retired</Badge>}
                     </span>
                     <span className="block truncate text-xs text-muted">
@@ -361,6 +368,18 @@ export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
             label="A customer may see this"
             hint="Off unless you say otherwise. Anything internal — a risk rating, a margin note — must stay off."
           />
+
+          {/* Only for sale fields: nothing else has a slip to print on, and a
+              toggle that cannot do anything is a toggle somebody will one day
+              ring up about. */}
+          {entity === 'sale' && (
+            <Switch
+              checked={printsOnSlip}
+              onChange={setPrintsOnSlip}
+              label="Print the answer on the customer's slip"
+              hint="Off unless you say otherwise. A slip is handed over and cannot be unprinted — put a name on it, not an age."
+            />
+          )}
 
           <Switch
             checked={isActive}

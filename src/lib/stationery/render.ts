@@ -140,17 +140,22 @@ export function formatValue(value: unknown, format: TokenFormat): string {
     case 'money':
       return escapeHtml(formatMoney(value))
     /*
-     * `exact`, so a document is NOT governed by the shop's display setting.
+     * ── `exact` IS THE PRINT RULE, NOT A DEFERRAL ────────────────────────────
      *
-     * The setting decides how many decimals a SCREEN shows. Paper is a
-     * different promise: a slip cannot be reprinted once the customer has
-     * walked out, and an invoice is the figure somebody pays against — so the
-     * decision to change what prints on one is deliberate work, taken on its
-     * own, rather than a side effect of a preference set for a stock take.
+     * Paper shows a quantity's decimals when it HAS them and nothing when it
+     * does not: 1 prints as "1", 1.5 prints as "1.5". A whole number padded to
+     * "1.000" on a slip is noise on the one document a customer reads standing
+     * at a counter, and the padding buys nothing there — a column of screen
+     * figures lines up because they all pad, and a slip line does not line up
+     * with anything.
      *
-     * The whole print path is pinned this way: escpos/slips.ts, slipSpec.ts,
-     * slipHtml.ts, stationery/pdf.ts and the two slip components. When the
-     * print side does follow the setting, these are the call sites to change.
+     * That is exactly what `exact` does at every setting, which is why the
+     * whole print path passes it: escpos/slips.ts, slipSpec.ts, slipHtml.ts,
+     * stationery/pdf.ts and the two slip components.
+     *
+     * COSTS never reach paper at all — no print path formats one, because a
+     * customer document does not carry what the business paid. So there is no
+     * cost-precision decision to make here.
      */
     case 'qty':
       return escapeHtml(formatQty(value, { exact: true }))

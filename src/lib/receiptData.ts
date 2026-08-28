@@ -138,6 +138,29 @@ export type ReceiptData = {
   loyalty: { pointsEarned: number; balance: number } | null
   /** 0 = the original; above zero the slip says COPY. Driven by print_count. */
   copyNumber: number
+  /**
+   * The sale's custom comments, for the ones marked to print.
+   *
+   * ── ALREADY FILTERED, AND FORMATTED ─────────────────────────────────────
+   *
+   * The caller decides what belongs here — `prints_on_slip` is a per-field flag
+   * and the renderers must not have to know that, any more than they know what
+   * `is_public` means. A renderer that filtered would be a second place the
+   * rule lived, and the two would disagree the first time either changed.
+   *
+   * The value arrives as TEXT rather than as a typed value: 'yes' has already
+   * become "Yes" and a number has its unit, through `formatFieldValue`. Same
+   * discipline as every other slip field — the renderers lay out, they do not
+   * interpret.
+   *
+   * Empty on the overwhelming majority of slips, and the renderers print
+   * nothing at all for an empty list.
+   *
+   * OPTIONAL, so a caller that predates this — the offline basket path, a test
+   * fixture — keeps producing a valid slip rather than being made to declare it
+   * has none. Absent and empty mean the same thing to every renderer.
+   */
+  comments?: { label: string; value: string }[]
   footerText: string
   /**
    * Where a QR block on the slip may point.
@@ -172,6 +195,8 @@ export function receiptDataFor(
     loyalty?: { pointsEarned: number; balance: number } | null
     copyNumber?: number
     footerText?: string
+    /** The sale's custom comments, already filtered and formatted. See slipComments. */
+    comments?: { label: string; value: string }[]
     /**
      * Special id → name, for the per-line "why" (see ReceiptLine.specialName).
      *
@@ -252,6 +277,7 @@ export function receiptDataFor(
     changeGiven: doc.changeGiven,
     loyalty: opts.loyalty ?? null,
     copyNumber: opts.copyNumber ?? 0,
+    comments: opts.comments ?? [],
     footerText: opts.footerText ?? '',
     ...(opts.qrLinks ? { qrLinks: opts.qrLinks } : {}),
   }

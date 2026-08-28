@@ -152,6 +152,21 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
         </>
       )}
 
+      {/* The sale's custom comments, above the footer and matching the thermal
+          layout in escpos/slips.ts — the two must not disagree about what a
+          slip says. Never on a gift slip: that slip hides what the sale was
+          worth, and an answer captured at the pad is exactly what the giver did
+          not mean to send along. */}
+      {!gift && receipt.comments && receipt.comments.length > 0 && (
+        <div className="border-t border-border py-2 text-[11px] text-muted">
+          {receipt.comments.map((c) => (
+            <p key={c.label}>
+              {c.label}: <span className="text-ink">{c.value}</span>
+            </p>
+          ))}
+        </div>
+      )}
+
       {receipt.footerText && (
         <p className="border-t border-border py-2 text-center text-[11px] text-muted">
           {receipt.footerText}

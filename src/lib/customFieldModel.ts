@@ -80,6 +80,15 @@ export type FieldDefInput = {
   unit: string | null
   isRequired: boolean
   isPublic: boolean
+  /**
+   * Whether this field's answer prints on the customer's slip.
+   *
+   * Separate from `isPublic`, which decides what reaches the customer PORTAL.
+   * A field can sensibly be one and not the other — a name is worth printing so
+   * the customer can check it was filed against them, an age is not something
+   * to put on a docket that ends up in a bin.
+   */
+  printsOnSlip: boolean
   isActive: boolean
 }
 

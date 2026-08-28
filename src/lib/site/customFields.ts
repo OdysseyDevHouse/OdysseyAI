@@ -5,6 +5,7 @@ import { logActivity, type Actor } from './activityLog'
 import {
   validateFieldDef,
   validateFieldValue,
+  formatFieldValue,
   type CustomFieldEntity,
   type CustomFieldType,
   type FieldDefInput,
@@ -52,6 +53,8 @@ export type CustomFieldDef = {
   unit: string | null
   isRequired: boolean
   isPublic: boolean
+  /** Whether the answer prints on the customer's slip. See 243. */
+  printsOnSlip: boolean
   sortOrder: number
   isActive: boolean
   /** How many records carry a value. The delete refusal needs it, so it is read once. */
@@ -68,6 +71,8 @@ export type CustomFieldValue = {
   unit: string | null
   isRequired: boolean
   isPublic: boolean
+  /** Whether the answer prints on the customer's slip. See 243. */
+  printsOnSlip: boolean
   sortOrder: number
   value: string | null
   setByName: string | null
@@ -115,6 +120,7 @@ function mapDef(r: Row): CustomFieldDef {
     unit: text(r.unit),
     isRequired: Number(r.is_required) === 1,
     isPublic: Number(r.is_public) === 1,
+    printsOnSlip: Number(r.prints_on_slip) === 1,
     sortOrder: Number(r.sort_order),
     isActive: Number(r.is_active) === 1,
     valueCount: Number(r.value_count ?? 0),
@@ -185,8 +191,8 @@ export async function saveFieldDef(
         siteId,
         `INSERT INTO custom_field_defs
            (entity, code, name, hint, field_type, options, unit, is_required, is_public,
-            sort_order, is_active)
-         VALUES (?,?,?,?,?,?,?,?,?,
+            prints_on_slip, sort_order, is_active)
+         VALUES (?,?,?,?,?,?,?,?,?,?,
             COALESCE((SELECT n FROM (SELECT MAX(sort_order) + 10 AS n
                         FROM custom_field_defs WHERE entity = ?) t), 0), ?)`,
         [
@@ -199,6 +205,7 @@ export async function saveFieldDef(
           text(input.unit),
           input.isRequired ? 1 : 0,
           input.isPublic ? 1 : 0,
+          input.printsOnSlip ? 1 : 0,
           input.entity,
           input.isActive ? 1 : 0,
         ],
@@ -236,7 +243,7 @@ export async function saveFieldDef(
       siteId,
       `UPDATE custom_field_defs
           SET name = ?, hint = ?, field_type = ?, options = ?, unit = ?,
-              is_required = ?, is_public = ?, is_active = ?
+              is_required = ?, is_public = ?, prints_on_slip = ?, is_active = ?
         WHERE id = ?`,
       [
         input.name.trim(),
@@ -246,6 +253,7 @@ export async function saveFieldDef(
         text(input.unit),
         input.isRequired ? 1 : 0,
         input.isPublic ? 1 : 0,
+        input.printsOnSlip ? 1 : 0,
         input.isActive ? 1 : 0,
         input.id,
       ],
@@ -357,7 +365,7 @@ export async function valuesFor(
     const rows = await siteQuery<Row>(
       siteId,
       `SELECT d.id AS field_id, d.code, d.name, d.hint, d.field_type, d.options, d.unit,
-              d.is_required, d.is_public, d.sort_order,
+              d.is_required, d.is_public, d.prints_on_slip, d.sort_order,
               v.value, v.set_by_name
          FROM custom_field_defs d
          LEFT JOIN custom_field_values v
@@ -377,6 +385,7 @@ export async function valuesFor(
       unit: text(r.unit),
       isRequired: Number(r.is_required) === 1,
       isPublic: Number(r.is_public) === 1,
+    printsOnSlip: Number(r.prints_on_slip) === 1,
       sortOrder: Number(r.sort_order),
       value: text(r.value),
       setByName: text(r.set_by_name),
@@ -609,5 +618,42 @@ export async function reconcileCustomFields(siteId: number): Promise<CustomField
     return { orphaned, invalid }
   } catch {
     return empty
+  }
+}
+
+/**
+ * A sale's custom comments, as a slip prints them.
+ *
+ * ── WHY THE FILTER AND THE FORMATTING LIVE HERE ─────────────────────────────
+ *
+ * Because there are two slip renderers — the thermal one and the browser one —
+ * and neither may be the place `prints_on_slip` is interpreted. A rule applied
+ * in two renderers is a rule that disagrees with itself the first time either
+ * changes, and the failure surfaces as one printer showing a field the other
+ * hides, on paper, in front of a customer.
+ *
+ * So this returns exactly what goes on the page: the fields marked to print,
+ * that actually have an answer, in the shop's own order, already turned into
+ * text by `formatFieldValue` — 'yes' as "Yes", a number with its unit.
+ *
+ * An unanswered field is dropped rather than printed blank. A caption over
+ * nothing reads as something the cashier forgot, which on a slip the customer
+ * is holding is worse than the line simply not being there.
+ *
+ * Returns [] on any failure, including a site that has not run 243. A slip that
+ * will not print is a queue at the counter; a slip missing a comment is not.
+ */
+export async function slipComments(
+  siteId: number,
+  documentId: number,
+): Promise<{ label: string; value: string }[]> {
+  try {
+    const values = await valuesFor(siteId, 'sale', documentId)
+    return values
+      .filter((v) => v.printsOnSlip && v.value !== null && v.value.trim() !== '')
+      .map((v) => ({ label: v.name, value: formatFieldValue(v, v.value) }))
+      .filter((c) => c.value !== '')
+  } catch {
+    return []
   }
 }
