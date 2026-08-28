@@ -4,6 +4,12 @@ import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
 import { getSettings, setSetting, validateSetting } from '@/lib/site/settings'
 import { openShifts } from '@/lib/site/shifts'
+import {
+  switchCurrency,
+  setDenominationActive,
+  addDenomination,
+} from '@/lib/site/cashDenominations'
+import { currencyFor } from '@/lib/currencies'
 
 /**
  * How far a drawer may be out before somebody has to explain it.
@@ -124,4 +130,82 @@ export async function setCashupModeAction(
         ? 'Cash-ups now reconcile per person.'
         : 'Cash-ups now reconcile per till.',
   }
+}
+
+/**
+ * Switch the shop's currency, and replace the denominations with it.
+ *
+ * ── REFUSED WHILE A SHIFT IS OPEN, LIKE THE MODE ────────────────────────────
+ *
+ * Same guard as `setCashupModeAction`, and a stronger version of the same
+ * reason. A shift is reconciled against the grid it was counted into, so
+ * swapping rand rows for Canadian ones under an open drawer would leave a
+ * half-counted declaration pointing at denominations that no longer exist on
+ * the screen. Closing everything first makes the change unambiguous.
+ *
+ * Historical counts are never disturbed — `switchCurrency` retires a row that
+ * has been counted rather than deleting it. This guard is about the drawer
+ * somebody is holding RIGHT NOW.
+ */
+export async function switchCurrencyAction(
+  code: string,
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  const open = await openShifts(siteId)
+  if (open.length > 0) {
+    return {
+      ok: false,
+      error: `Cash up the ${open.length} open shift${open.length === 1 ? '' : 's'} before changing currency.`,
+    }
+  }
+
+  const spec = currencyFor(code)
+  if (!spec) return { ok: false, error: `${code} is not a currency this system knows.` }
+
+  const result = await switchCurrency(siteId, code)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/cashup')
+  revalidatePath('/sales/cashup', 'layout')
+  revalidatePath('/pos')
+  return {
+    ok: true,
+    message: `Drawers are now counted in ${spec.name.toLowerCase()}.`,
+  }
+}
+
+/** Turn one denomination on or off — the tick, not a delete. See 168. */
+export async function setDenominationActiveAction(
+  id: number,
+  active: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await setDenominationActive(ctx.siteId, id, active)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/cashup')
+  revalidatePath('/sales/cashup', 'layout')
+  return { ok: true }
+}
+
+/** Add a note or coin the shipped set does not carry. */
+export async function addDenominationAction(input: {
+  label: string
+  value: number
+  isNote: boolean
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await addDenomination(ctx.siteId, input)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/cashup')
+  revalidatePath('/sales/cashup', 'layout')
+  return { ok: true }
 }

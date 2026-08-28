@@ -55,6 +55,36 @@ export const SETTING_DEFAULTS = {
    */
   tax_label: 'VAT',
   /**
+   * The money this shop trades in — ISO 4217, and the symbol in front of a
+   * number.
+   *
+   * ── WHY BOTH, RATHER THAN DERIVING ONE ────────────────────────────────────
+   *
+   * The symbol is what a person reads on a slip; the code is what a machine
+   * reads. Deriving either from the other is guesswork in both directions: "$"
+   * is eight different currencies, and nothing about "ZAR" says the symbol goes
+   * in front. 190 made the same call for the storefront and it holds here.
+   *
+   * ── WHY NOT online_store_settings.currency_code ───────────────────────────
+   *
+   * Because a shop's trading currency is not a property of its online store. A
+   * site with the storefront module off still counts a drawer and still prints
+   * money on a slip, and reading this from there would make the cash-up screen
+   * depend on a module the shop may not own. The two are free to differ — a
+   * shop CAN sell online in one currency and bank in another.
+   *
+   * ── WHAT IT DOES NOT YET REACH ────────────────────────────────────────────
+   *
+   * `formatMoney` still defaults to 'R' at around a thousand call sites, and
+   * changing that is a separate piece of work with its own risk: it decides
+   * what a till prints on a slip and what an invoice says it is owed. What this
+   * DOES reach today is the cash-up denominations, which is the place the
+   * default is not merely wrong but unusable — a Canadian cashier cannot count
+   * a drawer into a grid of rand.
+   */
+  currency_code: 'ZAR',
+  currency_symbol: 'R',
+  /**
    * Which way a forced price ending moves — 'up', 'down' or 'nearest'.
    *
    * Not a detail: on a .99 ending, R14.32 becomes R14.99 rounding up and
