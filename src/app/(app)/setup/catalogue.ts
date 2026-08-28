@@ -237,6 +237,19 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
     tone: 'teal',
     icon: 'Store',
     items: [
+      /* First in the group, and deliberately: it is the only tile here that
+         answers "who are we" rather than "how do we work", and it is the first
+         thing a new shop has to get right — every document it prints carries
+         these details. */
+      {
+        href: '/setup/store-info',
+        description: 'Your name, address and contact details — and the logo on your documents.',
+        keywords:
+          'store shop company name trading name address phone telephone email vat number registration number contact details letterhead logo my details business information branding',
+        icon: 'Store',
+        tone: 'teal',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/locations',
         description: 'The places stock is kept. Sales come from the main one.',
@@ -472,6 +485,18 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
           'plan subscription modules upgrade downgrade invoice licence licences price cost add-on billing account debit order',
         icon: 'CreditCard',
         tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      {
+        /* Beside SMS because they are the same question asked of a different
+           channel: how does this shop reach somebody. Email first — every
+           document the business sends leaves through it. */
+        href: '/setup/email',
+        description: 'The mail account your invoices, statements and orders are sent from.',
+        keywords:
+          'email smtp mail server outgoing send from address port password tls ssl gmail office 365 test message',
+        icon: 'Mail',
+        tone: 'sky',
         capability: 'setup.edit',
       },
       {

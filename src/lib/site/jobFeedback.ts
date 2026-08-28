@@ -4,7 +4,7 @@ import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { customerDbPrefix } from './customerDb'
 import { logActivity, type Actor } from './activityLog'
 import { getSetting } from './settings'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { createFeedbackToken } from '../feedbackToken'
 
 /**
@@ -189,7 +189,7 @@ export async function requestFeedback(
       throw error
     }
 
-    if (!isConfigured()) return { sent: false, skipped: 'mail not configured' }
+    if (!(await isConfiguredFor(siteId))) return { sent: false, skipped: 'mail not configured' }
 
     const intro = await getSetting(siteId, 'job_feedback_intro').catch(
       () => 'Thank you for your business. How did we do?',
@@ -199,7 +199,7 @@ export async function requestFeedback(
     const url = `${base}/feedback/${token}`
     const label = text(job.document_number) ?? `Job ${jobId}`
 
-    const result = await send({
+    const result = await sendAs(siteId, {
       to,
       subject: `How did we do? — ${label}`,
       text: `${intro}\n\n${label}: ${String(job.title ?? '')}\n\nRate the work here:\n${url}\n\nIt takes a few seconds, and it is the only thing we will send about it.`,

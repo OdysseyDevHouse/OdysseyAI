@@ -1,5 +1,5 @@
 import 'server-only'
-import { send as sendMail, isConfigured as mailConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { normaliseSaPhone } from '../sms/phone'
 import { truncateSms } from '../sms/types'
 import { getSmsProvider } from '../site/sms'
@@ -90,7 +90,7 @@ export async function deliverAlert(
 
     if (emails.length === 0) {
       notes.push('No valid email address to send to.')
-    } else if (!mailConfigured()) {
+    } else if (!(await isConfiguredFor(siteId))) {
       notes.push('Email is not set up for this site.')
     } else {
       const text = [msg.title, '', ...msg.lines, '', msg.summary].join('\n')
@@ -99,7 +99,7 @@ export async function deliverAlert(
       // owner should not learn from an alert who else is on it, and one bad
       // address must not take the whole send down with it.
       for (const address of emails) {
-        const result = await sendMail({ to: address, subject: msg.title, text, html: msg.html })
+        const result = await sendAs(siteId, { to: address, subject: msg.title, text, html: msg.html })
         if (result.ok) {
           anySent = true
           recipients.push(address)

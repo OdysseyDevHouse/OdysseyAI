@@ -1,5 +1,5 @@
 import 'server-only'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { escapeHtml, htmlToText } from '../orderEmailTemplate'
 import { formatMoney } from '../decimals'
 import { absoluteUrl } from '../appUrl'
@@ -47,7 +47,7 @@ export async function remindAbandonedBaskets(siteId: number): Promise<BasketTick
   const settings = await getOnlineSettings(siteId).catch(() => null)
   // Off by default, and off means off — see 072_saved_baskets.sql.
   if (!settings?.isEnabled || !settings.basketReminders) return EMPTY
-  if (!isConfigured()) return EMPTY
+  if (!(await isConfiguredFor(siteId))) return EMPTY
 
   // No public address means no link to come back to, and a reminder without one
   // is just a note about shopping the shopper cannot act on.
@@ -85,7 +85,7 @@ export async function remindAbandonedBaskets(siteId: number): Promise<BasketTick
         result.skipped++
         continue
       }
-      const outcome = await send(email)
+      const outcome = await sendAs(siteId, email)
       if (outcome.ok) result.sent++
       else result.failed++
     } catch {

@@ -127,8 +127,8 @@ export async function requestPasswordResetAction(
     return { ok: false, error: 'This shop is not available.' }
   }
 
-  const { isConfigured, send } = await import('@/lib/mail')
-  if (!isConfigured()) {
+  const { isConfiguredFor, sendAs } = await import('@/lib/mail')
+  if (!(await isConfiguredFor(store.siteId))) {
     return {
       ok: false,
       error: 'This shop cannot send reset emails — please contact them to reset your password.',
@@ -138,7 +138,7 @@ export async function requestPasswordResetAction(
   const reset = await createPasswordReset(store.siteId, email)
   if (reset) {
     const link = `${await publicOrigin()}/store/${token}/account/reset/${reset.token}`
-    await send({
+    await sendAs(store.siteId, {
       to: reset.loginEmail,
       subject: 'Reset your password',
       text: `Someone asked to reset the password for your account.\n\nReset it here (the link works once, for an hour):\n${link}\n\nIf this was not you, ignore this email — nothing has changed.`,

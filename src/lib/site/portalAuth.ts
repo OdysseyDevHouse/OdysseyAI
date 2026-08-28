@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import type { RowDataPacket } from 'mysql2/promise'
 import { customerExecute, customerQuery, customerQueryOne } from './customerDb'
 import { getSetting } from './settings'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 
 /**
  * Signing a customer in to the portal, with a link instead of a password.
@@ -155,9 +155,9 @@ export async function requestLink(
           [customerId, hashToken(token), LINK_MINUTES, opts.ip ?? null],
         )
 
-        if (isConfigured()) {
+        if (await isConfiguredFor(siteId)) {
           const base = opts.baseUrl ?? process.env.APP_URL ?? ''
-          await send({
+          await sendAs(siteId, {
             to: String(customer.email),
             subject: 'Your sign-in link',
             text:

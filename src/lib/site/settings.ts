@@ -84,6 +84,64 @@ export const SETTING_DEFAULTS = {
    */
   currency_code: 'ZAR',
   currency_symbol: 'R',
+
+  /* ── The shop's own outgoing mail account ──────────────────────────────
+     Empty means "not configured", and every reader then falls back to the
+     PROCESS settings in the environment — see lib/mail.ts. That fallback is
+     what keeps a self-hosted install working with the .env it already has, and
+     what makes this adoptable one shop at a time.
+
+     On a cloud server the fallback is the problem these exist to fix: one
+     server hosts many businesses, and without their own account every one of
+     them sent from the same address. A customer's invoice arrived from us
+     rather than from them. */
+
+  /** The mail server's hostname. Empty falls back to SMTP_HOST. */
+  smtp_host: '',
+  /**
+   * 587 for STARTTLS, 465 for implicit TLS, 25 for an unauthenticated relay.
+   *
+   * A string like every other setting, and parsed at the edge — the KV has one
+   * column type and inventing a second reader for numbers would be one more
+   * thing to keep in step.
+   */
+  smtp_port: '587',
+  smtp_user: '',
+  /**
+   * The password.
+   *
+   * ── STORED AS IT IS TYPED, AND THE SCREEN SAYS SO ────────────────────────
+   *
+   * Not encrypted, matching `sms_client_secret` beside it. Encrypting it here
+   * would be theatre: the key would have to live on the same machine as the
+   * database, so anyone who can read this row can read the key — and a shop
+   * would be told its password was protected when the only thing standing in
+   * front of it is the same access control that guards the row.
+   *
+   * What IS done: it never travels to the browser. The setup screen receives a
+   * mask, an unchanged mask is not written back, and the value is read only by
+   * server code building a transport. See the Email setup screen.
+   */
+  smtp_pass: '',
+  /**
+   * Whether the connection is TLS from the first byte.
+   *
+   * Stored rather than inferred from the port. 465 is implicit TLS and 587
+   * negotiates STARTTLS, which is the usual arrangement and what an empty value
+   * still assumes — but providers exist that do neither, and a shop that can
+   * tick a box is better served than one whose connection hangs because the
+   * port was used to guess.
+   */
+  smtp_secure: '',
+  /**
+   * The From address a recipient sees.
+   *
+   * Required alongside the host for a site's own settings to count as complete:
+   * a message from an unset address is refused by most providers and silently
+   * binned by the rest. It is also frequently NOT the login — a shop
+   * authenticating as a mailbox user sends as accounts@theirshop.co.za.
+   */
+  mail_from: '',
   /**
    * Which way a forced price ending moves — 'up', 'down' or 'nearest'.
    *

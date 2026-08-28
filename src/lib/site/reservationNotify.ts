@@ -1,5 +1,5 @@
 import 'server-only'
-import { isConfigured, send } from '../mail'
+import { isConfiguredFor, sendAs } from '../mail'
 import { publicSiteName } from '../sites'
 import { escapeHtml } from '../orderEmailTemplate'
 import { dayOf, timeOf, type Reservation, type ReservationStatus } from '../reservationTypes'
@@ -159,10 +159,10 @@ export async function notifyReservationGuest(
     const email = await composeReservationEmail(siteId, reservation, kind)
     if (!email) return { sent: false, reason: 'no-message' }
     if (!email.to) return { sent: false, reason: 'no-address' }
-    if (!isConfigured()) return { sent: false, reason: 'not-configured' }
+    if (!(await isConfiguredFor(siteId))) return { sent: false, reason: 'not-configured' }
 
     const { to, subject, text, html } = email
-    const result = await send({ to, subject, text, html })
+    const result = await sendAs(siteId, { to, subject, text, html })
     return result.ok ? { sent: true, to } : { sent: false, reason: 'failed', error: result.error }
   } catch (error) {
     return {

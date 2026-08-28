@@ -55,7 +55,7 @@ const site: IssuingSite = {
 const sent: { to: string; subject: string; attachments: number }[] = []
 const workingMail: MailDeps = {
   configured: () => true,
-  send: async (msg) => {
+  send: async (_siteId, msg) => {
     sent.push({ to: msg.to, subject: msg.subject, attachments: msg.attachments?.length ?? 0 })
     return { ok: true, messageId: 'fake-1' }
   },

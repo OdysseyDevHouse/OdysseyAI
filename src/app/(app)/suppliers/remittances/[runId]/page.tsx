@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
 import { getPaymentRun, listPaymentItems } from '@/lib/site/paymentRuns'
-import { isConfigured } from '@/lib/mail'
+import { isConfiguredFor } from '@/lib/mail'
 import { formatMoney } from '@/lib/decimals'
 import {
   PageHeader,
@@ -76,7 +76,7 @@ export default async function PaymentRunPage({
             <RunActions
               runId={run.id}
               status={run.status}
-              mailReady={isConfigured()}
+              mailReady={await isConfiguredFor(siteId)}
               hasItems={items.length > 0}
             />
           </>

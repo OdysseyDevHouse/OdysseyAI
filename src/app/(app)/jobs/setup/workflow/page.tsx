@@ -17,7 +17,7 @@ import HeadlinesPanel from './HeadlinesPanel'
 import AssetTypesPanel from './AssetTypesPanel'
 import TeamsPanel from './TeamsPanel'
 import NotificationsPanel from './NotificationsPanel'
-import { isConfigured } from '@/lib/mail'
+import { isConfiguredFor } from '@/lib/mail'
 
 export const dynamic = 'force-dynamic'
 
@@ -227,12 +227,13 @@ export default async function JobWorkflowPage() {
           autoAwaitingParts={settings.job_auto_awaiting_parts !== '0'}
           portalUrl={portalUrl}
           /*
-           * Both read on the SERVER. isConfigured() reads process.env, which a
-           * client component cannot see — and a panel that cannot tell whether
-           * mail works would let somebody switch on notifications and believe
-           * they were covered.
+           * Both read on the SERVER. `isConfiguredFor` reads this shop's own
+           * settings and falls back to process.env, neither of which a client
+           * component can see — and a panel that cannot tell whether mail works
+           * would let somebody switch on notifications and believe they were
+           * covered.
            */
-          mailConfigured={isConfigured()}
+          mailConfigured={await isConfiguredFor(siteId)}
           cronConfigured={Boolean(process.env.JOB_AUTOMATION_CRON_SECRET)}
         />
       </PageBody>

@@ -719,6 +719,7 @@ export const SUBPAGE_LABELS = {
   '/setup/opening-balances': 'Opening balances',
   '/setup/import': 'Import data',
   '/setup/laybys': 'Lay-bys',
+  '/setup/email': 'Email',
   '/setup/sms': 'Text messages & WhatsApp',
   /* "Alerts & automations", both halves named: the same screen sets up a rule
      that only TELLS somebody and one that also ACTS (a low-stock check that
@@ -727,6 +728,7 @@ export const SUBPAGE_LABELS = {
   '/setup/printing': 'Printing',
   '/setup/stationery': 'Stationery',
   '/setup/expense-categories': 'Expense categories',
+  '/setup/store-info': 'My store information',
   '/setup/databases': 'Site & databases',
   '/setup/training': 'Training mode',
   '/setup/style-guide': 'Style guide',
@@ -971,12 +973,15 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/opening-balances': 'import migration debtors creditors go live',
   '/setup/import': 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments stock take',
   '/setup/laybys': 'deposit cancellation fee terms instalments',
+  '/setup/email': 'email smtp mail server outgoing send from address port password tls ssl gmail office 365 test message',
   '/setup/sms': 'sms text message smsportal reminders dunning notify phone mobile',
   '/setup/alerts':
     'alert automation notify watch warn tell me email whatsapp low stock reorder automatic rule trigger',
   '/setup/printing': 'receipt printer thermal esc pos slip 80mm cash drawer kick kitchen bridge',
   '/setup/stationery': 'stationery template design document layout letterhead logo purchase order invoice quote print custom html branding terms footer unit cost',
   '/setup/expense-categories': 'chart of accounts spending overheads account codes',
+  '/setup/store-info':
+    'store shop company name trading name address phone telephone email vat number registration number contact details letterhead logo my details business information branding',
   '/setup/databases': 'connection health server site details',
   '/setup/training': 'training practice demo test sandbox learn staff dummy trial reset clear',
   '/setup/style-guide': 'design system components reference ui kit',

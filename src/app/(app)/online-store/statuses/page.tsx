@@ -1,6 +1,6 @@
 import { requireModuleCapability } from '@/lib/auth'
 import { listOrderStatuses, statusOrderCounts } from '@/lib/site/onlineStore'
-import { isConfigured } from '@/lib/mail'
+import { isConfiguredFor } from '@/lib/mail'
 import { PageHeader, PageBody } from '@/components/ui'
 import OrderStatuses from './OrderStatuses'
 
@@ -36,7 +36,7 @@ export default async function StatusesPage() {
           // Checked here rather than in the client: whether SMTP is set up is
           // a server fact, and a screen that promised to send when it cannot
           // would be worse than one that says so up front.
-          mailConfigured={isConfigured()}
+          mailConfigured={await isConfiguredFor(siteId)}
         />
       </PageBody>
     </>
