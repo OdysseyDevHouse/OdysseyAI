@@ -48,7 +48,7 @@ export default function ForceClockInPanel({ forceClockIn }: { forceClockIn: bool
   }
 
   return (
-    <Card>
+    <Card id="force-clock-in">
       <CardHeader
         title="Clocking on at the till"
         description="Whether each cashier must go on duty before they can ring up a sale."

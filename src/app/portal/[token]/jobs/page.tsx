@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { requireCustomer } from '../guard'
+import { requireSection } from '../guard'
 import { portalJobs } from '@/lib/site/portalData'
 import { publicSiteName } from '@/lib/sites'
 import PortalShell, { PortalNav } from '../PortalShell'
@@ -27,7 +27,7 @@ export default async function PortalJobsPage({
   params: Promise<{ token: string }>
 }) {
   const { token } = await params
-  const ctx = await requireCustomer(token)
+  const ctx = await requireSection(token, 'jobs')
 
   const [jobs, name] = await Promise.all([
     portalJobs(ctx.siteId, ctx.customerId),
@@ -40,7 +40,7 @@ export default async function PortalJobsPage({
   return (
     <PortalShell
       name={name ?? undefined}
-      nav={<PortalNav token={token} active="jobs" onSignOut={<SignOutButton token={token} />} />}
+      nav={<PortalNav token={token} active="jobs" settings={ctx.settings} onSignOut={<SignOutButton token={token} />} />}
     >
       <h1 className="text-xl font-semibold text-ink">Your jobs</h1>
       <p className="mt-1 text-sm text-muted">Signed in as {ctx.customerName}.</p>

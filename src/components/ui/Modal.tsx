@@ -30,6 +30,7 @@ export function Modal({
   bodyTall = false,
   bodyPins = false,
   bodyGrows = false,
+  bodyOverflows = false,
   closeOnBackdrop = true,
 }: {
   open: boolean
@@ -105,6 +106,22 @@ export function Modal({
    * shape changes with the kind of promotion.
    */
   bodyGrows?: boolean
+  /**
+   * Never clip the body — it grows to its content and the panel with it.
+   *
+   * For a dialog whose body contains a POP-UP of its own: a Combobox list, a
+   * Menu, a date picker. Those position themselves against the body, so a body
+   * that scrolls cuts them off at its own edge and the rows below are
+   * unreachable — the pane scrolls the form, not the dropdown. That is a
+   * different failure from a long form, which `bodyGrows` handles correctly by
+   * scrolling.
+   *
+   * The trade is deliberate: with nothing clipping it, a body taller than the
+   * window would push the footer off-screen. Use this only for a dialog whose
+   * content is BOUNDED — the advanced filter caps its conditions at a dozen —
+   * and prefer `bodyGrows` for anything that can run long.
+   */
+  bodyOverflows?: boolean
   /** Off for a dialog holding half-typed work, where a stray click would lose it. */
   closeOnBackdrop?: boolean
 }) {
@@ -139,7 +156,12 @@ export function Modal({
       ref={ref}
       /* The dialog element is the panel itself, so the backdrop is styled via
          ::backdrop in globals.css rather than an extra wrapper div. */
-      className={`${MODAL_PANEL} ${MODAL_SIZE[size]}`}
+      /* `overflow-visible` for a body that hosts its own pop-up: the panel's
+         default `overflow-hidden` keeps content inside the rounded corners,
+         but it also clips a Combobox list at the dialog's edge — which is the
+         same cut the body was making, one level out. Only the panel's own
+         clipping is dropped; the max-height that keeps it on screen stays. */
+      className={`${MODAL_PANEL} ${MODAL_SIZE[size]} ${bodyOverflows ? 'overflow-visible' : ''}`}
       onClick={(event) => {
         // A click that lands on the dialog element itself is a backdrop click:
         // the panel's own content sits in children, which stop it there.
@@ -234,9 +256,17 @@ export function Modal({
                      band of empty panel under the last field. `shrink-0` keeps
                      it at its content height, and `max-h` still caps it, so a
                      long form scrolls exactly as before. */
-                  `overflow-y-auto ${
-                    bodyGrows ? 'shrink-0 max-h-[calc(100dvh-13rem)]' : 'max-h-[60vh]'
-                  }`
+                  /* `bodyOverflows` clips NOTHING — no overflow rule and no
+                     ceiling — so a dropdown opened inside the body can paint
+                     past its edge instead of being cut off at it. `shrink-0`
+                     for the same reason bodyGrows needs it: a plain block
+                     child of a flex column stretches to fill the panel, and a
+                     one-row dialog would otherwise be drawn full height. */
+                  bodyOverflows
+                    ? 'shrink-0'
+                    : `overflow-y-auto ${
+                        bodyGrows ? 'shrink-0 max-h-[calc(100dvh-13rem)]' : 'max-h-[60vh]'
+                      }`
           }`}
         >
           {children}

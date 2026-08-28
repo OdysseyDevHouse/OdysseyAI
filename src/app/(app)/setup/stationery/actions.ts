@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { qrContextFor } from '@/lib/site/qrLinks'
+import { qrContextFor, samplePayUrl } from '@/lib/site/qrLinks'
 import { setSetting } from '@/lib/site/settings'
 import { canTakePayments } from '@/lib/site/payments'
 import { logActivity } from '@/lib/site/activityLog'
@@ -245,7 +245,7 @@ export async function previewTemplateAction(input: {
     if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
 
     const check = validateSlip(spec)
-    const receipt = sampleReceipt(site.displayName, site.vatNumber, await qrContextFor(ctx.siteId))
+    const receipt = sampleReceipt(site.displayName, site.vatNumber, await qrContextFor(ctx.siteId, samplePayUrl(ctx.siteId)))
 
     return {
       ok: true,
@@ -279,7 +279,7 @@ export async function previewTemplateAction(input: {
     ...source.input,
     capabilities: ctx.capabilities,
     pictures: await pictureIds(ctx.siteId),
-    qr: await qrContextFor(ctx.siteId),
+    qr: await qrContextFor(ctx.siteId, samplePayUrl(ctx.siteId)),
   })
 
   const dropped = unsupportedIn(input.body)
@@ -346,7 +346,7 @@ export async function previewBlocksAction(input: {
   // Read once for the whole design rather than per block: a page of seventeen
   // blocks would otherwise ask the same question seventeen times.
   const pictures = await pictureIds(ctx.siteId)
-  const qr = await qrContextFor(ctx.siteId)
+  const qr = await qrContextFor(ctx.siteId, samplePayUrl(ctx.siteId))
   const blocks: Record<string, string> = {}
   for (const [id, markup] of Object.entries(fragments)) {
     blocks[id] = renderTemplate(markup, input.docType, {
@@ -378,7 +378,24 @@ export async function previewBlocksAction(input: {
     if (b.kind !== 'qr') continue
     const target = b.qrTarget ?? 'store'
     if (resolveQrUrl(target, b.qrUrl, qr)) continue
-    qrProblems.add(`Your QR code has nothing to point at. ${whyNoUrl(target, qr)}`)
+
+    /*
+     * "This document" is the one target that is EXPECTED to be empty here.
+     *
+     * The preview runs on sample data — there is no real invoice, so there is
+     * no real pay link — and the square appears on the actual print. Leading
+     * with "your QR code has nothing to point at" made a working block read as
+     * broken, which is how somebody deletes it and loses the feature.
+     *
+     * Every other target is a genuine problem the designer must fix here, and
+     * keeps the blunt sentence.
+     */
+    const isSample = target === 'doc' && qr.appUrl !== null
+    qrProblems.add(
+      isSample
+        ? whyNoUrl(target, qr, true)
+        : `Your QR code has nothing to point at. ${whyNoUrl(target, qr)}`,
+    )
   }
 
   return {
@@ -438,7 +455,7 @@ export async function previewSlipBlocksAction(input: {
   if (!spec) return { ok: false, error: 'That slip design cannot be read.' }
 
   const site = await requireSite()
-  const receipt = sampleReceipt(site.displayName, site.vatNumber, await qrContextFor(ctx.siteId))
+  const receipt = sampleReceipt(site.displayName, site.vatNumber, await qrContextFor(ctx.siteId, samplePayUrl(ctx.siteId)))
 
   return {
     ok: true,

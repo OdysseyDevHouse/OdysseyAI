@@ -10,6 +10,11 @@ import {
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
 import { formatMoney } from '@/lib/decimals'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom, withParams } from '@/lib/searchParams'
+import { can, type Capability } from '@/lib/site/permissions'
+import { compileListFilters, filterableFields } from '@/lib/site/listFilterSql'
+import { rememberedFilters } from '@/lib/site/listFilterMemory'
+import { decodeFilters, encodeFilters, FILTER_PARAM } from '@/lib/listFilters'
+import ListFilterButton from '@/components/lists/ListFilterButton'
 import {
   PageHeader,
   PageBody,
@@ -20,6 +25,7 @@ import {
   StatStrip,
   FilterBar,
   FilterChip,
+  summariseCondition,
   LinkSegmentedControl,
   TableToolbar,
   Pagination,
@@ -64,6 +70,8 @@ type Search = {
   page?: string
   sort?: string
   dir?: string
+  /** The advanced filter's conditions. See FILTER_PARAM in lib/listFilters. */
+  f?: string
 }
 
 export default async function CustomersPage({
@@ -72,8 +80,47 @@ export default async function CustomersPage({
   searchParams: Promise<Search>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireModuleCapability('customers', 'customers.view')
+  const { siteId, capabilities, actor } = await requireModuleCapability(
+    'customers',
+    'customers.view',
+  )
   const params = await searchParams
+
+  /* ── the advanced filter ────────────────────────────────────────────────
+   *
+   * Same shape as the products list. Conditions live in the URL; the
+   * REMEMBERED set applies only when the URL says nothing about filters at
+   * all, so that an explicit `?f=` can clear one. See that page for the full
+   * reasoning behind the `cleared` distinction. */
+  const cleared = params[FILTER_PARAM] !== undefined
+  const remembered = cleared
+    ? null
+    : await rememberedFilters(siteId, 'customers', actor.userId)
+
+  const conditions = decodeFilters(cleared ? (params[FILTER_PARAM] ?? '') : (remembered ?? ''))
+
+  const allow = (c: Capability) => can(capabilities, c)
+  /* Every field whose SQL reads off `customers` itself. The customer group is
+     the one that does not — it is a joined name, and this query has no join —
+     so it is absent here and the toolbar's own group picker covers it. */
+  const filterFields = filterableFields('customers', allow).map((f) => ({
+    key: f.key,
+    label: f.label,
+    type: f.type,
+    numeric: f.numeric ?? false,
+    group: f.group ?? '',
+    hint: f.hint ?? '',
+    options: f.options ?? [],
+  }))
+
+  const compiled = compileListFilters(
+    'customers',
+    conditions,
+    allow,
+    new Set(filterFields.map((f) => f.key)),
+    // listCustomers has aliased the table `c` since long before this feature.
+    'c',
+  )
 
   const status = toCustomerStatus(params.status)
   const groupId = Number(params.group) || undefined
@@ -89,6 +136,8 @@ export default async function CustomersPage({
     category,
     withBalanceOnly: params.balance === 'owing',
     overLimitOnly: params.balance === 'over',
+    extraWhere: compiled.where,
+    extraParams: compiled.params,
     sort: params.sort === 'balance' || params.sort === 'code' ? params.sort : 'name',
     direction: params.dir === 'desc' ? 'desc' : 'asc',
     limit: PAGE_SIZE,
@@ -103,6 +152,30 @@ export default async function CustomersPage({
     listCustomerCategories(siteId),
   ])
 
+  /* The same slice WITHOUT the advanced conditions, for the "12 of 84" in the
+     subtitle. Deliberately not summary.total, which is the whole book: the
+     honest comparison is against what the OTHER filters already narrowed to,
+     or a status slice would make the advanced filter look like it hid far more
+     than it did. Only asked for when there is something to compare, so an
+     ordinary load runs exactly the queries it always did. */
+  const unfilteredTotal = conditions.length
+    ? (
+        await listCustomers(siteId, {
+          ...options,
+          extraWhere: undefined,
+          extraParams: undefined,
+          limit: 1,
+          offset: 0,
+        })
+      ).total
+    : total
+
+  /* This list's own address, carried out to every account it links to so the
+     trip back lands HERE — same filters, same sort, same page. Only when
+     something is applied, so an unfiltered book keeps its short links. */
+  const listUrl = `/customers${withParams(params, {})}`
+  const editSuffix = listUrl === '/customers' ? '' : `?from=${encodeURIComponent(listUrl)}`
+
   const href = hrefBuilder('/customers', params)
   // Any filter change returns to page 1: page 7 of the old result set is rarely
   // a page of the new one, and an empty list reads as "no matches".
@@ -116,7 +189,13 @@ export default async function CustomersPage({
       <PageHeader
         title="Customers"
         icon={<Icons.Users size={18} />}
-        subtitle={`${total} account${total === 1 ? '' : 's'}`}
+        /* Under an advanced filter, say what is being HIDDEN as well as what
+           is shown: "12 accounts" on a book of 400 reads the same whether the
+           filter was typed just now or remembered from before lunch. */
+        subtitle={
+          `${total} account${total === 1 ? '' : 's'}` +
+          (conditions.length && unfilteredTotal > total ? ` of ${unfilteredTotal}` : '')
+        }
         action={
           <PrimaryLink href="/customers/new">
             <Icons.Plus size={15} />
@@ -197,6 +276,9 @@ export default async function CustomersPage({
               category: params.category,
               balance: params.balance,
               status: params.status,
+              /* A GET form submits only its own fields, so without this a
+                 search would silently drop the advanced filter. */
+              [FILTER_PARAM]: params[FILTER_PARAM],
             }).map(([key, value]) =>
               value ? <input key={key} type="hidden" name={key} value={value} /> : null,
             )}
@@ -209,11 +291,26 @@ export default async function CustomersPage({
               icon={<Icons.Search size={16} />}
             />
           </form>
+
+          {/* Everything the toolbar cannot express, behind one button. Sits
+              after the built-in controls because it is the escape hatch from
+              them, not a peer — and most people never open it. */}
+          <ListFilterButton
+            listKey="customers"
+            fields={filterFields}
+            value={conditions}
+            remembered={!!remembered}
+            builderHref="/reports/builder?source=customers"
+          />
         </TableToolbar>
 
         {/* Status has no chip — the segmented control above already shows the
             active slice and how to leave it. */}
-        <FilterBar clearHref="/customers" className="-mx-6 -my-2">
+        {/* Clearing goes to an EMPTY `?f=`, not a bare /customers: an absent
+            parameter means "nobody has said", which is exactly when a
+            remembered filter comes back. A plain link would appear to do
+            nothing. */}
+        <FilterBar clearHref={`/customers?${FILTER_PARAM}=`} className="-mx-6 -my-2">
           {groupName && (
             <FilterChip label="Group" value={groupName} clearHref={filterHref({ group: null })} />
           )}
@@ -227,6 +324,21 @@ export default async function CustomersPage({
           {params.balance === 'over' && (
             <FilterChip label="Balance" value="Over limit" clearHref={filterHref({ balance: null })} />
           )}
+
+          {/* One chip per advanced condition, spelled out in words. This is
+              what keeps a REMEMBERED filter honest: it applies without anyone
+              having typed a URL, so the screen has to say plainly what it is
+              currently showing. */}
+          {conditions.map((condition, i) => (
+            <FilterChip
+              key={`${condition.field}-${i}`}
+              label="Where"
+              value={summariseCondition(condition, filterFields)}
+              clearHref={filterHref({
+                [FILTER_PARAM]: encodeFilters(conditions.filter((_, j) => j !== i)),
+              })}
+            />
+          ))}
         </FilterBar>
 
         <Card>
@@ -234,6 +346,7 @@ export default async function CustomersPage({
             rows={items}
             total={total}
             search={params.q}
+            editSuffix={editSuffix}
             filters={{
               groups: groups.map((g) => ({ id: g.id, name: g.name })),
               reps: reps.map((r) => ({ id: r.id, name: r.name })),

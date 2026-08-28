@@ -89,12 +89,23 @@ export default function CustomerListClient({
   total,
   search,
   filters,
+  editSuffix = '',
 }: {
   rows: Customer[]
   total: number
   /** The active search term, echoed in the empty state. */
   search?: string
   filters: Filters
+  /**
+   * Query string appended to every link out to an account, carrying THIS
+   * list's URL so the trip back lands here rather than on the bare book.
+   *
+   * A filtered list is a worklist: narrow to twelve accounts, then work
+   * through them. Built on the server, because the URL helpers do not cross
+   * into a client component. Empty when nothing is filtered, so an ordinary
+   * list keeps its short, shareable links.
+   */
+  editSuffix?: string
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [showOptions, setShowOptions] = useState(false)
@@ -205,7 +216,7 @@ export default function CustomerListClient({
         getRowKey={(row) => row.id}
         selectedKeys={selected}
         onSelectionChange={setSelected}
-        onRowClick={(row) => router.push(`/customers/${row.id}`)}
+        onRowClick={(row) => router.push(`/customers/${row.id}${editSuffix}`)}
         actions={(row) => (
           <Menu
             iconOnly
@@ -214,7 +225,7 @@ export default function CustomerListClient({
             triggerLabel={`Actions for ${row.name}`}
             label={<Icons.MoreVertical size={16} />}
           >
-            <MenuItem href={`/customers/${row.id}`}>
+            <MenuItem href={`/customers/${row.id}${editSuffix}`}>
               <Icons.Eye size={15} />
               View account
             </MenuItem>

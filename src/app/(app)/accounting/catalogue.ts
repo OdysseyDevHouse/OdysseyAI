@@ -279,6 +279,8 @@ export const ACCOUNTING_GROUPS: HubGroup[] = resolveGroups(DECLARED)
 export function accountingGroupsFor(
   granted: (capability: string) => boolean,
   holds: (module: string) => boolean = () => true,
+  /** Areas switched off under Setup → Menu & modules. No tile here uses it yet. */
+  menuHidden: (area: string) => boolean = () => false,
 ): HubGroup[] {
-  return groupsFor(ACCOUNTING_GROUPS, granted, holds)
+  return groupsFor(ACCOUNTING_GROUPS, granted, holds, menuHidden)
 }

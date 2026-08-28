@@ -1,4 +1,4 @@
-import { MODULE_LABELS, type ModuleKey } from './modules'
+import { MODULE_LABELS, type ModuleKey } from './moduleCatalogue'
 
 /**
  * What to tell somebody who reached a feature their shop has not bought.

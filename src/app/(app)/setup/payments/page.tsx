@@ -1,4 +1,4 @@
-import { requireModuleCapability } from '@/lib/auth'
+import { requireCapability } from '@/lib/auth'
 import { getGateway } from '@/lib/site/payments'
 import { getOnlineSettings } from '@/lib/site/onlineStore'
 import { encryptionKeyConfigured } from '@/lib/crypto/secrets'
@@ -11,13 +11,27 @@ import GatewayForm from './GatewayForm'
  * The money moves shopper → store directly. This software never holds it, and
  * that is deliberate: routing store takings through one platform account would
  * make us a payment aggregator, which is a regulated activity.
+ *
+ * ── WHY THIS SITS IN SETUP AND NOT UNDER THE ONLINE STORE ─────────────────
+ *
+ * It lived there because the storefront was the first thing that needed a
+ * gateway, and for a while it was the only one. It is not any more: a pay link
+ * on an emailed invoice, a QR on a printed statement and an instalment against
+ * a lay-by all need the same connected account, and none of them involves a
+ * storefront at all.
+ *
+ * Behind the `online_store` MODULE it was worse than merely misfiled — a shop
+ * that never bought the storefront could not reach the screen, so it could not
+ * connect a gateway, so its invoice pay links silently never appeared and the
+ * setting that enables them looked broken. The capability moves with it:
+ * `setup.edit`, like everything else on this hub.
  */
 
 export const dynamic = 'force-dynamic'
 
 export default async function PaymentsPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireModuleCapability('online_store', 'online.edit')
+  const { siteId } = await requireCapability('setup.edit')
 
   const [gateway, settings] = await Promise.all([getGateway(siteId), getOnlineSettings(siteId)])
 

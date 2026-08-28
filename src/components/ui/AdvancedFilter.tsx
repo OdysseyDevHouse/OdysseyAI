@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { Button } from './Button'
 import { Modal } from './Modal'
 import { Checkbox, Input, Select } from './Field'
-import { Menu, MenuItem } from './Menu'
-import { Filter, Close, Plus } from './icons'
+import { Combobox } from './Combobox'
+import { Filter, Close } from './icons'
 import { Badge } from './Badge'
 import type { FilterOp } from '@/lib/reportBuilder/spec'
 import {
@@ -81,6 +81,9 @@ export function AdvancedFilter({
      and — worse — would renumber the list under someone mid-edit. */
   const [draft, setDraft] = useState<FilterCondition[]>([...value])
   const [remember, setRemember] = useState(!!remembered)
+  /* The field search box. Cleared on every pick, so the next condition starts
+     from an empty box rather than the last thing typed. */
+  const [fieldQuery, setFieldQuery] = useState('')
 
   /* Re-seed whenever the applied filter changes underneath us — a chip cleared
      from the strip outside this panel, or a Back that restored an earlier set.
@@ -116,12 +119,28 @@ export function AdvancedFilter({
     setOpen(false)
   }
 
-  // Fields bucketed by their catalog section, so a 35-entry menu is navigable.
-  const grouped = new Map<string, FilterField[]>()
-  for (const f of fields) {
-    const key = f.group || 'Other'
-    grouped.set(key, [...(grouped.get(key) ?? []), f])
-  }
+  /* What the field search offers: everything not already being filtered on,
+     matched on the field's own name AND its catalogue section, so typing
+     "stock" finds the Quantities fields and "till" finds "Visible on the
+     till". The section is shown beside each row because two sections can hold
+     similarly-named fields — "Department" is both a product's own and its
+     supplier's on other sources. */
+  const query = fieldQuery.trim().toLowerCase()
+  const chosen = new Set(draft.map((c) => c.field))
+  const pickerOptions = fields
+    .filter((f) => !chosen.has(f.key))
+    .filter(
+      (f) =>
+        !query ||
+        f.label.toLowerCase().includes(query) ||
+        (f.group || '').toLowerCase().includes(query),
+    )
+    .slice(0, 50)
+    .map((f) => ({
+      value: f.key,
+      label: f.label,
+      hint: f.group || undefined,
+    }))
 
   return (
     <>
@@ -139,6 +158,17 @@ export function AdvancedFilter({
         title="Advanced filter"
         description="Narrow the list to exactly what you want to work through. Every condition must match."
         size="lg"
+        /* Two things this dialog needs, and one flag gives both.
+           It starts with ONE row and grows a row at a time, so the body must
+           be its content's height — the default body is a plain block child of
+           a flex column, which STRETCHES, and drew a one-row dialog full
+           height with a scrollbar down the side. And the field picker is a
+           Combobox that opens inside the body, so any clipping there cuts its
+           list off at the body's edge — which is what put the scrollbar back
+           even once the height was right. `bodyOverflows` sizes to content and
+           clips nothing. Safe here because the conditions are capped at a
+           dozen; see the prop's note. */
+        bodyOverflows
         footer={
           <div className="flex w-full items-center justify-between gap-3">
             {/* Remember sits in the FOOTER, beside Apply, because it is part of
@@ -267,27 +297,29 @@ export function AdvancedFilter({
 
           <div className="flex items-center gap-3">
             {draft.length < max ? (
-              <Menu
-                variant="secondary"
-                align="left"
-                label={
-                  <>
-                    <Plus size={14} />
-                    Add a condition
-                  </>
-                }
-              >
-                {[...grouped.entries()].flatMap(([group, list]) => [
-                  <MenuItem key={`${group}-head`} disabled>
-                    {group}
-                  </MenuItem>,
-                  ...list.map((f) => (
-                    <MenuItem key={f.key} onClick={() => add(f.key)}>
-                      {f.label}
-                    </MenuItem>
-                  )),
-                ])}
-              </Menu>
+              /* A SEARCH box, not a dropdown of thirty-five fields.
+                 Two reasons, and the second is what forced it: at this length
+                 a menu is something you hunt through, while a filter is always
+                 begun by knowing the word — "till", "type", "cost". And a
+                 dropdown opens INSIDE this dialog's scrolling body, so a long
+                 one is clipped at the body's edge no matter what height it is
+                 given. Combobox already caps its list to the room actually
+                 left below it, which is the same fix the product picker needed
+                 in a modal. */
+              <div className="w-72">
+                <Combobox
+                  options={pickerOptions}
+                  query={fieldQuery}
+                  onQueryChange={setFieldQuery}
+                  onSelect={(option) => {
+                    add(String(option.value))
+                    setFieldQuery('')
+                  }}
+                  clearOnSelect
+                  placeholder="Add a condition — search fields…"
+                  emptyText="No field matches"
+                />
+              </div>
             ) : (
               <span className="text-xs text-muted">
                 That is the most conditions one list can carry.

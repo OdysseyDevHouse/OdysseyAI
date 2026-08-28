@@ -116,15 +116,25 @@ export default function GiftCardsClient({
 
   return (
     <Card>
+      {/* `inCard` because this toolbar is a BAND of the card above the table,
+          not a free-standing row: without it the strip loses the card's px-4
+          gutter, so the search box hung off the left edge of the column
+          headings below it, and there was no rule between the controls and the
+          rows. Every other in-card toolbar in the app passes it. */}
       <TableToolbar
+        inCard
         actions={
           canManage ? (
+            /* Full-height buttons, not `sm`: they share this row with a search
+               box and a segmented control, both h-control (36px). At `sm` they
+               were 32px and sat off that baseline — the misalignment on the
+               right of the strip. */
             <>
-              <Button variant="ghost" size="sm" disabled={pending} onClick={runExpiry}>
+              <Button variant="ghost" disabled={pending} onClick={runExpiry}>
                 <Icons.History size={15} />
                 Run expiry
               </Button>
-              <Button variant="primary" size="sm" onClick={() => setGenerating(true)}>
+              <Button variant="primary" onClick={() => setGenerating(true)}>
                 <Icons.Plus size={15} />
                 Generate cards
               </Button>

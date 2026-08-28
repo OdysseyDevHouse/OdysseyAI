@@ -2,7 +2,7 @@ import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listGiftCards, giftCardLiability } from '@/lib/site/giftCards'
 import { formatMoney } from '@/lib/decimals'
-import { PageHeader, PageBody, StatStrip, StatTile } from '@/components/ui'
+import { PageHeader, PageBody, StatStrip, StatTile, Icons } from '@/components/ui'
 import GiftCardsClient from './GiftCardsClient'
 
 export const dynamic = 'force-dynamic'
@@ -34,17 +34,35 @@ export default async function GiftCardsPage() {
         subtitle="Stored value the shop is holding. Cards sell and redeem at the till; this is the book behind them."
       />
       <PageBody>
+        {/* Each tile carries its subject's glyph. Without one StatTile renders
+            no medallion and no divider — the label and figure alone, which is
+            what made this strip read as three bare numbers rather than the
+            tiles every other list screen shows.
+
+            Colour is spent on MEANING, not decoration. The liability is money
+            the shop owes its customers, so its medallion is money-coloured
+            while the figure stays plain ink — `iconTone` rather than `tone`,
+            because the balance is not an exception to act on, it is simply
+            what is on the books. The other two are plain. */}
         <StatStrip columns={3}>
           <StatTile
             label="Held for bearers"
             value={formatMoney(liability)}
             hint="Live balances — the figure account 2500 mirrors"
+            iconTone="success"
+            icon={<Icons.Coins size={20} />}
           />
-          <StatTile label="Active cards" value={String(active.length)} />
+          <StatTile
+            label="Active cards"
+            value={String(active.length)}
+            hint={active.length ? 'Sold and still carrying value' : 'None in circulation'}
+            icon={<Icons.Gift size={20} />}
+          />
           <StatTile
             label="Unsold stock"
             value={String(pending.length)}
             hint="Pre-generated cards waiting to sell"
+            icon={<Icons.Package size={20} />}
           />
         </StatStrip>
 

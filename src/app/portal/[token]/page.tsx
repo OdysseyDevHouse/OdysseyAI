@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { verifyPortalToken } from '@/lib/publicPortalToken'
 import { getCustomerSession } from '@/lib/customerSession'
-import { portalSettings } from '@/lib/site/portalAuth'
+import { portalSettings, portalIsOpen } from '@/lib/site/portalAuth'
 import { publicSiteName } from '@/lib/sites'
 import PortalShell from './PortalShell'
 import SignInForm from './SignInForm'
@@ -53,8 +53,11 @@ export default async function PortalSignInPage({
     getCustomerSession(siteId),
   ])
 
-  if (!settings.isEnabled) redirect(`/portal/${token}/closed`)
-  if (session) redirect(`/portal/${token}/jobs`)
+  if (!portalIsOpen(settings)) redirect(`/portal/${token}/closed`)
+  // Where "in" is depends on what the shop offers. A statements-only shop has
+  // no jobs page to land on, and sending somebody there would bounce them
+  // straight back out through the section guard.
+  if (session) redirect(`/portal/${token}${settings.isEnabled ? '/jobs' : '/account'}`)
 
   return (
     <PortalShell name={name ?? undefined}>

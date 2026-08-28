@@ -88,6 +88,9 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Percent',
         tone: 'amber',
         capability: 'staff.cost',
+        /* Goes with the Staff section. A shop that has switched that off should
+           not be left configuring pay rules for rows it cannot see. */
+        menuArea: 'staff',
       },
       /* Leave entitlement is configuration for the same reason pay rules are:
          it decides what every balance on the leave screen comes to, and it is
@@ -99,6 +102,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Clock',
         tone: 'sky',
         capability: 'staff.edit',
+        menuArea: 'staff',
       },
       {
         href: '/staff/cost',
@@ -107,6 +111,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Coins',
         tone: 'emerald',
         capability: 'staff.cost',
+        menuArea: 'staff',
       },
       /* The other half of what a person is paid, and until now reachable only
          from /commission by somebody who already knew it was there. */
@@ -117,6 +122,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Percent',
         tone: 'rose',
         capability: 'commission.edit',
+        menuArea: 'staff',
       },
     ],
   },
@@ -152,6 +158,22 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         keywords: 'cash card eft payment methods vouchers',
         icon: 'CreditCard',
         tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      /* Beside the tender types, because they answer the same question from two
+         ends: what a cashier may take at the counter, and what a customer may
+         pay from an email or a printed square. Moved here from the online store,
+         where the MODULE gate meant a shop without a storefront could not
+         connect a gateway — and therefore never got a pay link on an invoice. */
+      {
+        href: '/setup/payments',
+        description: 'The account that takes online payments — pay links on invoices and statements, and the storefront checkout.',
+        keywords:
+          'payfast gateway online payments pay link qr code invoice statement layby deposit card eft checkout merchant sandbox',
+        // Landmark — a bank. CreditCard is the tender-types tile directly above,
+        // and two identical glyphs side by side read as one repeated entry.
+        icon: 'Landmark',
+        tone: 'sky',
         capability: 'setup.edit',
       },
       {
@@ -499,6 +521,25 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        /*
+         * Directly after billing, because the two are the same subject asked one
+         * step apart: what this shop PAYS for, and what it wants to LOOK at. A
+         * shop that has just read its plan is exactly the reader who wants to
+         * put half of it away.
+         *
+         * Deliberately carries NO `module`. Every other tile here can be filtered
+         * out of the hub; this one must never be, or a shop that hides a module
+         * loses the screen that would bring it back.
+         */
+        href: '/setup/modules',
+        description: 'Switch off the parts of the system this shop does not use, so they leave the menu.',
+        keywords:
+          'menu modules hide show sidebar navigation simplify remove sections turn off disable job cards loyalty online store accounting customers declutter tidy',
+        icon: 'LayoutGrid',
+        tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      {
         /* Beside SMS because they are the same question asked of a different
            channel: how does this shop reach somebody. Email first — every
            document the business sends leaves through it. */
@@ -517,6 +558,21 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'MessageSquare',
         tone: 'sky',
         capability: 'setup.edit',
+      },
+      {
+        /* After email and SMS because it is the same subject from the other
+           side: those are how the shop reaches a customer, this is how a
+           customer reaches their own account without ringing anybody. It also
+           NEEDS email configured to work at all — sign-in is a mailed link —
+           so it reads in the right order. */
+        href: '/setup/customer-portal',
+        description: 'Let customers sign in to see their own details, transactions and statement.',
+        keywords:
+          'customer portal account statement online self service my account link transactions history invoices pay online debtors login sign in',
+        icon: 'Users',
+        tone: 'violet',
+        capability: 'setup.edit',
+        module: 'customers',
       },
       {
         href: '/setup/alerts',
@@ -565,6 +621,8 @@ export const SETUP_ITEMS = SETUP_GROUPS.flatMap((g) => g.items)
 export function setupGroupsFor(
   granted: (capability: string) => boolean,
   holds: (module: string) => boolean = () => true,
+  /** Areas switched off under Setup → Menu & modules — the staff tiles use it. */
+  menuHidden: (area: string) => boolean = () => false,
 ): HubGroup[] {
-  return groupsFor(SETUP_GROUPS, granted, holds)
+  return groupsFor(SETUP_GROUPS, granted, holds, menuHidden)
 }

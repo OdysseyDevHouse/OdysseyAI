@@ -4,6 +4,8 @@ import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
 import { toNum } from '../decimals'
 import { DEFAULT_MAX_CANCELLATION_FEE_PCT } from '../laybyRules'
 import { PICTURE_FONTS } from '../generatedPicture'
+import { BASE_MODULE } from '../control/moduleCatalogue'
+import { isMenuArea } from '../menuAreas'
 
 /**
  * The site settings KV.
@@ -1437,6 +1439,36 @@ export const SETTING_DEFAULTS = {
   portal_max_uploads_per_job: '10',
 
   /**
+   * The ACCOUNT side of the customer portal — profile, transactions, statement.
+   *
+   * Its own switch rather than a share of `portal_enabled`, because the two
+   * answer different questions. That one asks "may a customer follow their
+   * repair job"; this one asks "may a customer see what they owe us". A shop
+   * that runs no job cards at all still has debtors, and would otherwise have
+   * to turn on a JOBS setting to hand somebody a statement link.
+   *
+   * OFF, for the same reason the jobs portal is off: it puts a customer's
+   * financial history on the internet.
+   */
+  portal_accounts_enabled: '0',
+
+  /** The whole ledger, not just invoices — payments, credit notes, interest. */
+  portal_show_transactions: '1',
+
+  /** The statement, on screen and as a PDF on the site's own stationery. */
+  portal_show_statement: '1',
+
+  /**
+   * A customer may settle an open invoice from their own statement.
+   *
+   * ON where the others default off, deliberately: it is the one switch here a
+   * shop is paid for. It can do nothing until a gateway is configured, so
+   * "yes, the moment you can take money" is the honest default rather than an
+   * extra step somebody has to find later.
+   */
+  portal_allow_pay: '1',
+
+  /**
    * Typeface for generated till icons — the initial-on-a-gradient pictures
    * offered on the product screen when a product has no icon to upload.
    *
@@ -1447,6 +1479,38 @@ export const SETTING_DEFAULTS = {
    * the next.
    */
   generate_picture_font: '',
+
+  /**
+   * Parts of the product this shop has chosen to HIDE from its own menus.
+   *
+   * A comma-separated list of `MenuArea` values — see lib/menuAreas.ts. The name
+   * says "modules" because the key is PERSISTED and was written before the list
+   * widened past the price book; renaming it would orphan every row.
+   *
+   * Empty — the default — means
+   * nothing is hidden, so a shop that never opens the screen sees everything it
+   * holds. That is the only safe default: a feature you did not know you had is
+   * a feature you never got.
+   *
+   * ── THIS IS NOT AN ENTITLEMENT, AND THAT IS THE POINT ─────────────────────
+   *
+   * `control/modules.ts` answers "has this shop BOUGHT it". This answers "does
+   * this shop want to LOOK at it". They are stored apart because they fail in
+   * opposite directions: a module never bought must stay hidden whatever a site
+   * setting says, and a module that was bought must come back the moment
+   * somebody switches it on again. Folded into one set, un-hiding would be
+   * indistinguishable from provisioning — and this table is writable from a
+   * setup screen.
+   *
+   * So it only ever SUBTRACTS. `visibleModules()` intersects it with what is
+   * held: a stale key for a module the shop no longer has changes nothing, and a
+   * module added to the plan next month arrives visible.
+   *
+   * Kept out of the entitlements object for the same reason. The billing screen
+   * must keep showing what is paid for even while the menu hides it, or a shop
+   * hides Loyalty, forgets, and cannot find the thing it is being charged for.
+   */
+  hidden_modules: '',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -1638,6 +1702,28 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === '' || PICTURE_FONTS.some((f) => f.id === value)
         ? null
         : 'That is not one of the fonts the picture generator offers.'
+
+    /*
+     * Only real menu areas, and the base package is refused outright.
+     *
+     * A typo here does nothing visible — the readers drop any key they do not
+     * recognise — which is exactly why it is caught at the WRITE: a list that
+     * quietly ignores half of what it was given is worse than one that refuses
+     * it. `starter` is the package every un-gated screen lives in, so hiding it
+     * would empty the menu with no obvious way back.
+     *
+     * The key is still named `hidden_modules` because it is PERSISTED and rows
+     * already carry it; what it holds widened from modules to menu areas — see
+     * lib/menuAreas.ts.
+     */
+    case 'hidden_modules': {
+      if (value === '') return null
+      for (const key of value.split(',')) {
+        if (key === BASE_MODULE) return 'The base package cannot be hidden.'
+        if (!isMenuArea(key)) return `'${key}' is not a part of the menu.`
+      }
+      return null
+    }
 
     // Digits only, and never zero. This lands in a legal document number, so a
     // stray letter here would print on an invoice — and 'store 0' reads as

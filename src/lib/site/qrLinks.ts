@@ -85,6 +85,32 @@ export async function documentPayUrl(
   }
 }
 
+/**
+ * A stand-in pay link, for the STATIONERY PREVIEW only.
+ *
+ * ── WHY THE PREVIEW NEEDS A FAKE ONE ──────────────────────────────────────
+ *
+ * The designer renders against sample data, so there is no real invoice and
+ * therefore no real pay link — which meant a QR block aimed at "this document"
+ * drew nothing at all on the one screen whose whole job is showing what the
+ * paper will look like. A designer cannot size, place or caption a square they
+ * cannot see, and blank space reads as a broken feature rather than an absent
+ * sample.
+ *
+ * So the preview gets a REAL-SHAPED url that resolves to nothing: same origin,
+ * same `/p/<site36>-<slug>` shape, so the square has the same module count and
+ * visual weight as the one that will print. `SAMPLE` is not base58 — the
+ * alphabet excludes it — so it can never collide with a real slug, and anyone
+ * scanning a preview off a screen gets a 404 rather than somebody's invoice.
+ *
+ * It is NOT minted, stored or revocable, and it never leaves the designer.
+ */
+export function samplePayUrl(siteId: number): string | null {
+  const base = appBaseUrl()
+  if (!base) return null
+  return `${base}/p/${siteId.toString(36)}-SAMPLE0LINK0`
+}
+
 export async function qrContextFor(
   siteId: number,
   /** This document's own public page, where the caller has one. */

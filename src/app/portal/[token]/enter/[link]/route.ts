@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { verifyPortalToken } from '@/lib/publicPortalToken'
-import { consumeLink, portalSettings } from '@/lib/site/portalAuth'
+import { consumeLink, portalSettings, portalIsOpen } from '@/lib/site/portalAuth'
 import { createCustomerToken, CUSTOMER_COOKIE } from '@/lib/customerSession'
 
 /**
@@ -42,7 +42,7 @@ export async function GET(
   if (siteId === null) return NextResponse.redirect(`${origin}/`)
 
   const settings = await portalSettings(siteId)
-  if (!settings.isEnabled) {
+  if (!portalIsOpen(settings)) {
     return NextResponse.redirect(`${origin}/portal/${token}/closed`)
   }
 

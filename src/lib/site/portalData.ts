@@ -687,3 +687,114 @@ export async function portalUpload(
     return { ok: false, error: 'That could not be saved.' }
   }
 }
+
+/* ── The account side: profile, transactions, statement ──────────────────── */
+
+/**
+ * The customer's own details, as THEY may see them.
+ *
+ * ── A HAND-WRITTEN COLUMN LIST, NOT `getCustomer` ──────────────────────────
+ *
+ * getCustomer returns the whole row, and the whole row is not a document a
+ * customer may read. It carries the sales rep, the notes staff wrote about
+ * them, the standing discount, the interest rate and grace days, the price
+ * structure and the spend caps — commercial terms the business set, some of
+ * which are frankly uncomfortable reading, and none of which a shopper asked
+ * for. Passing that object to a page and picking fields in JSX would put every
+ * one of them in the HTML payload regardless of what was rendered.
+ *
+ * So the SELECT is the boundary, exactly as the module header says. What is not
+ * named here cannot reach a browser by being forgotten in a component.
+ *
+ * ── READ-ONLY, AND THAT IS THE POINT ───────────────────────────────────────
+ *
+ * There is no matching write. A customer correcting their own VAT number or
+ * address on a live debtors account changes what gets invoiced and where it
+ * gets delivered, without anybody at the shop knowing. They ring up instead,
+ * which is a worse UX and a much better control.
+ */
+export type PortalProfile = {
+  code: string
+  name: string
+  contactName: string | null
+  email: string | null
+  phone: string | null
+  vatNumber: string | null
+  addressLines: string[]
+  /** Days from invoice to due. Shown because it explains every due date. */
+  paymentTermsDays: number
+  /** What they owe right now. Positive means owing. */
+  balance: number
+}
+
+export async function portalProfile(
+  siteId: number,
+  customerId: number,
+): Promise<PortalProfile | null> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT code, name, contact_name, email, phone, vat_number,
+            address_line1, address_line2, city, postal_code,
+            payment_terms_days, balance
+       FROM customers
+      WHERE id = ?`,
+    [customerId],
+  )
+  if (!row) return null
+
+  return {
+    code: String(row.code ?? ''),
+    name: String(row.name ?? ''),
+    contactName: (row.contact_name as string | null) ?? null,
+    email: (row.email as string | null) ?? null,
+    phone: (row.phone as string | null) ?? null,
+    vatNumber: (row.vat_number as string | null) ?? null,
+    // Assembled here rather than in the page: the same four columns are laid
+    // out on the statement PDF too, and two places deciding what an address
+    // looks like is how they come to disagree.
+    addressLines: [row.address_line1, row.address_line2, row.city, row.postal_code]
+      .map((part) => String(part ?? '').trim())
+      .filter((part) => part.length > 0),
+    paymentTermsDays: Number(row.payment_terms_days ?? 0),
+    balance: Number(row.balance ?? 0),
+  }
+}
+
+/**
+ * Where a customer may deliver to. Their own, active ones only.
+ *
+ * Shown on the profile beside the account address because "which of my
+ * addresses do you have" is one of the questions this page exists to answer.
+ */
+export type PortalAddress = {
+  id: number
+  kind: string
+  label: string
+  lines: string[]
+  isDefault: boolean
+}
+
+export async function portalAddresses(
+  siteId: number,
+  customerId: number,
+): Promise<PortalAddress[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT id, kind, label, line1, line2, city, postal_code, province, is_default
+       FROM customer_addresses
+      WHERE customer_id = ? AND is_active = 1
+      ORDER BY kind, is_default DESC, sort_order, label`,
+    [customerId],
+  )
+  // `notes` is deliberately not selected: an address note is a message to the
+  // DRIVER — gate codes, "ring twice", "dog in the yard" — written by staff.
+  return rows.map((r) => ({
+    id: Number(r.id),
+    kind: String(r.kind),
+    label: String(r.label ?? ''),
+    lines: [r.line1, r.line2, r.city, r.province, r.postal_code]
+      .map((part) => String(part ?? '').trim())
+      .filter((part) => part.length > 0),
+    isDefault: !!r.is_default,
+  }))
+}

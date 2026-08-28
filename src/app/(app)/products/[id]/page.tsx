@@ -314,7 +314,11 @@ export default async function EditProductPage({
             name: r.name,
             description: r.description,
           }))}
-          priceHistory={<PriceHistoryPanel rows={priceHistory} />}
+          /* Keyed because this element is created on the SERVER and handed to a
+             client component as a prop: it crosses the RSC boundary, is spliced
+             into that component's children as an array element, and React then
+             key-validates it like any other list child. */
+          priceHistory={<PriceHistoryPanel key="price-history" rows={priceHistory} />}
         />
       </PageBody>
     </>

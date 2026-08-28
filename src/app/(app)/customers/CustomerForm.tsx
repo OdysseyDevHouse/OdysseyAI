@@ -173,7 +173,14 @@ export default function CustomerForm({
   structures = [],
   suggestedCode = null,
   rowActions,
+  returnTo = null,
 }: {
+  /**
+   * The list URL this account was opened from, already validated by the page.
+   * Null when it was reached directly, in which case saving falls back to the
+   * account itself.
+   */
+  returnTo?: string | null
   customer: Customer | null
   groups: CustomerGroup[]
   reps: SalesRep[]
@@ -264,6 +271,10 @@ export default function CustomerForm({
         className="flex flex-col gap-5"
       >
         {customer && <input type="hidden" name="id" value={customer.id} />}
+        {/* The list this account was opened from, so saving returns to it
+            with its filters intact. The redirect happens in the server
+            action, which sees only what the FormData brings it. */}
+        {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
 
         {state.error && (
           <Callout tone="danger" title="Could not save">

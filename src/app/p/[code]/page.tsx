@@ -3,7 +3,7 @@ import { headers } from 'next/headers'
 import { splitPayCode, resolvePayLink } from '@/lib/site/payLinks'
 import { payableSummary } from '@/lib/site/payableSummary'
 import { getGateway, createIntent, type IntentTarget } from '@/lib/site/payments'
-import { createCallbackToken } from '@/lib/callbackToken'
+import { callbackPath } from '@/lib/callbackToken'
 import { buildCheckoutForm } from '@/lib/payfast/checkout'
 import { publicSiteName } from '@/lib/sites'
 import { formatMoney } from '@/lib/decimals'
@@ -99,7 +99,10 @@ export default async function PayCodePage({ params }: Props) {
     target: targetFor(link.purpose, link.targetId),
     amountIncl: summary.outstanding,
   })
-  const callback = await createCallbackToken(split.siteId, intent.reference)
+  /* The SHORT path, not a JWT: a signed token puts the notify URL past
+     PayFast's 255-character limit, and it then never posts at all. See
+     callbackToken.ts. */
+  const callback = callbackPath(split.siteId, intent.reference)
   const origin = await publicOrigin()
 
   const form = buildCheckoutForm({

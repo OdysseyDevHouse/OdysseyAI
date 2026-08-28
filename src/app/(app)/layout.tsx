@@ -14,6 +14,8 @@ import { lockState } from '@/lib/licence/lockState'
 import PrecisionProvider from '@/components/PrecisionProvider'
 import { getSettings } from '@/lib/site/settings'
 import { setDisplayPrecision } from '@/lib/decimals'
+import { hiddenAreas } from '@/lib/site/menuVisibility'
+import type { MenuArea } from '@/lib/menuAreas'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   /* Read once, on the server. `APP_MODE` is baked in by `build:desktop`, so this
@@ -115,6 +117,32 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const unread = await unreadCount(site.id, user.id, capabilities).catch(() => 0)
 
   /*
+   * ── WHAT THIS SHOP WANTS IN ITS MENU, NOT MERELY WHAT IT BOUGHT ──────────
+   *
+   * A third filter on top of capabilities and modules: a shop that holds Job
+   * Cards but never takes a booking can switch the section off under Setup →
+   * Menu & modules, and this is where that choice reaches the chrome. It only
+   * ever subtracts from `modules.held` — see lib/site/menuVisibility.ts for
+   * why hiding and owning are kept as two separate facts.
+   *
+   * Handed to BOTH shells below, because the phone and the browser draw
+   * different chrome from the same answer; computing it once here is what stops
+   * the two menus from disagreeing.
+   *
+   * Read ONCE and derived twice: both answers come from the same settings row,
+   * and this runs on every authenticated page load.
+   *
+   * The hide list goes down as well as the merged answer, because a section
+   * marked `menuArea` — Tickets, which travels with Job Cards, and Staff, which
+   * is nobody's module — has to tell "switched off" apart from "never bought",
+   * and the merged list cannot: both read as absent. Sets do not cross the
+   * server/client boundary, so both go as arrays.
+   */
+  const switchedOff = await hiddenAreas(site.id)
+  const hiddenAreaKeys = [...switchedOff]
+  const menuModules = [...modules.held].filter((key) => !switchedOff.has(key as MenuArea))
+
+  /*
    * ── THE PHONE GETS DIFFERENT CHROME, NOT DIFFERENT RULES ─────────────────
    *
    * Read AFTER every guard above, deliberately. The session check, the
@@ -134,7 +162,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <MobileTopBar
           granted={[...capabilities.granted]}
           isOwner={capabilities.isOwner}
-          modules={[...modules.held]}
+          modules={menuModules}
+          hiddenAreas={hiddenAreaKeys}
           userName={user.name}
           siteName={site.displayName}
           unreadNotifications={unread}
@@ -160,7 +189,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <Sidebar
         granted={[...capabilities.granted]}
         isOwner={capabilities.isOwner}
-        modules={[...modules.held]}
+        modules={menuModules}
+        hiddenAreas={hiddenAreaKeys}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar

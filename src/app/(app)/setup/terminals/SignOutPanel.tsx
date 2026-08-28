@@ -87,7 +87,7 @@ export default function SignOutPanel({
   }
 
   return (
-    <Card>
+    <Card id="idle-logout">
       <CardHeader
         title="Signing out of the till"
         description="When the till hands itself back to the PIN pad, so the next sale is rung by whoever is standing there."
@@ -102,7 +102,7 @@ export default function SignOutPanel({
 
           <div className="flex flex-wrap items-center gap-3">
             <label className="text-sm text-ink" htmlFor="idle-logout">
-              Sign out after this long untouched
+              Automatically log out after being idle
             </label>
             <Select
               id="idle-logout"
@@ -117,6 +117,16 @@ export default function SignOutPanel({
               ))}
             </Select>
           </div>
+
+          {/* Beside the field rather than in the prose below it, because it
+              bounds what the setting REACHES — somebody reading "automatically
+              log out after being idle" on a settings screen has every reason to
+              read it as the whole product, and would then either expect the
+              back office to lock or avoid turning it on for fear that it will. */}
+          <p className="text-sm text-muted">
+            This applies to the point of sale only — the back office is never signed out by this
+            timer.
+          </p>
 
           <div className="flex items-center gap-3">
             <Button variant="primary" onClick={save} disabled={!dirty || pending}>

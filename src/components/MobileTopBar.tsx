@@ -32,6 +32,7 @@ export function MobileTopBar({
   granted,
   isOwner,
   modules,
+  hiddenAreas = [],
   userName,
   siteName,
   unreadNotifications,
@@ -39,6 +40,8 @@ export function MobileTopBar({
   granted: string[]
   isOwner: boolean
   modules: string[]
+  /** As on Sidebar — switched off under Setup → Menu & modules, not unbought. */
+  hiddenAreas?: string[]
   userName: string
   siteName: string
   unreadNotifications: number
@@ -52,6 +55,7 @@ export function MobileTopBar({
   const sections: NavSection[] = navFor(
     (capability) => isOwner || granted.includes(capability),
     (module) => modules.includes(module),
+    (area) => hiddenAreas.includes(area),
   )
 
   /* The SCREEN's name, from the same breadcrumb source the desktop uses — not

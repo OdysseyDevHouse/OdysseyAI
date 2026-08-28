@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation'
+import { returnToOr } from '@/lib/returnTo'
 import { requireCapability } from '@/lib/auth'
 import { getSupplier } from '@/lib/site/suppliers'
 import { listSupplierCategories } from '@/lib/site/customerLookups'
@@ -55,12 +56,16 @@ export default async function SupplierPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ tab?: string; saved?: string; error?: string }>
+  searchParams: Promise<{ tab?: string; saved?: string; error?: string; from?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId } = await requireCapability('suppliers.view')
   const { id } = await params
-  const { tab, saved, error } = await searchParams
+  const { tab, saved, error, from } = await searchParams
+
+  /* Where leaving goes: the list that sent us here when it had filters worth
+     keeping, else the plain register. Validated — see lib/returnTo.ts. */
+  const backHref = returnToOr(from, '/suppliers')
 
   const supplierId = Number(id)
   if (!Number.isFinite(supplierId) || supplierId <= 0) notFound()
@@ -98,7 +103,7 @@ export default async function SupplierPage({
       <PageHeader
         title={supplier.name}
         subtitle={supplier.code}
-        backHref="/suppliers"
+        backHref={backHref}
         backLabel="Suppliers"
         action={
           // Nothing posted yet means nothing to reconcile — matches how the
@@ -236,6 +241,7 @@ export default async function SupplierPage({
         />
       ) : active === 'details' ? (
         <SupplierForm
+          returnTo={backHref === '/suppliers' ? null : backHref}
           supplier={supplier}
           categories={categories}
           rowActions={

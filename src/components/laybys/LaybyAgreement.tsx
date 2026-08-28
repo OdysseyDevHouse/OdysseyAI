@@ -1,5 +1,6 @@
 import { formatMoney, formatQty } from '@/lib/decimals'
 import { percentPaid } from '@/lib/laybyRules'
+import { qrDataUri } from '@/lib/stationery/qr'
 import type { Layby } from '@/lib/site/laybys'
 import { TABLE, TABLE_HEAD_ROW, TABLE_TH, TABLE_TD, TABLE_ROW, TABLE_NUMERIC } from '@/components/ui'
 
@@ -19,10 +20,20 @@ import { TABLE, TABLE_HEAD_ROW, TABLE_TH, TABLE_TD, TABLE_ROW, TABLE_NUMERIC } f
 export function LaybyAgreement({
   layby,
   site,
+  payUrl = null,
   terms,
 }: {
   layby: Layby
   site: { name: string; vatNumber: string | null; taxLabel?: string }
+  /**
+   * Where "pay an instalment" points, or null for no block at all.
+   *
+   * Resolved by the ROUTE rather than here, because minting a link is a
+   * database write and this component is also rendered for a preview. Null is
+   * the ordinary case — the shop has not switched lay-by links on, or has no
+   * gateway — and prints nothing rather than a square that leads to an apology.
+   */
+  payUrl?: string | null
   terms: string
 }) {
   return (
@@ -134,6 +145,42 @@ export function LaybyAgreement({
           </div>
         </div>
       </section>
+
+      {/*
+        Paying an instalment without coming in.
+        ── THE CASE THE WHOLE PAY-LINK FEATURE EXISTS FOR ────────────────────
+        A lay-by customer is frequently a `cash` account — somebody on file who
+        was never granted credit — and until this the only way to pay one off
+        was to stand at the counter with a card. This card lives in a wallet for
+        months, which is exactly why the link behind the square is a revocable
+        slug rather than a token that expires.
+        Absent unless the shop switched it on AND has a working gateway, so a
+        square that scans to an apology is never printed. The code is spelled
+        out beside it because a scanner that will not read is the moment
+        somebody types it instead — which is what the slug alphabet is chosen
+        for.
+      */}
+      {payUrl ? (
+        <section className="mt-5 flex items-center gap-4 border-t border-border pt-5">
+          <img
+            src={qrDataUri(payUrl, { scale: 4 })}
+            alt=""
+            width={96}
+            height={96}
+            className="shrink-0"
+          />
+          <div className="text-sm">
+            <p className="font-medium text-ink">Pay an instalment online</p>
+            <p className="mt-1 text-muted">
+              Scan this code, or go to{' '}
+              <span className="whitespace-nowrap text-ink">{payUrl.replace(/^https?:\/\//, '')}</span>
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              It always asks for what is still owed on the day you open it.
+            </p>
+          </div>
+        </section>
+      ) : null}
 
       {/*
         The disclosure. Everything above is a record of the transaction; THIS

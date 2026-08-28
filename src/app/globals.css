@@ -969,11 +969,64 @@ input[type='range'] {
   animation: drawer-in-left 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* Arrived here from search: say WHICH panel was meant.
+
+   A settings result in the palette opens the screen that holds it — and a setup
+   screen is ten near-identical cards, so landing on the right one still leaves
+   somebody reading headings to find what they just asked for. Scrolling alone
+   does not answer it either: a card in the middle of the viewport looks like
+   every other card that happens to be in the middle of the viewport.
+
+   So the panel says so itself — and it HOLDS, rather than flashing past.
+
+   This was a 1.5s fade first, on the reasoning that a mark which lingers turns
+   into chrome. In use that was simply too quick: the ring is competing with a
+   smooth scroll that is still settling when it starts, so somebody who looked
+   at the screen a moment after pressing Enter saw the tail of it at 20% opacity
+   or missed it altogether — which leaves them reading headings, the exact thing
+   the ring exists to save them from.
+
+   Ten seconds, and the shape of those ten matters as much as the length. Solid
+   for the first eight and a half, so it is unambiguously ON while the eye
+   arrives and while somebody reads the panel to check it is what they wanted;
+   then a fade over the last second and a half, so it leaves the way it used to
+   — the eye drawn by something departing rather than by something blinking. A
+   ring that simply vanished after ten seconds would pull attention back to a
+   panel somebody had already finished with.
+
+   Reduced motion keeps the ring and drops the fade: the answer to "which one"
+   must not be carried by movement alone. It holds flat for the full ten seconds
+   and is then removed by the same timer that removes the class. */
+@keyframes setting-found {
+  /* Flat until 85% — the hold — then out. Percentages rather than a delayed
+     second animation so the whole life of the mark is one line to read. */
+  0%,
+  85% {
+    box-shadow: 0 0 0 3px var(--color-brand);
+  }
+  100% {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
+.setting-found {
+  animation: setting-found 10s ease-out;
+  /* Not `outline`: a card already owns its border and radius, and an outline
+     squares off the corners the rounded card just drew. */
+  border-radius: var(--radius-card);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pin-shake,
   .drawer-from-right[open],
   .drawer-from-left[open] {
     animation: none;
+  }
+
+  /* The ring, held steady rather than faded — see the note above. */
+  .setting-found {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--color-brand);
   }
 }
 

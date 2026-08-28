@@ -102,6 +102,28 @@ export type NavSection = {
   capability?: string
   /** As on NavItem — the module the shop must hold for this to exist. */
   module?: string
+  /**
+   * The menu area this section is switched off WITH under Setup → Menu &
+   * modules, without being sold by it. A `MenuArea` from lib/menuAreas.ts.
+   *
+   * A weaker thing than `module`, and deliberately separate. `module` is the
+   * PLAN: a shop that has not bought Job Cards does not get that section at all.
+   * This is only the menu PREFERENCE, and it is what a base-package section
+   * needs — one that every shop is entitled to but that plenty of shops never
+   * open:
+   *
+   *   - Tickets travels with Job Cards. A business that has switched those off
+   *     has said it does not take work in and track it, so leaving the ticket
+   *     desk standing would answer half the request.
+   *   - Staff is its own area, `staff`, sold to nobody. A two-person shop that
+   *     pays cash has no use for the clock, timesheets or leave.
+   *
+   * Marked here rather than by giving Tickets `module: 'job_cards'`, because
+   * that would be a pricing change wearing a menu change's clothes: it would
+   * take the section away from every shop on the base package, which is not the
+   * same question and not one a nav file should decide.
+   */
+  menuArea?: string
   /** As on NavItem — one line for the search palette, never for the menu. */
   description?: string
   /**
@@ -139,6 +161,22 @@ export const NAV: NavSection[] = [
       { label: 'Reservations', href: '/sales/reservations', icon: CalendarClock, built: true, capability: 'reservations.view', keywords: 'bookings table diary covers restaurant seating guests', description: 'Tonight’s book — who is coming and where they sit' },
       { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view', description: 'Agreements that bill themselves on a schedule' },
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note', description: 'Take goods back and credit the customer' },
+      /*
+       * Gift cards sits in Sales, not under Customers.
+       *
+       * It was under Customers because that is where the people are, but a gift
+       * card is STORED VALUE — money taken now against goods later — and it is
+       * sold, redeemed and checked at the till by whoever is serving. Nothing
+       * about it needs a customer record; most are bought by somebody who never
+       * gives a name.
+       *
+       * The move is what lets the Customers section hide cleanly. Gift cards is
+       * base-package while every other row there carries the `customers` module,
+       * so switching Customers off used to leave the heading standing over this
+       * one row — which reads as the switch half-working rather than as a
+       * deliberate exception.
+       */
+      { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', keywords: 'gift card voucher stored value balance top up redeem', description: 'Sell, check and manage stored-value cards' },
       { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup', description: 'Count a drawer and close off a shift' },
       /* Paying tips out, beside the cash-up rather than under Setup: it happens at the end
          of a shift, by whoever counts the drawer, and shares that capability. Setup → Tips
@@ -210,10 +248,12 @@ export const NAV: NavSection[] = [
   {
     label: 'Customers',
     icon: Contact,
+    /* On the SECTION now, not only on each row. Every screen left here needs the
+       module, so the heading has nothing to stand over without it — and a lone
+       heading is worse than no heading. Gift cards was the one base-package row
+       and has moved to Sales, which is where it belonged anyway. */
+    module: 'customers',
     items: [
-      /* The section itself carries no module: gift cards are part of the base
-         package, so the heading survives even when Customers and Loyalty are
-         both switched off. */
       { label: 'Customers', href: '/customers', icon: Contact, built: true, capability: 'customers.view', module: 'customers', description: 'Accounts, contact details and history' },
       { label: 'Age analysis', href: '/customers/age-analysis', icon: BarChart, built: true, capability: 'customers.view', module: 'customers', description: 'Who owes what, and how overdue it is' },
       /* Directly after the age analysis: that screen says what is overdue,
@@ -225,9 +265,9 @@ export const NAV: NavSection[] = [
          briefly a tile in the Online Store hub, which stranded any shop that
          had bought loyalty without a storefront. The programme, its tiers and
          the punch cards decide how it WORKS and stay in the setup hub. */
-      /* Stored value, not a points programme — a shop that wants gift cards
-         rarely wants loyalty, so this stays in the base package. */
-      { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', description: 'Sell, check and manage stored-value cards' },
+      /* Gift cards is NOT a row here any more — it moved to Sales. Stored value
+         is money at the till, not a customer record, and keeping it here was
+         what stopped this section from hiding cleanly. See the note there. */
     ],
   },
   /*
@@ -354,6 +394,10 @@ export const NAV: NavSection[] = [
        hub: both are configuration that decides what the figures here come to. */
     label: 'Staff',
     icon: Users,
+    /* Base-package, so no `module` — every shop is entitled to the clock and the
+       timesheets. But plenty never keep a roster: a two-person shop that pays
+       cash has no use for any of these five rows. See `menuArea`. */
+    menuArea: 'staff',
     items: [
       /* The clock leads: it is the screen somebody opens every morning, while
          People is opened when a person joins or their terms change. */
@@ -576,6 +620,10 @@ export const NAV: NavSection[] = [
   {
     label: 'Tickets',
     icon: Ticket,
+    /* Not `module`: every shop is entitled to the ticket desk. But a shop that
+       switches Job Cards off has said it does not take work in and track it, and
+       leaving Tickets standing would answer half of that. See `menuArea`. */
+    menuArea: 'job_cards',
     keywords: 'support helpdesk service desk enquiry issue incident request customer query',
     items: [
       {
@@ -630,12 +678,28 @@ export function navFor(
    * silently losing half its menu.
    */
   holds: (module: string) => boolean = () => true,
+  /**
+   * Whether the shop has SWITCHED THIS OFF under Setup → Menu & modules, as
+   * opposed to never having bought it. Only `menuArea` consults it, and only to
+   * drop a base-package section the shop has deliberately put away.
+   *
+   * Defaults to "nothing is hidden" for the same reason `holds` defaults to
+   * "everything is held": a caller that predates the setting must not silently
+   * lose a section.
+   */
+  menuHidden: (area: string) => boolean = () => false,
 ): NavSection[] {
   const visible: NavSection[] = []
   const allowed = (entry: { capability?: string; module?: string }) =>
     (!entry.capability || granted(entry.capability)) && (!entry.module || holds(entry.module))
 
   for (const section of NAV) {
+    /* Checked BEFORE the `href` branch below, so it reaches a section that is a
+       link in its own right as well as one with children. Accounting is exactly
+       that shape — a bare link to a hub — and testing it after the branch meant
+       the one section written to need this never saw the check. */
+    if (section.menuArea && menuHidden(section.menuArea)) continue
+
     if (section.href) {
       if (allowed(section)) visible.push(section)
       continue
@@ -692,6 +756,10 @@ export const SUBPAGE_LABELS = {
   // "terminals" on the tile, so looking for either finds it.
   '/setup/terminals': 'Tills',
   '/setup/billing': 'Plan & billing',
+  // "Menu & modules", not "Modules" — the module list is what it SHOWS, but what
+  // it CHANGES is the menu, and somebody looking to tidy the sidebar would not
+  // think to open a screen named after the billing catalogue.
+  '/setup/modules': 'Menu & modules',
   '/setup/decimals': 'Decimal places',
   '/setup/numbering': 'Numbering',
   '/setup/quick-keys': 'Quick keys',
@@ -720,6 +788,10 @@ export const SUBPAGE_LABELS = {
   '/setup/opening-balances': 'Opening balances',
   '/setup/import': 'Import data',
   '/setup/laybys': 'Lay-bys',
+  /* "Customer portal", not "Customer statements": the screen decides what a
+     customer sees of their whole account, of which the statement is one part.
+     The jobs half of the same portal stays on /jobs/setup/workflow. */
+  '/setup/customer-portal': 'Customer portal',
   '/setup/email': 'Email',
   '/setup/sms': 'Text messages & WhatsApp',
   /* "Alerts & automations", both halves named: the same screen sets up a rule
@@ -796,7 +868,11 @@ export const SUBPAGE_LABELS = {
   '/online-store/funnel': 'Shopper funnel',
   '/online-store/builder': 'Page builder',
   '/online-store/pages': 'Pages',
-  '/online-store/payments': 'Payments',
+  /* "Online payments", not "Payments" — the hub already has Tender types
+     directly beside it, which is how sales are paid for AT THE COUNTER. A tile
+     called simply Payments next to that one is two names for what reads like the
+     same subject. */
+  '/setup/payments': 'Online payments',
   '/online-store/setup': 'Store setup',
   '/online-store/settings': 'Online store setup',
 
@@ -870,7 +946,6 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
      from the general setup hub; now they have one front door. */
   '/online-store/setup': '/online-store/settings',
   '/online-store/trading': '/online-store/settings',
-  '/online-store/payments': '/online-store/settings',
   '/online-store/statuses': '/online-store/settings',
   '/online-store/discounts': '/online-store/settings',
   /* Beside pay rules, for the same reason: it is set once and decides what
@@ -960,6 +1035,11 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/tips': 'tips gratuity service charge tiers waiter pool',
   '/setup/terminals': 'terminals registers pos devices',
   '/setup/billing': 'plan subscription modules upgrade downgrade invoice licence price cost add-on account debit order',
+  /* Heavy on the words somebody types when the menu is in their way rather than
+     the ones on the screen — "hide", "remove", "declutter" and the module names
+     themselves. Nobody searching to switch Job Cards off types "modules". */
+  '/setup/modules':
+    'menu modules hide show sidebar navigation simplify remove sections turn off disable declutter tidy job cards loyalty online store accounting customers',
   '/setup/numbering': 'sequences document numbers prefix autocode',
   '/setup/decimals': 'decimals decimal places precision rounding quantity qty cost digits',
   '/setup/quick-keys': 'buttons tiles favourites shortcuts till pos grid',
@@ -975,6 +1055,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/opening-balances': 'import migration debtors creditors go live',
   '/setup/import': 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments stock take',
   '/setup/laybys': 'deposit cancellation fee terms instalments',
+  '/setup/customer-portal':
+    'customer portal account statement online self service my account link transactions history invoices pay online debtors login sign in',
   '/setup/email': 'email smtp mail server outgoing send from address port password tls ssl gmail office 365 test message',
   '/setup/sms': 'sms text message smsportal reminders dunning notify phone mobile',
   '/setup/alerts':
@@ -1003,7 +1085,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/online-store/setup': 'domain url delivery fees shipping open closed launch go live web shop',
   '/online-store/statuses': 'workflow stages pipeline packing shipped fulfilment',
   '/online-store/trading': 'hours open closed holidays busy pause sold out collection times',
-  '/online-store/payments': 'payfast yoco ozow gateway card eft checkout',
+  '/setup/payments': 'payfast yoco ozow gateway card eft checkout online payments pay link qr invoice statement',
   '/online-store/discounts': 'promo coupon voucher promotion sale code',
   '/accounting/accounts': 'chart of accounts ledger codes general ledger',
   '/accounting/periods': 'period lock close month year end freeze',

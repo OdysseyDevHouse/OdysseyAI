@@ -16,7 +16,7 @@ import { hrefBuilder, offsetFor, pageCountFor, pageFrom, withParams } from '@/li
 import { listColumnsFor } from '@/lib/site/listColumns'
 import { PRODUCT_COLUMN_IDS, PRODUCT_DEFAULT_COLUMNS } from './columns'
 import ProductColumnsButton from './ProductColumnsButton'
-import ProductFilterButton from './ProductFilterButton'
+import ListFilterButton from '@/components/lists/ListFilterButton'
 import {
   PageHeader,
   PageBody,
@@ -562,10 +562,12 @@ export default async function ProductsPage({
           {/* Everything the toolbar cannot express, behind one button. Sits
               after the built-in pickers because it is the escape hatch from
               them, not a peer — and most people never open it. */}
-          <ProductFilterButton
+          <ListFilterButton
+            listKey="products"
             fields={filterFields}
             value={conditions}
             remembered={!!remembered}
+            builderHref="/reports/builder?source=products"
           />
 
           {filterLabel && (

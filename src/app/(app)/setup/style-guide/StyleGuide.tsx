@@ -1793,9 +1793,9 @@ function ColumnPickerSection() {
           </span>
         </div>
 
-        {/* Both heights, side by side with a Menu — the pairing that matters,
-            since these two sit next to each other in a report toolbar and a
-            mismatch is only visible against something else. */}
+        {/* Shown beside a Menu — the pairing that matters, since these two sit
+            next to each other in a toolbar and a height mismatch is only
+            visible against something else. */}
         <div className="flex items-center gap-3 border-t border-border pt-4">
           <ColumnPicker
             columns={columns}
@@ -1803,19 +1803,11 @@ function ColumnPickerSection() {
             onChange={setVisible}
             align="left"
           />
-          <ColumnPicker
-            columns={columns}
-            visible={visible}
-            onChange={setVisible}
-            align="left"
-            size="md"
-          />
           <Menu label="Export" variant="ghost">
             <MenuItem>PDF</MenuItem>
           </Menu>
           <span className="text-sm text-muted">
-            Default <code>sm</code> (32px) for a list toolbar; <code>md</code> (40px) to sit level
-            with full-height controls, as the report toolbar does.
+            <code>md</code> (40px) — level with the full-height controls it shares a toolbar with.
           </span>
         </div>
       </CardBody>

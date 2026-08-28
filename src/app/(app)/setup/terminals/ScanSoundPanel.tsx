@@ -44,7 +44,7 @@ export default function ScanSoundPanel({ scanSounds }: { scanSounds: boolean }) 
   }
 
   return (
-    <Card>
+    <Card id="scan-sounds">
       <CardHeader
         title="Scan sounds at the till"
         description="Whether ringing something up makes a noise, and a different one when nothing matched."

@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { requireCustomer } from '../guard'
+import { requireSection } from '../guard'
 import { portalInvoices } from '@/lib/site/portalData'
 import { publicSiteName } from '@/lib/sites'
 import PortalShell, { PortalNav } from '../PortalShell'
@@ -37,7 +37,7 @@ export default async function PortalInvoicesPage({
   params: Promise<{ token: string }>
 }) {
   const { token } = await params
-  const ctx = await requireCustomer(token)
+  const ctx = await requireSection(token, 'account')
 
   const [invoices, name] = await Promise.all([
     portalInvoices(ctx.siteId, ctx.customerId),
@@ -51,7 +51,7 @@ export default async function PortalInvoicesPage({
     <PortalShell
       name={name ?? undefined}
       nav={
-        <PortalNav token={token} active="invoices" onSignOut={<SignOutButton token={token} />} />
+        <PortalNav token={token} active="invoices" settings={ctx.settings} onSignOut={<SignOutButton token={token} />} />
       }
     >
       <h1 className="text-xl font-semibold text-ink">Your invoices</h1>
@@ -90,7 +90,7 @@ export default async function PortalInvoicesPage({
                     <Badge tone="warning">{formatMoney(inv.outstanding)} owing</Badge>
                     {/* Hands off to the payment flow that already exists rather
                         than building a second one. */}
-                    <PayButton token={token} documentId={inv.id} />
+                    {ctx.settings.allowPay && <PayButton token={token} documentId={inv.id} />}
                   </>
                 )}
               </li>

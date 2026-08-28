@@ -1,6 +1,6 @@
 import { requireSiteUser } from '@/lib/auth'
 import { can, type Capability } from '@/lib/site/permissions'
-import { holder } from '@/lib/control/modules'
+import { menuHolder } from '@/lib/site/menuVisibility'
 import { PageHeader, PageBody, Badge, Card, Icons } from '@/components/ui'
 import { SalesDashboard } from './SalesDashboard'
 import { MobileDashboard } from './MobileDashboard'
@@ -37,13 +37,18 @@ export default async function DashboardPage() {
    * does not list switches that would turn on a box reading "not available".
    * A Set cannot cross the server/client boundary, so it goes as a plain array.
    */
-  const bought = holder(modules)
+  const bought = await menuHolder(site.id, modules)
   const visibleWidgets = WIDGETS.filter(
     (w) =>
       (!w.capability || can(capabilities, w.capability as Capability)) &&
       /* The module half is NOT merely an affordance: a shop that never bought
          Job Cards has no job data to read, so those panels would sit on the
-         dashboard for ever showing zero. */
+         dashboard for ever showing zero.
+
+         `menuHolder` rather than `holder`, so a module the shop switched off
+         under Setup → Menu & modules drops out here too. Same reasoning one step
+         on: a shop that hid the Jobs section has told you it does not run jobs,
+         and offering it a job widget offers back the thing it just put away. */
       (!w.module || bought(w.module)),
   ).map((w) => w.id)
 

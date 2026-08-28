@@ -4,6 +4,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { customerExecute, customerQuery, customerQueryOne } from './customerDb'
 import { getSetting } from './settings'
 import { sendAs, isConfiguredFor } from '../mail'
+import { createPortalToken } from '../publicPortalToken'
 
 /**
  * Signing a customer in to the portal, with a link instead of a password.
@@ -45,42 +46,88 @@ const LINK_MINUTES = 30
 const MAX_LINKS_PER_HOUR = 5
 
 export type PortalSettings = {
+  /** The JOBS side: a customer following their own work. */
   isEnabled: boolean
   allowComments: boolean
   allowUploads: boolean
   allowQuoteAccept: boolean
   maxUploadsPerJob: number
+  /**
+   * The ACCOUNT side: profile, transactions, statement.
+   *
+   * Independent of `isEnabled` — see the setting's own note. A shop may run
+   * either, both or neither, and the guard below opens the door when EITHER is
+   * on rather than treating the jobs portal as the portal.
+   */
+  accountsEnabled: boolean
+  showTransactions: boolean
+  showStatement: boolean
+  allowPay: boolean
 }
 
-/** How the portal is configured. Fails CLOSED on any error. */
+const CLOSED: PortalSettings = {
+  isEnabled: false,
+  allowComments: false,
+  allowUploads: false,
+  allowQuoteAccept: false,
+  maxUploadsPerJob: 0,
+  accountsEnabled: false,
+  showTransactions: false,
+  showStatement: false,
+  allowPay: false,
+}
+
+/**
+ * How the portal is configured. Fails CLOSED on any error.
+ *
+ * The two halves are resolved SEPARATELY. An earlier shape returned `closed`
+ * whole the moment `portal_enabled` was off, which would have meant a shop
+ * offering statements and no job cards got nothing — the jobs switch silently
+ * governing a feature that has nothing to do with jobs.
+ */
 export async function portalSettings(siteId: number): Promise<PortalSettings> {
-  const closed: PortalSettings = {
-    isEnabled: false,
-    allowComments: false,
-    allowUploads: false,
-    allowQuoteAccept: false,
-    maxUploadsPerJob: 0,
-  }
   try {
-    const [enabled, comments, uploads, quotes, maxUploads] = await Promise.all([
-      getSetting(siteId, 'portal_enabled'),
-      getSetting(siteId, 'portal_allow_comments'),
-      getSetting(siteId, 'portal_allow_uploads'),
-      getSetting(siteId, 'portal_allow_quote_accept'),
-      getSetting(siteId, 'portal_max_uploads_per_job'),
-    ])
-    if (enabled !== '1') return closed
+    const [enabled, comments, uploads, quotes, maxUploads, accounts, transactions, statement, pay] =
+      await Promise.all([
+        getSetting(siteId, 'portal_enabled'),
+        getSetting(siteId, 'portal_allow_comments'),
+        getSetting(siteId, 'portal_allow_uploads'),
+        getSetting(siteId, 'portal_allow_quote_accept'),
+        getSetting(siteId, 'portal_max_uploads_per_job'),
+        getSetting(siteId, 'portal_accounts_enabled'),
+        getSetting(siteId, 'portal_show_transactions'),
+        getSetting(siteId, 'portal_show_statement'),
+        getSetting(siteId, 'portal_allow_pay'),
+      ])
+
+    const jobsOn = enabled === '1'
+    const accountsOn = accounts === '1'
+
     return {
-      isEnabled: true,
-      allowComments: comments === '1',
-      allowUploads: uploads === '1',
-      allowQuoteAccept: quotes === '1',
-      maxUploadsPerJob: Math.max(0, Math.min(100, Number(maxUploads) || 0)),
+      isEnabled: jobsOn,
+      allowComments: jobsOn && comments === '1',
+      allowUploads: jobsOn && uploads === '1',
+      allowQuoteAccept: jobsOn && quotes === '1',
+      maxUploadsPerJob: jobsOn ? Math.max(0, Math.min(100, Number(maxUploads) || 0)) : 0,
+      accountsEnabled: accountsOn,
+      showTransactions: accountsOn && transactions === '1',
+      showStatement: accountsOn && statement === '1',
+      allowPay: accountsOn && pay === '1',
     }
   } catch {
     // A site without 130 has no portal, which is the safe answer.
-    return closed
+    return CLOSED
   }
+}
+
+/**
+ * Whether the portal opens at all — either half being on is enough.
+ *
+ * The one question the door asks. Kept here rather than spelled out at each
+ * call site so a third section added later cannot be forgotten by one of them.
+ */
+export function portalIsOpen(settings: PortalSettings): boolean {
+  return settings.isEnabled || settings.accountsEnabled
 }
 
 function hashToken(token: string): string {
@@ -105,7 +152,7 @@ export async function requestLink(
   opts: { ip?: string | null; baseUrl?: string } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   const settings = await portalSettings(siteId)
-  if (!settings.isEnabled) {
+  if (!portalIsOpen(settings)) {
     return { ok: false, error: 'This business does not offer an online account.' }
   }
 
@@ -157,12 +204,28 @@ export async function requestLink(
 
         if (await isConfiguredFor(siteId)) {
           const base = opts.baseUrl ?? process.env.APP_URL ?? ''
+          /*
+           * ── THE SITE TOKEN HAS TO BE IN THE PATH ───────────────────────────
+           *
+           * This used to mail `/portal/enter/<token>`, and there has never been
+           * a route at that address: the handler is `/portal/[token]/enter/
+           * [link]`, because every page under the portal needs to know WHICH
+           * BUSINESS it belongs to before it can do anything — see
+           * publicPortalToken. Every sign-in email sent was a dead link, and it
+           * failed silently because the send is best-effort and nothing here
+           * reads the URL back.
+           *
+           * Minted rather than passed in: requestLink is called from a server
+           * action that has the site id and not the token, and deriving it here
+           * means the email and the route cannot disagree about the shape.
+           */
+          const siteToken = await createPortalToken(siteId)
           await sendAs(siteId, {
             to: String(customer.email),
             subject: 'Your sign-in link',
             text:
-              `Here is your link to sign in and see your jobs:\n\n` +
-              `${base}/portal/enter/${token}\n\n` +
+              `Here is your link to sign in and see your account:\n\n` +
+              `${base}/portal/${siteToken}/enter/${token}\n\n` +
               `It works once and lasts ${LINK_MINUTES} minutes. ` +
               `If you did not ask for it, you can ignore this email.`,
           }).catch(() => undefined)

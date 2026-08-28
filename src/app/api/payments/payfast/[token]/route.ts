@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { readCallbackToken } from '@/lib/callbackToken'
+import { readCallbackToken, readCallbackPath } from '@/lib/callbackToken'
 import { verifyItn } from '@/lib/payfast/itn'
 import { getGateway, getIntent, settleIntent } from '@/lib/site/payments'
 import { invoicePaidOrder, markOrderPayment } from '@/lib/site/paidOrders'
@@ -49,8 +49,17 @@ function sourceIp(req: NextRequest): string | null {
 export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params
 
-  // 1. Which store, which payment — from a value we minted, never from the body.
-  const claim = await readCallbackToken(token)
+  /*
+   * 1. Which store, which payment — from a value we minted, never from the body.
+   *
+   * TWO SHAPES ACCEPTED, and the order matters. The short `<site36>-<reference>`
+   * path is what is minted now (see callbackToken.ts: the JWT made a notify_url
+   * 296 characters long, past PayFast's 255-character limit, so the callback was
+   * simply never sent). The JWT is still read because one may be sitting in
+   * PayFast's retry queue against a payment already taken — dropping it would
+   * turn a settled payment into money nobody can account for.
+   */
+  const claim = readCallbackPath(token) ?? (await readCallbackToken(token))
   if (!claim) return ack()
 
   // The raw body, unparsed: the ITN signature is built over the fields in the

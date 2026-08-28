@@ -99,6 +99,17 @@ export type DeclaredItem<Href extends SubpageHref = SubpageHref> = {
    * itself, because a hidden tile is still a URL.
    */
   module?: string
+  /**
+   * The menu area this tile is switched off WITH under Setup → Menu & modules,
+   * without being sold by it. A `MenuArea` from lib/menuAreas.ts.
+   *
+   * The same distinction `NavSection.menuArea` draws, and needed here for the
+   * same reason: the four staff tiles — pay rules, leave types, cost per
+   * employee, commission rules — are base-package, so `module` cannot describe
+   * them. A shop that has switched the Staff section off should not be left
+   * configuring pay rules for a section it cannot see.
+   */
+  menuArea?: string
 }
 
 /** A screen as the hub renders it, with its name resolved. */
@@ -157,10 +168,19 @@ export function groupsFor(
    * silently emptying itself.
    */
   holds: (module: string) => boolean = () => true,
+  /**
+   * Whether the shop has SWITCHED THIS AREA OFF under Setup → Menu & modules.
+   * Only `menuArea` consults it — see the note on that field. Permissive by
+   * default for the same reason `holds` is.
+   */
+  menuHidden: (area: string) => boolean = () => false,
 ): HubGroup[] {
   return groups.flatMap((group) => {
     const items = group.items.filter(
-      (item) => granted(item.capability) && (!item.module || holds(item.module)),
+      (item) =>
+        granted(item.capability) &&
+        (!item.module || holds(item.module)) &&
+        (!item.menuArea || !menuHidden(item.menuArea)),
     )
     return items.length ? [{ ...group, items }] : []
   })

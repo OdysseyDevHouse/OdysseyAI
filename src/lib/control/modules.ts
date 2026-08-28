@@ -47,56 +47,32 @@ import { billableDeviceCount } from './devices'
 type Row = RowDataPacket & Record<string, unknown>
 
 /**
- * The catalogue. These strings are PERSISTED, so they are permanent — renaming
- * one orphans every row that carries it.
+ * The catalogue itself lives in moduleCatalogue.ts and is re-exported here.
  *
- * No dots, deliberately: `loyalty.view` is a capability and `loyalty` is a
- * module, and the two get passed to similarly-shaped predicates. Making them
- * look different is the cheapest guard against one being handed to the other.
- */
-export const MODULE_KEYS = [
-  'starter',
-  'inventory_advanced',
-  'multi_branch',
-  'customers',
-  'online_store',
-  'loyalty',
-  'job_cards',
-  'accounting',
-] as const
-
-export type ModuleKey = (typeof MODULE_KEYS)[number]
-
-/**
- * Always held, never sold separately, cannot be removed.
+ * It moved because it is pure data and this file is `server-only`: a client
+ * component that merely wants to NAME a module — the switch list under Setup →
+ * Menu & modules — cannot import from here without pulling the control database
+ * and `next/headers` into the browser bundle. See that file for the full note.
  *
- * It is in the price book because it appears on the bill, but it is not
- * something a screen ever gates on: every site has it by definition, so
- * `has(e, 'starter')` is always true and a guard written against it would be
- * dead code that reads like a real check.
+ * Re-exported rather than relocated outright so that every existing importer,
+ * and anyone asking "what is a module", still finds the answer at this address.
  */
-export const BASE_MODULE: ModuleKey = 'starter'
+export {
+  MODULE_KEYS,
+  BASE_MODULE,
+  DEVICE_MODULE_KEY,
+  MODULE_LABELS,
+  type ModuleKey,
+} from './moduleCatalogue'
 
-/**
- * POS device licences: a QUANTITY, not a feature.
- *
- * Deliberately outside ModuleKey. Nothing gates on it — cp2_devices is the
- * authority for whether a till may trade, and this key exists only so the
- * licences appear as a line on the same bill as everything else.
- */
-export const DEVICE_MODULE_KEY = 'pos_device'
-
-/** Human names for the catalogue. The billing screen and /upgrade share these. */
-export const MODULE_LABELS: Record<ModuleKey, string> = {
-  starter: 'Starter Pack',
-  inventory_advanced: 'Advanced Inventory',
-  multi_branch: 'Multi-Branch',
-  customers: 'Customers',
-  online_store: 'Online Store',
-  loyalty: 'Loyalty',
-  job_cards: 'Job Cards',
-  accounting: 'Accounting',
-}
+/* Imported as well as re-exported: `export … from` forwards a name without
+   binding it locally, and everything below this line uses all four. */
+import {
+  MODULE_KEYS,
+  BASE_MODULE,
+  DEVICE_MODULE_KEY,
+  type ModuleKey,
+} from './moduleCatalogue'
 
 export type AccountStatus = 'trial' | 'active' | 'suspended' | 'closed'
 

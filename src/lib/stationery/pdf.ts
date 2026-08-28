@@ -422,17 +422,17 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
     case 'vatSummary':
       return titled(
         ctx,
-        b.title ?? `${input.taxLabel ?? 'VAT'} SUMMARY`,
+        blockTitle(b.title, '{{tax}} SUMMARY', input.taxLabel),
         tokenValue('totals.vatSummary', v, docKey),
         box,
         align,
       )
 
     case 'banking':
-      return titled(ctx, b.title ?? 'BANKING DETAILS', tokenValue('banking', v, docKey), box, align)
+      return titled(ctx, blockTitle(b.title, 'BANKING DETAILS', input.taxLabel), tokenValue('banking', v, docKey), box, align)
 
     case 'notes':
-      return titled(ctx, b.title ?? 'NOTES', tokenValue('doc.notes', v, docKey), box, align)
+      return titled(ctx, blockTitle(b.title, 'NOTES', input.taxLabel), tokenValue('doc.notes', v, docKey), box, align)
 
     case 'text': {
       const text = resolveText(b.text ?? '', v, docKey)
@@ -456,7 +456,7 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
        * A rule to sign on, with its label under it — where a signature line puts
        * it, because the space above the line is what gets written in.
        */
-      const label = b.title ?? 'Received by'
+      const label = blockTitle(b.title, 'Received by', input.taxLabel)
       rule(doc, box.y + 26, box.x, box.w)
       doc
         .font('Helvetica')
@@ -487,6 +487,32 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
 }
 
 /** A caption over one value, which disappears entirely when the value is empty. */
+/**
+ * A block title with `{{tax}}` resolved to the shop's word for VAT.
+ *
+ * ── WHY A TITLE CARRIES A MARKER AT ALL ───────────────────────────────────
+ *
+ * The block compiler writes "{{tax}} SUMMARY" as the DEFAULT title, so a shop
+ * that calls its tax something else gets its own word without editing anything.
+ * The marker is resolved at print time rather than at design time, because a
+ * design copied to another shop must not carry the first one's tax name.
+ *
+ * ── THE BUG THIS CLOSES ───────────────────────────────────────────────────
+ *
+ * The HTML renderer resolves `{{tax}}` across the whole document (render.ts), so
+ * the designer preview and the on-screen document were always right. This PDF
+ * renderer resolved it only for CATALOG labels, never for a saved block title —
+ * and `b.title ?? default` means a stored title bypasses the default entirely.
+ *
+ * So an emailed invoice printed the literal text "{{TAX}} SUMMARY" while the
+ * designer showed "VAT SUMMARY", which is the worst shape for this kind of bug:
+ * the preview is not lying about the layout, only about one word, and the first
+ * person to see it is the customer.
+ */
+function blockTitle(title: string | undefined, fallback: string, taxLabel?: string): string {
+  return (title ?? fallback).replace(/\{\{tax\}\}/g, taxLabel ?? 'VAT')
+}
+
 function titled(
   ctx: Ctx,
   title: string,

@@ -139,6 +139,7 @@ export {
   SettingRowsSkeleton,
 } from './Skeleton'
 export { TextLink, TextLinkButton } from './TextLink'
+export { CopyLink } from './CopyLink'
 export { FieldGroup } from './FieldGroup'
 
 export { DataTable, type Column, type SortState, type SortDirection } from './DataTable'

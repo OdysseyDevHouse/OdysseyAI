@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import { headers } from 'next/headers'
-import { readCallbackToken } from '@/lib/callbackToken'
+import { readCallbackToken, callbackPath } from '@/lib/callbackToken'
 import { getGateway, getIntent } from '@/lib/site/payments'
 import { payableInvoice } from '@/lib/site/paidInvoices'
 import { buildCheckoutForm } from '@/lib/payfast/checkout'
@@ -114,7 +114,17 @@ export default async function PayPage({ params }: Props) {
     // Neither of these proves payment — only the notify URL does.
     returnUrl: `${origin}/pay/${token}/done`,
     cancelUrl: `${origin}/pay/${token}`,
-    notifyUrl: `${origin}/api/payments/payfast/${token}`,
+    /*
+     * The SHORT callback path, NOT this page's own token.
+     *
+     * Reusing `token` here was neat and produced a 296-character notify URL —
+     * past PayFast's documented 255-character limit for that field. PayFast
+     * accepts the checkout form anyway and then never posts the callback, so
+     * the money moves and nothing on our side ever hears about it. The link in
+     * the email keeps its JWT, which is right for a mailed link; only the
+     * machine-to-machine address is shortened. See callbackToken.ts.
+     */
+    notifyUrl: `${origin}/api/payments/payfast/${callbackPath(claim.siteId, intent.reference)}`,
   })
 
   return (

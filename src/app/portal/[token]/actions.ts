@@ -4,7 +4,7 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { verifyPortalToken } from '@/lib/publicPortalToken'
 import { getCustomerSession, clearCustomerCookie } from '@/lib/customerSession'
-import { requestLink, portalSettings } from '@/lib/site/portalAuth'
+import { requestLink, portalSettings, portalIsOpen } from '@/lib/site/portalAuth'
 import { portalComment, payLinkFor, ownsQuote, portalUpload } from '@/lib/site/portalData'
 import { acceptQuote } from '@/lib/site/jobQuotes'
 import { revalidatePath } from 'next/cache'
@@ -35,7 +35,7 @@ async function customerFor(
   const siteId = await verifyPortalToken(token)
   if (siteId === null) return null
   const settings = await portalSettings(siteId)
-  if (!settings.isEnabled) return null
+  if (!portalIsOpen(settings)) return null
   const session = await getCustomerSession(siteId)
   if (!session) return null
   return { siteId, customerId: session.customerId, name: session.name }
@@ -130,6 +130,18 @@ export async function payInvoiceAction(
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const me = await customerFor(token)
   if (!me) return { ok: false, error: 'Please sign in again.' }
+
+  /*
+   * The switch is checked HERE, not only where the button is drawn. A server
+   * action is a public endpoint: hiding the button stops it being pressed by
+   * accident, and this stops it being called on purpose by a shop that turned
+   * online payment off.
+   */
+  const settings = await portalSettings(me.siteId)
+  if (!settings.allowPay) {
+    return { ok: false, error: 'Please contact the business to settle this invoice.' }
+  }
+
   return payLinkFor(me.siteId, me.customerId, documentId)
 }
 

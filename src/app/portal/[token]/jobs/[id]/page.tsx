@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
-import { requireCustomer } from '../../guard'
+import { requireSection } from '../../guard'
 import { portalJob } from '@/lib/site/portalData'
 import { publicSiteName } from '@/lib/sites'
 import PortalShell, { PortalNav } from '../../PortalShell'
@@ -42,7 +42,7 @@ export default async function PortalJobPage({
   params: Promise<{ token: string; id: string }>
 }) {
   const { token, id } = await params
-  const ctx = await requireCustomer(token)
+  const ctx = await requireSection(token, 'jobs')
 
   const jobId = Number(id)
   if (!Number.isFinite(jobId) || jobId <= 0) notFound()
@@ -60,7 +60,7 @@ export default async function PortalJobPage({
   return (
     <PortalShell
       name={name ?? undefined}
-      nav={<PortalNav token={token} active="jobs" onSignOut={<SignOutButton token={token} />} />}
+      nav={<PortalNav token={token} active="jobs" settings={ctx.settings} onSignOut={<SignOutButton token={token} />} />}
     >
       <p className="text-xs text-muted">
         <TextLink href={`/portal/${token}/jobs`}>&larr; All your jobs</TextLink>

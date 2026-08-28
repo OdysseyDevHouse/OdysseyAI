@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { PanelLeft, Search, ChevronDown } from '@/components/ui/icons'
 import { Button } from '@/components/ui'
 import GlobalSearch from '@/components/GlobalSearch'
+import SettingAnchor from '@/components/SettingAnchor'
 import {
   NAV,
   hubFor,
@@ -96,15 +97,23 @@ export default function Sidebar({
   granted,
   isOwner,
   modules,
+  hiddenAreas = [],
 }: {
   granted: string[]
   isOwner: boolean
   /**
-   * The modules this SHOP has bought, as plain strings for the same reason
-   * `granted` is. Unlike capabilities, an owner does NOT bypass these: owning
-   * the shop does not mean having paid for Loyalty.
+   * The modules this shop has bought AND not switched off — what the menu should
+   * be built from. Plain strings for the same reason `granted` is. Unlike
+   * capabilities, an owner does NOT bypass these: owning the shop does not mean
+   * having paid for Loyalty.
    */
   modules: string[]
+  /**
+   * The modules deliberately switched off under Setup → Menu & modules, as
+   * opposed to never bought. Only a section marked `menuModule` needs the
+   * distinction — see the note on that field in lib/nav.ts.
+   */
+  hiddenAreas?: string[]
 }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
@@ -122,9 +131,11 @@ export default function Sidebar({
      watches it. */
   const grantedKey = granted.join(',')
   const modulesKey = modules.join(',')
+  const hiddenKey = hiddenAreas.join(',')
   const visible = useMemo(() => {
     const held = new Set(granted)
     const bought = new Set(modules)
+    const switchedOff = new Set(hiddenAreas)
     /* The owner bypass applies to CAPABILITIES only. A capability is something
        an owner could grant themselves anyway, so short-circuiting it saves a
        round trip and changes nothing. A module is something they would have to
@@ -133,9 +144,10 @@ export default function Sidebar({
     return navFor(
       (capability) => isOwner || held.has(capability),
       (module) => bought.has(module),
+      (module) => switchedOff.has(module),
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grantedKey, modulesKey, isOwner])
+  }, [grantedKey, modulesKey, hiddenKey, isOwner])
 
   /**
    * ONE open section, not a set of them.
@@ -366,6 +378,12 @@ export default function Sidebar({
         onClose={() => setSearchOpen(false)}
         sections={visible}
       />
+
+      {/* The far half of a settings result: scrolls to the panel the palette
+          sent somebody to and flashes it. Mounted here rather than in the
+          layout because the layout has two branches — desktop and web — and one
+          of them would eventually be edited without the other. */}
+      <SettingAnchor />
 
 
       {/* `overflow-y-auto` also clips horizontally, which would cut a flyout off
