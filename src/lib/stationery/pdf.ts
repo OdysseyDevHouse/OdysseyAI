@@ -104,7 +104,7 @@ function valueOf(raw: unknown, format: TokenFormat): string {
     case 'money':
       return typeof raw === 'number' ? formatMoney(raw) : String(raw)
     case 'qty':
-      return typeof raw === 'number' ? formatQty(raw) : String(raw)
+      return typeof raw === 'number' ? formatQty(raw, { exact: true }) : String(raw)
     case 'percent':
       return typeof raw === 'number' ? `${Number(raw.toFixed(2))}%` : String(raw)
     case 'markup':

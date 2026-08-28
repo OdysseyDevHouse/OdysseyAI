@@ -45,7 +45,7 @@ export function renderReceipt(data: ReceiptData, opts: SlipOptions = {}): Uint8A
   job.align('left').line('-'.repeat(columns))
 
   for (const line of data.lines) {
-    const label = `${formatQty(line.qty)} x ${line.description}`
+    const label = `${formatQty(line.qty, { exact: true })} x ${line.description}`
     if (data.gift) {
       for (const piece of wrapText(label, columns)) job.line(piece)
     } else {
@@ -59,7 +59,7 @@ export function renderReceipt(data: ReceiptData, opts: SlipOptions = {}): Uint8A
          R0.00 line stops looking like a pricing error. */
       if (line.discountIncl > 0 || line.specialName) {
         const off = line.discountIncl > 0
-          ? `${line.specialName ? ' - ' : ''}${formatQty(line.discountPct)}% off`
+          ? `${line.specialName ? ' - ' : ''}${formatQty(line.discountPct, { exact: true })}% off`
           : ''
         job.line(
           twoCol(
@@ -134,7 +134,7 @@ export function renderBill(data: BillData, opts: SlipOptions = {}): Uint8Array {
 
   job.align('left').line('-'.repeat(columns))
   for (const line of data.lines) {
-    job.line(twoCol(`${formatQty(line.qty)} x ${line.description}`, formatMoney(line.lineTotalIncl), columns))
+    job.line(twoCol(`${formatQty(line.qty, { exact: true })} x ${line.description}`, formatMoney(line.lineTotalIncl), columns))
     for (const note of line.notes) {
       for (const piece of wrapText(`  ${note}`, columns)) job.line(piece)
     }
@@ -241,7 +241,7 @@ export function renderKitchenTicket(data: KitchenTicketData, opts: SlipOptions =
       /* Every quantity carries the word on a cancellation, not just the header.
          A docket can be torn, or read from halfway down while it is still
          coming off the roll, and a bare "2 x Steak" in that state is an ORDER. */
-      const qty = `${formatQty(line.qty)} x ${line.description}`
+      const qty = `${formatQty(line.qty, { exact: true })} x ${line.description}`
       job.size(2, 2).line(data.cancelled ? `CANCEL ${qty}` : qty).size(1, 1)
       for (const note of line.notes) {
         for (const piece of wrapText(`  ${note}`, columns)) job.line(piece)

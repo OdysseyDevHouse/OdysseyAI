@@ -299,6 +299,7 @@
     "test:tax-identity": "tsx --conditions=react-server --env-file=.env scripts/test-tax-identity.ts",
     "test:cash-denominations": "tsx --conditions=react-server --env-file=.env scripts/test-cash-denominations.ts",
     "test:mail-config": "tsx --conditions=react-server --env-file=.env scripts/test-mail-config.ts",
+    "test:display-precision": "tsx scripts/test-display-precision.ts",
     "test:pos-void": "tsx --conditions=react-server --env-file=.env scripts/test-pos-void.ts",
     "test:quick-keys": "tsx --conditions=react-server --env-file=.env scripts/test-quick-keys.ts",
     "test:saved-baskets": "tsx --conditions=react-server --env-file=.env scripts/test-saved-baskets.ts",

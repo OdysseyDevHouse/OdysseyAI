@@ -18,7 +18,7 @@ import {
   TABLE_TH,
   type ColumnOption,
 } from '@/components/ui'
-import { formatMoney, formatQty, round } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty, round } from '@/lib/decimals'
 import { weightedAverageCost } from '@/lib/documentMath'
 import { addVat, removeVat, sellExclFromGp, sellExclFromMarkup } from '@/lib/pricing'
 import {
@@ -673,7 +673,7 @@ export default function PurchaseLineGrid({
                         }`}
                       >
                         {costShift > 0 ? '↑' : '↓'} {Math.abs(costShift)}% on the last cost of{' '}
-                        <span className="numeric">{formatMoney(line.lastCost)}</span>
+                        <span className="numeric">{formatCost(line.lastCost)}</span>
                       </div>
                     )}
                   </td>

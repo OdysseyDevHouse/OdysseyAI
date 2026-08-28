@@ -269,7 +269,7 @@ function emitBlock(
        */
       if (!block.align) setAlign(job, head, 'left')
       for (const line of data.lines) {
-        const label = `${formatQty(line.qty)} x ${line.description}`
+        const label = `${formatQty(line.qty, { exact: true })} x ${line.description}`
         if (gift) {
           for (const piece of wrapText(label, columns)) job.line(piece)
         } else {
@@ -283,7 +283,7 @@ function emitBlock(
              and a R0.00 line stops looking like a pricing error. */
           if (line.discountIncl > 0 || line.specialName) {
             const off = line.discountIncl > 0
-              ? `${line.specialName ? ' - ' : ''}${formatQty(line.discountPct)}% off`
+              ? `${line.specialName ? ' - ' : ''}${formatQty(line.discountPct, { exact: true })}% off`
               : ''
             job.line(
               twoCol(

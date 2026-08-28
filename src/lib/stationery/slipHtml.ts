@@ -196,7 +196,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
         `<ul class="${cls(b)}">` +
         r.lines
           .map((line) => {
-            const label = `${formatQty(line.qty)} × ${line.description}`
+            const label = `${formatQty(line.qty, { exact: true })} × ${line.description}`
             const money = gift
               ? ''
               : `<span class="numeric shrink-0 text-ink">${escapeHtml(formatMoney(line.lineTotalIncl))}</span>`
@@ -214,7 +214,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
                   `<span class="min-w-0 flex-1">${escapeHtml(
                     `${line.specialName ?? ''}${
                       line.discountIncl > 0
-                        ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct)}% off`
+                        ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct, { exact: true })}% off`
                         : ''
                     }`,
                   )}</span>` +

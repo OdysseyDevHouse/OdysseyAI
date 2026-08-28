@@ -85,6 +85,49 @@ export const SETTING_DEFAULTS = {
   currency_code: 'ZAR',
   currency_symbol: 'R',
 
+  /**
+   * How many decimals a QUANTITY is shown with.
+   *
+   * ── WHY THIS IS A SETTING ─────────────────────────────────────────────────
+   *
+   * `formatQty` has always shown up to three decimals and trimmed the trailing
+   * zeros, which suits a shop selling by weight and reads as clutter to one
+   * selling whole units — "1" and "1.000" are the same fact, and a stock take
+   * of two hundred lines is easier to check when none of them pretend to a
+   * precision the shop does not use.
+   *
+   * ── WHAT IT DOES NOT OVERRIDE ─────────────────────────────────────────────
+   *
+   * A WEIGHED line keeps its decimals whatever this says. 1.5kg displayed as
+   * "2" is not a tidier display, it is a wrong figure on a document somebody
+   * pays against — see `formatQty`, which takes an explicit escape hatch for
+   * exactly that. The setting decides how a COUNT is shown, never how a weight
+   * is.
+   *
+   * ── AND WHAT IT DOES NOT CHANGE ───────────────────────────────────────────
+   *
+   * Anything stored. Quantities are DECIMAL(12,3) and stay that way; this is a
+   * display rule, so a shop can lower it and raise it again without having lost
+   * anything in between.
+   */
+  qty_decimals: '2',
+  /**
+   * How many decimals a COST is shown with, and how many a cost box accepts.
+   *
+   * Two by default, and three or four for the shops that need them: a
+   * distributor buying at 0.0875 a unit loses real money to rounding at two,
+   * and seeing 0.09 in a margin calculation is how that goes unnoticed.
+   *
+   * DISPLAY ONLY, deliberately. Cost columns are DECIMAL(12,4) and keep every
+   * digit they were given — lowering this setting hides precision rather than
+   * destroying it, so a shop that lowers it by mistake has lost nothing and a
+   * shop that raises it gets its own figures back rather than zeros.
+   *
+   * The selling side is not governed by this. A price is money and money has
+   * two decimals; a third would be a price no customer can pay.
+   */
+  cost_decimals: '2',
+
   /* ── The shop's own outgoing mail account ──────────────────────────────
      Empty means "not configured", and every reader then falls back to the
      PROCESS settings in the environment — see lib/mail.ts. That fallback is
@@ -1723,6 +1766,24 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       // better than storing a value that looks configured and never fires.
       if (seconds > 3600) return 'Use Never rather than an inactivity time above an hour.'
       return null
+    }
+
+    case 'qty_decimals': {
+      /* 0 to 3, matching the column: quantities are DECIMAL(12,3), so offering
+         a fourth would promise a digit the database cannot hold. */
+      const places = Number(value)
+      return Number.isInteger(places) && places >= 0 && places <= 3
+        ? null
+        : 'Quantity decimals must be 0, 1, 2 or 3.'
+    }
+
+    case 'cost_decimals': {
+      /* 2 to 4. Below two is not a cost anybody quotes, and above four is more
+         precision than the DECIMAL(12,4) columns carry. */
+      const places = Number(value)
+      return Number.isInteger(places) && places >= 2 && places <= 4
+        ? null
+        : 'Cost decimals must be 2, 3 or 4.'
     }
 
     case 'cashup_mode':

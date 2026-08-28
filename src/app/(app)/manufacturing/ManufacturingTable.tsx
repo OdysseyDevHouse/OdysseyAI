@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { Badge, DataTable, Icons, type Column } from '@/components/ui'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty } from '@/lib/decimals'
 
 /**
  * The build list.
@@ -84,7 +84,7 @@ export default function ManufacturingTable({ rows }: { rows: BuildRow[] }) {
       key: 'unitCost',
       header: 'Unit cost',
       numeric: true,
-      cell: (b) => formatMoney(b.unitCostExcl),
+      cell: (b) => formatCost(b.unitCostExcl),
       sortValue: (b) => b.unitCostExcl,
     },
     {

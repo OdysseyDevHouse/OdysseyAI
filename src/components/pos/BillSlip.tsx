@@ -57,7 +57,7 @@ export function BillSlip({ bill }: { bill: BillData }) {
                     </div>
                   ))}
                 </td>
-                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatQty(line.qty)}</td>
+                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatQty(line.qty, { exact: true })}</td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-ink`}>
                   {formatMoney(line.lineTotalIncl)}
                 </td>

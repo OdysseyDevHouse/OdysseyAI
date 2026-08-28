@@ -11,6 +11,9 @@ import { ToastProvider } from '@/components/ui'
 import DesktopLicenceGate from './DesktopLicenceGate'
 import LeaseLockScreen from './LeaseLockScreen'
 import { lockState } from '@/lib/licence/lockState'
+import PrecisionProvider from '@/components/PrecisionProvider'
+import { getSettings } from '@/lib/site/settings'
+import { setDisplayPrecision } from '@/lib/decimals'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   /* Read once, on the server. `APP_MODE` is baked in by `build:desktop`, so this
@@ -28,6 +31,30 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // request rather than trusted from the token — so access revoked upstream or
   // a role changed on the permissions screen takes effect on the next load.
   const { site, user, capabilities, modules } = await requireSiteUser()
+
+  /*
+   * ── HOW MANY DECIMALS THIS SHOP SHOWS ───────────────────────────────────
+   *
+   * Set on the module before anything below renders, because `formatQty` and
+   * `formatCost` are called from server components deep in the tree and cannot
+   * each be handed a preference — see lib/decimals.ts for why it is a set
+   * value rather than a parameter at 248 call sites.
+   *
+   * PER REQUEST, and that is the load-bearing part: one Node process serves
+   * many shops, so a value read once at boot would be whichever site rendered
+   * first and every other shop would silently inherit it. A request is handled
+   * to completion before the next layout runs, so setting it here is safe.
+   *
+   * A failed read leaves the defaults in place, which are exactly what these
+   * functions printed before the setting existed. `PrecisionProvider` below
+   * carries the same two numbers into the client half of the tree.
+   */
+  const decimals = await getSettings(site.id, ['qty_decimals', 'cost_decimals']).catch(() => null)
+  const precision = {
+    qty: Number(decimals?.qty_decimals ?? 2),
+    cost: Number(decimals?.cost_decimals ?? 2),
+  }
+  setDisplayPrecision(precision)
 
   /*
    * ── OUT OF LEASE: NOTHING ELSE RENDERS ──────────────────────────────────
@@ -114,9 +141,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         />
         {/* min-h-0 so the pane scrolls instead of the children being crushed —
             a flex column hands its children infinite height otherwise. */}
-        <main className="min-h-0 flex-1 overflow-y-auto bg-canvas">
+        {/* `relative` for the same reason as the desktop shell below — a static
+            scroll pane does not contain absolutely positioned descendants, and
+            they stretch the document into a second scrollbar. */}
+        <main className="relative min-h-0 flex-1 overflow-y-auto bg-canvas">
           <ToastProvider>
-            {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            <PrecisionProvider qty={precision.qty} cost={precision.cost}>
+              {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            </PrecisionProvider>
           </ToastProvider>
         </main>
       </div>
@@ -145,7 +177,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           roleName={user.roleName}
           unreadNotifications={unread}
         />
-        <main className="flex-1 overflow-y-auto bg-canvas">
+        {/* `relative` is what makes `overflow-y-auto` above actually CONTAIN the
+            page. Without it this pane is `position: static`, so any absolutely
+            positioned descendant resolves against the VIEWPORT rather than this
+            box — it escapes the clip and stretches the document behind it. The
+            symptom is two scrollbars: the pane's own, plus a second on the
+            window scrolling tens of thousands of pixels of blank space. The
+            style guide showed it worst (27212px of nothing) because its preview
+            frames hold whole absolutely-positioned screens, but the leak was in
+            the shell and every long page could feed it. */}
+        <main className="relative flex-1 overflow-y-auto bg-canvas">
           {/* Toasts are the standard outcome message for any action, so the
               provider sits above every page rather than per-screen. */}
           <ToastProvider>
@@ -161,7 +202,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               claiming to be desktop would be claiming its way into a check, and
               one claiming to be a browser could otherwise skip it.
             */}
-            {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            <PrecisionProvider qty={precision.qty} cost={precision.cost}>
+              {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            </PrecisionProvider>
           </ToastProvider>
         </main>
       </div>

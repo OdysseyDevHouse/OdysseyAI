@@ -139,12 +139,25 @@ export function formatValue(value: unknown, format: TokenFormat): string {
   switch (format) {
     case 'money':
       return escapeHtml(formatMoney(value))
+    /*
+     * `exact`, so a document is NOT governed by the shop's display setting.
+     *
+     * The setting decides how many decimals a SCREEN shows. Paper is a
+     * different promise: a slip cannot be reprinted once the customer has
+     * walked out, and an invoice is the figure somebody pays against — so the
+     * decision to change what prints on one is deliberate work, taken on its
+     * own, rather than a side effect of a preference set for a stock take.
+     *
+     * The whole print path is pinned this way: escpos/slips.ts, slipSpec.ts,
+     * slipHtml.ts, stationery/pdf.ts and the two slip components. When the
+     * print side does follow the setting, these are the call sites to change.
+     */
     case 'qty':
-      return escapeHtml(formatQty(value))
+      return escapeHtml(formatQty(value, { exact: true }))
     case 'percent': {
       const n = typeof value === 'number' ? value : Number(value)
       if (!Number.isFinite(n) || n === 0) return ''
-      return escapeHtml(`${formatQty(n)}%`)
+      return escapeHtml(`${formatQty(n, { exact: true })}%`)
     }
     case 'multiline':
       // Escaped FIRST, then newlines become breaks: the text can never

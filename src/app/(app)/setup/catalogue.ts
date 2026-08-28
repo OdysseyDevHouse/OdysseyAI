@@ -443,6 +443,17 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        /* Beside numbering: both shape how the app PRESENTS itself rather than
+           what it does, and neither changes a stored figure. */
+        href: '/setup/decimals',
+        description: 'How many decimals your quantities and costs are shown with.',
+        keywords:
+          'decimals decimal places precision rounding quantity qty cost digits display format weight',
+        icon: 'Hash',
+        tone: 'slate',
+        capability: 'setup.edit',
+      },
+      {
         /* Under System rather than under Jobs, because it is not a job feature:
            the same mechanism serves jobs, customers and equipment, and filing it
            beside the job workflow would be the first step towards it becoming

@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { requireModuleCapability } from '@/lib/auth'
 import { getBuild } from '@/lib/site/manufacturing'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
@@ -75,7 +75,7 @@ export default async function BuildPage({ params }: { params: Promise<{ id: stri
           <StatTile label="Extra costs" value={formatMoney(build.overheadCost)} />
           {/* The figure this whole document exists to produce: what one made
               unit cost, and therefore what it is worth in stock. */}
-          <StatTile label="Cost of one" value={formatMoney(build.unitCostExcl)} />
+          <StatTile label="Cost of one" value={formatCost(build.unitCostExcl)} />
         </StatStrip>
 
         <Card>

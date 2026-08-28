@@ -51,7 +51,7 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
           <li key={i} className="py-0.5 text-[12px]">
             <div className="flex justify-between gap-2">
               <span className="min-w-0 flex-1 text-ink">
-                {formatQty(line.qty)} × {line.description}
+                {formatQty(line.qty, { exact: true })} × {line.description}
               </span>
               {!gift && (
                 <span className="numeric shrink-0 text-ink">{formatMoney(line.lineTotalIncl)}</span>
@@ -71,7 +71,7 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
                 <span className="min-w-0 flex-1">
                   {line.specialName ?? ''}
                   {line.discountIncl > 0
-                    ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct)}% off`
+                    ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct, { exact: true })}% off`
                     : ''}
                 </span>
                 {line.discountIncl > 0 ? (
