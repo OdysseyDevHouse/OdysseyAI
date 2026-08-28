@@ -27,16 +27,23 @@ Do not darken these files themselves; tune that one class.
 
 Filenames are exact and lower-case. `.webp` only — the URL is built from the slug.
 
-| Site type id | Type in the control panel | File                  | Present |
-| ------------ | ------------------------- | --------------------- | ------- |
-| 1            | Bakery                    | `bakery.webp`         | yes     |
-| 2            | Bar                       | `bar.webp`            | yes     |
-| 3            | Beauty Salon              | `beauty-salon.webp`   | yes     |
-| 4            | Biltong Deli              | `biltong-deli.webp`   | yes     |
-| 5            | Bottle Store              | `bottle-store.webp`   | yes     |
-| 6            | Boutique                  | `boutique.webp`       | yes     |
-| 7            | Butchery                  | `butchery.webp`       | yes     |
-| 8            | Clothing/Shoes            | `clothing-shoes.webp` | yes     |
+| Site type id | Type in the control panel | File                    | Present |
+| ------------ | ------------------------- | ----------------------- | ------- |
+| 1            | Bakery                    | `bakery.webp`           | yes     |
+| 2            | Bar                       | `bar.webp`              | yes     |
+| 3            | Beauty Salon              | `beauty-salon.webp`     | yes     |
+| 4            | Biltong Deli              | `biltong-deli.webp`     | yes     |
+| 5            | Bottle Store              | `bottle-store.webp`     | yes     |
+| 6            | Boutique                  | `boutique.webp`         | yes     |
+| 7            | Butchery                  | `butchery.webp`         | yes     |
+| 8            | Clothing/Shoes            | `clothing-shoes.webp`   | yes     |
+| 9            | Coffee Shop               | `coffee-shop.webp`      | yes     |
+| 10           | Cosmetics                 | `cosmetics.webp`        | yes     |
+| 11           | Cycling Shop              | `cycling-shop.webp`     | yes     |
+| 12           | Electronics               | `electronics.webp`      | yes     |
+| 13           | Fast Food Cafe            | `fast-food-cafe.webp`   | yes     |
+| 14           | General Retailer          | `general-retailer.webp` | yes     |
+| 15           | Golf Club/Shop            | `golf-club-shop.webp`   | yes     |
 
 `bottle-store.webp` is the only one that is genuinely required — every failure
 lands on it.
@@ -48,13 +55,6 @@ then add its id to `STOCK_BY_SITE_TYPE`:
 
 | Id | Type              | Suggested file           |
 | -- | ----------------- | ------------------------ |
-| 9  | Coffee Shop       | `coffee-shop.webp`       |
-| 10 | Cosmetics         | `cosmetics.webp`         |
-| 11 | Cycling Shop      | `cycling-shop.webp`      |
-| 12 | Electronics       | `electronics.webp`       |
-| 13 | Fast Food Cafe    | `fast-food-cafe.webp`    |
-| 14 | General Retailer  | `general-retailer.webp`  |
-| 15 | Golf Club/Shop    | `golf-club-shop.webp`    |
 | 16 | Gun Shop          | `gun-shop.webp`          |
 | 17 | Hardware Store    | `hardware-store.webp`    |
 | 18 | Hotel / Lodge     | `hotel-lodge.webp`       |

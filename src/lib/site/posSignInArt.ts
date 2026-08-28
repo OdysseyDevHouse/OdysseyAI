@@ -45,7 +45,7 @@ import { storeImageUpload, deleteStoredFile, readStoredFile, sniffImage } from '
  * Where the bundled sign-in photographs live.
  *
  * `public/`, not the uploads directory, and the difference matters. These ship
- * WITH the application: they are the same eight files on every installation,
+ * WITH the application: they are the same fifteen files on every installation,
  * they are not a shop's data, and a till that has never reached the server must
  * still paint one. An upload lives on a disk the desktop build may not have; a
  * file under `public/` is served by the Next server running on the till itself,
@@ -64,7 +64,7 @@ const STOCK_DIR = '/signin'
  * actually holds.
  *
  * Absent ids are NOT an error and not a gap to be filled with a placeholder:
- * eighteen of the twenty-six types have no photograph yet, a brand new type
+ * eleven of the twenty-six types have no photograph yet, a brand new type
  * added in the control panel tomorrow will have none either, and all of them
  * fall to the default below. See `stockBackdrop`.
  */
@@ -77,6 +77,13 @@ const STOCK_BY_SITE_TYPE: Record<number, string> = {
   6: 'boutique',
   7: 'butchery',
   8: 'clothing-shoes',
+  9: 'coffee-shop',
+  10: 'cosmetics',
+  11: 'cycling-shop',
+  12: 'electronics',
+  13: 'fast-food-cafe',
+  14: 'general-retailer',
+  15: 'golf-club-shop',
 }
 
 /**

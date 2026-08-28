@@ -3,6 +3,7 @@ import { ShieldCheck } from '@/components/ui/icons'
 import LoginForm from './login/LoginForm'
 import LocalLoginForm from './login/LocalLoginForm'
 import { localSiteId } from '@/lib/localSignIn'
+import { cloudSiteMessage } from '@/lib/desktopBackOffice'
 import styles from './login.module.css'
 
 /**
@@ -28,9 +29,9 @@ import styles from './login.module.css'
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; kicked?: string }>
+  searchParams: Promise<{ next?: string; kicked?: string; cloudsite?: string }>
 }) {
-  const { next, kicked } = await searchParams
+  const { next, kicked, cloudsite } = await searchParams
   const local = await localSiteId()
 
   return (
@@ -61,6 +62,16 @@ export default async function HomePage({
         {kicked === '1' && (
           <div className={styles.notice} role="status">
             You were signed out because this account signed in on another device.
+          </div>
+        )}
+
+        {/* A store that was open here and is not any more: requireSite() sets
+            this when connection_type has been changed to cloud under a live
+            session. Distinct from `kicked` on purpose — the remedy is a
+            browser, not another attempt at this form. */}
+        {cloudsite === '1' && (
+          <div className={styles.notice} role="status">
+            {cloudSiteMessage()}
           </div>
         )}
 

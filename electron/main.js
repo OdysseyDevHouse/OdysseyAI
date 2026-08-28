@@ -11,6 +11,7 @@ const mariaService = require('./mariaService')
 const replicationTunnel = require('./replicationTunnel')
 const { isPos, isDatabaseSetup, startPath, posNavigation, setupNavigation } = require('./appRole')
 const dbSetupBridge = require('./dbSetupBridge')
+const { applyMigrations } = require('./siteMigrate')
 const log = require('./log')
 const updater = require('./updater')
 
@@ -99,6 +100,76 @@ function waitForServer(url, timeoutMs = 60000) {
  * A packaged build had none of this: main.js never loaded a .env, so `npm run
  * dist` produced an app that could not open a connection at all.
  */
+/**
+ * Bring an ADOPTED shop's own database up to this build's schema.
+ *
+ * ── THE GAP THIS CLOSES ─────────────────────────────────────────────────────
+ *
+ * Odyssey Database Setup applies sql/site/*.sql when it adopts a machine, and
+ * until now that was the ONLY thing that ever did. So every migration written
+ * after a shop was set up was stranded: the Back Office shipped with the files
+ * in resources/sql, read none of them, and the shop stayed on the schema it had
+ * on the day it was installed. The only way to move it forward was for somebody
+ * to re-run Setup's "Retrieve new details" — which nobody would think to do,
+ * because nothing says a schema is behind.
+ *
+ * It surfaced the first time a back-office feature depended on a new table: the
+ * offline site-profile mirror (sql/site/238) exists in the installer, is never
+ * applied, and a shop with no line then fails on the very screen the mirror was
+ * written to keep working.
+ *
+ * ── WHY IT IS SAFE TO RUN ON EVERY START ────────────────────────────────────
+ *
+ * applyMigrations is incremental: it records each file in `schema_migrations`
+ * and applies only what is missing, which is exactly what `npm run
+ * test:site-migrate` asserts by running it twice. On a shop that is up to date
+ * this is one indexed SELECT and nothing else.
+ *
+ * ── AND WHY A FAILURE DOES NOT STOP THE APP ─────────────────────────────────
+ *
+ * Deliberate, and the opposite of what Setup does. Setup is a technician
+ * standing at a machine who can act on "migration 137 failed"; this is a shop
+ * opening at seven in the morning. A schema that could not be moved forward is
+ * a degraded feature; a Back Office that refuses to start is a shop that cannot
+ * trade. So it is logged, the run is retried on the next start, and every
+ * reader of a new table is written to tolerate its absence.
+ */
+async function migrateAdoptedSite(onProgress) {
+  const host = process.env.ODYSSEY_SITE_DB_HOST;
+  const name = process.env.ODYSSEY_SITE_DB_NAME;
+  const user = process.env.ODYSSEY_SITE_DB_USER;
+  const password = process.env.ODYSSEY_SITE_DB_PASSWORD;
+  /* Only the adopted model sets all four. A self-provisioning install has no
+     ODYSSEY_SITE_DB_* at all — its site databases are described in its own
+     local control database, and Setup never touched it. */
+  if (!host || !name || !user || password === undefined) return;
+
+  const mysql = require('mysql2/promise');
+  let conn;
+  try {
+    conn = await mysql.createConnection({
+      host,
+      port: Number(process.env.ODYSSEY_SITE_DB_PORT) || 3306,
+      user,
+      password,
+      database: name,
+      /* Migration files hold several statements each, exactly as
+         dbSetupBridge opens its own connection. */
+      multipleStatements: true,
+    });
+    const ran = await applyMigrations(conn, {
+      /* Silent when there is nothing to do — a shop opening should not be told
+         about a schema that did not change. */
+      onProgress: (m) => onProgress?.(m),
+    });
+    if (ran) console.log(`[schema] applied ${ran} site migration(s).`);
+  } catch (err) {
+    console.error('[schema] could not bring the shop database up to date:', err.message);
+  } finally {
+    if (conn) await conn.end().catch(() => {});
+  }
+}
+
 async function prepareRuntime(onProgress) {
   const { env, mode } = runtimeConfig.resolveEnv()
   Object.assign(process.env, env)
@@ -134,6 +205,8 @@ async function prepareRuntime(onProgress) {
           `Open Services, start "${mariaService.SERVICE_NAME}", and try again.`,
       )
     })
+
+    await migrateAdoptedSite(onProgress)
     return { mode }
   }
 

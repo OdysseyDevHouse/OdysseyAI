@@ -29,6 +29,7 @@ export function PinPad({
   busy = false,
   submitLabel = 'OK',
   wide = false,
+  display = 'box',
   rejectedAt = 0,
 }: {
   /** Digits before it submits itself. Six-digit PINs need an explicit Enter. */
@@ -40,9 +41,12 @@ export function PinPad({
   /**
    * The confirm key's caption.
    *
-   * Short — it is one cell of a three-wide grid, not a full-width button, so
-   * anything much past "OK" either wraps or shrinks the type below the size a
-   * finger aims at. The screen around the pad is where the verb belongs.
+   * Short — it is one cell of a three-wide grid, not a full-width button. The
+   * wide pad's cell is about 165px and holds roughly ten characters at the size
+   * a finger aims at ("Open till" on the sign-in screen is the longest in use);
+   * the narrow pad inside a dialog has far less and should keep "OK". Past that
+   * the label would have to shrink below a touch size, and the verb belongs on
+   * the screen around the pad instead.
    */
   submitLabel?: string
   /**
@@ -54,6 +58,22 @@ export function PinPad({
    * the narrow default.
    */
   wide?: boolean
+  /**
+   * How the entry so far is drawn.
+   *
+   * `box` is the default and what every pad inside a dialog wears: a bordered
+   * field that carries an "Enter PIN" prompt while it is empty, because a pad
+   * that appears mid-task has to say what it wants.
+   *
+   * `dots` is the till's own sign-in screen, where the words above the pad
+   * already say it — a second prompt inside the box was the same sentence
+   * twice. Bare dots also read as progress from across a counter, which a
+   * bordered field does not.
+   *
+   * Both are exactly one `length` of dots and neither ever renders a digit:
+   * the customer is standing on the other side of the screen.
+   */
+  display?: 'box' | 'dots'
   /**
    * Bump on every rejected attempt to shake the pad.
    *
@@ -180,18 +200,39 @@ export function PinPad({
             reason this is not an <input> — the customer is standing on the other
             side of the screen, and a till that renders the digits hands them the
             PIN. */}
-        <div className="flex h-[58px] w-full items-center justify-center rounded-card border border-border bg-canvas px-4">
-          {pin.length === 0 ? (
-            <span className="text-sm font-semibold text-muted">Enter PIN</span>
-          ) : (
-            /* pl-[8px]: letter-spacing is applied after the LAST bullet too, so
-               the glyph row carries a trailing gap and centring lands it 4px
-               left of true. The padding gives that space back. */
-            <span className="pl-[8px] text-[26px] font-extrabold tracking-[8px] text-ink">
-              {'•'.repeat(pin.length)}
-            </span>
-          )}
-        </div>
+        {/* The SAME 58px tall either way, so the pad's overall height does not
+            depend on which display it wears — the sign-in screen's 706px pane
+            is measured from this, and a variant that came out shorter would
+            leave the picture beside it hanging past the card. */}
+        {display === 'dots' ? (
+          /* One dot per expected digit, filling left to right.
+             A count of what is left to type rather than a field being filled
+             in: `length` dots exist from the start and change colour, so the
+             row never changes width and nothing moves as a thumb works. */
+          <div className="flex h-[58px] w-full items-center justify-center gap-3">
+            {Array.from({ length }).map((_, i) => (
+              <span
+                key={i}
+                className={`h-2.5 w-2.5 rounded-pill transition ${
+                  i < pin.length ? 'bg-brand' : 'bg-border-strong'
+                }`}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex h-[58px] w-full items-center justify-center rounded-card border border-border bg-canvas px-4">
+            {pin.length === 0 ? (
+              <span className="text-sm font-semibold text-muted">Enter PIN</span>
+            ) : (
+              /* pl-[8px]: letter-spacing is applied after the LAST bullet too, so
+                 the glyph row carries a trailing gap and centring lands it 4px
+                 left of true. The padding gives that space back. */
+              <span className="pl-[8px] text-[26px] font-extrabold tracking-[8px] text-ink">
+                {'•'.repeat(pin.length)}
+              </span>
+            )}
+          </div>
+        )}
         {/* The count, for a screen reader only — the dots above are shapes with
             no text, so without this the pad is silent as it fills.
             The COUNT rather than the digits: reading a PIN out loud at a counter
@@ -265,7 +306,7 @@ export function PinPad({
           size={keySize}
           onClick={() => send(pin)}
           disabled={busy || pin.length < 4}
-          className={`w-full font-extrabold ${wide ? 'text-lg' : 'text-base'}`}
+          className={`w-full whitespace-nowrap font-extrabold ${wide ? 'text-lg' : 'text-base'}`}
         >
           {busy ? '…' : submitLabel}
         </Button>

@@ -35,7 +35,7 @@
 // it generates its own on first run, because nothing it holds needs to be
 // readable by anyone else.
 const { app, safeStorage } = require('electron')
-const { isDatabaseSetup } = require('./appRole')
+const { appRole, isDatabaseSetup } = require('./appRole')
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
@@ -206,6 +206,22 @@ function resolveEnv() {
     set('ENCRYPTION_KEY', d.ENCRYPTION_KEY)
     set('BACKUP_DIR', path.join(app.getPath('userData'), 'backups'))
     set('ODYSSEY_SITE_ID', cfg.siteId)
+
+    /* ── HOW THIS MACHINE SPEAKS FOR ITS SHOP WITH NOBODY WATCHING ─────────
+     *
+     * The licence check runs inside every finalised sale, so it cannot post the
+     * owner's password — there is nobody at the counter to type it. It signs
+     * with this key instead. Collected by Odyssey Database Setup from /login
+     * and sealed by adoptMachineConfig(); absent on a machine set up before the
+     * portal issued them, and every caller works without one by falling back to
+     * the direct connection it used before.
+     *
+     * Only this branch. The self-provisioning model below never adopts a
+     * machineConfig, so it never has one — and its control database is on
+     * 127.0.0.1 anyway, which is the problem this key exists to solve. */
+    set('ODYSSEY_SITE_API_KEY', unseal(cfg.apiKeySealed))
+    set('ODYSSEY_SITE_API_KEY_ID', cfg.apiKeyId)
+
     set('ODYSSEY_SITE_DB_HOST', cfg.siteDbHost || '127.0.0.1')
     set('ODYSSEY_SITE_DB_PORT', cfg.dbPort)
     set('ODYSSEY_SITE_DB_NAME', cfg.siteDbName)
@@ -232,6 +248,7 @@ function resolveEnv() {
        is trusted. */
     set('ODYSSEY_SITE_ID', cfg.siteId)
 
+
     /* No ODYSSEY_SITE_DB_* here. A self-provisioned install put its control
        database and its site databases on the SAME server it minted credentials
        for, so SITE_DB_HOST_OVERRIDE above is the whole of what siteDb needs;
@@ -257,6 +274,24 @@ function resolveEnv() {
    * reach to fix by other means. Absent on a dev checkout, and the updater says
    * so rather than failing quietly. */
   set('ODYSSEY_UPDATE_URL', resolveBuildDefaults().ODYSSEY_UPDATE_URL)
+
+  /* ── THE ROLE, WHERE THE NEXT SERVER CAN SEE IT ───────────────────────────
+   *
+   * appRole() reads package.json, which only the MAIN process ever required.
+   * The renderer got the answer through preload, and lib/appRole.ts is honest
+   * about that being presentation only — but lib/desktopBackOffice.ts has to
+   * refuse a sign-in, and a refusal decided in the browser is not a refusal.
+   *
+   * Assigned through set(), so an explicit ODYSSEY_ROLE still wins — that is
+   * the seam `npm run dev:setup` already uses to run the database build from a
+   * checkout.
+   *
+   * Only the packaged app passes through here. `next dev` is a separate
+   * process on port 4100 and never receives this, which is deliberate: a
+   * developer working against a cloud site is not a customer who installed the
+   * wrong EXE. See the docblock on isBackOfficeDesktop().
+   */
+  set('ODYSSEY_ROLE', appRole())
 
   set('APP_MODE', 'desktop')
   set('NEXT_PUBLIC_APP_MODE', 'desktop')
@@ -470,6 +505,12 @@ function adoptMachineConfig() {
   cfg.siteDbName = shared.databaseName
   cfg.siteDbUser = shared.username
   cfg.siteDbSealed = seal(String(shared.password))
+  /* The signing key Setup collected from /login, if that portal issued one.
+     Sealed on the way in for the same reason the database password is: this
+     copy lives in a per-user config that only this Windows account reads, so
+     DPAPI is available here where it was not in ProgramData. */
+  cfg.apiKeySealed = shared.apiKey ? seal(String(shared.apiKey)) : null
+  cfg.apiKeyId = shared.apiKeyId || null
   writeConfig(cfg)
   return true
 }

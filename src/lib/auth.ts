@@ -13,6 +13,7 @@ import {
 import { moduleLabelFor } from './control/moduleMessages'
 import { verifyPassword, hashPassword } from './password'
 import { getSite, getSiteForUser, listSitesForUser, type Site } from './sites'
+import { opensHere, cloudSiteMessage } from './desktopBackOffice'
 import { siteExecute } from './siteDb'
 import { getTillSession } from './tillSession'
 import { getUserByControlId, getUser, type SiteUser } from './site/users'
@@ -311,7 +312,29 @@ async function finishSignIn(user: UserRow, normalisedEmail: string): Promise<Sig
   // the fact that they have access to another store's books. A user with no
   // site link also gets a null siteId, and lands on a screen that says so
   // rather than a broken page.
-  const sites = await listSitesForUser(user.id)
+  const all = await listSitesForUser(user.id)
+
+  /* ── THE BACK OFFICE EXE OPENS LOCAL STORES ONLY ──────────────────────────
+   *
+   * Filtered rather than refused outright, because an account with a local
+   * store and a cloud one has a perfectly good reason to be here — for the
+   * local one. Offering both and failing on the second would be a picker that
+   * lists a door it then refuses to open.
+   *
+   * BEFORE claimSession below, and that ordering is the whole reason this sits
+   * here rather than in the caller. Claiming displaces the user's other live
+   * session, so a refusal issued after it would sign somebody out of the
+   * browser they were legitimately working in — as a side effect of being told
+   * this app cannot help them. See lib/desktopBackOffice.ts.
+   */
+  const sites = all.filter((s) => opensHere(s.connectionType))
+  if (sites.length === 0 && all.length > 0) {
+    return {
+      ok: false,
+      error: cloudSiteMessage(all.length === 1 ? all[0].displayName : undefined),
+    }
+  }
+
   const siteId = sites.length === 1 ? sites[0].id : null
 
   /* ── ONE LIVE SESSION PER USER ───────────────────────────────────────────
@@ -625,6 +648,21 @@ export async function requireSite(): Promise<Site> {
       ? await getSite(session.siteId)
       : await getSiteForUser(session.userId, session.siteId)
   if (!site) redirect('/select-site')
+
+  /* ── AND IT HAS TO STILL BE A LOCAL STORE ─────────────────────────────────
+   *
+   * Re-checked on every request rather than trusted from the sign-in, because
+   * connection_type changes in the control panel under sessions that are
+   * already open — which is precisely what happens the day a shop is migrated
+   * to the cloud. Without this, that shop keeps trading through a back office
+   * EXE that has quietly become the wrong way to reach it, and nobody finds
+   * out until the line drops.
+   *
+   * `/?cloudsite=1` rather than a screen of its own: it is the same shape as
+   * the `kicked` notice, the login page already explains itself above the form,
+   * and somebody turned away has to end up there regardless.
+   */
+  if (!opensHere(site.connectionType)) redirect('/?cloudsite=1')
 
   return site
 }

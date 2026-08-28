@@ -1,11 +1,11 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQueryOne } from '../siteDb'
-import { queryOne } from '../db'
 import { formatMoney } from '../decimals'
 import { send, isConfigured } from '../mail'
 import { renderInvoicePdf } from '../invoices/pdf'
 import { buildInvoice, type IssuingSite } from '../invoices/build'
+import { getSite } from '../sites'
 import { HEADING, CLOSING, printKindFor } from './salesDocumentKind'
 import { createCallbackToken } from '../callbackToken'
 import { appBaseUrl } from '../appUrl'
@@ -265,35 +265,35 @@ export async function mintPaymentLink(
  * paper — contracts had its own copy, which is how letterheads drift.
  */
 export async function issuingSiteFor(siteId: number): Promise<IssuingSite | null> {
-  const row = await queryOne<{
-    company_name: string
-    trading_name: string | null
-    vat_number: string | null
-    registration_number: string | null
-    address1: string | null
-    address2: string | null
-    address3: string | null
-    postal_code: string | null
-    phone: string | null
-    email: string | null
-  }>(
-    `SELECT company_name, trading_name, vat_number, registration_number,
-            address1, address2, address3, postal_code, phone, email
-       FROM cp2_sites WHERE id = ? LIMIT 1`,
-    [siteId],
-  )
-  if (!row) return null
+  /* ── THROUGH getSite, NOT A SECOND SELECT ─────────────────────────────────
+   *
+   * This used to read cp2_sites directly, which meant a shop with no line
+   * could not put its own name on its own invoice — every field below is
+   * already sitting in the local mirror by then, behind a query that was
+   * spelled slightly differently. getSite() carries the offline fallback (see
+   * lib/site/siteProfile.ts) and requireSite has almost certainly already
+   * called it this request, so this is also one fewer control-database read on
+   * the document path.
+   *
+   * The one behavioural difference, said out loud rather than discovered:
+   * getSite filters to active and suspended sites, where the old query did not.
+   * An ARCHIVED site now gets no letterhead — which is right. An archived site
+   * is not trading, and a document issued on its paper is a document that
+   * should not exist.
+   */
+  const site = await getSite(siteId)
+  if (!site) return null
 
   return {
-    displayName: row.trading_name?.trim() || row.company_name,
-    vatNumber: row.vat_number,
-    registrationNumber: row.registration_number,
-    address1: row.address1,
-    address2: row.address2,
-    address3: row.address3,
-    postalCode: row.postal_code,
-    phone: row.phone,
-    email: row.email,
+    displayName: site.displayName,
+    vatNumber: site.vatNumber,
+    registrationNumber: site.registrationNumber,
+    address1: site.address1,
+    address2: site.address2,
+    address3: site.address3,
+    postalCode: site.postalCode,
+    phone: site.phone,
+    email: site.email,
   }
 }
 

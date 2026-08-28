@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSession, requireSiteUser } from '@/lib/auth'
 import { listSitesForUser } from '@/lib/sites'
+import { opensHere } from '@/lib/desktopBackOffice'
 import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
@@ -56,7 +57,31 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     )
   }
 
-  const sites = await listSitesForUser(session.userId)
+  /* ── A LOCAL INSTALL HAS ONE STORE, AND IT IS NOT IN cp2_user_sites ───────
+   *
+   * On a local build `session.userId` is a row in the SHOP'S OWN users table,
+   * not a control account — see SessionPayload.scope and the same reasoning in
+   * requireSite(). Asking listSitesForUser for it compares that id against
+   * cp2_user_sites.user_id, two unrelated id spaces that are both small
+   * integers, so it matches nothing: the switcher was handed an empty list,
+   * found no row for the site the page is actually showing, and rendered
+   * "No store" above a back office that was working perfectly.
+   *
+   * The site is already resolved, and already resolved more strictly than this
+   * query could — the machine was provisioned for it. So it IS the list. One
+   * entry also renders as a plain label rather than a dropdown, which is the
+   * truth on a machine that has nothing to switch to.
+   */
+  const sites =
+    session.scope === 'site'
+      ? [site]
+      : /* Filtered for the same reason /select-site is: on the back office EXE a
+           cloud store is not openable, and a switcher row that selectSiteAction
+           refuses is a door drawn on a wall. An account holding one store of
+           each kind is exactly the case that reaches this line — it signs in
+           against the control panel, opens its local store, and would otherwise
+           be offered the cloud one in the header. */
+        (await listSitesForUser(session.userId)).filter((s) => opensHere(s.connectionType))
 
   // The bell's starting figure. One indexed COUNT; the client keeps itself
   // fresh from there, and a failure here must not take down every page.

@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2'
 import { query, queryOne, transaction } from '@/lib/db'
+import * as portal from './devicesPortal'
 
 /**
  * POS device licensing.
@@ -122,6 +123,15 @@ export async function licenceForSerial(siteId: number, serial: string): Promise<
   const trimmed = serial.trim()
   if (!trimmed) return { ok: false, reason: 'unregistered' }
 
+  /* ── OVER HTTPS WHERE THIS MACHINE CAN ─────────────────────────────────
+   *
+   * Null means "not configured, or the portal could not answer", and the query
+   * below runs exactly as it always has. See devicesPortal.ts for the three
+   * cases that produce it and the one that deliberately does not. Every
+   * function in this file follows the same two lines. */
+  const viaPortal = await portal.licenceForSerial(trimmed)
+  if (viaPortal) return viaPortal
+
   const row = await queryOne<Row>(
     `${SELECT_DEVICE} WHERE site_id = ? AND serial_number = ? LIMIT 1`,
     [siteId, trimmed],
@@ -148,6 +158,9 @@ export async function licenceForSerial(siteId: number, serial: string): Promise<
  * told plainly that there is nothing free.
  */
 export async function freeSpots(siteId: number): Promise<LicenceSpot[]> {
+  const viaPortal = await portal.freeSpots(siteId)
+  if (viaPortal) return viaPortal
+
   const rows = await query<Row>(
     `${SELECT_DEVICE}
       WHERE site_id = ? AND serial_number IS NULL
@@ -173,12 +186,18 @@ export async function freeSpots(siteId: number): Promise<LicenceSpot[]> {
  * read-only and links to the tills screen rather than offering a stepper.
  */
 export async function billableDeviceCount(siteId: number): Promise<number> {
+  const viaPortal = await portal.billableDeviceCount(siteId)
+  if (viaPortal !== null) return viaPortal
+
   const rows = await query<Row>(`${SELECT_DEVICE} WHERE site_id = ?`, [siteId])
   return rows.filter((r) => entitlement(r).ok).length
 }
 
 /** Every licence row for the site, claimed or not — for the setup screen. */
 export async function listLicences(siteId: number): Promise<LicenceSpot[]> {
+  const viaPortal = await portal.listLicences(siteId)
+  if (viaPortal) return viaPortal
+
   const rows = await query<Row>(`${SELECT_DEVICE} WHERE site_id = ? ORDER BY device_name, id`, [
     siteId,
   ])
@@ -235,6 +254,9 @@ export async function claimSpot(
 ): Promise<ClaimResult> {
   const trimmed = serial.trim()
   if (!trimmed) return { ok: false, error: 'This machine has no identifier to register.' }
+
+  const viaPortal = await portal.claimSpot(deviceRowId, trimmed, label, terminalId)
+  if (viaPortal) return viaPortal
 
   return transaction(async (tx) => {
     /* Scoped to the site, matching the unique index.
@@ -298,6 +320,8 @@ export async function claimSpot(
  * change.
  */
 export async function releaseSpot(siteId: number, deviceRowId: number): Promise<void> {
+  if (await portal.releaseSpot(deviceRowId)) return
+
   await transaction(async (tx) => {
     await tx.execute(
       `UPDATE cp2_devices
@@ -317,6 +341,7 @@ export async function releaseSpot(siteId: number, deviceRowId: number): Promise<
  */
 export async function touchDevice(deviceRowId: number): Promise<void> {
   try {
+    if (await portal.touchDevice(deviceRowId)) return
     await transaction(async (tx) => {
       await tx.execute('UPDATE cp2_devices SET last_seen_at = NOW() WHERE id = ?', [deviceRowId])
     })
@@ -390,6 +415,9 @@ export type PaidSlots = {
 }
 
 export async function paidSlots(siteId: number): Promise<PaidSlots> {
+  const viaPortal = await portal.paidSlots(siteId)
+  if (viaPortal) return viaPortal
+
   const [order, rows] = await Promise.all([
     queryOne<Row>('SELECT requested FROM cp2_site_device_orders WHERE site_id = ?', [siteId]),
     query<Row>(`${SELECT_DEVICE} WHERE site_id = ? AND status = 'active' AND is_paid = 1`, [siteId]),
@@ -439,6 +467,9 @@ export type DeviceOffer =
   | { kind: 'none'; reason: 'trial-used' | 'no-serial'; paidFor: number }
 
 export async function deviceOffer(siteId: number, serial: string | null): Promise<DeviceOffer> {
+  const viaPortal = await portal.deviceOffer(serial)
+  if (viaPortal) return viaPortal
+
   const trimmed = serial?.trim() ?? ''
   /* A browser with storage blocked has no identity to register. It is allowed to
      TRADE (see PosEntry) but it cannot hold a licence, because the row would
@@ -480,6 +511,9 @@ export async function takePaidSlot(
 ): Promise<SelfRegisterResult> {
   const trimmed = serial.trim()
   if (!trimmed) return { ok: false, error: 'This machine has no identifier to register.' }
+
+  const viaPortal = await portal.selfRegister('paid', trimmed, label, terminalId)
+  if (viaPortal) return viaPortal
 
   return transaction(async (tx) => {
     /* The order row is the lock as well as the number. Every site has one after
@@ -592,6 +626,9 @@ export async function startTrial(
 ): Promise<SelfRegisterResult> {
   const trimmed = serial.trim()
   if (!trimmed) return { ok: false, error: 'This machine has no identifier to register.' }
+
+  const viaPortal = await portal.selfRegister('trial', trimmed, label, terminalId, startedBy)
+  if (viaPortal) return viaPortal
 
   const startedOn = isoToday()
   const endsOn = isoInDays(TRIAL_DAYS)

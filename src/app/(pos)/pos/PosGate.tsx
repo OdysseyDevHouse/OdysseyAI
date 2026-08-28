@@ -2,15 +2,7 @@
 
 import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
-import {
-  PinPad,
-  ButtonLink,
-  Card,
-  Icons,
-  PosSignInArt,
-  type PosSignInSpecial,
-} from '@/components/ui'
+import { PinPad, ButtonLink, Icons, PosSignInArt, type PosSignInSpecial } from '@/components/ui'
 import { tillSignInAction } from './pinActions'
 import {
   signInOffline,
@@ -43,12 +35,23 @@ import { ensureWindowId } from '@/lib/windowSession'
  */
 export default function PosGate({
   siteId,
+  siteName = '',
   backdropUrl = '',
   logoUrl = '',
   specials = [],
   onOfflineSignIn,
 }: {
   siteId: number
+  /**
+   * The shop's name, for the greeting on the showcase half.
+   *
+   * Already on the session's site as `displayName` and relayed down by
+   * PosEntry, rather than fetched here: the gate is a client component and this
+   * screen stands between a cashier and the till at 07:00, so a round trip to
+   * learn the name of the shop the till already belongs to is a round trip
+   * somebody waits through.
+   */
+  siteName?: string
   /**
    * The shop's own picture behind the showcase half, or '' for the brand
    * gradient. Resolved by the server page — see lib/site/posSignInArt.
@@ -153,9 +156,11 @@ export default function PosGate({
     })
   }
 
+
   return (
     /*
-     * TWO HALVES: a showcase the customer sees, and the pad the cashier uses.
+     * TWO HALVES OF ONE CARD: a showcase the customer sees, and the pad the
+     * cashier uses.
      *
      * The showcase is `hidden lg:flex` inside PosSignInArt, so this collapses to
      * the pad alone on a narrow screen. That is not a fallback — a 1024px counter
@@ -163,161 +168,139 @@ export default function PosGate({
      * to speak of, so giving half its width to a photograph would shrink the only
      * thing on the screen anybody has to hit.
      *
-     * ── ALL THE SPACING IS ON THIS ELEMENT ───────────────────────────────────
+     * ── ONE CARD NOW, NOT TWO PANES WITH A GAP ──────────────────────────
      *
-     * `p-8` is the screen's edge and `gap-8` is the middle, and both can be read
-     * off the class list rather than added up. It used to be split between here
-     * and the column below, which made it neither: the column's own padding
-     * added to this one's on the outer side and to the gap on the inner, so the
-     * picture sat 16px off the glass while the pad sat 32px off it.
+     * The picture and the pad used to be two rounded cards with 32px of till
+     * shell showing between them, which read as two unrelated things that
+     * happened to be side by side. They are one object: the shop on the left,
+     * the way in on the right, and the seam between them is where the dark
+     * stops and the white starts rather than a gutter.
      *
-     * ── AND BOTH HALVES ARE NOW FIXED, SO THE PAIR IS CENTRED ─────────────────
+     * So the rounding, the shadow and the clipping all live HERE, on the
+     * container, and neither half carries any of its own. `items-stretch` is
+     * what makes the seam run the full height — the halves state the same 706px
+     * and would line up anyway, but a stretch means a later change to one of
+     * them cannot leave a notch in the other.
      *
-     * Neither side grows any more — the showcase is 574 wide and so is the card.
-     * Something has to take up the slack on a wide counter screen, and centring
-     * the pair is the only answer that keeps them looking like two halves of one
-     * thing rather than a block shoved against the left edge.
-     *
-     * ── WHY THE CENTRING AND THE ROW ARE TWO ELEMENTS ─────────────────────────
-     *
-     * Because the pad column is TALLER than the card inside it — the way out sits
-     * beneath the card, so the column is 706 + 24 + 40 = 770 while the showcase is
-     * 706. One element doing both jobs centred a 706 pane against a 770 column and
-     * dropped the picture 32px below the card it is supposed to sit beside.
-     *
-     * So: this element centres the block on the screen, and the row inside it
-     * aligns the two panes by their TOPS. The button then hangs below the card
-     * without having any say in where the picture sits.
+     * `overflow-hidden` is doing real work and not just tidiness: the showcase
+     * paints an absolutely-positioned photograph across its whole pane, and
+     * without the clip that photograph squares off the two left corners the
+     * radius here is trying to round.
      */
-    <div className="flex flex-1 items-center justify-center p-8">
-      <div className="flex w-full items-start justify-center gap-8">
+    <div className="flex flex-1 items-center justify-center p-6">
+      <div className="flex max-w-full items-stretch overflow-hidden rounded-card shadow-card">
         {/* No wrapper: the panel hides itself below `lg` and states its own
-            574×706 above it, so a div doing either of those here would be saying
-            it twice — and the two said it differently, which is how the showcase
-            once ended up a narrow strip with a dead gap beside it. */}
-        <PosSignInArt backdropUrl={backdropUrl} logoUrl={logoUrl} specials={specials} />
+            width and height above it, so a div doing either of those here would
+            be saying it twice — and the two said it differently, which is how the
+            showcase once ended up a narrow strip with a dead gap beside it. */}
+        <PosSignInArt
+          backdropUrl={backdropUrl}
+          logoUrl={logoUrl}
+          siteName={siteName}
+          specials={specials}
+        />
 
         {/*
           The sign-in half.
 
-          A fixed 560px beside a flexible showcase, rather than the two sharing the
-          width evenly. The pad has ONE correct size — it is sized by the finger,
-          not by the display — so every pixel past what it needs belongs to the
-          picture. On a very wide counter screen an even split would leave the pad
-          marooned in the middle of its own half.
+          574px, which is the PIN pad's 510 plus its own padding. The pad has ONE
+          correct size — it is sized by the finger, not by the display — so every
+          pixel past what it needs belongs to the picture. On a very wide counter
+          screen an even split would leave the pad marooned in the middle of its
+          own half.
+
+          `bg-surface` rather than the till shell's `bg-canvas`: this is the part
+          a cashier touches, and it sits on white the way every other block of
+          content in the product does. It is not the kit's `Card` any more,
+          because the card is now the container above — this is one half of it,
+          and a Card inside a Card would draw a second border down the seam.
+
+          The stack is CENTRED in the half rather than starting at the top. The
+          pad is the whole reason the screen exists, and hanging it from the top
+          with the slack at the foot left it sitting high against the greeting
+          opposite.
         */}
-        {/* 574px, the same as the showcase — and the same as the card inside it,
-            which is the PIN pad's 510 plus its own padding. The pad has one correct
-            size, sized by the finger rather than by the display, and stating that
-            width here rather than letting the card's `w-fit` set it is what keeps
-            the button below centred on the card rather than on the column.
+        <div className="flex h-[706px] max-h-full w-[574px] max-w-full shrink-0 flex-col items-center justify-center bg-surface px-8 py-10">
+          {/* No Odyssey wordmark over this half any more. It sat above the
+              heading when the customer-facing side carried no words of its own;
+              the greeting opposite now names the shop, and our own mark facing
+              the cashier as well made two brands on one card. The wordmark is
+              still the fallback on the showcase for a shop with no logo. */}
+          <h2 className="text-[22px] font-extrabold tracking-tight text-ink">Clerk sign-in</h2>
+          <p className="mt-1.5 text-[13px] text-muted">Enter your 4-digit PIN to open the till</p>
 
-            It was 560 while the card had no padding of its own, which left the card
-            14px wider than the half containing it. */}
-        {/* `justify-center` on the column, centring the PAIR — the card and the
-            way out beneath it now read as one stack, so one rule for both is the
-            honest description. It was one rule per child while the exit was pinned
-            to the top of the half.
+          {/* `display="dots"` rather than the pad's default entry box. The two
+              lines above already say what to type, and the box carried an
+              "Enter PIN" prompt that repeated them — see PinPad. */}
+          <div className="mt-7">
+            <PinPad
+              wide
+              display="dots"
+              submitLabel="Open till"
+              onSubmit={submit}
+              error={error}
+              busy={pending}
+              rejectedAt={rejects}
+            />
+          </div>
 
-            In flow, with a gap, rather than either of them positioned absolutely:
-            on a short counter screen the two must push each other rather than
-            overlap, and an absolutely placed exit let a tall pad slide underneath
-            it. */}
-        <div className="flex w-full max-w-full shrink-0 flex-col items-center gap-6 lg:w-[574px]">
-          {/*
-            A CARD around the pad.
+          {/* Said only when it is FALSE and known.
+              A till that cannot sign anybody in without the network is one somebody
+              needs to fix before the line drops, not after — and while it is true
+              there is nothing useful to announce. */}
+          {offlineReady === false && (
+            <div className="mt-6 flex max-w-[510px] items-center gap-3 text-[12.5px] text-muted">
+              {/* On a tinted disc. A 15px glyph loose beside three lines of grey
+                  text read as a bullet point; this is the one standing condition
+                  on the screen that a manager has to notice and act on before the
+                  queue arrives.
 
-            The half it sits in is `bg-canvas` — the till shell's grey — so this
-            lifts the one part of the screen a cashier touches onto white, the way
-            every other block of content in the product sits on a surface. The
-            kit's own `Card`, not a hand-rolled box, so its radius, border and
-            shadow move when the kit's do.
-
-            `w-fit` stays on it rather than moving inside: the card is sized by the
-            PAD, which has one correct width. Sizing it by anything but the pad
-            went wrong twice before — a percentage width left the keys marooned in
-            a card far wider than they were. The vertical centring is the column's
-            now, not this element's, because there are two things to centre.
-          */}
-          <Card className="w-fit">
-            <div className="flex flex-col items-center p-8">
-              {/* The wordmark, above the pad rather than above the whole screen.
-                  The customer-facing half now carries the SHOP's identity, so ours
-                  belongs over the part the staff use. */}
-              <Image
-                src="/logo-full.png"
-                alt="Odyssey Point of Sale"
-                width={1109}
-                height={304}
-                className="logo-plate mb-6 h-14 w-auto object-contain"
-                priority
-                unoptimized
-              />
-
-              {/* A tinted lock disc, so the heading has something to sit under and
-                  the column has a top. Same idiom as the kit's empty states. */}
-              <span className="mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-brand-soft text-brand">
-                <Icons.Lock size={20} />
+                  `Wifi` rather than `Offline`: the till is not offline right now
+                  — it is being told it will not COPE with being offline, because
+                  nobody here has signed in while connected yet. */}
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand">
+                <Icons.Wifi size={20} />
               </span>
-
-              <h2 className="mb-1 max-w-[510px] text-center text-[17px] font-bold text-ink">
-                Clerk sign-in
-              </h2>
-              <p className="mb-4 max-w-[510px] text-center text-[12.5px] text-muted">
-                Enter your PIN to open the till
+              <p className="leading-relaxed">
+                This till needs a connection to sign in. Each person should enter their PIN
+                once while online so it works offline afterwards.
               </p>
-
-              <PinPad wide onSubmit={submit} error={error} busy={pending} rejectedAt={rejects} />
-
-              {/* Said only when it is FALSE and known.
-                  A till that cannot sign anybody in without the network is one somebody
-                  needs to fix before the line drops, not after — and while it is true
-                  there is nothing useful to announce. */}
-              {offlineReady === false && (
-                <div className="mt-4 flex max-w-[510px] items-center gap-3 text-[12.5px] text-muted">
-                  {/* On a tinted disc, the same idiom as the lock above it. A 15px
-                      glyph loose beside three lines of grey text read as a bullet
-                      point; this is the one standing condition on the screen that a
-                      manager has to notice and act on before the queue arrives.
-
-                      `Wifi` rather than `Offline`: the till is not offline right now
-                      — it is being told it will not COPE with being offline, because
-                      nobody here has signed in while connected yet. */}
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand">
-                    <Icons.Wifi size={20} />
-                  </span>
-                  <p className="leading-relaxed">
-                    This till needs a connection to sign in. Each person should enter their
-                    PIN once while online so it works offline afterwards.
-                  </p>
-                </div>
-              )}
             </div>
-          </Card>
+          )}
 
-          {/* The way out, UNDER the card and centred on it — the last thing in the
-              column rather than the first. A cashier standing at this screen is
-              here to sign in; the exit is the rarer act, and reading order should
-              put the thing somebody came to do above the thing they occasionally
-              want instead.
+          {/* ── The footer ──────────────────────────────────────────────── */}
+          {/* Both of the things somebody does when the pad is NOT what they
+              wanted, kept together and kept quiet. Neither competes with the
+              keys above: a cashier standing here is here to sign in. */}
+          <div className="mt-7 flex flex-col items-center gap-2.5">
+            {/* The answer to the commonest reason a PIN fails, said before
+                anybody has to ask. Deliberately NOT a control — there is nothing
+                for the person at the till to press, and a button here would
+                promise a self-service reset the product does not offer. */}
+            <p className="flex items-center gap-1.5 text-[12.5px] text-muted">
+              <Icons.Lock size={13} className="shrink-0" />
+              Forgot your PIN? Ask a manager to reset it.
+            </p>
 
-              A BUTTON rather than a text link, and `contrast` rather than any of
-              the blues. This is a touch screen — a 13px underlined link is not a
-              target a finger can take — and it is the only control on the half
-              besides the pad, so it has to be found without being hunted for. The
-              blues are all spoken for: the confirm key, the lock disc and the
-              showcase beside it. Dark-on-light (and light-on-dark under a
-              cashier's dark theme) is the one register nothing else here uses.
+            {/* The way out, and the only one — without it the till is a dead end
+                and the back office is reachable only by typing a URL.
 
-              The chevron points RIGHT, following the words rather than leading
-              them — this is a departure to another place, not a step back through
-              a screen the cashier came from. Landmark is the back office as an
-              institution, matching the sidebar's own mark for it. */}
-          <ButtonLink href="/dashboard" variant="contrast">
-            <Icons.Landmark size={17} />
-            Back to Back Office
-            <Icons.ChevronRight size={16} />
-          </ButtonLink>
+                A BUTTON rather than a text link even at this size: this is a
+                touch screen, and a 13px underlined link is not a target a finger
+                can take. `ghost` and `sm` keep it quiet enough not to compete
+                with the pad, which is what it was doing as a full-size dark
+                button under a card of its own.
+
+                The chevron points RIGHT, following the words rather than leading
+                them — this is a departure to another place, not a step back
+                through a screen the cashier came from. Landmark is the back
+                office as an institution, matching the sidebar's own mark for it. */}
+            <ButtonLink href="/dashboard" variant="ghost" size="sm">
+              <Icons.Landmark size={15} />
+              Back to Back Office
+              <Icons.ChevronRight size={14} />
+            </ButtonLink>
+          </div>
         </div>
       </div>
     </div>

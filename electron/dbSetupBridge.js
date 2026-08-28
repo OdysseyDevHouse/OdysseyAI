@@ -24,6 +24,77 @@ const { applyMigrations } = require('./siteMigrate')
 const machineConfig = require('./machineConfig')
 const mariaService = require('./mariaService')
 const posApi = require('./posApi')
+
+/**
+ * Write the shop's own name and address into its database.
+ *
+ * ── WHY A FAILURE HERE IS NOT A FAILED SETUP ────────────────────────────────
+ *
+ * Everything this writes is a CACHE of something the control panel is still the
+ * authority on, and the Back Office refreshes it on every successful read. So
+ * the worst case of it not being written is the behaviour that existed before
+ * it was: the shop needs one online launch before it can work offline.
+ *
+ * Weighed against that, refusing to finish provisioning a database because a
+ * convenience row would not insert is plainly the wrong trade — the technician
+ * is standing at the machine, the shop's tables are already there, and the
+ * thing that failed is one they have never heard of.
+ *
+ * Skipped silently on a build whose schema predates 238, which is the same
+ * shape of tolerance readSiteProfile has on the other side.
+ */
+async function seedSiteProfile(conn, plan, progress) {
+  const p = plan && plan.profile
+  if (!p) return
+  try {
+    progress('Recording the shop’s details for offline use…')
+    await conn.query(
+      `REPLACE INTO site_profile
+         (id, site_id, site_code, company_name, trading_name, registration_number, vat_number,
+          address1, address2, address3, postal_code, phone, email, contact_name,
+          connection_type, site_type_id, is_paid, status, mirrored_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NOW())`,
+      [
+        plan.siteId,
+        p.siteCode,
+        p.companyName,
+        p.tradingName,
+        p.registrationNumber,
+        p.vatNumber,
+        p.address1,
+        p.address2,
+        p.address3,
+        p.postalCode,
+        p.phone,
+        p.email,
+        p.contactName,
+        p.connectionType,
+        p.isPaid,
+        p.status,
+      ],
+    )
+  } catch (err) {
+    console.error('[setup] could not seed the offline site profile:', err.message)
+  }
+}
+
+/**
+ * Open the site's signing key, if this portal issued one.
+ *
+ * Never throws. A key that cannot be unsealed is a build whose payload key does
+ * not match the one the portal encrypted with — worth a log line and nothing
+ * more, because the alternative is refusing to set up a shop's database over a
+ * credential that only matters to a feature it has not used yet.
+ */
+function readApiKey(store) {
+  if (!store || !store.apiKey) return null
+  try {
+    return posApi.openEnvelope(store.apiKey)
+  } catch (err) {
+    console.error('[setup] could not open the site API key:', err.message)
+    return null
+  }
+}
 const fs = require('node:fs')
 const path = require('node:path')
 const { app } = require('electron')
@@ -303,6 +374,56 @@ function register({ getOrigin, getWindow }) {
       /* A fact about the MACHINE, which the control panel deliberately cannot
          see. It changes the wording, never the decision. */
       alreadyInstalled: mariaService.isInitialised(),
+
+      /* ── WHAT THE SHOP IS CALLED, SO IT NEVER HAS TO ASK AGAIN ───────────
+       *
+       * The Back Office reads cp2_sites on every authenticated page to find
+       * the shop's own name and address — over the wire, from a machine that
+       * holds all of its own trading data locally. sql/site/238 is the mirror
+       * that closes that, but a mirror is only written when the control panel
+       * ANSWERS, so a freshly adopted machine had an empty one until somebody
+       * opened the app with a working line.
+       *
+       * This wizard is the one moment that is guaranteed not to be true of:
+       * it is holding the control panel's answer right now. Seeding the mirror
+       * here means a shop works offline from the minute it is set up, rather
+       * than from its first online launch.
+       *
+       * `siteTypeId` is deliberately absent — /login returns the site type's
+       * NAME, not its id, and inventing one would be worse than the default
+       * picture on the till's PIN screen until the first online read fills it.
+       */
+      profile: {
+        siteCode: store.siteCode,
+        companyName: store.companyName,
+        tradingName: store.tradingName || null,
+        registrationNumber: store.registrationNumber || null,
+        vatNumber: store.vatNumber || null,
+        address1: store.address1 || null,
+        address2: store.address2 || null,
+        address3: store.address3 || null,
+        postalCode: store.postalCode || null,
+        phone: store.phone || null,
+        email: store.email || null,
+        contactName: store.contactName || null,
+        connectionType: store.connectionType,
+        isPaid: store.isPaid ? 1 : 0,
+        status: store.status || 'active',
+      },
+
+      /* ── THE KEY THIS MACHINE WILL SIGN UNATTENDED CALLS WITH ────────────
+       *
+       * /login hands each store a signing key, sealed in the same `pos:v1:`
+       * envelope the database password above travelled in. It is what lets the
+       * Back Office ask about its own licence when nobody is standing at it —
+       * see the portal's migration 111.
+       *
+       * Absent on a portal that predates it, and that is not an error: the
+       * machine simply has no key until the next sign-in mints one, and every
+       * caller is written to work without one.
+       */
+      apiKey: readApiKey(store),
+      apiKeyId: store.apiKeyId || null,
     }
 
     /* The SQL is still generated by the app's own builder rather than here:
@@ -410,6 +531,12 @@ function register({ getOrigin, getWindow }) {
       try {
         const ran = await applyMigrations(conn, { onProgress: progress })
         progress(ran ? `${ran} migrations applied.` : 'Schema already up to date.')
+
+        /* Seeded on the SAME connection, immediately after the migration that
+           creates the table — so the mirror exists from the moment the database
+           does, and this shop can open with no line on its very first morning.
+           See the `profile` block on the plan for why it is carried this far. */
+        await seedSiteProfile(conn, plan, progress)
       } finally {
         await conn.end().catch(() => {})
       }
@@ -435,6 +562,14 @@ function register({ getOrigin, getWindow }) {
         databaseName: plan.databaseName,
         username: plan.username,
         password: plan.password,
+        /* The signing key travels the same road as the database password, and
+           carries the same caveat this file's header already sets out: it is
+           written in the clear because DPAPI would bind it to the technician's
+           Windows account and the shop owner runs under another. It is a
+           per-shop key on the shop's own office machine, and it is strictly
+           less dangerous than the database password sitting beside it. */
+        apiKey: plan.apiKey || null,
+        apiKeyId: plan.apiKeyId || null,
       })
 
       /* ── TELL OUR OWN SERVER WHERE THE SHOP NOW LIVES ──────────────────

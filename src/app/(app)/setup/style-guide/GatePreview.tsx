@@ -433,10 +433,11 @@ export function PosGatePreview() {
     { key: 'bare', label: 'No picture at all' },
     { key: 'specials', label: 'Specials running' },
     { key: 'logo', label: 'Logo uploaded' },
-    /* A logo and NO promotions — the commonest real shop, and the only state
-       that shows the logo at its full size. The panel gives the disc the whole
-       pane when there is no board to share it with, so this is the one case
-       where getting that size wrong is invisible in every other toggle. */
+    /* A logo and NO promotions — the commonest real shop by a distance, and the
+       state where the greeting has the panel to itself. The specials card is
+       what fills the bottom third; without it the whole lower half is
+       photograph, which is the composition most tills in the field are actually
+       showing and the easiest one to leave looking unfinished. */
     { key: 'quiet', label: 'Logo, no specials' },
     { key: 'full', label: 'Logo + own backdrop' },
   ] as const
@@ -476,9 +477,11 @@ export function PosGatePreview() {
         independent optional pieces, so step through them. “No picture at all” is the
         gradient the panel paints while a photograph loads or when its bytes have gone
         missing — a shop that has uploaded nothing gets a stock picture for its trade
-        instead, so this is a fallback rather than a first day. The board carries two
-        row types: priced items a customer can act on, and — for combos and
-        spend-and-gets, which have no one price — the deal said in words.
+        instead, so this is a fallback rather than a first day. The specials card leads
+        with ONE offer at the size it is read from a queue and lists the rest beneath
+        it, cycling two at a time. Both kinds of promotion take the same shape there:
+        priced items a customer can act on lead with the price, while combos and
+        spend-and-gets — which have no one price — lead with the deal said in words.
       </p>
       <div className="flex flex-wrap gap-2">
         {STATES.map((s) => (
@@ -492,7 +495,7 @@ export function PosGatePreview() {
           </Button>
         ))}
       </div>
-      {/* 706 for the showcase pane plus 64 of screen padding, rounded up. Short
+      {/* 706 for the sign-in card plus 48 of screen padding, rounded up. Short
           of that the pane's `max-h-full` kicks in and the preview quietly shows a
           squashed version rather than the real one — which is the specific way a
           preview becomes worse than no preview. Wide matters for the same reason:
@@ -502,6 +505,12 @@ export function PosGatePreview() {
         <div className="flex h-full flex-col">
           <PosGate
             siteId={0}
+            /* A name, because the greeting is the largest thing on the showcase
+               and a preview of it reading "Welcome back." would be showing the
+               unnamed-site fallback rather than what a shop actually sees. Long
+               enough to wrap onto two lines, which is where the heading's
+               `text-balance` earns its place. */
+            siteName="Harbour View Deli"
             backdropUrl={showBackdrop ? BACKDROP : ''}
             logoUrl={showLogo ? LOGO : ''}
             specials={showSpecials ? PREVIEW_SPECIALS : []}

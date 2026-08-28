@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { Building2, ChevronRight, StatusError as AlertCircle } from '@/components/ui/icons'
 import { requireSession } from '@/lib/auth'
 import { listSitesForUser } from '@/lib/sites'
+import { opensHere, cloudSiteMessage } from '@/lib/desktopBackOffice'
 import LoginScreen from '@/components/LoginScreen'
 import { selectSiteAction } from './actions'
 
@@ -16,7 +17,7 @@ const ROLE_LABEL: Record<string, string> = {
 export default async function SelectSitePage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>
+  searchParams: Promise<{ next?: string; cloudsite?: string }>
 }) {
   const session = await requireSession()
 
@@ -24,8 +25,17 @@ export default async function SelectSitePage({
   // otherwise picking a site would be a way around the forced change.
   if (session.mustChangePassword) redirect('/change-password')
 
-  const { next } = await searchParams
-  const sites = await listSitesForUser(session.userId)
+  const { next, cloudsite } = await searchParams
+
+  /* The back office EXE lists only the stores it can actually open — a cloud
+     store's back office is a web page, and offering a row here that
+     selectSiteAction then refuses would be a door drawn on a wall. See
+     lib/desktopBackOffice.ts. `hidden` is what got filtered out, so the screen
+     can say so rather than silently showing a shorter list than the one the
+     same account sees in a browser. */
+  const all = await listSitesForUser(session.userId)
+  const sites = all.filter((s) => opensHere(s.connectionType))
+  const hidden = all.length - sites.length
 
   return (
     <LoginScreen>
@@ -39,7 +49,21 @@ export default async function SelectSitePage({
           </p>
         </div>
 
-        {sites.length === 0 ? (
+        {/* Arrived here by trying one anyway — a stale picker, or a store
+            migrated to the cloud since this page was drawn. */}
+        {cloudsite === '1' && (
+          <p className="flex items-start gap-2 rounded-md bg-warning/10 px-3 py-2.5 text-sm text-warning">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            <span>{cloudSiteMessage()}</span>
+          </p>
+        )}
+
+        {sites.length === 0 && hidden > 0 ? (
+          <p className="flex items-start gap-2 rounded-md bg-warning/10 px-3 py-2.5 text-sm text-warning">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            <span>{cloudSiteMessage(all.length === 1 ? all[0].displayName : undefined)}</span>
+          </p>
+        ) : sites.length === 0 ? (
           <p className="flex items-start gap-2 rounded-md bg-warning/10 px-3 py-2.5 text-sm text-warning">
             <AlertCircle size={15} className="mt-0.5 shrink-0" />
             <span>
@@ -79,6 +103,16 @@ export default async function SelectSitePage({
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Said plainly rather than left as a shorter list. An owner who knows
+            they have four stores and counts three here should be told which
+            question that answers. */}
+        {hidden > 0 && sites.length > 0 && (
+          <p className="text-center text-xs text-muted">
+            {hidden === 1 ? 'One other store keeps' : `${hidden} other stores keep`} their data in
+            the cloud. Open {hidden === 1 ? 'it' : 'them'} in your web browser.
+          </p>
         )}
 
         <form action="/api/auth/signout" method="post" className="text-center">

@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { requireSession } from '@/lib/auth'
 import { createSessionToken, setSessionCookie } from '@/lib/session'
 import { getSiteForUser } from '@/lib/sites'
+import { opensHere } from '@/lib/desktopBackOffice'
 
 /**
  * Re-issues the session JWT with a different site open.
@@ -24,6 +25,13 @@ export async function selectSiteAction(form: FormData): Promise<void> {
 
   const site = await getSiteForUser(session.userId, siteId)
   if (!site) redirect('/select-site')
+
+  /* Guarded here as well as on the page, for the same reason the
+     must-change-password check above is: this is a POST endpoint in its own
+     right, and a picker that merely omits the row is not a check. On the back
+     office EXE a cloud store is not openable at all — see
+     lib/desktopBackOffice.ts. */
+  if (!opensHere(site.connectionType)) redirect('/select-site?cloudsite=1')
 
   const token = await createSessionToken({ ...session, siteId: site.id })
   await setSessionCookie(token)

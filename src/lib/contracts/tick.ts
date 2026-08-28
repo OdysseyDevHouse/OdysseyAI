@@ -1,5 +1,4 @@
 import 'server-only'
-import { queryOne } from '../db'
 import { generateDue } from '../site/contracts'
 import { sendPending } from '../site/contractSend'
 import type { IssuingSite } from '../invoices/build'
@@ -65,41 +64,24 @@ export async function tickSite(siteId: number, origin: string): Promise<TickResu
 }
 
 /**
- * The letterhead, from the control database.
+ * The letterhead.
  *
- * Read per site per run rather than passed in, because the route sweeps every
- * site and each invoice must carry ITS OWN business's name and VAT number.
- * Getting this wrong would put one client's VAT number on another's invoice.
+ * ── ONE COPY, NOT TWO ───────────────────────────────────────────────────────
+ *
+ * This was its own SELECT against cp2_sites, duplicating the one in
+ * site/invoiceEmail.ts — which is the drift that file's own docblock warns
+ * about ("contracts had its own copy, which is how letterheads drift"). The two
+ * had already diverged: this one filtered to active sites, that one did not.
+ *
+ * Now there is one, and it carries the offline fallback with it — a shop whose
+ * line is down can still bill its contracts on its own paper, which is the
+ * whole point of holding the data locally.
+ *
+ * Still read per site per run rather than passed in, because the route sweeps
+ * every site and each invoice must carry ITS OWN business's name and VAT
+ * number. Getting that wrong puts one client's VAT number on another's invoice.
  */
 async function issuingSite(siteId: number): Promise<IssuingSite | null> {
-  const row = await queryOne<{
-    company_name: string
-    trading_name: string | null
-    vat_number: string | null
-    registration_number: string | null
-    address1: string | null
-    address2: string | null
-    address3: string | null
-    postal_code: string | null
-    phone: string | null
-    email: string | null
-  }>(
-    `SELECT company_name, trading_name, vat_number, registration_number,
-            address1, address2, address3, postal_code, phone, email
-       FROM cp2_sites WHERE id = ? AND status = 'active' LIMIT 1`,
-    [siteId],
-  )
-  if (!row) return null
-
-  return {
-    displayName: row.trading_name?.trim() || row.company_name,
-    vatNumber: row.vat_number,
-    registrationNumber: row.registration_number,
-    address1: row.address1,
-    address2: row.address2,
-    address3: row.address3,
-    postalCode: row.postal_code,
-    phone: row.phone,
-    email: row.email,
-  }
+  const { issuingSiteFor } = await import('../site/invoiceEmail')
+  return issuingSiteFor(siteId)
 }

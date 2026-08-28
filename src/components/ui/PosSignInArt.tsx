@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Tag, Gift } from './icons'
+import { Gift } from './icons'
 import { formatMoney } from '@/lib/decimals'
 
 /**
@@ -18,19 +18,28 @@ import { formatMoney } from '@/lib/decimals'
  * ── WHAT IT SHOWS WHEN THE SHOP HAS SET UP NOTHING ───────────────────────
  *
  * Almost every shop, on day one. So the empty state is the DESIGNED state: a
- * brand gradient, the Odyssey wordmark, and no specials section at all. It
- * looks finished rather than looking like a screen waiting to be filled in.
- * Each piece the shop adds — a backdrop photograph, a logo, a promotion —
+ * brand gradient, the Odyssey wordmark, a greeting, and no specials card at
+ * all. It looks finished rather than looking like a screen waiting to be filled
+ * in. Each piece the shop adds — a backdrop photograph, a logo, a promotion —
  * replaces a part of that rather than filling a hole.
  *
  * That ordering matters more here than on an ordinary screen. An `EmptyState`
  * saying "no specials yet — add one in Setup" is right in the back office and
  * wrong here: the audience is a customer waiting to be served, who can do
  * nothing about it and should not be shown our scaffolding.
+ *
+ * ── THE PANEL IS TOP-AND-BOTTOM, NOT CENTRED ─────────────────────────────
+ *
+ * Identity at the top — logo, greeting, date — and the offer at the foot, with
+ * the photograph left to breathe between them. The two blocks are the two
+ * things a person in the queue reads, and they are read in that order; stacking
+ * them together in the middle made the panel a caption on a picture rather than
+ * a composed half of a screen.
  */
 export function PosSignInArt({
   backdropUrl,
   logoUrl,
+  siteName = '',
   specials = [],
   cycleMs = 7000,
 }: {
@@ -38,24 +47,43 @@ export function PosSignInArt({
   backdropUrl?: string
   /** The shop's logo, or '' to fall back to the Odyssey wordmark. */
   logoUrl?: string
-  /** The board. Empty omits the whole panel — see the docblock. */
+  /**
+   * The shop's name, for the greeting. '' greets without naming anybody rather
+   * than rendering "Welcome back, ." — a site with no display name is a control
+   * panel record somebody has not finished, not a reason to break the heading.
+   */
+  siteName?: string
+  /** The board. Empty omits the whole card — see the docblock. */
   specials?: PosSignInSpecial[]
   /**
-   * How long each page of the board holds before the next.
+   * How long each page of the supporting rows holds before the next.
    *
-   * Seven seconds is long enough to read three items at a glance and short
-   * enough that somebody waiting to be served sees more than one page. Faster
-   * than about five reads as a slideshow demanding attention, which is the
-   * wrong register for a screen behind a counter.
+   * Seven seconds is long enough to read two items at a glance and short enough
+   * that somebody waiting to be served sees more than one page. Faster than
+   * about five reads as a slideshow demanding attention, which is the wrong
+   * register for a screen behind a counter.
    */
   cycleMs?: number
 }) {
-  /* Four at a time, which is what the 706px pane holds without squeezing the
-     logo above it: four 76px rows plus the board's own chrome is 444px, leaving
-     262px for the logo block — enough for the h-32 disc it shrinks to whenever
-     there is a board. A fifth would have to come out of the logo. */
-  const perPage = 4
-  const pages = Math.max(1, Math.ceil(specials.length / perPage))
+  /*
+   * ONE headline, then the others.
+   *
+   * The card is titled "Today's special" in the singular, and that is a promise
+   * about what the biggest thing on it is: the first promotion the resolver
+   * returned, held still. The rest cycle underneath it.
+   *
+   * Cycling the headline as well was the obvious alternative and is worse — the
+   * one line a customer reads from across the room would change under them
+   * mid-sentence, and the card's own title would stop being true.
+   */
+  const headline = specials[0]
+  const rest = specials.slice(1)
+
+  /* Two supporting rows at a time. The card sits in the bottom third of a 706px
+     pane and a headline plus two rows is what fits there without the greeting
+     above having to give up room. */
+  const perPage = 2
+  const pages = Math.max(1, Math.ceil(rest.length / perPage))
   const [page, setPage] = useState(0)
 
   /*
@@ -71,36 +99,72 @@ export function PosSignInArt({
     return () => clearInterval(timer)
   }, [pages, cycleMs])
 
-  /* Clamped rather than reset: a promotion ending mid-cycle shortens the board,
-     and a page index past the end would render an empty panel until the next
+  /* Clamped rather than reset: a promotion ending mid-cycle shortens the list,
+     and a page index past the end would render an empty strip until the next
      tick. */
   const current = page % pages
-  const shown = specials.slice(current * perPage, current * perPage + perPage)
+  const shown = rest.slice(current * perPage, current * perPage + perPage)
+
+  /*
+   * Today's date, resolved on the CLIENT and kept current.
+   *
+   * Not passed down from the server page, for two reasons. A till renders this
+   * screen once and then sits on it all night, so a date baked in at render
+   * time says "Wednesday" to the cashier opening up on Thursday — this screen
+   * is precisely the one that is left up for sixteen hours. And a server that
+   * formats a date in its own locale and timezone hands the browser a string it
+   * would have written differently, which is a hydration mismatch on the one
+   * screen that must not flicker in a dim room.
+   *
+   * Empty on the first paint rather than a guess, so nothing has to be
+   * corrected a frame later; the line simply arrives.
+   */
+  const [today, setToday] = useState('')
+  useEffect(() => {
+    /* 'en-ZA' rather than the browser's own locale, which is what every other
+       formatted date and number in the product uses — see lib/reservations,
+       lib/invoices/pdf and the rest. A till's browser is frequently left on
+       en-US out of the box, and that renders "August 26" on a screen facing a
+       South African queue while the prices beside it are in rand. */
+    const label = () =>
+      new Date().toLocaleDateString('en-ZA', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      })
+    setToday(label())
+    /* Once a minute, which is enough to turn the date over shortly after
+       midnight and is a fraction of the work the specials cycle already does.
+       React bails out when the string has not changed, so all but one of these
+       ticks costs a comparison and nothing else. */
+    const timer = setInterval(() => setToday(label()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
 
   return (
     /*
-     * A FIXED 574×706 pane, matching the sign-in card beside it.
+     * A FIXED-WIDTH, full-height pane forming the LEFT half of the sign-in card.
      *
-     * Those are not arbitrary: 574 is the PIN pad's 510 plus the card's padding,
-     * and 706 is that card's height with the offline notice showing. Two panes
-     * of one size read as a pair; one pane stretched to whatever the screen left
-     * over read as a photograph with the pad parked next to it.
+     * No rounding and no shadow of its own any more: the two halves are now one
+     * card, and PosGate's container does the rounding and clips this to it. A
+     * radius here as well would have drawn a second, smaller corner inside the
+     * first down the seam between the halves.
      *
-     * It also replaces an explicit `w-full flex-1`, which was there because every
-     * child here is either absolutely positioned (the backdrop, the scrim) or
-     * optional (the board) — so the pane's intrinsic width is close to nothing,
-     * and without a stated width it collapsed to a narrow strip whenever the shop
-     * had no specials to widen it. A fixed width answers that just as well.
+     * 400px at `lg` and 440 above it. The pad beside it has ONE correct size —
+     * it is sized by the finger, not by the display — so the panel takes what is
+     * left, and at exactly 1024px (a real counter display) the pair has to still
+     * fit between the screen's own padding. That is what the narrower step is
+     * for; a single 440 overflowed it by the width of a thumb.
      *
      * ── max-h-full IS NOT OPTIONAL ────────────────────────────────────────────
      *
-     * 706 plus the screen's padding is 770, and a very common counter display is
-     * 1366×768. Without this the pane would hang 2px off the bottom of the
-     * commonest till in the field. It shrinks instead, which the inside of this
-     * pane already handles: the logo block is `min-h-0 flex-1` precisely so that
-     * it yields and the specials board does not get clipped.
+     * 706 plus the screen's padding is 754, and a very common counter display is
+     * 1366×768. Without this the pane would hang off the bottom of a till in the
+     * field. It shrinks instead, which the inside of this pane already handles:
+     * the identity block is `min-h-0 flex-1` precisely so that it yields and the
+     * specials card does not get clipped.
      */
-    <div className="relative isolate hidden h-[706px] max-h-full w-[574px] shrink-0 overflow-hidden rounded-card bg-brand lg:flex lg:flex-col">
+    <div className="relative isolate hidden h-[706px] max-h-full shrink-0 overflow-hidden bg-brand lg:flex lg:w-[400px] lg:flex-col xl:w-[440px]">
       {/* ── The backdrop ────────────────────────────────────────────────── */}
       {/* A gradient ALWAYS, with the photograph over it. Two reasons: a picture
           that is still loading shows brand colour rather than a white flash on
@@ -121,7 +185,7 @@ export function PosSignInArt({
           It has to cover both. White text over an unknown photograph is a
           contrast accident waiting to happen — the shop chooses the picture and
           we cannot know how light it is — but `brand` is itself a LIGHT blue,
-          so a scrim that skipped the fallback would leave the wordmark white on
+          so a scrim that skipped the fallback would leave the greeting white on
           pale blue on the screen almost every shop actually sees.
 
           `.signin-scrim` rather than `from-ink/55`: `ink` is the THEME's text
@@ -134,24 +198,12 @@ export function PosSignInArt({
           establish one for the flex children that follow. */}
       <div aria-hidden className="signin-scrim absolute inset-0 z-[1]" />
 
-      {/* ── The logo ────────────────────────────────────────────────────── */}
-      {/* Centred in the space ABOVE the board rather than pinned to the top:
-          with no specials it lands in the middle of the panel, which is where a
-          logo belongs on a screen that is otherwise a photograph. */}
-      {/* `min-h-0` so this yields rather than the board below it. Both are
-         flex children; without it the logo keeps its content height and the
-         specials card is the one that gets clipped — which is what happened,
-         cutting the third item in half on a short panel. */}
-      {/* Centred with no board, but pushed UP the moment there is one: four
-          specials is a tall card, and a logo still sitting on the vertical
-          centre of what is left ends up crowding the board's top edge. `pt-10`
-          with `items-start` parks it in the upper third instead, which is where
-          a mark belongs on a panel whose lower half is a list. */}
-      <div
-        className={`relative z-[2] flex min-h-0 flex-1 justify-center p-8 ${
-          specials.length > 0 ? 'items-start pt-10' : 'items-center'
-        }`}
-      >
+      {/* ── Who this shop is ────────────────────────────────────────────── */}
+      {/* `min-h-0 flex-1` so this yields rather than the card below it. Both are
+          flex children; without it this block keeps its content height and the
+          specials card is the one that gets clipped on a 768px-tall counter
+          screen — which is what happened before, cutting the last row in half. */}
+      <div className="relative z-[2] flex min-h-0 flex-1 flex-col p-8">
         {logoUrl ? (
           /* On its own light disc, because a shop's logo is drawn for white
              paper and most have dark ink. Dropping it straight onto a
@@ -161,20 +213,12 @@ export function PosSignInArt({
              `.logo-disc` rather than `bg-surface`: surface follows the
              OPERATOR's theme, and this disc is on the half a CUSTOMER reads.
              A cashier preferring dark mode must not turn a shop's dark logo
-             invisible on the screen facing the queue. */
-          /* Capped by the room available as well as by a fixed size, so a
-             short panel shrinks the disc instead of squeezing the board. */
-          /* Two sizes rather than one. With no board the disc has the whole
-             pane and reads small at h-40, so it takes h-52; with a board it
-             steps back to h-32, because the shop's offers are what the person
-             in the queue is there to read and the mark only has to be
-             recognised. Both keep `max-h-full` for the 768px-tall counter
-             screen. */
-          <div
-            className={`logo-disc flex max-h-full items-center justify-center rounded-full shadow-pop ${
-              specials.length > 0 ? 'h-32 w-32 p-5' : 'h-52 w-52 p-7'
-            }`}
-          >
+             invisible on the screen facing the queue.
+
+             ONE size now, and small. The mark used to be the whole panel and
+             carried the shop's identity alone; the greeting beneath it does
+             that in words now, so the logo only has to be recognised. */
+          <div className="logo-disc flex h-16 w-16 shrink-0 items-center justify-center rounded-full p-2.5 shadow-pop">
             <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" />
           </div>
         ) : (
@@ -182,38 +226,46 @@ export function PosSignInArt({
              before this panel existed. Never a "your logo here" placeholder —
              the customer side of a counter is not where we advertise our own
              setup screens. */
-          <p className="wordmark text-center text-3xl text-white">
+          <p className="wordmark shrink-0 text-xl text-white">
             ODYSSEY
-            <span className="wordmark-sub mt-1 block text-xs text-white/80">POINT OF SALE</span>
+            <span className="wordmark-sub mt-1 block text-[10px] text-white/80">
+              POINT OF SALE
+            </span>
           </p>
         )}
+
+        {/* The greeting, at the size a heading wears on a screen read from
+            across a room rather than at arm's length. `text-balance` so a long
+            trading name breaks into even lines instead of leaving one word
+            stranded on the second. */}
+        <h2 className="mt-7 text-balance text-[30px] font-extrabold leading-[1.15] tracking-tight text-white">
+          {siteName ? `Welcome back, ${siteName}.` : 'Welcome back.'}
+        </h2>
+
+        {/* The date. Rendered only once it has resolved on the client — see the
+            state above — so the line never appears and then corrects itself. */}
+        {today && <p className="mt-3 text-[13px] font-semibold text-white/70">{today}</p>}
       </div>
 
-      {/* ── The board ───────────────────────────────────────────────────── */}
+      {/* ── Today's special ─────────────────────────────────────────────── */}
       {/* Omitted entirely when the shop runs no price-shaped promotions, rather
           than rendered as an empty card. See the docblock: there is no useful
           empty state for this audience. */}
-      {specials.length > 0 && (
+      {headline && (
         <div className="relative z-[2] shrink-0 p-6">
           {/* `.signin-board` rather than a token fill — see the class in
               globals.css. Same trap as the scrim: `ink` inverts with the
               operator's theme and this card faces the queue. */}
-          <div className="signin-board rounded-card p-4 backdrop-blur-sm">
-            <div className="flex items-center gap-2.5 pb-3">
-              {/* The glyph on its own disc rather than loose beside the words.
-                  The heading is small caps at 13px and the tag on its own sat
-                  as a speck against a photograph; the disc gives it a ground to
-                  be legible on from across the room, and matches the lock disc
-                  the operator half wears over its own heading. */}
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white">
-                <Tag size={15} />
-              </span>
-              <h2 className="text-[13px] font-bold uppercase tracking-wide text-white/90">
-                Specials of the day
-              </h2>
-              {/* Which page, where there is more than one. Dots rather than
-                  "1 of 3": it is a progress hint for somebody who is not
-                  reading closely, not a control anybody operates. */}
+          <div className="signin-board rounded-card p-5 backdrop-blur-sm">
+            <div className="flex items-center gap-2">
+              <Gift size={14} className="shrink-0 text-white/70" />
+              <h3 className="text-[11px] font-bold uppercase tracking-[0.12em] text-white/70">
+                Today&rsquo;s special
+              </h3>
+              {/* Which page of the SUPPORTING rows, where there is more than
+                  one. Dots rather than "1 of 3": it is a progress hint for
+                  somebody who is not reading closely, not a control anybody
+                  operates. */}
               {pages > 1 && (
                 <span className="ml-auto flex items-center gap-1.5">
                   {Array.from({ length: pages }).map((_, i) => (
@@ -228,21 +280,27 @@ export function PosSignInArt({
               )}
             </div>
 
-            {/* ONE card holding every item, not a card each.
-                Three separately-bordered tiles stacked two millimetres apart
-                read as three unrelated offers; the board is a single thing a
-                customer scans top to bottom. The rows carry their own padding
-                and need no rule between them — the product pictures already
-                mark where each one starts. */}
-            <div className="flex flex-col rounded-card bg-surface p-2">
-              {shown.map((s) =>
-                s.kind === 'price' ? (
-                  <SpecialRow key={`p${s.productId}`} special={s} />
-                ) : (
-                  <OfferRow key={`o${s.specialId}`} offer={s} />
-                ),
-              )}
-            </div>
+            <HeadlineSpecial special={headline} />
+
+            {/* The others, under a hairline. Quieter than the headline by a
+                long way and deliberately so: the card makes ONE offer, and
+                these are there for the customer who has read it and is still
+                waiting. */}
+            {shown.length > 0 && (
+              <div className="mt-3.5 flex flex-col gap-2 border-t border-white/10 pt-3">
+                {shown.map((s) =>
+                  s.kind === 'price' ? (
+                    <SupportingRow
+                      key={`p${s.productId}`}
+                      name={s.description}
+                      value={formatMoney(s.priceIncl)}
+                    />
+                  ) : (
+                    <SupportingRow key={`o${s.specialId}`} name={s.description} value={s.blurb} />
+                  ),
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -250,92 +308,67 @@ export function PosSignInArt({
   )
 }
 
-/** One item on the board, at a price a customer can act on. */
-function SpecialRow({ special }: { special: PosSignInPriceRow }) {
+/**
+ * The one offer the card is built around, said in two sizes on one line.
+ *
+ * The big half is the thing that makes somebody look up — a price, or the words
+ * of a deal — and the smaller half is what it applies to. That split is the
+ * whole design: "R89.00 ribeye 300g" and "25% off wood-fired pizza" are the
+ * same sentence shape, so a card of either kind reads consistently from the
+ * back of a queue.
+ */
+function HeadlineSpecial({ special }: { special: PosSignInSpecial }) {
+  /* A price row leads with the PRICE, an offer row with the words of the deal.
+     Never a computed price for an offer — see posSignInSpecials: "Chicken Wings
+     — R0.00" because the promotion was really a buy-two-get-one is the failure
+     this distinction exists to avoid. */
+  const lead = special.kind === 'price' ? formatMoney(special.priceIncl) : special.blurb
+
+  /* The supporting line under it. A price row has the shop's own blurb and, if
+     the item was genuinely dearer before, the old price; an offer row has what
+     the promotion applies to. All three are optional and the line is dropped
+     rather than padded when there is nothing to say. */
+  const note =
+    special.kind === 'price'
+      ? special.blurb ||
+        (special.wasIncl !== null && special.wasIncl !== undefined
+          ? `Was ${formatMoney(special.wasIncl)}`
+          : '')
+      : special.appliesTo
+
   return (
-    /* No fill of its own: the light card is the BOARD's, above. The light-on-dark
-       reasoning still holds — the price is read from a distance and dark-on-light
-       beats white-on-photograph every time — it is just carried one level up so
-       three items read as one list. */
-    <div className="flex items-center gap-3 p-2.5">
-      {special.imageUrl ? (
-        <img
-          src={special.imageUrl}
-          alt=""
-          className="h-14 w-14 shrink-0 rounded-control border border-border object-cover"
-        />
-      ) : (
-        /* No photograph is ordinary — most products have none. A tinted glyph
-           rather than a grey box, so a board of un-photographed items still
-           reads as a designed list. */
-        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
-          <Tag size={20} />
+    <div className="mt-3">
+      {/* Baseline-aligned rather than centred, so the small half sits on the
+          same line the big half stands on — centring left it floating against
+          the cap height of a 24px number. */}
+      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="numeric text-[24px] font-extrabold leading-tight text-white">{lead}</span>
+        <span className="text-[15px] font-semibold leading-snug text-white/90">
+          {special.description}
         </span>
+      </p>
+      {note && (
+        /* Two lines, then clipped. A shop's marketing copy has no length limit
+           and a long one would push the supporting rows off the card. */
+        <p className="mt-1.5 line-clamp-2 text-[12px] leading-snug text-white/55">{note}</p>
       )}
-
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[15px] font-bold text-ink">{special.description}</p>
-        {special.blurb && (
-          /* Two lines, then clipped. A shop's marketing copy has no length
-             limit and a long one would push the price off the card. */
-          <p className="line-clamp-2 text-[12.5px] leading-snug text-muted">{special.blurb}</p>
-        )}
-      </div>
-
-      <div className="shrink-0 text-right">
-        <p className="numeric text-[17px] font-bold text-brand">
-          {formatMoney(special.priceIncl)}
-        </p>
-        {special.wasIncl !== null && special.wasIncl !== undefined && (
-          /* The saving, struck through. Only where it is genuinely higher — the
-             resolver returns null otherwise, because a struck-through number
-             that is not bigger reads as our mistake rather than the shop's. */
-          <p className="numeric text-[12px] text-faint line-through">
-            {formatMoney(special.wasIncl)}
-          </p>
-        )}
-      </div>
     </div>
   )
 }
 
 /**
- * A promotion with no single price to show — a combo, a spend-and-get, a
- * multibuy — said in words instead.
+ * One of the other promotions running today — a name and its number.
  *
- * ── WHY IT LOOKS DELIBERATELY UNLIKE THE ROW ABOVE ───────────────────────
- *
- * The priced row is a menu line: photograph, name, number. This one cannot be,
- * and dressing it to match would be the lie. A customer scanning the board has
- * to be able to tell at a glance which rows they can act on without asking
- * anybody and which need a word at the counter — so this carries a tinted glyph
- * where the photograph goes, and the space the price occupied is simply left to
- * the words.
- *
- * No price, ever, including a computed one. See posSignInSpecials: "Chicken
- * Wings — R0.00" because the promotion was really a buy-two-get-one is the
- * failure this whole row type exists to avoid.
+ * No photograph and no second line, unlike the headline above it. Three
+ * fully-dressed rows competing with the headline is what the old board did, and
+ * it left a customer with no idea which of four things the shop actually wanted
+ * them to notice.
  */
-function OfferRow({ offer }: { offer: PosSignInOfferRow }) {
+function SupportingRow({ name, value }: { name: string; value: string }) {
   return (
-    <div className="flex items-center gap-3 p-2.5">
-      {/* A tinted disc rather than a product photograph. The deal covers several
-          things, so any one picture would be a claim about which item it is
-          really about — and that is the one the customer would come to the
-          counter holding. */}
-      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
-        <Gift size={22} />
-      </span>
-
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[15px] font-bold text-ink">{offer.description}</p>
-        {/* The DEAL, at the size the price wears on the row above — it is the
-            same fact for this row, and the thing being read from a distance. */}
-        <p className="text-[13.5px] font-semibold leading-snug text-brand">{offer.blurb}</p>
-        {offer.appliesTo && (
-          <p className="truncate text-[12px] leading-snug text-muted">{offer.appliesTo}</p>
-        )}
-      </div>
+    <div className="flex items-baseline gap-3">
+      <span className="min-w-0 flex-1 truncate text-[12.5px] text-white/75">{name}</span>
+      <span className="numeric shrink-0 text-[12.5px] font-bold text-white">{value}</span>
     </div>
   )
 }

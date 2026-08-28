@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne } from './db'
+import { keepsProfile, readSiteProfile, writeSiteProfile } from './site/siteProfile'
 
 export type SiteRole = 'owner' | 'manager' | 'staff'
 
@@ -158,19 +159,65 @@ export async function listSitesForUser(userId: number): Promise<Site[]> {
  * is; archived ones are gone rather than withheld.
  */
 export async function getSite(siteId: number): Promise<Site | null> {
-  const row = await queryOne<SiteRow>(
-    `SELECT s.id, s.site_code, s.company_name, s.trading_name, s.registration_number,
-            s.vat_number, s.address1, s.address2, s.address3, s.postal_code,
-            s.phone, s.email, s.contact_name, s.connection_type, s.site_type_id,
-            s.is_paid, s.status,
-            NULL AS site_role, 1 AS is_default
-       FROM cp2_sites s
-      WHERE s.id = ?
-        AND s.status IN ('active','suspended')
-      LIMIT 1`,
-    [siteId],
-  )
-  return row ? mapSite(row) : null
+  let row: SiteRow | null
+  try {
+    row = await queryOne<SiteRow>(
+      `SELECT s.id, s.site_code, s.company_name, s.trading_name, s.registration_number,
+              s.vat_number, s.address1, s.address2, s.address3, s.postal_code,
+              s.phone, s.email, s.contact_name, s.connection_type, s.site_type_id,
+              s.is_paid, s.status,
+              NULL AS site_role, 1 AS is_default
+         FROM cp2_sites s
+        WHERE s.id = ?
+          AND s.status IN ('active','suspended')
+        LIMIT 1`,
+      [siteId],
+    )
+  } catch (err) {
+    /* ── THE CONTROL DATABASE IS UNREACHABLE ────────────────────────────────
+     *
+     * On an adopted local install this is the ordinary state of a shop whose
+     * line is down, and it used to be fatal: requireSite() calls this on every
+     * authenticated page, so a machine holding all of its own trading data
+     * could sign in against its own users table and then fail to draw a stock
+     * screen — because it could not find out what the shop was called.
+     *
+     * The mirror is the last thing the control panel said, written on every
+     * successful read above. Desktop only, and it answers "which shop is this
+     * machine" rather than "which shops may this person open" — which is why
+     * the fallback is here and NOT in getSiteForUser below, where it would be
+     * a stale copy standing in for an access check.
+     *
+     * Null when there is nothing to trust: no mirror yet, or one belonging to a
+     * different shop. The throw is then re-raised, so the failure is reported
+     * as what it is — a database that could not be reached — rather than as a
+     * missing site. See lib/site/siteProfile.ts and sql/site/238.
+     */
+    const mirrored = await readSiteProfile(siteId)
+    if (mirrored) return mirrored.site
+
+    /* Nothing mirrored yet. On a desktop install that is a real state with a
+       real remedy, and an ENETUNREACH stack trace names neither — so it is
+       said in a sentence instead. It happens exactly once per machine: until
+       this shop has been opened with a working line at least once, there is
+       nothing for the offline copy to have copied. */
+    if (keepsProfile()) {
+      throw new Error(
+        'This machine has not yet stored its store details, so it cannot open without an ' +
+          'internet connection. Connect it to the internet and sign in once — after that it ' +
+          'will work offline.',
+        { cause: err },
+      )
+    }
+    throw err
+  }
+
+  if (!row) return null
+  const site = mapSite(row)
+  /* Unawaited: the answer is already in hand, and a request that got it must
+     never be failed by a failure to write it down. */
+  void writeSiteProfile(site)
+  return site
 }
 
 export async function getSiteForUser(userId: number, siteId: number): Promise<Site | null> {
