@@ -165,7 +165,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
       return `<p class="${cls(b, 'center')} font-semibold text-ink">${escapeHtml(r.siteName)}</p>`
 
     case 'vatNumber':
-      return `<p class="${cls(b, 'center')} text-muted">VAT no. ${escapeHtml(r.vatNumber ?? '')}</p>`
+      return `<p class="${cls(b, 'center')} text-muted">${escapeHtml(r.taxLabel ?? 'VAT')} no. ${escapeHtml(r.vatNumber ?? '')}</p>`
 
     case 'title':
       return `<p class="${cls(b, 'center')} font-semibold tracking-wide text-ink">${gift ? 'GIFT RECEIPT' : 'TAX INVOICE'}</p>`
@@ -183,7 +183,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
 
     case 'customer':
       return `<p class="${cls(b, 'center')} text-ink-2">${escapeHtml(
-        r.customerName + (r.customerVatNo && !gift ? ` · VAT ${r.customerVatNo}` : ''),
+        r.customerName + (r.customerVatNo && !gift ? ` · ${r.taxLabel ?? 'VAT'} ${r.customerVatNo}` : ''),
       )}</p>`
 
     case 'copyBanner':
@@ -265,7 +265,7 @@ function block(b: SlipBlock, r: ReceiptData): string {
         `<div class="${cls(b)} text-[0.9167em]">` +
         r.vatByRate
           .map((rate) =>
-            row(`VAT @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`, formatMoney(rate.vat)),
+            row(`${r.taxLabel ?? 'VAT'} @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`, formatMoney(rate.vat)),
           )
           .join('') +
         `</div>`

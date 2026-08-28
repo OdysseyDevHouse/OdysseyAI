@@ -51,6 +51,8 @@ export function statementTokens(
     sitePhone?: string | null
     siteEmail?: string | null
     siteRegistrationNumber?: string | null
+    /** What this business calls its tax. Absent falls back to VAT. */
+    taxLabel?: string
   } = {},
 ): RenderInput {
   const { site, account } = data
@@ -60,7 +62,7 @@ export function statementTokens(
   const values: TokenValues = {
     'site.name': site.name,
     'site.vatNumber': site.vatNumber,
-    'site.vatLine': site.vatNumber ? `VAT no. ${site.vatNumber}` : '',
+    'site.vatLine': site.vatNumber ? `${extra.taxLabel ?? 'VAT'} no. ${site.vatNumber}` : '',
     'site.registrationNumber': extra.siteRegistrationNumber ?? null,
     'site.registrationLine': extra.siteRegistrationNumber
       ? `Reg. no. ${extra.siteRegistrationNumber}`
@@ -175,6 +177,7 @@ export function statementTokens(
     values,
     sections: { lines, aging },
     capabilities: { isOwner: false, granted: new Set() },
+    taxLabel: extra.taxLabel,
   }
 }
 

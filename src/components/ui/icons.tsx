@@ -279,6 +279,10 @@ export {
   Rows3 as StackedBands,
   FileSpreadsheet,
   FileArchive,
+  // A speaker with sound coming out of it. Named for what it means rather than
+  // lucide's `Volume2`, whose digit counts that icon's own waves — the same
+  // reason SplitPanes and StackedBands are renamed above.
+  Volume2 as Sound,
 } from 'lucide-react'
 
 /**

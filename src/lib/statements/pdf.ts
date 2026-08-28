@@ -1,4 +1,5 @@
 import 'server-only'
+import { taxLabel } from '../site/taxIdentity'
 import { qrContextFor } from '../site/qrLinks'
 import { pictureIds, pictureBytes } from '../site/stationeryImages'
 import PDFDocument from 'pdfkit'
@@ -176,6 +177,7 @@ async function renderDesignedStatement(
     sitePhone: letterhead?.phone ?? null,
     siteEmail: letterhead?.email ?? null,
     siteRegistrationNumber: letterhead?.registrationNumber ?? null,
+    taxLabel: await taxLabel(siteId),
   })
 
   /*

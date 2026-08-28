@@ -3,6 +3,7 @@ import { qrContextFor } from '@/lib/site/qrLinks'
 import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { getQuote } from '@/lib/site/quotes'
 import { getOrder } from '@/lib/site/salesOrders'
@@ -168,6 +169,7 @@ export default async function SalesDocumentPrintPage({
     site: {
       name: site.displayName,
       vatNumber: site.vatNumber,
+      taxLabel: await taxLabel(site.id),
       registrationNumber: site.registrationNumber,
       address1: site.address1,
       address2: site.address2,

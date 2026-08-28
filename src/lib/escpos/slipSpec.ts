@@ -212,7 +212,7 @@ function emitBlock(
       break
 
     case 'vatNumber':
-      if (data.vatNumber && !gift) job.line(`VAT no. ${data.vatNumber}`)
+      if (data.vatNumber && !gift) job.line(`${data.taxLabel ?? 'VAT'} no. ${data.vatNumber}`)
       break
 
     case 'title':
@@ -243,7 +243,7 @@ function emitBlock(
       if (data.customerName) {
         job.line(
           data.customerVatNo && !gift
-            ? `${data.customerName} · VAT ${data.customerVatNo}`
+            ? `${data.customerName} · ${data.taxLabel ?? 'VAT'} ${data.customerVatNo}`
             : data.customerName,
         )
       }
@@ -337,7 +337,7 @@ function emitBlock(
       for (const rate of data.vatByRate) {
         job.line(
           twoCol(
-            `VAT @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`,
+            `${data.taxLabel ?? 'VAT'} @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`,
             formatMoney(rate.vat),
             columns,
           ),

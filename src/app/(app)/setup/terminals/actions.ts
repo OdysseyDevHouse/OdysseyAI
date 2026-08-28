@@ -310,6 +310,98 @@ export async function setForceClockInAction(on: boolean): Promise<TerminalAction
 }
 
 /**
+ * Whether the till makes a noise when something is rung up.
+ *
+ * Shop-wide, like the rules around it. The till applies the retail-and-
+ * hospitality-only half itself, from its own mode — see `pos_scan_sounds`.
+ */
+export async function setScanSoundsAction(on: boolean): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setSetting(ctx.siteId, 'pos_scan_sounds', on ? '1' : '0')
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/setup/terminals')
+  revalidatePath('/pos')
+  return {
+    ok: true,
+    message: on
+      ? 'Retail and hospitality tills will beep on a scan.'
+      : 'The tills will ring up in silence.',
+  }
+}
+
+/**
+ * Whether the till returns to the PIN pad after every transaction.
+ *
+ * Shop-wide rather than per till, like the rules above it. The question it
+ * settles — "is a slip's cashier name worth anything" — has one answer per
+ * business, and a shop that shares one till usually shares all of them.
+ */
+export async function setReturnToLoginAction(on: boolean): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setSetting(ctx.siteId, 'pos_return_to_login', on ? '1' : '0')
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/setup/terminals')
+  /* The till reads this at page load — see pos/page.tsx, where it ships with
+     the rest of the shell's rules. Without this a machine already open keeps
+     yesterday's answer until somebody reloads it. */
+  revalidatePath('/pos')
+  return {
+    ok: true,
+    message: on
+      ? 'The till will return to the PIN pad after every sale.'
+      : 'The till will stay signed in between sales.',
+  }
+}
+
+/**
+ * How long a till may sit untouched before it signs the operator out.
+ *
+ * Takes SECONDS, with 0 meaning never. The screen offers a list of durations
+ * because those are the ones anybody wants; the storage is the raw number so a
+ * shop asking for something off the list is a settings edit rather than a
+ * deploy. See `pos_idle_logout_seconds`.
+ */
+export async function setIdleLogoutAction(seconds: number): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  /* Trunc rather than trust: this comes off a client select, and a fractional
+     or NaN value would reach validateSetting as a string it would refuse with
+     a message about whole numbers that the person never typed. */
+  const whole = Math.trunc(Number(seconds))
+  if (!Number.isFinite(whole)) {
+    return { ok: false, error: 'Choose how long the till may sit untouched.' }
+  }
+
+  const saved = await setSetting(ctx.siteId, 'pos_idle_logout_seconds', String(whole))
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/setup/terminals')
+  revalidatePath('/pos')
+  return {
+    ok: true,
+    message:
+      whole > 0
+        ? `The till will sign out after ${describeIdle(whole)} of inactivity.`
+        : 'The till will stay signed in however long it sits.',
+  }
+}
+
+/** "30 seconds", "2 minutes" — for the sentence the save reports back. */
+function describeIdle(seconds: number): string {
+  if (seconds < 60) return `${seconds} seconds`
+  const minutes = seconds / 60
+  const rounded = Number.isInteger(minutes) ? minutes : Math.round(minutes * 10) / 10
+  return `${rounded} minute${rounded === 1 ? '' : 's'}`
+}
+
+/**
  * Whether a disconnected till may still sell ON ACCOUNT.
  *
  * ── WHAT THE OWNER IS ACTUALLY AGREEING TO ────────────────────────────────

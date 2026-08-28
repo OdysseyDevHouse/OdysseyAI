@@ -8,7 +8,7 @@ import {
   type DocBlock,
   type DocumentSpec,
 } from './blocks'
-import { findToken, getDocType, type TokenFormat } from './catalog'
+import { findToken, getDocType, labelWithTax, type TokenFormat } from './catalog'
 import { conditionHolds } from './conditions'
 import { qrMatrix } from './qr'
 import { resolveBarcodeText } from './barcodeSource'
@@ -379,7 +379,7 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
         if (text === '') continue
         const def = doc2 ? findToken(doc2, t) : null
         const y = doc.y
-        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(def?.label ?? t, box.x, y, {
+        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(labelWithTax(def?.label ?? t, input.taxLabel), box.x, y, {
           width: box.w * 0.55,
         })
         doc.font('Helvetica').fontSize(8.5).fillColor(INK).text(text, box.x + box.w * 0.55, y, {
@@ -399,7 +399,9 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
          * PICKER, where the page wants "Amount due" or "Balance owed" or
          * "Amount paid" depending on which of the three documents this is.
          */
-        const label = b.title ? resolveText(b.title, v, docKey) : (def?.label ?? 'Total')
+        const label = b.title
+          ? resolveText(b.title, v, docKey)
+          : labelWithTax(def?.label ?? 'Total', input.taxLabel)
         doc
           .font('Helvetica-Bold')
           .fontSize(10)
@@ -418,7 +420,13 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
     }
 
     case 'vatSummary':
-      return titled(ctx, b.title ?? 'VAT SUMMARY', tokenValue('totals.vatSummary', v, docKey), box, align)
+      return titled(
+        ctx,
+        b.title ?? `${input.taxLabel ?? 'VAT'} SUMMARY`,
+        tokenValue('totals.vatSummary', v, docKey),
+        box,
+        align,
+      )
 
     case 'banking':
       return titled(ctx, b.title ?? 'BANKING DETAILS', tokenValue('banking', v, docKey), box, align)

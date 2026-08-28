@@ -5,7 +5,7 @@ import { can, type CapabilitySet } from '@/lib/site/permissions'
 import { listUsers } from '@/lib/site/users'
 import { listTerminals } from '@/lib/site/terminals'
 import { openEntryFor } from '@/lib/site/staffTime'
-import { getBooleanSetting } from '@/lib/site/settings'
+import { getSettings } from '@/lib/site/settings'
 import {
   cashupMode,
   openShift,
@@ -67,6 +67,18 @@ export type TillShiftStatus = {
    * there is nothing for them to be missing.
    */
   clock: { required: boolean; clockedIn: boolean; operatorName: string }
+  /**
+   * Whether an open shift is required before this till will sell.
+   *
+   * Resolved HERE rather than read in the browser, for the same reason
+   * `clock.required` is: the till would otherwise need its own settings read on
+   * top of this one, and a gate that depends on two round trips can draw itself
+   * against a half-answered question. One read, one answer, one gate.
+   *
+   * False lets `shift: null` mean "trading without one" instead of "closed".
+   * See `pos_require_shift` in settings.ts.
+   */
+  shiftRequired: boolean
   shift: {
     id: number
     openedAt: string
@@ -99,7 +111,12 @@ export async function tillShiftStatusAction(
    * `staff.clock` cannot clock on at all, so gating them would be a door with
    * no handle.
    */
-  const clockRule = await getBooleanSetting(siteId, 'pos_force_clock_in')
+  /* Both rules in one read: this action is on the path between a PIN and a
+     sale screen, and two sequential settings queries there are two round trips
+     a cashier waits through. */
+  const rules = await getSettings(siteId, ['pos_force_clock_in', 'pos_require_shift'])
+  const clockRule = rules.pos_force_clock_in === '1'
+  const shiftRequired = rules.pos_require_shift === '1'
   const clocks = can(operator.capabilities, 'staff.clock')
   const clockRequired = clockRule && clocks
   const clock = {
@@ -122,6 +139,7 @@ export async function tillShiftStatusAction(
       mode,
       canCashup: can(operator.capabilities, 'sales.cashup'),
       clock,
+      shiftRequired,
       shift: null,
       tenders: [],
     }
@@ -132,6 +150,7 @@ export async function tillShiftStatusAction(
     mode,
     canCashup: can(operator.capabilities, 'sales.cashup'),
     clock,
+    shiftRequired,
     shift: {
       id: shift.id,
       openedAt: shift.openedAt.toISOString(),

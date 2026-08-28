@@ -655,6 +655,37 @@ export function findToken(doc: DocTypeDef, key: string): TokenDef | null {
   return allTokens(doc).find((t) => t.key === key) ?? null
 }
 
+/**
+ * A token's label, with this shop's own word for the tax substituted in.
+ *
+ * ── WHY THE LABELS ARE NOT SIMPLY STORED PER SITE ─────────────────────────
+ *
+ * Because a label does two jobs. It names the token in the DESIGNER's picker,
+ * where a stable list is what makes a design portable between shops, and it is
+ * PRINTED beside the figure on the finished document — see the `totals` case in
+ * pdf.ts and compile.ts. Only the second job wants the shop's own wording.
+ *
+ * So the catalog keeps saying VAT, which is what a designer picks from, and the
+ * renderers pass every label through here on the way to the page. One rule, one
+ * place, and a shop that renames its tax does not invalidate a single saved
+ * design.
+ *
+ * ── WORD-BOUNDARY, AND WHY THAT MATTERS ───────────────────────────────────
+ *
+ * `\bVAT\b` rather than a plain replace: "VAT number" and "VAT by rate" must
+ * both change, and nothing else in the catalog may. A bare `.replace('VAT', …)`
+ * would also rewrite a label that merely CONTAINED those letters, and the
+ * failure would be silent and printed.
+ *
+ * Case-sensitive on purpose. Every label in the catalog spells it in capitals,
+ * so matching only that cannot touch prose, and a shop whose label is "Tax"
+ * gets "Tax number" rather than "tax number" — which is what a heading wants.
+ */
+export function labelWithTax(label: string, taxLabel?: string): string {
+  if (!taxLabel || taxLabel === 'VAT') return label
+  return label.replace(/\bVAT\b/g, taxLabel)
+}
+
 export function getSection(doc: DocTypeDef, key: string): SectionDef | null {
   return doc.sections.find((s) => s.key === key) ?? null
 }

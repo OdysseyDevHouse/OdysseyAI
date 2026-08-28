@@ -63,6 +63,27 @@ export type RenderInput = {
    * fail-closed direction `pictures` takes.
    */
   qr?: QrContext
+  /**
+   * What this business calls its sales tax — VAT, HST, Tax.
+   *
+   * ── WHY THE LABEL TRAVELS WITH THE VALUES ─────────────────────────────────
+   *
+   * Two things on a document say the word, and only one of them is a token
+   * value. `totals.vat` resolves to a NUMBER, and the word beside it is the
+   * catalog's `label` — printed straight onto the page by both renderers (see
+   * the `totals` case in pdf.ts). The VAT-summary block's heading is a
+   * hardcoded default in the same place.
+   *
+   * Neither is reachable by changing an adapter, because neither is a value.
+   * They are the renderer's own furniture, and this is how the renderer is told
+   * what to call it.
+   *
+   * Absent falls back to 'VAT' at every use, so a caller that has not been
+   * taught to pass it prints exactly what it printed before — the same
+   * discipline `pictures` and `qr` follow, and the only acceptable failure for
+   * something that goes on an invoice.
+   */
+  taxLabel?: string
 }
 
 /** Where a picture block's <img> points. One place, so the route and the tag cannot drift. */
@@ -227,7 +248,20 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
    * A barcode that scans as the wrong thing is worse than one that is absent:
    * absent is noticed, wrong is acted on.
    */
-  const withBarcodes = body.replace(
+  /*
+   * ── THE TAX LABEL ───────────────────────────────────────────────────────
+   *
+   * `{{tax}}` is what the compiler emits wherever a catalog label said VAT, and
+   * it is resolved HERE for the reason the two markers below are: the compiler
+   * runs at design time and its output is SAVED, so a word baked in then would
+   * be frozen into the template — and a design copied to another shop would
+   * carry the first one's tax name with it.
+   *
+   * First, so a label reaching the barcode or QR passes below unchanged.
+   */
+  const withTax = body.replace(/\{\{tax\}\}/g, input.taxLabel ?? 'VAT')
+
+  const withBarcodes = withTax.replace(
     /<div class="sd-block sd-barcode"([^>]*)>\{\{barcode:([a-zA-Z]+):(\d+)\}\}/g,
     (whole, attrs: string, source: string, rawH: string) => {
       const strip = () => whole.replace(/\{\{barcode:[^}]*\}\}/, '')

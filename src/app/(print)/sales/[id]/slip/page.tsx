@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import { qrContextFor } from '@/lib/site/qrLinks'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { getSetting } from '@/lib/site/settings'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
@@ -107,7 +108,7 @@ export default async function SlipPage({
 
   const receipt = receiptDataFor(
     doc,
-    { name: site.displayName, vatNumber: site.vatNumber },
+    { name: site.displayName, vatNumber: site.vatNumber, taxLabel: await taxLabel(site.id) },
     tenders,
     {
       printedAt: new Date().toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' }),

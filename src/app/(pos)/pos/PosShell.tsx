@@ -39,6 +39,8 @@ import {
   listParkedOffline,
 } from '@/lib/posOffline/parkOffline'
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
+import { endOfflineSession } from '@/lib/posOffline/signInOffline'
+import { scanOk, scanFailed } from '@/lib/posOffline/scanSound'
 import { stockShortfalls, stockWarning } from '@/lib/stockWarning'
 import { type PosMode } from '@/lib/posMode'
 import { salePaperRoute } from '@/lib/salePaper'
@@ -275,6 +277,7 @@ export default function PosShell({
   siteId,
   siteName,
   siteVatNumber = null,
+  siteTaxLabel = 'VAT',
   operatorName,
   operatorUserId,
   terminals,
@@ -288,6 +291,9 @@ export default function PosShell({
   cashRounding,
   depositMinPct,
   depositAllowWalkin,
+  returnToLogin,
+  idleLogoutSeconds,
+  scanSounds,
   canOverrideDiscount,
   canOverridePrice,
   canVoid,
@@ -318,6 +324,8 @@ export default function PosShell({
   siteName: string
   /** For the till-printed slip's header — a tax invoice names the vendor. */
   siteVatNumber?: string | null
+  /** What this shop calls its tax, for the offline slip. See taxIdentity.ts. */
+  siteTaxLabel?: string
   operatorName: string
   operatorUserId: number
   terminals: Terminal[]
@@ -360,6 +368,24 @@ export default function PosShell({
   depositMinPct: number
   /** Whether a deposit may be taken with no customer named. */
   depositAllowWalkin: boolean
+  /**
+   * Whether the till returns to the PIN pad after every transaction — finalised
+   * and saved alike. See `pos_return_to_login` in settings.ts.
+   */
+  returnToLogin: boolean
+  /**
+   * Seconds of inactivity before the till signs the operator out; 0 is never.
+   * See `pos_idle_logout_seconds` — a basket with lines in it suspends it.
+   */
+  idleLogoutSeconds: number
+  /**
+   * Whether ringing something up makes a noise — `pos_scan_sounds`.
+   *
+   * Read through `soundOn` below rather than directly, which is where the
+   * retail-and-hospitality-only rule is applied: a trade counter is a desk in a
+   * showroom, and the mis-scan this catches does not happen there.
+   */
+  scanSounds: boolean
   canOverrideDiscount: boolean
   canOverridePrice: boolean
   /**
@@ -485,6 +511,16 @@ export default function PosShell({
   undoLimit: number
 }) {
   const [state, dispatch] = useSaleState()
+
+  /**
+   * Does this till beep?
+   *
+   * The shop's setting AND the screen it is running, because the rule is
+   * "retail and hospitality, not invoicing" — see `pos_scan_sounds`. Resolved
+   * once here rather than tested at each call site: there are two of those and
+   * they must not be able to disagree about which tills are silent.
+   */
+  const soundOn = scanSounds && !invoicing
 
   /**
    * The price type this sale is being rung at, chosen at the till.
@@ -783,6 +819,10 @@ export default function PosShell({
        the server answers `required: false` when the shop has the rule off, so
        a site that never turns it on behaves exactly as before. */
     clock: { required: boolean; clockedIn: boolean; operatorName: string }
+    /* Whether an open shift is demanded at all. Answered by the same read as
+       `clock`, so the gate below never has to weigh two half-arrived facts.
+       See `pos_require_shift` in settings.ts. */
+    shiftRequired: boolean
   } | null>(null)
 
   const [pending, startTransition] = useTransition()
@@ -978,6 +1018,7 @@ export default function PosShell({
       slipRef.current = receiptDataFromBasket({
         siteName,
         vatNumber: siteVatNumber,
+        taxLabel: siteTaxLabel,
         documentNumber,
         // LOCAL date, matching how the sale is stamped.
         documentDate: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`,
@@ -1903,6 +1944,11 @@ export default function PosShell({
       return
     }
 
+    /* The success beep, at the one moment a line actually lands.
+       Every early return above opens a modal INSTEAD of adding — a weight, a
+       serial, a lot, an instruction — and beeping there would tell a cashier
+       who is looking elsewhere that an item went in when it has not. */
+    if (soundOn) scanOk()
     dispatch({ type: 'ADD', product, qty, resolvedIncl: priceFor(product) })
   }
 
@@ -1927,6 +1973,11 @@ export default function PosShell({
         add(product, product.scannedQty ?? 1)
         return
       }
+      /* Nothing matched. THE noise this feature is really for: a cashier
+         working a trolley is watching the goods, not the screen, so the search
+         panel below is feedback they never see — and the item goes into the bag
+         unscanned. Fired before the dispatch so it leads the re-render. */
+      if (soundOn) scanFailed()
       dispatch({ type: 'SHOW_SEARCH', term: code })
       if (results.length === 0 && !searching) {
         toast.info(`No barcode matched "${code}" — searching instead.`)
@@ -2567,6 +2618,16 @@ export default function PosShell({
     }
     toast.success('Sale saved on this till.')
     dispatch({ type: 'CLEAR' })
+    /* The offline saved path, and it must sign out for the same reason the
+       online one does — a till that has lost its line is still a shared till.
+       Placed inside `parkLocally` rather than at its call sites so both reach
+       it: `park()` routes here when it starts offline AND when a transport
+       failure drops it here mid-save.
+
+       `signOutToPinPad` clears the LOCAL session before the server cookie for
+       exactly this path — see there. The pad it returns to signs the next
+       cashier in against the offline verifiers this device holds. */
+    endOfTransaction()
   }
 
   /**
@@ -2765,6 +2826,11 @@ export default function PosShell({
         refreshTables()
       }
       router.refresh()
+      /* The saved half of `pos_return_to_login`. A parked basket ends a
+         transaction exactly as a paid one does — and if only the paid path
+         signed out, a cashier could hold the session open all day by saving
+         every sale, which is the hole the setting exists to close. */
+      endOfTransaction()
     })
   }
 
@@ -3505,6 +3571,13 @@ export default function PosShell({
           if (pushed?.ok) await autoSendToKitchen(documentId)
         })
       }
+      /* Closing a table IS saving it — the commit point the block above calls
+         the first of three — so it ends a transaction for the purposes of
+         `pos_return_to_login`, exactly as parking a counter basket does.
+
+         Outside the `if (documentId)` above: a table closed with nothing yet
+         written to the server still ends the waiter's turn at this till. */
+      endOfTransaction()
       return
     }
 
@@ -4524,6 +4597,7 @@ export default function PosShell({
           canCashup: result.canCashup,
           open: result.shift !== null,
           clock: result.clock,
+          shiftRequired: result.shiftRequired,
         })
       })
       .catch(() => {})
@@ -4538,9 +4612,20 @@ export default function PosShell({
    * outage into a closed shop — the exact failure the whole offline path exists
    * to prevent. Those sales queue with whatever shift KV.shift last held, which
    * is the one the till was already trading on.
+   *
+   * NOR IS A SHOP THAT DOES NOT USE SHIFTS. `shiftRequired` is the shop's own
+   * answer to whether a drawer is counted here at all — see `pos_require_shift`
+   * — and where it is false there is nothing for this gate to ask: the sale
+   * carries no shift, which `sales_documents.shift_id` has always permitted.
+   *
+   * It suppresses the GATE, not shifts. A site with the rule off may still open
+   * one from the till menu, and the moment it does `shiftStatus.open` goes true
+   * and every sale carries it again, exactly as it would anywhere else.
    */
   const closedGate =
-    till.online && shiftStatus !== null && !shiftStatus.open ? shiftStatus : null
+    till.online && shiftStatus !== null && shiftStatus.shiftRequired && !shiftStatus.open
+      ? shiftStatus
+      : null
 
   /**
    * Does the clock-on gate stand in front of the sale right now?
@@ -4554,11 +4639,25 @@ export default function PosShell({
    * entry is a server record, so a till that lost the line could not clear this
    * gate however long the cashier stood there. Turning a network outage into a
    * closed shop is the failure the offline path exists to prevent.
+   *
+   * ── WHY IT WAITS ON `closedGate` AND NOT ON `shiftStatus.open` ────────────
+   *
+   * Those were the same fact until `pos_require_shift` existed, and they are
+   * not any more. A shop that does not use shifts never has one open, so a
+   * condition testing `open` would hold this gate shut for ever there — the
+   * clock rule would read as configured, gate nobody, and the shop would find
+   * out when it ran payroll off hours that were never recorded.
+   *
+   * The thing this actually wants to say is "the shift gate is not standing in
+   * front of me", which is what `closedGate === null` means in both worlds. The
+   * ordering the docblock above describes is preserved exactly: where a shift
+   * IS required, `closedGate` stands until one is open, and this waits behind
+   * it as it always did.
    */
   const clockGate =
     till.online &&
     shiftStatus !== null &&
-    shiftStatus.open &&
+    closedGate === null &&
     shiftStatus.clock.required &&
     !shiftStatus.clock.clockedIn
       ? shiftStatus.clock
@@ -4598,11 +4697,149 @@ export default function PosShell({
           canCashup: result.canCashup,
           open: result.shift !== null,
           clock: result.clock,
+          shiftRequired: result.shiftRequired,
         })
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal?.id])
+
+  /**
+   * Hand the screen back to the PIN pad.
+   *
+   * The same two steps the gates' `onExit` handlers already take — clear the
+   * till cookie, then refresh so PosEntry falls back to `PosGate` now rather
+   * than on the next load. Extracted because three more callers want it: the
+   * two ends of `pos_return_to_login` and the idle timer.
+   *
+   * ── NOT AWAITED BY ITS CALLERS, AND WHY THAT IS SAFE HERE ─────────────────
+   *
+   * `onExit` on the table gate awaits a bill release before signing out,
+   * because a claim left behind outlives the session that owns it. Nothing
+   * calling THIS holds a claim: the return-to-login callers fire after a sale
+   * has committed and cleared, and the idle timer only runs on an empty basket.
+   * So there is nothing to hand back first.
+   */
+  const signOutToPinPad = useCallback(() => {
+    startTransition(async () => {
+      /*
+       * BOTH HALVES, AND THE LOCAL ONE FIRST.
+       *
+       * There are two records of who is standing at this till and PosEntry
+       * consults both: a cookie the server reads, and an `OfflineSession` in
+       * IndexedDB that lets a disconnected till sign somebody in at all. It
+       * shows the PIN pad only when NEITHER answers, so clearing one leaves the
+       * operator signed in by the other.
+       *
+       * The local one goes first because it is the one that cannot fail for a
+       * reason outside this machine. `tillSignOutAction` is a server action, so
+       * on a till with no line it throws — and if that ran first, an offline
+       * sign-out would abort before touching the session that is actually
+       * holding the operator in place. Caught for the same reason: offline is
+       * the case this ordering exists to serve, so the throw is expected there
+       * and must not stop the refresh below.
+       */
+      await endOfflineSession(siteId).catch(() => {})
+      await tillSignOutAction().catch(() => {})
+      router.refresh()
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, siteId])
+
+  /**
+   * The till has finished with a transaction — return to the PIN pad if the
+   * shop asked for that.
+   *
+   * Called from every commit point rather than from an effect watching the
+   * basket empty, and deliberately: a basket goes empty for reasons that are
+   * not a completed transaction — Clear, a void, recalling a saved sale over
+   * the top of one — and an effect could not tell those apart. The commit
+   * points can, because they are the places that know a sale actually landed.
+   *
+   * A no-op when the setting is off, which is the default, so every one of
+   * those call sites costs nothing on a till that never turns this on.
+   */
+  const endOfTransaction = useCallback(() => {
+    if (!returnToLogin) return
+    signOutToPinPad()
+  }, [returnToLogin, signOutToPinPad])
+
+  /**
+   * Sign the operator out after a stretch of inactivity — `pos_idle_logout_seconds`.
+   *
+   * ── WHY THE BASKET SUSPENDS IT ────────────────────────────────────────────
+   *
+   * A basket with lines in it is a customer at the counter. Signing out over
+   * one has two possible behaviours and both are worse than doing nothing:
+   * throw the lines away, which destroys work somebody is mid-way through, or
+   * park them, which files a sale under an operator who is about to stop being
+   * the operator. Neither beats leaving the screen up for a till that is
+   * plainly in use — and the state this setting actually exists for is a till
+   * abandoned BETWEEN customers, which is an empty one.
+   *
+   * The timer restarts when the basket empties, because `lines.length` is in
+   * the dependency list: clearing the last line is itself a re-arm.
+   *
+   * ── WHY THE LISTENERS ARE PASSIVE AND THE TIMER IS A DEADLINE ─────────────
+   *
+   * The obvious shape — clear and re-set a timeout on every event — runs on
+   * every keystroke of a scanned barcode and every pointer move. Instead the
+   * listeners only stamp a ref, and one interval asks whether the deadline has
+   * passed. That makes the cost of an event a single assignment, which matters
+   * on a machine that is also drawing a sale screen.
+   *
+   * `keydown` covers the scanner: a USB scanner is a keyboard, so a shop
+   * working through a long delivery never trips this even with nobody touching
+   * the screen.
+   *
+   * ── AND WHY IT DOES NOT RUN WHILE A GATE IS UP ────────────────────────────
+   *
+   * The gates ARE the signed-out state as far as the cashier is concerned, and
+   * a PIN pad that signs you out is a loop. `operatorName` is still set behind
+   * them, so nothing else would stop it.
+   */
+  const lastActivityRef = useRef(Date.now())
+  /* Read off `state` directly rather than through the `basketHasLines` below:
+     that one is declared further down the component, and hoisting it up here
+     to share it would move a `const` past readers this file already has. The
+     dependency is the length, so the effect re-arms when the basket empties. */
+  const idleBasketBusy = state.lines.length > 0
+  useEffect(() => {
+    if (idleLogoutSeconds <= 0) return
+    if (idleBasketBusy) return
+    if (closedGate || clockGate || gateUndecided) return
+
+    lastActivityRef.current = Date.now()
+    const note = () => {
+      lastActivityRef.current = Date.now()
+    }
+
+    /* Capture phase, so a handler that stops propagation — a modal trapping
+       keys, of which this screen has several — cannot make the till look idle
+       while somebody is plainly using it. Passive: none of these are cancelled. */
+    const options = { capture: true, passive: true } as const
+    window.addEventListener('pointerdown', note, options)
+    window.addEventListener('keydown', note, options)
+    window.addEventListener('wheel', note, options)
+    window.addEventListener('touchstart', note, options)
+
+    const deadlineMs = idleLogoutSeconds * 1000
+    /* Once a second regardless of the setting: the check is a subtraction, and
+       a coarser tick would make a 15-second timeout fire at up to 20. */
+    const interval = window.setInterval(() => {
+      if (Date.now() - lastActivityRef.current < deadlineMs) return
+      window.clearInterval(interval)
+      signOutToPinPad()
+    }, 1000)
+
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('pointerdown', note, options)
+      window.removeEventListener('keydown', note, options)
+      window.removeEventListener('wheel', note, options)
+      window.removeEventListener('touchstart', note, options)
+    }
+  }, [idleLogoutSeconds, idleBasketBusy, closedGate, clockGate, gateUndecided, signOutToPinPad])
 
   /**
    * Send-to-kitchen: fetch the delta, PRINT, then mark — in that order, so a
@@ -7082,7 +7319,16 @@ export default function PosShell({
         change={receipt?.change ?? 0}
         tip={receipt?.tip}
         posted={(receipt?.documentId ?? 0) > 0}
-        onClose={() => setReceipt(null)}
+        /* The finalised half of `pos_return_to_login`, and it fires HERE rather
+           than where the sale committed. The receipt carries the document
+           number and the change owed — signing out the moment the money landed
+           would take both off the screen before the cashier had counted the
+           change into a customer's hand. Dismissing this dialog is the point at
+           which the transaction is genuinely finished with. */
+        onClose={() => {
+          setReceipt(null)
+          endOfTransaction()
+        }}
         canPrint={
           (receipt?.documentId ?? 0) > 0 ||
           /* A basket snapshot only becomes paper on a THERMAL till. The trade

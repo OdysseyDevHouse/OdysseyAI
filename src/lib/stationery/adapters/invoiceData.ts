@@ -40,7 +40,7 @@ const lines = (parts: (string | null | undefined)[]) =>
  * the totals already used to reach the same numbers, and it agrees with them for
  * the reason it must: both work from the same inclusive line total.
  */
-function vatSummary(data: InvoiceData): string {
+function vatSummary(data: InvoiceData, taxLabel: string): string {
   const byRate = new Map<number, { excl: number; vat: number }>()
   for (const l of data.lines) {
     const rate = l.vatRatePct
@@ -53,7 +53,7 @@ function vatSummary(data: InvoiceData): string {
   return [...byRate.entries()]
     .filter(([, v]) => v.excl !== 0 || v.vat !== 0)
     .sort((a, b) => b[0] - a[0])
-    .map(([rate, v]) => `VAT @ ${rate}% on ${formatMoney(v.excl)}: ${formatMoney(v.vat)}`)
+    .map(([rate, v]) => `${taxLabel} @ ${rate}% on ${formatMoney(v.excl)}: ${formatMoney(v.vat)}`)
     .join('\n')
 }
 
@@ -66,9 +66,15 @@ export function invoiceDataTokens(
     heading?: string
     closing?: string
     printedAt?: string
+    /** What this business calls its tax. Absent falls back to VAT. */
+    taxLabel?: string
   } = {},
 ): RenderInput {
   const { site, customer } = data
+
+  /* Resolved once: it appears in the letterhead line and in the rate analysis,
+     and those two must never disagree about what the tax is called. */
+  const taxLabel = extra.taxLabel ?? 'VAT'
 
   /*
    * All four banking fields or none — the rule build.ts states plainly: "an
@@ -83,7 +89,7 @@ export function invoiceDataTokens(
     'site.name': site.name,
     'site.vatNumber': site.vatNumber,
     'site.registrationNumber': site.registrationNumber ?? null,
-    'site.vatLine': site.vatNumber ? `VAT no. ${site.vatNumber}` : '',
+    'site.vatLine': site.vatNumber ? `${taxLabel} no. ${site.vatNumber}` : '',
     'site.registrationLine': site.registrationNumber
       ? `Reg. no. ${site.registrationNumber}`
       : '',
@@ -137,7 +143,7 @@ export function invoiceDataTokens(
     // InvoiceData carries no rounding adjustment; the row drops itself.
     'totals.roundingAdj': null,
     'totals.totalIncl': data.totalIncl,
-    'totals.vatSummary': vatSummary(data),
+    'totals.vatSummary': vatSummary(data, taxLabel),
   }
 
   const rows: TokenValues[] = data.lines.map((line, i) => ({
@@ -157,5 +163,10 @@ export function invoiceDataTokens(
     'line.totalIncl': line.lineTotalIncl,
   }))
 
-  return { values, sections: { lines: rows }, capabilities: { isOwner: false, granted: new Set() } }
+  return {
+    values,
+    sections: { lines: rows },
+    capabilities: { isOwner: false, granted: new Set() },
+    taxLabel,
+  }
 }

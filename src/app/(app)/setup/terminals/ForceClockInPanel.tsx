@@ -9,9 +9,9 @@ import { setForceClockInAction } from './actions'
  *
  * ── THE DISTINCTION THIS PANEL HAS TO MAKE ────────────────────────────────
  *
- * A shop already cannot trade without an open SHIFT — that gate is
- * unconditional and not a setting. The confusion worth heading off is that the
- * two sound like the same rule:
+ * A shop normally cannot trade without an open SHIFT — a separate gate, with
+ * its own switch on the cash-up screen (`pos_require_shift`). The confusion
+ * worth heading off is that the two sound like the same rule:
  *
  *   The shift is the DRAWER, opened once for the till.
  *   This is the PERSON, answered for each cashier who signs in.

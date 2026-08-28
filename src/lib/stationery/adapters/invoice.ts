@@ -37,6 +37,20 @@ export type InvoiceSources = {
   site: {
     name: string
     vatNumber: string | null
+    /**
+     * What this business calls its sales tax — VAT, HST, Tax.
+     *
+     * ── WHY IT IS OPTIONAL, AND WHY THAT IS NOT LAZINESS ──────────────────
+     *
+     * Optional with a 'VAT' fallback, so a caller that has not been taught to
+     * pass it prints exactly what it printed before rather than a document
+     * headed with an empty word. This value goes on invoices that leave the
+     * building; degrading to the old behaviour is the only acceptable failure.
+     *
+     * Resolved by the print route through `taxIdentity`, not looked up here —
+     * see the NO QUERIES note above. This file maps; it does not fetch.
+     */
+    taxLabel?: string
     registrationNumber: string | null
     address1: string | null
     address2: string | null
@@ -91,7 +105,7 @@ const lines = (v: (string | null | undefined)[]) =>
  * columns only hold the sum. Rates with nothing on them are dropped: "VAT @ 0%
  * on R0.00" is a row that answers no question.
  */
-function vatSummary(doc: SalesDocument): string {
+function vatSummary(doc: SalesDocument, taxLabel: string): string {
   const byRate = new Map<number, { excl: number; vat: number }>()
   for (const l of doc.lines) {
     const at = byRate.get(l.vatRatePct) ?? { excl: 0, vat: 0 }
@@ -102,7 +116,7 @@ function vatSummary(doc: SalesDocument): string {
   return [...byRate.entries()]
     .filter(([, v]) => v.excl !== 0 || v.vat !== 0)
     .sort((a, b) => b[0] - a[0])
-    .map(([rate, v]) => `VAT @ ${rate}% on ${formatMoney(v.excl)}: ${formatMoney(v.vat)}`)
+    .map(([rate, v]) => `${taxLabel} @ ${rate}% on ${formatMoney(v.excl)}: ${formatMoney(v.vat)}`)
     .join('\n')
 }
 
@@ -140,7 +154,7 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
     'site.name': site.name,
     'site.vatNumber': site.vatNumber,
     'site.registrationNumber': site.registrationNumber,
-    'site.vatLine': site.vatNumber ? `VAT no. ${site.vatNumber}` : '',
+    'site.vatLine': site.vatNumber ? `${site.taxLabel ?? 'VAT'} no. ${site.vatNumber}` : '',
     'site.registrationLine': site.registrationNumber
       ? `Reg. no. ${site.registrationNumber}`
       : '',
@@ -192,7 +206,7 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
     'totals.vat': doc.vatTotal,
     'totals.roundingAdj': doc.roundingAdj !== 0 ? doc.roundingAdj : null,
     'totals.totalIncl': doc.totalIncl,
-    'totals.vatSummary': vatSummary(doc),
+    'totals.vatSummary': vatSummary(doc, site.taxLabel ?? 'VAT'),
   }
 
   const rows: TokenValues[] = doc.lines.map((line) => ({
@@ -207,5 +221,12 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
     'line.totalIncl': line.lineTotalIncl,
   }))
 
-  return { values, sections: { lines: rows }, capabilities: { isOwner: false, granted: new Set() } }
+  return {
+    values,
+    sections: { lines: rows },
+    capabilities: { isOwner: false, granted: new Set() },
+    /* The renderer's own furniture — the totals row labels and the summary
+       heading — is not a token value, so it is told separately. See RenderInput. */
+    taxLabel: site.taxLabel,
+  }
 }

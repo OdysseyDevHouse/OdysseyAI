@@ -30,6 +30,8 @@ export type PurchaseOrderSources = {
   site: {
     name: string
     vatNumber: string | null
+    /** What this business calls its tax. Optional; falls back to VAT. */
+    taxLabel?: string
     registrationNumber: string | null
     address1: string | null
     address2: string | null
@@ -100,7 +102,7 @@ export function purchaseOrderTokens(src: PurchaseOrderSources): RenderInput {
     'site.postalCode': site.postalCode,
     // Label and value together, so a business that is not a VAT vendor gets no
     // orphaned "VAT no." caption over a blank.
-    'site.vatLine': site.vatNumber ? `VAT no. ${site.vatNumber}` : '',
+    'site.vatLine': site.vatNumber ? `${site.taxLabel ?? 'VAT'} no. ${site.vatNumber}` : '',
     'site.registrationLine': site.registrationNumber
       ? `Reg. no. ${site.registrationNumber}`
       : '',
@@ -171,5 +173,12 @@ export function purchaseOrderTokens(src: PurchaseOrderSources): RenderInput {
     'line.totalExcl': line.lineTotalExcl,
   }))
 
-  return { values, sections: { lines: rows }, capabilities: { isOwner: false, granted: new Set() } }
+  return {
+    values,
+    sections: { lines: rows },
+    capabilities: { isOwner: false, granted: new Set() },
+    /* The renderer's own furniture — the totals row labels and the summary
+       heading — is not a token value, so it is told separately. See RenderInput. */
+    taxLabel: site.taxLabel,
+  }
 }

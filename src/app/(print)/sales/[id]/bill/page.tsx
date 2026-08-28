@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { billDataFor } from '@/lib/billData'
 import { BillSlip } from '@/components/pos/BillSlip'
@@ -49,7 +50,7 @@ export default async function BillPrintPage({
 
   const bill = billDataFor(
     doc,
-    { name: site.displayName, vatNumber: site.vatNumber },
+    { name: site.displayName, vatNumber: site.vatNumber, taxLabel: await taxLabel(site.id) },
     {
       printedAt: new Date().toLocaleString('en-ZA', {
         dateStyle: 'short',

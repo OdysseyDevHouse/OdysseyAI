@@ -125,6 +125,29 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+/**
+ * Turn the word VAT in a catalog label into the `{{tax}}` marker.
+ *
+ * ── WHY A MARKER AND NOT THE SHOP'S ACTUAL WORD ───────────────────────────
+ *
+ * Because this compiler runs at DESIGN time and its output is SAVED — the
+ * markup in `stationery_templates.body` is what every future document renders
+ * from. Baking "HST" in here would freeze the label into the saved design, so
+ * a shop that later corrected it would keep printing the old word until
+ * somebody re-saved every template. Worse, a design copied between two shops
+ * would carry the first one's tax name.
+ *
+ * The marker keeps the decision at PRINT time, where the shop's current answer
+ * is known — the same reasoning `{{qr:…}}` and `{{barcode:…}}` already follow,
+ * and it is resolved in the same pass. See renderTemplate.
+ *
+ * Applied AFTER `esc`, so the braces survive: escaping the marker would emit
+ * `&#123;&#123;tax&#125;&#125;` and print literally on the page.
+ */
+function taxMarked(escaped: string): string {
+  return escaped.replace(/\bVAT\b/g, '{{tax}}')
+}
+
 /* ── per-block compilers ─────────────────────────────────────────────────── */
 
 /**
@@ -383,7 +406,7 @@ function totals(b: DocBlock, docKey: string): string {
       const def = doc ? findToken(doc, t) : null
       return (
         `<div class="sd-row flex justify-between gap-6">` +
-        `<dt class="text-muted">${esc(def?.label ?? t)}</dt>` +
+        `<dt class="text-muted">${taxMarked(esc(def?.label ?? t))}</dt>` +
         `<dd class="numeric text-ink">{${t}}</dd></div>`
       )
     })
@@ -443,7 +466,7 @@ function compileBlock(b: DocBlock, docKey: string): string {
     case 'totals':
       return totals(b, docKey)
     case 'vatSummary':
-      return titledValue(b.title ?? 'VAT SUMMARY', 'totals.vatSummary')
+      return titledValue(b.title ?? '{{tax}} SUMMARY', 'totals.vatSummary')
     case 'banking':
       return titledValue(b.title ?? 'BANKING DETAILS', 'banking')
     case 'notes':

@@ -31,6 +31,8 @@ export function PurchaseOrderDocument({
   site: {
     name: string
     vatNumber: string | null
+    /** What this business calls its tax. Absent falls back to VAT. */
+    taxLabel?: string
     registrationNumber: string | null
     address1: string | null
     address2: string | null
@@ -94,7 +96,7 @@ export function PurchaseOrderDocument({
             </p>
           )}
           <p className="mt-1 text-xs text-muted">
-            {site.vatNumber && <span className="block">VAT no. {site.vatNumber}</span>}
+            {site.vatNumber && <span className="block">{site.taxLabel ?? 'VAT'} no. {site.vatNumber}</span>}
             {site.registrationNumber && (
               <span className="block">Reg. no. {site.registrationNumber}</span>
             )}
@@ -236,7 +238,7 @@ export function PurchaseOrderDocument({
               </div>
             )}
             <div className="flex justify-between gap-6">
-              <dt className="text-muted">VAT</dt>
+              <dt className="text-muted">{site.taxLabel ?? 'VAT'}</dt>
               <dd className="numeric text-ink">{formatMoney(doc.vatTotal)}</dd>
             </div>
           </dl>

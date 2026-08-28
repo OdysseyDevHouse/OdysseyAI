@@ -35,7 +35,7 @@ export function StatementDocument({
         <div>
           <h1 className="text-lg font-semibold text-ink">{data.site.name}</h1>
           {data.site.vatNumber && (
-            <p className="mt-0.5 text-xs text-muted">VAT no. {data.site.vatNumber}</p>
+            <p className="mt-0.5 text-xs text-muted">{data.site.taxLabel ?? 'VAT'} no. {data.site.vatNumber}</p>
           )}
         </div>
         <div className="text-right">
@@ -65,7 +65,7 @@ export function StatementDocument({
             </p>
           ))}
           {data.account.vatNumber && (
-            <p className="mt-1 text-xs text-muted">VAT no. {data.account.vatNumber}</p>
+            <p className="mt-1 text-xs text-muted">{data.site.taxLabel ?? 'VAT'} no. {data.account.vatNumber}</p>
           )}
         </div>
 

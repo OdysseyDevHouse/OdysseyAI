@@ -52,6 +52,7 @@ export default function PosEntry({
   siteId,
   siteName,
   siteVatNumber = null,
+  siteTaxLabel = 'VAT',
   serverOperator,
   terminals,
   departments,
@@ -67,6 +68,9 @@ export default function PosEntry({
   cashRounding,
   depositMinPct,
   depositAllowWalkin,
+  returnToLogin,
+  idleLogoutSeconds,
+  scanSounds,
   specials,
   pendingPrices,
   posMenus,
@@ -89,6 +93,8 @@ export default function PosEntry({
   siteName: string
   /** For the till-printed slip's header. Forwarded to PosShell. */
   siteVatNumber?: string | null
+  /** What this shop calls its tax, for the offline slip. See taxIdentity.ts. */
+  siteTaxLabel?: string
   /**
    * The operator the SERVER resolved, or null when the till cookie has lapsed.
    *
@@ -125,6 +131,12 @@ export default function PosEntry({
   depositMinPct: number
   /** Whether a deposit may be taken with no customer named. */
   depositAllowWalkin: boolean
+  /** Whether the till returns to the PIN pad after every transaction. */
+  returnToLogin: boolean
+  /** Seconds of inactivity before the till signs out. 0 is never. */
+  idleLogoutSeconds: number
+  /** Whether a scan beeps. Ignored on the invoicing screen — see PosShell. */
+  scanSounds: boolean
   specials: Special[]
   /** Approved price changes, moments unevaluated — the till decides on its clock. */
   pendingPrices: PendingSchedule[]
@@ -345,6 +357,7 @@ export default function PosEntry({
       siteId={siteId}
       siteName={siteName}
       siteVatNumber={siteVatNumber}
+      siteTaxLabel={siteTaxLabel}
       operatorName={operator.name}
       operatorUserId={operator.userId}
       terminals={terminals}
@@ -358,6 +371,9 @@ export default function PosEntry({
       cashRounding={cashRounding}
       depositMinPct={depositMinPct}
       depositAllowWalkin={depositAllowWalkin}
+      returnToLogin={returnToLogin}
+      idleLogoutSeconds={idleLogoutSeconds}
+      scanSounds={scanSounds}
       canOverrideDiscount={operator.canOverrideDiscount}
       canOverridePrice={operator.canOverridePrice}
       canVoid={operator.canVoid}

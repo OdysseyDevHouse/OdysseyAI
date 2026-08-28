@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getLayby } from '@/lib/site/laybys'
 import { getSettings } from '@/lib/site/settings'
 import { LaybyAgreement } from '@/components/laybys/LaybyAgreement'
@@ -33,7 +34,7 @@ export default async function LaybyPrintPage({ params }: { params: Promise<{ id:
       <PrintButton laybyId={layby.id} />
       <LaybyAgreement
         layby={layby}
-        site={{ name: site.displayName, vatNumber: site.vatNumber }}
+        site={{ name: site.displayName, vatNumber: site.vatNumber, taxLabel: await taxLabel(site.id) }}
         terms={settings.layby_terms_text ?? ''}
       />
     </div>

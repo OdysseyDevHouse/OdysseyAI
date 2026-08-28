@@ -22,7 +22,7 @@ export function LaybyAgreement({
   terms,
 }: {
   layby: Layby
-  site: { name: string; vatNumber: string | null }
+  site: { name: string; vatNumber: string | null; taxLabel?: string }
   terms: string
 }) {
   return (
@@ -30,7 +30,7 @@ export function LaybyAgreement({
       <header className="flex items-start justify-between gap-8 border-b border-border pb-5">
         <div>
           <h1 className="text-lg font-semibold text-ink">{site.name}</h1>
-          {site.vatNumber && <p className="mt-0.5 text-xs text-muted">VAT no. {site.vatNumber}</p>}
+          {site.vatNumber && <p className="mt-0.5 text-xs text-muted">{site.taxLabel ?? 'VAT'} no. {site.vatNumber}</p>}
         </div>
         <div className="text-right">
           <h2 className="text-xl font-semibold tracking-wide text-ink">LAY-BY AGREEMENT</h2>

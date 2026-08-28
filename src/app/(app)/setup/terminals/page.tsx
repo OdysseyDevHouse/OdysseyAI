@@ -3,7 +3,7 @@ import { listTerminals } from '@/lib/site/terminals'
 import { listLocations } from '@/lib/site/stockLocations'
 import { listLicences, paidSlots } from '@/lib/control/devices'
 import { PageHeader, PageBody } from '@/components/ui'
-import { getNumericSetting, getSetting } from '@/lib/site/settings'
+import { getNumericSetting, getSetting, getSettings } from '@/lib/site/settings'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
 
 import TerminalsClient from './TerminalsClient'
@@ -12,6 +12,8 @@ import UndoLimitPanel from './UndoLimitPanel'
 import StockWarningPanel from './StockWarningPanel'
 import SignInArtPanel from './SignInArtPanel'
 import ForceClockInPanel from './ForceClockInPanel'
+import SignOutPanel from './SignOutPanel'
+import ScanSoundPanel from './ScanSoundPanel'
 import OfflineAccountPanel from './OfflineAccountPanel'
 
 import UnlockPanel from './UnlockPanel'
@@ -57,6 +59,26 @@ export default async function TerminalsPage() {
   /* Absent means OFF. Turning it on can stop a cashier trading, which is not a
      rule anybody should inherit by upgrade — see pos_force_clock_in. */
   const forceClockIn = (await getSetting(siteId, 'pos_force_clock_in')) === '1'
+  /* When the till hands itself back to the PIN pad. Both absent means OFF: they
+     cost a PIN entry per sale, which at a single-operator counter buys nothing
+     — see pos_return_to_login and pos_idle_logout_seconds. */
+  const signOutRules = await getSettings(siteId, [
+    'pos_return_to_login',
+    'pos_idle_logout_seconds',
+    /* Read alongside them rather than on its own: it is one more till-behaviour
+       flag on the same screen, and a separate query would be a second round
+       trip for one column. See pos_scan_sounds. */
+    'pos_scan_sounds',
+  ])
+  const scanSounds = signOutRules.pos_scan_sounds === '1'
+  const returnToLogin = signOutRules.pos_return_to_login === '1'
+  /* Clamped the same way the till itself clamps it: this drives a select whose
+     options are whole seconds, and a malformed row must present as Never rather
+     than as a blank control with no option selected. */
+  const idleLogoutSeconds = Math.max(
+    0,
+    Math.trunc(Number(signOutRules.pos_idle_logout_seconds)) || 0,
+  )
   /* NO SHOP-WIDE MODE READ HERE ANY MORE. Which screen a till runs is a
      property of that till, carried on its own row — see TerminalsClient and
      sql/site/180_terminal_pos_mode.sql. */
@@ -102,6 +124,19 @@ export default async function TerminalsPage() {
               is about what the TILL does when somebody signs in, and this is the
               screen a manager is on when they set up how the tills behave. */}
           <ForceClockInPanel forceClockIn={forceClockIn} />
+          {/* Directly after it, because the two are the same subject read from
+              opposite ends: that one decides who may START trading, this one
+              decides when they STOP. A manager setting up a shared counter
+              wants them together. */}
+          <SignOutPanel
+            returnToLogin={returnToLogin}
+            idleLogoutSeconds={idleLogoutSeconds}
+          />
+          {/* Last of the behaviour run, because it is the only one here that
+              changes what the till DOES rather than what it allows — and the
+              only one a manager can judge by pressing a button rather than by
+              reading a paragraph. */}
+          <ScanSoundPanel scanSounds={scanSounds} />
           {/* What the tills LOOK like before anybody signs in, under what they
               DO once somebody has. It is the one panel here a manager opens for
               appearance rather than behaviour, so it sits at the end of the

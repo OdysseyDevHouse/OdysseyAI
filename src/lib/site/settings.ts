@@ -28,6 +28,33 @@ import { PICTURE_FONTS } from '../generatedPicture'
 export const SETTING_DEFAULTS = {
   cost_basis: 'average',
   /**
+   * What this country calls its sales tax: VAT, HST, GST, Tax.
+   *
+   * ── WHY IT IS CONFIGURABLE AT ALL ─────────────────────────────────────────
+   *
+   * The word was hard-coded in several hundred places, which is right for one
+   * country and wrong everywhere the product is sold. South Africa says VAT,
+   * Canada says HST, the United States says Tax — and a Canadian invoice
+   * headed "VAT" is not merely odd, it is a document naming a tax that does not
+   * exist in the jurisdiction it was issued in.
+   *
+   * ── WHY IT IS A SITE SETTING AND THE NUMBER IS NOT ────────────────────────
+   *
+   * The NUMBER is the shop's identity and lives in the control database, where
+   * support maintains it beside the registered name and address. The LABEL is a
+   * display preference with no meaning outside this database, and it has to be
+   * readable by a till with no connection — a slip that cannot print its own
+   * tax heading is not a slip. See lib/site/taxIdentity.ts, which reads both.
+   *
+   * ── LENGTH ────────────────────────────────────────────────────────────────
+   *
+   * Short by design. It goes in table headings, on 40-column thermal slips and
+   * in report column titles, all of which are laid out around a word of three
+   * or four characters. `validateSetting` caps it at 12 — enough for anything
+   * real, short enough that a sentence typed in here cannot break a slip.
+   */
+  tax_label: 'VAT',
+  /**
    * Which way a forced price ending moves — 'up', 'down' or 'nearest'.
    *
    * Not a detail: on a .99 ending, R14.32 becomes R14.99 rounding up and
@@ -301,9 +328,10 @@ export const SETTING_DEFAULTS = {
    * They are different questions and both are worth asking:
    *
    *   THE SHIFT is the DRAWER. In terminal mode it is opened once, by whoever
-   *   starts the day, and every cashier afterwards trades on it. That gate is
-   *   unconditional and stays that way — a sale rung up with no shift banks
-   *   into no reconciliation.
+   *   starts the day, and every cashier afterwards trades on it. That gate has
+   *   its own switch — `pos_require_shift`, on by default — and the two are
+   *   independent: a shop that does not count a drawer may still want to know
+   *   who is on duty, so this one is asked whether or not that one is set.
    *
    *   THIS is the PERSON. The till is open, the drawer is counted, and the
    *   question is whether the individual now standing at it is on duty. After
@@ -325,6 +353,134 @@ export const SETTING_DEFAULTS = {
    * capability exists to exempt. See `tillShiftStatusAction`.
    */
   pos_force_clock_in: '0',
+  /**
+   * Whether the till insists on an open shift before it will sell.
+   *
+   * ── WHY THIS IS A SETTING AND NOT SIMPLY THE BEHAVIOUR ────────────────────
+   *
+   * A shift is the RECONCILIATION UNIT — the drawer between two moments — and
+   * the till has always demanded one. That is right for a shop that counts a
+   * drawer: a sale rung up with no shift banks into no reconciliation, and the
+   * money is unaccounted for by construction.
+   *
+   * It is wrong for the shops that never count one. A single-owner counter, an
+   * office invoicing from the till, a stall settling everything by card — none
+   * of them open a drawer in the morning, and for those the gate is a screen
+   * standing between them and every sale, asking for a float that does not
+   * exist. Several sites do not use shifts and do not want the feature at all.
+   *
+   * ── WHY IT IS ON BY DEFAULT ───────────────────────────────────────────────
+   *
+   * Because the other default silently loses money. With this off, sales carry
+   * no shift, so they appear in no cash-up and in no variance — and a shop that
+   * did want its drawer counted would not discover the omission until the first
+   * time it tried to count one, by which point the day is gone. Every shop
+   * trading today expects the gate. A shop that does not want it turns it off
+   * deliberately, which is the direction whose mistake is recoverable.
+   *
+   * ── WHAT IT DOES NOT DO ───────────────────────────────────────────────────
+   *
+   * It does not disable shifts. A site with this off may still open one from
+   * the till menu or the back office, and the moment it does, sales carry it
+   * again — `sales_documents.shift_id` is nullable and always has been, so both
+   * kinds of sale coexist without a schema change and a shop can change its
+   * mind mid-life without stranding what it has already banked.
+   *
+   * Nor does it touch the clock gate. "Is the drawer open" is a fact about the
+   * till and "is this person on duty" is a fact about the person; a shop can
+   * want the second without the first, so `pos_force_clock_in` is asked
+   * independently of this and still stands when this is off.
+   */
+  pos_require_shift: '1',
+  /**
+   * Whether the till returns to the PIN pad after every transaction.
+   *
+   * ── WHAT IT IS FOR ────────────────────────────────────────────────────────
+   *
+   * A shared till, where the next sale is rung by whoever reaches it first. Off,
+   * the operator who signed in that morning owns every sale until somebody
+   * signs out — so a slip printed at four o'clock names a cashier who went home
+   * at noon, and a variance has nobody to ask about it. On, each sale is
+   * attributed to whoever actually put their PIN in for it.
+   *
+   * Legacy called this "Force Cashier Code During Sale", which named the
+   * mechanism rather than the point. The point is attribution.
+   *
+   * ── FINALISED AND SAVED, BOTH ─────────────────────────────────────────────
+   *
+   * A transaction ends when the basket leaves the screen, and it leaves both
+   * ways: paid for, or saved for later. Signing out on one and not the other
+   * would let a cashier keep the session alive indefinitely by parking every
+   * sale — which is exactly the hole the setting exists to close.
+   *
+   * ── OFF BY DEFAULT ────────────────────────────────────────────────────────
+   *
+   * It costs a PIN entry per sale, and at a single-operator counter that is
+   * pure friction for an attribution question nobody is asking — there is only
+   * ever one person it could have been. A shop that shares a till turns it on.
+   */
+  pos_return_to_login: '0',
+  /**
+   * Seconds of inactivity before the till signs the operator out. '0' is never.
+   *
+   * ── WHY SECONDS AND NOT A LIST ────────────────────────────────────────────
+   *
+   * The screen offers a list — 15s through 5 minutes, and Never — because those
+   * are the durations anybody actually wants. Storing the SECONDS rather than a
+   * list position means a shop that asks for 45 gets 45 by editing one row, and
+   * the till needs no table to interpret what it was given.
+   *
+   * ── WHAT COUNTS AS INACTIVITY ─────────────────────────────────────────────
+   *
+   * Any pointer, key or scanner input at the till. A scanner is a keyboard as
+   * far as the browser is concerned, so a shop scanning a long delivery never
+   * trips this even with no hand on the screen.
+   *
+   * ── AND WHAT A HALF-RUNG BASKET DOES TO IT ────────────────────────────────
+   *
+   * Suspends it. A basket with lines in it is a customer standing at the
+   * counter, and signing out over one either destroys work somebody is in the
+   * middle of or parks a sale under a name that is about to stop being the
+   * operator. Neither is better than leaving the screen up for a counter that
+   * is plainly in use. The timer resumes the moment the basket empties, which
+   * is the state this is actually for: a till abandoned between customers.
+   *
+   * ── OFF BY DEFAULT ────────────────────────────────────────────────────────
+   *
+   * It is a security feature for a shop that has an unattended-till problem,
+   * and a cost for every shop that does not — a cashier who turns to serve
+   * somebody comes back to a PIN pad. A shop that wants it asks for it.
+   */
+  pos_idle_logout_seconds: '0',
+  /**
+   * Whether the till makes a noise when something is rung up.
+   *
+   * ── WHAT IT IS ACTUALLY FOR ───────────────────────────────────────────────
+   *
+   * The FAILURE sound, mostly. A cashier working a trolley watches the customer
+   * and the goods, not the screen, and a barcode that did not match produces a
+   * search panel they never look at — so the item goes into the bag unscanned
+   * and the shop is short its price. A distinct noise is the only feedback that
+   * reaches somebody whose eyes are elsewhere.
+   *
+   * The success beep exists to make the failure one MEAN something. A sound that
+   * only ever fires on failure is a sound nobody has learnt, and the first time
+   * they hear it they will not know what it was.
+   *
+   * ── RETAIL AND HOSPITALITY ONLY ───────────────────────────────────────────
+   *
+   * Not invoicing. A trade counter rings items up while talking to a customer
+   * across a desk, at a pace where every line is looked at — the failure this
+   * catches does not happen there, and a beeping desk in a quiet showroom is an
+   * irritation with no upside. The till reads its own mode, so this setting is
+   * simply not consulted on that screen.
+   *
+   * ── OFF BY DEFAULT ────────────────────────────────────────────────────────
+   *
+   * A shop that has traded silently and is suddenly noisy will assume something
+   * is broken. Turning it on is a decision somebody makes.
+   */
+  pos_scan_sounds: '0',
   /**
    * Whether a till with no connection may still sell ON ACCOUNT.
    *
@@ -1014,6 +1170,83 @@ export const SETTING_DEFAULTS = {
   document_review_url: '',
 
   /**
+   * Pay links — a "pay now" button on what a customer is sent, and a QR square
+   * on what they are handed.
+   *
+   * ── ALL OFF, AND NOT BECAUSE OFF IS TIDIER ────────────────────────────────
+   *
+   * Switching one of these on changes what every customer of this business
+   * receives from it. That is a decision about how a company asks to be paid —
+   * the same class of thing as job_feedback_enabled above — and a default must
+   * not make it on the owner's behalf.
+   *
+   * There is also a concrete failure behind the caution. A shop whose gateway
+   * is still in SANDBOX has credentials that look configured and take play
+   * money, so a link switched on by default would put a working-looking button
+   * in front of real customers whose payments go nowhere. Every one of these is
+   * additionally gated on a live, decryptable gateway at render time, but the
+   * default is the belt.
+   *
+   * ── WHY FOUR KEYS AND NOT ONE ─────────────────────────────────────────────
+   *
+   * They are genuinely different decisions and get made by different people. A
+   * business will happily put a pay button on an emailed invoice while wanting
+   * nothing on a printed till slip, because the slip is handed to somebody who
+   * has already paid. Lay-bys are the opposite case — the whole point is that
+   * the customer comes back — and a shop may want that one alone.
+   *
+   * One switch would force all of it, and the first shop to want the invoice
+   * button without the slip QR would have to be told no.
+   */
+
+  /** The button on an emailed invoice, and the QR on its PDF. */
+  pay_link_on_invoices: '0',
+
+  /**
+   * The button on an emailed STATEMENT.
+   *
+   * Pays the account balance rather than one document — which is what a payment
+   * against a statement has always meant, and why it settles as an allocated
+   * receipt rather than against any single invoice.
+   */
+  pay_link_on_statements: '0',
+
+  /**
+   * The QR on a lay-by slip, so an instalment can be paid without coming in.
+   *
+   * The nearest thing to the "walk-in pays remotely" case that actually exists:
+   * a lay-by customer is frequently a `cash` account — a person on file who was
+   * never granted credit — and today the only way to pay one off is to stand at
+   * the counter with the card.
+   */
+  pay_link_on_laybys: '0',
+
+  /**
+   * The button on a quote or a sales order, which takes a DEPOSIT.
+   *
+   * ── IT DOES NOT CONVERT ANYTHING ──────────────────────────────────────────
+   *
+   * The tempting version of this feature is "customer pays the quote and it
+   * becomes an invoice by itself". It is deliberately not built, and this
+   * setting does not enable it.
+   *
+   * convertToInvoice raises a DRAFT and three warnings a person is meant to
+   * read — the quote expired, prices have moved, there is not enough stock.
+   * Converting on payment would take the money and only then discover the goods
+   * cannot be supplied. Quotes reserve nothing, so several open quotes for the
+   * last unit are all payable at once; that is the ordinary case, not a corner.
+   *
+   * A sales order arrives at the same answer differently: stock IS reserved and
+   * the decision IS made, but deliverOrder exists to invoice an order in parts,
+   * and a payment does not say which delivery it settles.
+   *
+   * So the money lands as a deposit against the document and applies when a
+   * person converts or delivers it. The customer commits with money — a better
+   * signal of acceptance than a click — and the judgement step survives.
+   */
+  pay_link_on_quotes: '0',
+
+  /**
    * Ask the customer to rate the work when a job closes.
    *
    * OFF, and for a stronger reason than the automations above: switching this on
@@ -1169,6 +1402,27 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === 'average' || value === 'last'
         ? null
         : "Cost basis must be 'average' or 'last'."
+
+    case 'tax_label': {
+      const label = value.trim()
+      /* Empty is refused rather than defaulted, because this arrives from a text
+         box: somebody who cleared the field meant to type something, and
+         silently restoring "VAT" would look like the save was ignored. Readers
+         still fall back to the default for a row that was never written. */
+      if (label === '') return 'Give the tax a name — VAT, HST, GST or Tax.'
+      /* Headings, thermal slips and report columns are all laid out around a
+         word of three or four characters. Twelve is generous for a real one and
+         short enough that no sentence fits. */
+      if (label.length > 12) return 'The tax name is too long — 12 characters at most.'
+      /* Letters, spaces and slashes only: "GST/HST" is a real label in Canada.
+         Digits and punctuation would mean somebody had typed the NUMBER in here
+         — a mistake worth catching, since it would then print as the heading on
+         every invoice. */
+      if (!/^[A-Za-z][A-Za-z /]*$/.test(label)) {
+        return 'The tax name should be a word like VAT, HST or Tax — not a number.'
+      }
+      return null
+    }
 
     /* The two receiving guards. Both had no case here until they became
        editable — an unvalidated key falls through to `default` and saves
@@ -1356,9 +1610,32 @@ export function validateSetting(key: SettingKey, value: string): string | null {
        months later as a service charge on a takeaway. */
     case 'tips_tables_only':
     case 'pos_warn_out_of_stock':
+    case 'pos_require_shift':
+    case 'pos_return_to_login':
+    case 'pos_scan_sounds':
     case 'pos_offline_account_sales':
     case 'pos_auto_print_kitchen':
       return value === '1' || value === '0' ? null : 'That setting must be 1 or 0.'
+
+    case 'pos_idle_logout_seconds': {
+      const seconds = Number(value)
+      // Zero is meaningful: it is "never", and the only way to switch this off.
+      if (!Number.isInteger(seconds) || seconds < 0) {
+        return 'The inactivity time must be a whole number of seconds, or zero for never.'
+      }
+      /* A floor, because the failure below it is not a wrong setting but an
+         unusable till: at a few seconds the pad returns while the cashier is
+         still reaching for the next item, and the shop's answer is to turn the
+         feature off entirely rather than to raise it. Ten is under the shortest
+         option the screen offers and still long enough to be deliberate. */
+      if (seconds > 0 && seconds < 10) {
+        return 'An inactivity time under ten seconds would sign the cashier out mid-sale.'
+      }
+      // An hour of inactivity is indistinguishable from off, and saying so is
+      // better than storing a value that looks configured and never fires.
+      if (seconds > 3600) return 'Use Never rather than an inactivity time above an hour.'
+      return null
+    }
 
     case 'cashup_mode':
       return value === 'terminal' || value === 'user'

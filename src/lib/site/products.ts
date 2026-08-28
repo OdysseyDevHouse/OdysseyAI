@@ -15,6 +15,7 @@ import {
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
 import { writePriceRows } from './reprice'
 import { resolveMasterCode } from './masterCodes'
+import { whyTaxRateRefused, vatRatePercent } from './taxIdentity'
 
 export type Product = {
   id: number
@@ -936,6 +937,16 @@ export async function createProduct(
 
   const vat = await resolveVat(siteId, input)
 
+  /*
+   * An unregistered shop may not charge tax — checked AFTER resolveVat rather
+   * than against the input, because a create that names no rate takes the site
+   * DEFAULT, and on a shop that has never been registered that default is still
+   * the seeded 15% row. Guarding the input alone would let every product added
+   * without touching the tax field arrive on a rate the shop may not charge.
+   */
+  const refusal = await whyTaxRateRefused(siteId, await vatRatePercent(siteId, vat.selling))
+  if (refusal) return { ok: false, error: refusal }
+
   return siteTransaction(siteId, async (tx) => {
     const id = await insertProductTx(tx, { ...input, code }, vat, audit)
     return { ok: true as const, id }
@@ -1083,11 +1094,36 @@ export async function updateProduct(
   const wanted = toProductType(input.productType) === 'recipe' && input.isManufactured ? 1 : 0
   const existing = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
     siteId,
-    `SELECT p.is_manufactured, p.stock_on_hand, p.product_type,
+    `SELECT p.is_manufactured, p.stock_on_hand, p.product_type, p.selling_vat_rate_id,
             (SELECT COUNT(*) FROM stock_movements m WHERE m.product_id = p.id) AS movements
        FROM products p WHERE p.id = ?`,
     [id],
   )
+
+  /*
+   * ── THE TAX-RATE GUARD, AND WHY IT ONLY LOOKS AT A CHANGE ─────────────────
+   *
+   * An unregistered shop may not put a product on a rate that charges tax. But
+   * this action saves the WHOLE product, so a plain description edit posts the
+   * rate the product already has — and refusing that would make every product
+   * uneditable on a shop that had removed its VAT number, which is exactly the
+   * retrospective behaviour whyTaxRateRefused exists not to have.
+   *
+   * So the gate stands only where the id actually MOVES. A product left on the
+   * rate it was already on saves regardless.
+   */
+  const currentSellingVat =
+    existing?.selling_vat_rate_id === null || existing?.selling_vat_rate_id === undefined
+      ? null
+      : Number(existing.selling_vat_rate_id)
+  const wantedSellingVat = input.sellingVatRateId ?? null
+  if (wantedSellingVat !== currentSellingVat) {
+    const refusal = await whyTaxRateRefused(
+      siteId,
+      await vatRatePercent(siteId, wantedSellingVat),
+    )
+    if (refusal) return { ok: false, error: refusal }
+  }
   if (existing && Number(existing.is_manufactured ?? 0) !== wanted) {
     const hasHistory = Number(existing.movements ?? 0) > 0 || toNum(existing.stock_on_hand) !== 0
     if (hasHistory) {
@@ -1414,6 +1450,26 @@ export async function bulkUpdateProducts(
     return {
       updated: 0,
       skipped: unique.map((id) => ({ id, code: '', name: '', reason: invalid })),
+    }
+  }
+
+  /*
+   * An unregistered shop cannot put products on a tax rate — in bulk least of
+   * all, since this is the fastest way to do it to a whole catalogue at once.
+   *
+   * Checked here rather than inside `validateProductBulk`, which is synchronous
+   * and pure: answering this needs the shop's VAT number, which is a read. The
+   * rate is resolved from the id because the change carries an id and the rule
+   * is about the PERCENTAGE — a shop moving products onto a zero-rated row is
+   * doing something legitimate whether it is registered or not.
+   */
+  if (change.kind === 'sellingVat') {
+    const refusal = await whyTaxRateRefused(siteId, await vatRatePercent(siteId, change.vatRateId))
+    if (refusal) {
+      return {
+        updated: 0,
+        skipped: unique.map((id) => ({ id, code: '', name: '', reason: refusal })),
+      }
     }
   }
 

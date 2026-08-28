@@ -111,6 +111,14 @@ export type ReceiptData = {
   gift: boolean
   siteName: string
   vatNumber: string | null
+  /**
+   * What this business calls its tax — VAT, HST, Tax.
+   *
+   * Optional with a 'VAT' fallback at every use, so a caller that has not been
+   * taught to pass it prints exactly what it printed before. A slip is the one
+   * document a shop cannot reprint after the customer has walked out.
+   */
+  taxLabel?: string
   documentNumber: string
   documentDate: string
   printedAt: string
@@ -156,7 +164,7 @@ export function receiptNotes(
 
 export function receiptDataFor(
   doc: SalesDocument,
-  site: { name: string; vatNumber: string | null },
+  site: { name: string; vatNumber: string | null; taxLabel?: string },
   tenders: ReceiptTender[],
   opts: {
     printedAt: string
@@ -204,6 +212,7 @@ export function receiptDataFor(
     gift: opts.gift ?? false,
     siteName: site.name,
     vatNumber: site.vatNumber?.trim() || null,
+    taxLabel: site.taxLabel,
     documentNumber: doc.documentNumber,
     documentDate: doc.documentDate,
     printedAt: opts.printedAt,
@@ -258,6 +267,14 @@ export function receiptDataFor(
 export function receiptDataFromBasket(input: {
   siteName: string
   vatNumber: string | null
+  /**
+   * What this business calls its tax — VAT, HST, Tax.
+   *
+   * Optional with a 'VAT' fallback at every use, so a caller that has not been
+   * taught to pass it prints exactly what it printed before. A slip is the one
+   * document a shop cannot reprint after the customer has walked out.
+   */
+  taxLabel?: string
   documentNumber: string
   documentDate: string
   printedAt: string
@@ -300,6 +317,7 @@ export function receiptDataFromBasket(input: {
     gift: input.gift ?? false,
     siteName: input.siteName,
     vatNumber: input.vatNumber?.trim() || null,
+    taxLabel: input.taxLabel,
     documentNumber: input.documentNumber,
     documentDate: input.documentDate,
     printedAt: input.printedAt,

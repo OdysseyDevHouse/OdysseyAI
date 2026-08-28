@@ -10,6 +10,7 @@ import {
   Icons,
   SettingGroup,
   SettingRow,
+  Switch,
   useToast,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
@@ -47,6 +48,7 @@ export default function CashupSettingsClient({
   const [saved, setSaved] = useState(initial)
   const [mode, setMode] = useState(initialMode)
   const [tolerance, setTolerance] = useState(Number(initial.varianceTolerance))
+  const [requireShift, setRequireShift] = useState(initial.requireShift === '1')
 
   /* Mode saves on click rather than waiting for Save, because it can be
      REFUSED by something the screen does not control — an open shift. Folding
@@ -64,11 +66,14 @@ export default function CashupSettingsClient({
     })
   }
 
-  const dirty = tolerance !== Number(saved.varianceTolerance)
+  const dirty =
+    tolerance !== Number(saved.varianceTolerance) ||
+    requireShift !== (saved.requireShift === '1')
 
   function save() {
     startTransition(async () => {
       const result = await saveCashupSettingsAction({
+        requireShift: requireShift ? '1' : '0',
         /* Sent as a plain number, NOT toFixed(2). The column is a VARCHAR and
            every reader runs Number() over it, so '5' and '5.00' are the same
            setting — but writing the padded form back would rewrite a value the
@@ -83,12 +88,54 @@ export default function CashupSettingsClient({
       }
       setSaved(result.settings)
       setTolerance(Number(result.settings.varianceTolerance))
+      setRequireShift(result.settings.requireShift === '1')
       toast.success('Cash-up settings saved.')
     })
   }
 
   return (
     <div className="flex flex-col gap-6">
+      {/* First, because it decides whether the two groups below apply at all.
+          A shop that does not count a drawer has no variance to tolerate and
+          no mode to reconcile by. */}
+      <SettingGroup
+        title="Shifts"
+        description="A shift is the drawer between two moments — opened with a float, closed with a count. Not every shop works that way."
+      >
+        <SettingRow
+          icon={<Icons.Lock size={16} />}
+          label="Require an open shift to sell"
+          description="The till asks for a float before the first sale and will not trade until somebody opens one. Turn this off for a shop that never counts a drawer."
+          htmlFor="require-shift"
+        >
+          <Switch
+            id="require-shift"
+            checked={requireShift}
+            onChange={setRequireShift}
+            ariaLabel="Require an open shift to sell"
+          />
+        </SettingRow>
+
+        {/* Only while it differs from what is stored, same rule as the variance
+            warning below: a permanent banner about a setting already in force
+            is furniture, and furniture is what stops the next warning being
+            read. */}
+        {!requireShift && saved.requireShift === '1' && (
+          <div className="flex flex-col gap-4 px-6 py-4">
+            <Callout tone="warning" title="Sales will not belong to any cash-up">
+              With this off, a sale rung up while no shift is open carries no shift at all — so
+              it appears in no cash-up, and no drawer is ever short because of it. That is the
+              right answer for a shop settling everything by card, and the wrong one for a shop
+              that counts cash.
+              <br />
+              <br />
+              Shifts still work. Anyone may open one from the till menu, and every sale from
+              that moment banks into it as usual.
+            </Callout>
+          </div>
+        )}
+      </SettingGroup>
+
       <SettingGroup
         title="Variance"
         description="A cash-up almost never lands exactly on the expected figure. This is the point at which the difference stops being noise and becomes something somebody has to account for."

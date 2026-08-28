@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
 import { customerDbPrefix, supplierDbPrefix } from './customerDb'
 import { round, toNum } from '../decimals'
+import { taxIdentity } from './taxIdentity'
 
 /**
  * The VAT return: what we charged, what we were charged, and the difference.
@@ -307,13 +308,22 @@ export async function buildVatReturn(siteId: number, range: DateRange): Promise<
   }
 }
 
+/**
+ * The shop's registered number, for the head of the return.
+ *
+ * ── IT USED TO READ A SECOND COPY, AND THAT WAS THE BUG ─────────────────────
+ *
+ * This read `settings.vat_number` — a key nothing in the app ever wrote, and
+ * which is not in SETTING_DEFAULTS — while every document in the product
+ * printed `cp2_sites.vat_number` from the store's own details. Two copies of
+ * one legal number with no rule about which won, so a shop that captured its
+ * number on the store-information screen still filed a return with a blank
+ * heading, and nobody would have found that until a submission was queried.
+ *
+ * One number, one place. taxIdentity() is now the only reader.
+ */
 async function siteVatNumber(siteId: number): Promise<string | null> {
-  const row = await siteQueryOne<Row>(
-    siteId,
-    "SELECT setting_value FROM settings WHERE setting_key = 'vat_number' LIMIT 1",
-  ).catch(() => null)
-  const value = (row?.setting_value as string | null)?.trim()
-  return value ? value : null
+  return (await taxIdentity(siteId).catch(() => null))?.number ?? null
 }
 
 /* ── Detail ──────────────────────────────────────────────────────────────── */

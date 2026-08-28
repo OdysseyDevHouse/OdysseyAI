@@ -127,7 +127,7 @@ export const INVOICE_DEFAULT = `<style>
           <dd class="numeric text-ink">{totals.discountIncl}</dd>
         </div>
         <div class="inv-row flex justify-between gap-6">
-          <dt class="text-muted">VAT</dt>
+          <dt class="text-muted">{{tax}}</dt>
           <dd class="numeric text-ink">{totals.vat}</dd>
         </div>
         <div class="inv-row flex justify-between gap-6">
@@ -143,7 +143,7 @@ export const INVOICE_DEFAULT = `<style>
   </section>
 
   <section class="border-t border-border py-5">
-    <p class="mb-2 text-xs font-medium tracking-wide text-muted">VAT SUMMARY</p>
+    <p class="mb-2 text-xs font-medium tracking-wide text-muted">{{tax}} SUMMARY</p>
     <p class="whitespace-pre-line text-sm text-ink-2">{totals.vatSummary}</p>
   </section>
 

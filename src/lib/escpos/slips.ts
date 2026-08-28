@@ -26,14 +26,14 @@ export function renderReceipt(data: ReceiptData, opts: SlipOptions = {}): Uint8A
   const job = new EscPos().init()
 
   header(job, data.siteName, columns)
-  if (data.vatNumber && !data.gift) job.line(`VAT no. ${data.vatNumber}`)
+  if (data.vatNumber && !data.gift) job.line(`${data.taxLabel ?? 'VAT'} no. ${data.vatNumber}`)
   job.bold(true).line(data.gift ? 'GIFT RECEIPT' : 'TAX INVOICE').bold(false)
   job.line(`${data.documentNumber} · ${data.documentDate}`)
   job.line([data.cashierName, data.terminalCode, data.printedAt].filter(Boolean).join(' · '))
   if (data.customerName) {
     job.line(
       data.customerVatNo && !data.gift
-        ? `${data.customerName} · VAT ${data.customerVatNo}`
+        ? `${data.customerName} · ${data.taxLabel ?? 'VAT'} ${data.customerVatNo}`
         : data.customerName,
     )
   }
@@ -99,7 +99,7 @@ export function renderReceipt(data: ReceiptData, opts: SlipOptions = {}): Uint8A
     job.line('-'.repeat(columns))
     for (const rate of data.vatByRate) {
       job.line(
-        twoCol(`VAT @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`, formatMoney(rate.vat), columns),
+        twoCol(`${data.taxLabel ?? 'VAT'} @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`, formatMoney(rate.vat), columns),
       )
     }
 
@@ -125,7 +125,7 @@ export function renderBill(data: BillData, opts: SlipOptions = {}): Uint8Array {
   const job = new EscPos().init()
 
   header(job, data.siteName, columns)
-  if (data.vatNumber) job.line(`VAT no. ${data.vatNumber}`)
+  if (data.vatNumber) job.line(`${data.taxLabel ?? 'VAT'} no. ${data.vatNumber}`)
   job.size(2, 2).line(data.label).size(1, 1)
   job.line([data.covers ? `${data.covers} pax` : '', data.userName, data.printedAt].filter(Boolean).join(' · '))
 
@@ -144,9 +144,9 @@ export function renderBill(data: BillData, opts: SlipOptions = {}): Uint8Array {
   if (data.discountTotal > 0) {
     job.line(twoCol('Discount', `-${formatMoney(data.discountTotal)}`, columns))
   }
-  job.line(twoCol('Excl. VAT', formatMoney(data.subtotalExcl), columns))
+  job.line(twoCol(`Excl. ${data.taxLabel ?? 'VAT'}`, formatMoney(data.subtotalExcl), columns))
   for (const rate of data.vatByRate) {
-    job.line(twoCol(`VAT @ ${rate.ratePct}%`, formatMoney(rate.vat), columns))
+    job.line(twoCol(`${data.taxLabel ?? 'VAT'} @ ${rate.ratePct}%`, formatMoney(rate.vat), columns))
   }
   job.bold(true).size(1, 2).line(twoCol('TOTAL', formatMoney(data.totalIncl), columns)).size(1, 1).bold(false)
 
