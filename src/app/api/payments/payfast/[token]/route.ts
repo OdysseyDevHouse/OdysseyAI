@@ -4,6 +4,12 @@ import { verifyItn } from '@/lib/payfast/itn'
 import { getGateway, getIntent, settleIntent } from '@/lib/site/payments'
 import { invoicePaidOrder, markOrderPayment } from '@/lib/site/paidOrders'
 import { settlePaidInvoice } from '@/lib/site/paidInvoices'
+import {
+  settleAccountPayment,
+  settleLaybyPayment,
+  settleDocumentDeposit,
+  settleJobDeposit,
+} from '@/lib/site/paidLinks'
 
 /**
  * PayFast ITN — the server-to-server callback that says a payment happened.
@@ -104,48 +110,58 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
     }
 
     // 5. The money is confirmed in. What that MEANS depends on what was being
-    //    paid for — a shop order becomes an invoice, whereas an invoice that
-    //    was already raised gets a receipt against the customer's account.
+    //    paid for — a shop order becomes an invoice, an already-raised invoice
+    //    gets a receipt, a statement pays down a balance, and the three deposit
+    //    kinds simply hold the money against what it was paid for.
     //    Branching here rather than in settleIntent keeps the intent table
-    //    ignorant of what its targets are, which is what lets a third purpose
+    //    ignorant of what its targets are, which is what lets a further purpose
     //    be added without touching the settling code.
-    if (outcome.intent.purpose === 'debtor_invoice') {
-      const receipted = await settlePaidInvoice(
-        claim.siteId,
-        // There is nobody signed in at a callback. The ledger row records who
-        // it came from rather than pretending a person keyed it.
-        { userId: 0, userName: 'Online payment' },
-        outcome.intent.targetId,
-        verified.data.amountGross,
-        verified.data.providerRef || claim.reference,
-      )
+    //
+    //    THE PAPERWORK MAY FAIL AND THE PAYMENT STILL STANDS. Every branch
+    //    below logs rather than throws, because the money really did arrive:
+    //    unwinding a settled payment over a failed posting would lose a fact
+    //    that is true. A person fixes the posting; nobody can un-take the cash.
+    const actor = {
+      // There is nobody signed in at a callback. The rows record where the
+      // money came from rather than pretending a person keyed it.
+      userId: 0,
+      userName: 'Online payment',
+    }
+    const targetId = outcome.intent.targetId
+    const amount = verified.data.amountGross
+    const providerRef = verified.data.providerRef || claim.reference
 
-      if (!receipted.ok) {
-        // The payment stands — the money really did arrive. Only the paperwork
-        // failed, which is a job for a person, not a reason to unwind it.
-        console.error(
-          `[payfast] settled ${claim.reference} but could not receipt invoice ${outcome.intent.targetId}: ${receipted.error}`,
-        )
+    const settle = async (): Promise<{ ok: boolean; error?: string }> => {
+      switch (outcome.intent.purpose) {
+        case 'debtor_invoice':
+          return settlePaidInvoice(claim.siteId, actor, targetId, amount, providerRef)
+
+        case 'customer_account':
+          // target_id is a CUSTOMER id here, not a document id — a statement is
+          // a balance. See paidLinks.ts for why this must not be receipted
+          // against any single invoice.
+          return settleAccountPayment(claim.siteId, actor, targetId, amount, providerRef)
+
+        case 'layby':
+          return settleLaybyPayment(claim.siteId, actor, targetId, amount, providerRef)
+
+        case 'document_deposit':
+          return settleDocumentDeposit(claim.siteId, actor, targetId, amount, providerRef)
+
+        case 'job_deposit':
+          return settleJobDeposit(claim.siteId, actor, targetId, amount, providerRef)
+
+        case 'online_order': {
+          await markOrderPayment(claim.siteId, targetId, 'paid')
+          return invoicePaidOrder(claim.siteId, targetId, amount, providerRef)
+        }
       }
-
-      return ack()
     }
 
-    await markOrderPayment(claim.siteId, outcome.intent.targetId, 'paid')
-
-    const invoiced = await invoicePaidOrder(
-      claim.siteId,
-      outcome.intent.targetId,
-      verified.data.amountGross,
-      verified.data.providerRef || claim.reference,
-    )
-
-    if (!invoiced.ok) {
-      // The payment stands — the money really did arrive. Only the paperwork
-      // failed, and that is a job for a person, not a reason to unwind a
-      // settled payment.
+    const posted = await settle()
+    if (!posted.ok) {
       console.error(
-        `[payfast] settled ${claim.reference} but could not invoice order ${outcome.intent.targetId}: ${invoiced.error}`,
+        `[payfast] settled ${claim.reference} but could not post ${outcome.intent.purpose} ${targetId}: ${posted.error}`,
       )
     }
 

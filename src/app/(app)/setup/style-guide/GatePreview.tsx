@@ -435,9 +435,11 @@ export function PosGatePreview() {
     { key: 'logo', label: 'Logo uploaded' },
     /* A logo and NO promotions — the commonest real shop by a distance, and the
        state where the greeting has the panel to itself. The specials card is
-       what fills the bottom third; without it the whole lower half is
-       photograph, which is the composition most tills in the field are actually
-       showing and the easiest one to leave looking unfinished. */
+       what fills the bottom third; without it there is no second block for the
+       identity to be read before, so the panel switches layout: the logo,
+       greeting and date centre in the pane and the logo takes the size it can
+       be read at from a queue. Step between this and "Specials running" to see
+       the pair. */
     { key: 'quiet', label: 'Logo, no specials' },
     { key: 'full', label: 'Logo + own backdrop' },
   ] as const

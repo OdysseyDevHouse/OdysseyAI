@@ -10,6 +10,7 @@ import {
   actorForModuleOrThrow,
 } from '@/lib/auth'
 import { toProductType } from '@/lib/productTypes'
+import { safeReturnTo } from '@/lib/returnTo'
 import { toVariableType, toPriceCalc } from '@/lib/productProperties'
 import { linkedStores } from '@/lib/storeGroups'
 import { setShareSettings } from '@/lib/site/shareSettings'
@@ -538,7 +539,18 @@ export async function saveProductAction(
   }
 
   revalidatePath('/products')
-  redirect(`/products/${result.id}?saved=1`)
+
+  /* Saving keeps you ON the product — it is not necessarily the end of the
+     edit, and bouncing to the list after every field change would make a
+     two-part correction into two round trips.
+
+     What it must NOT do is lose the list that sent you here: the redirect
+     rebuilds the URL from scratch, so without carrying `from` the Back arrow
+     silently reverted to the bare catalogue on the first save. That is what
+     made a filtered worklist unusable. */
+  const back = safeReturnTo(form.get('returnTo'))
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+  redirect(`/products/${result.id}?saved=1${from}`)
 }
 
 export async function archiveProductAction(form: FormData): Promise<void> {
@@ -550,7 +562,9 @@ export async function archiveProductAction(form: FormData): Promise<void> {
   if (Number.isFinite(id) && id > 0) await setArchived(siteId, id, archived)
 
   revalidatePath('/products')
-  redirect(`/products/${id}`)
+  // Same as the save path: keep the list that sent us here. See above.
+  const back = safeReturnTo(form.get('returnTo'))
+  redirect(`/products/${id}${back ? `?from=${encodeURIComponent(back)}` : ''}`)
 }
 
 export async function deleteProductAction(form: FormData): Promise<void> {
@@ -564,17 +578,25 @@ export async function deleteProductAction(form: FormData): Promise<void> {
   const result = await deleteProduct(siteId, id)
   revalidatePath('/products')
 
+  /* The list this was opened from, kept across all three outcomes below. Two
+     of them stay on the product and need it for the Back arrow; the third
+     returns to the list itself, which is the one place the filtered worklist
+     genuinely has to survive — deleting one of ten is exactly the moment you
+     want the other nine still on screen. */
+  const back = safeReturnTo(form.get('returnTo'))
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+
   if (!result.ok) {
-    redirect(`/products/${id}?error=${encodeURIComponent(result.error)}`)
+    redirect(`/products/${id}?error=${encodeURIComponent(result.error)}${from}`)
   }
 
   // A product with sales history is archived rather than deleted. Say so:
   // silently doing something other than what was asked is worse than refusing.
   if (result.archived) {
-    redirect(`/products/${id}?archived=1&reason=${encodeURIComponent(result.reason)}`)
+    redirect(`/products/${id}?archived=1&reason=${encodeURIComponent(result.reason)}${from}`)
   }
 
-  redirect('/products?deleted=1')
+  redirect(back ? `${back}${back.includes('?') ? '&' : '?'}deleted=1` : '/products?deleted=1')
 }
 
 /**

@@ -52,7 +52,15 @@ export type ButtonVariant =
  * sizes rather than call-site overrides so that "how big is a finger target"
  * stays one answer in one place; see --spacing-touch in globals.css.
  */
-export type ButtonSize = 'md' | 'sm' | 'touch' | 'touch-lg' | 'keypad' | 'keypad-sm'
+export type ButtonSize =
+  | 'md'
+  | 'sm'
+  | 'touch'
+  | 'touch-lg'
+  | 'pad'
+  | 'pad-lg'
+  | 'keypad'
+  | 'keypad-sm'
 
 /* Layout, radius, type scale and motion — identical for every variant, so
    none of them can drift. Only colour changes below. */
@@ -130,6 +138,28 @@ const BUTTON_SIZE: Record<ButtonSize, { text: string; icon: string }> = {
   'touch-lg': {
     text: 'h-touch-lg px-6 rounded-control text-lg font-semibold shadow-card',
     icon: 'h-touch-lg w-touch-lg rounded-control text-lg font-semibold shadow-card',
+  },
+  /* The two FIXED-HEIGHT pad keys — the pads that sit at a set touch height
+     rather than growing with their column: the narrow pad inside a dialog
+     (`pad`) and the sign-in lock screen's (`pad-lg`).
+
+     They exist for the weight. Both pads asked for `font-bold` through a
+     className and both silently got `touch`'s 500 and `touch-lg`'s 600 instead
+     — Button concatenates its size classes with whatever className it is handed
+     and does not resolve the conflict, so the two land in the same Tailwind
+     layer and source order decides. That is the same trap the note on `keypad`
+     below records, and the reason the digits on four different pads rendered at
+     three different weights while every class looked right in the DOM.
+
+     w-full for the same reason `keypad` carries it: Button is inline-flex, so a
+     key without it sizes to its own glyph and sits at the LEFT of its cell. */
+  pad: {
+    text: 'h-touch w-full px-5 rounded-control text-[19px] font-bold',
+    icon: 'h-touch w-full rounded-control text-[19px] font-bold',
+  },
+  'pad-lg': {
+    text: 'h-touch-lg w-full px-6 rounded-control text-[22px] font-bold',
+    icon: 'h-touch-lg w-full rounded-control text-[22px] font-bold',
   },
   /* A NUMBER-PAD KEY, and only that. Not a height but a proportion: the key
      fills the column its grid gives it and takes its height from that, so one

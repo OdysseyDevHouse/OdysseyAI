@@ -119,27 +119,35 @@ export function NumPad({
 
   const lg = size === 'lg'
   const wide = size === 'wide'
-  /* Both full-width sizes carry their own type, so neither takes the override
-     below. */
+  /* Only the GAP still varies with the size — the keys themselves no longer
+     take an override, so there is nothing else to branch on here. */
   const fills = lg || wide
-  /* The SIZE prop, not a className. Button concatenates its own size classes
-     with whatever className it is handed and does not resolve the conflict, so
-     an `h-auto text-3xl` passed in loses to `h-touch text-base` on source order
-     alone — the keys stayed 56px and 14px while every class looked right in the
-     DOM. `keypad` puts the same declarations where they can win. */
-  const keySize = lg ? 'keypad' : wide ? 'keypad-sm' : 'touch'
-  const keyClass = fills ? '' : 'text-xl font-bold'
+  /* The SIZE prop, and nothing through a className. Button concatenates its own
+     size classes with whatever it is handed and does not resolve the conflict,
+     so both land in the same Tailwind layer and source order decides: an
+     `h-auto text-3xl` passed in lost to `h-touch text-base`, and the digits'
+     `font-bold` lost to `font-medium` — the keys rendered at 56px/14px/500
+     while every class sat right there in the DOM. Each of these sizes puts the
+     height, the type, the weight and w-full where they can win.
 
+     `pad` rather than `touch` for the default, so this pad's digits are the
+     same weight and size as PinPad's — a cashier meets both on one till. */
+  const keySize = lg ? 'keypad' : wide ? 'keypad-sm' : 'pad'
+
+  /* variant="key", the same fill PinPad's digits wear — this pad was `ghost`,
+     which rests on `surface` and so renders white-on-white inside the card or
+     dialog around it. Two pads that a cashier meets minutes apart on the same
+     till looked like two different controls. `key` is the one answer: a filled
+     grey pad that reads as physical, with the brand arriving only on hover. */
   return (
     <div ref={rootRef} className={`grid grid-cols-3 ${fills ? 'gap-3' : 'gap-2'}`}>
       {KEYS.map((key) => (
         <Button
           key={key}
-          variant="ghost"
+          variant="key"
           size={keySize}
           disabled={disabled}
           onClick={() => press(key)}
-          className={keyClass}
         >
           {key}
         </Button>
@@ -147,11 +155,10 @@ export function NumPad({
 
       {maxDecimals > 0 ? (
         <Button
-          variant="ghost"
+          variant="key"
           size={keySize}
           disabled={disabled}
           onClick={() => press('.')}
-          className={keyClass}
           aria-label="Decimal point"
         >
           .
@@ -164,22 +171,20 @@ export function NumPad({
       )}
 
       <Button
-        variant="ghost"
+        variant="key"
         size={keySize}
         disabled={disabled}
         onClick={() => press('0')}
-        className={keyClass}
       >
         0
       </Button>
 
       <Button
-        variant="ghost"
+        variant="key"
         size={keySize}
         disabled={disabled || value === ''}
         onClick={() => press('back')}
         aria-label="Backspace"
-        className={keyClass}
       >
         {/* The key a cashier already knows. A ChevronLeft — which this used to
             be — reads as "go back a screen" on a touch till, which is the one
@@ -229,11 +234,17 @@ export function NumPadDisplay({
    * a pad that IS the screen rather than one control on it. Opt in; a long
    * label would crowd the figure on the same row.
    *
-   * `plaque` is the till's own step, and the shape every full-screen entry
-   * dialog uses: the label small along the top, the figure large along the
-   * bottom right, on a brand-tinted field. For a dialog whose ONLY subject is
-   * the number being typed — a payout, a pay-in, a drop, a discount — where the
-   * figure and the pad under it are the whole screen.
+   * `plaque` is the till's own step: the label small along the top, the figure
+   * large along the bottom right, at the biggest step of the three. For a
+   * dialog whose ONLY subject is the number being typed — a payout, a pay-in, a
+   * drop, a discount — where the figure and the pad under it are the whole
+   * screen.
+   *
+   * All three sit on the SAME deep plaque — the dark block `DeepPanel` gives
+   * the till's opening float. They differ in how the label and figure are
+   * arranged and at what size, never in what they are drawn on: a cashier
+   * meets several of these on one till, and three different grounds meant the
+   * number they read moved and changed colour between dialogs.
    *
    * The label goes ABOVE rather than beside, unlike `inline`: these labels are
    * sentences ("Percent off the sale", "Cash — amount handed over") and on one
@@ -245,36 +256,54 @@ export function NumPadDisplay({
   const empty = value === ''
   const plaque = layout === 'plaque'
   const inline = layout === 'inline'
-  const figure = `numeric font-extrabold ${
-    plaque ? 'text-4xl leading-none' : inline ? 'text-3xl' : 'block text-right text-3xl'
-  } ${
+
+  /* THE DEEP PLAQUE, at every layout — the same dark block the till's opening
+     float wears, which is what `DeepPanel` was built for. It used to be three
+     different grounds: a pale `canvas` box, a `surface-2` row and a brand-tinted
+     field, so the figure a cashier reads changed colour depending on which
+     dialog they happened to be in. One ground means the number is always in the
+     same place and always the brightest thing in the box.
+
+     `danger` keeps the plaque and reddens it, rather than swapping to the pale
+     `danger-soft` it used to use: a refused entry should not also relocate the
+     figure onto a different-coloured card. */
+  const field =
     tone === 'danger'
-      ? 'text-danger'
-      : /* Brand, not faint, when inline or on a plaque: the figure is the
-           subject of the screen, and greying the resting value made the one
-           number the cashier is about to change look disabled. */
-        inline || plaque
-        ? 'text-brand'
-        : empty
-          ? 'text-faint'
-          : 'text-ink'
+      ? 'bg-gradient-to-br from-danger-deep to-danger-deep-2'
+      : 'bg-gradient-to-br from-deep to-deep-2'
+
+  /* WHITE, and white while empty too. The figure is the one thing on the
+     plaque worth reading, and a resting "0" set in the muted step looked
+     disabled — which is exactly wrong for the number a cashier is about to
+     type over. `deep-ink` at every state; the placeholder is distinguished by
+     being a placeholder, not by being dimmer than the plaque's own label. */
+  const figure = `numeric font-extrabold leading-none text-deep-ink ${
+    plaque ? 'text-4xl' : 'text-3xl'
   }`
+
+  /* The label in white as well. `deep-muted` is the caption step — right for
+     DeepPanel's optional `hint` under the label, too quiet for the label
+     itself, which names the figure and has to be readable at a glance. */
+  const labelTone = 'text-deep-ink'
+
+  /* The suffix stays a step down: it qualifies the figure ("%") and must not
+     compete with it. `deep-muted` on white digits is the same relationship
+     DeepPanel gives its currency mark. */
+  const suffixTone = 'text-deep-muted'
+
+  /* NO margin here, deliberately. The gap to the pad belongs to whatever lays
+     the two out: every dialog that uses this already wraps the pair in a flex
+     column with a gap-2/3/4, and a margin-bottom on a flex item ADDS to the
+     column's gap rather than being absorbed by it — measured, 16px gap plus a
+     12px margin comes to 28px — so a floor set here would loosen every one of
+     those screens to fix the one place that renders the two as bare siblings.
+     That place is the caller to fix. */
 
   if (plaque) {
     return (
-      <div
-        className={`rounded-card border px-5 py-4 ${
-          /* The border follows the tone: a refused entry that keeps a brand
-             frame says "fine" in the same breath the figure says "no". */
-          tone === 'danger' ? 'border-danger/40 bg-danger-soft' : 'border-brand/25 bg-brand-soft'
-        }`}
-      >
+      <div className={`rounded-card px-5 py-4 ${field}`}>
         {label && (
-          <span
-            className={`block text-sm font-semibold ${
-              tone === 'danger' ? 'text-danger' : 'text-brand'
-            }`}
-          >
+          <span className={`block text-xs font-bold uppercase tracking-wider ${labelTone}`}>
             {label}
           </span>
         )}
@@ -282,15 +311,7 @@ export function NumPadDisplay({
             than centred against a 36px line box and floating above it. */}
         <div className="mt-2 flex items-baseline justify-end gap-1.5">
           <span className={figure}>{empty ? placeholder : value}</span>
-          {suffix && (
-            <span
-              className={`text-xl font-semibold ${
-                tone === 'danger' ? 'text-danger/70' : 'text-brand/70'
-              }`}
-            >
-              {suffix}
-            </span>
-          )}
+          {suffix && <span className={`text-xl font-semibold ${suffixTone}`}>{suffix}</span>}
         </div>
       </div>
     )
@@ -298,17 +319,27 @@ export function NumPadDisplay({
 
   if (inline) {
     return (
-      <div className="flex items-center justify-between gap-3 rounded-control border border-border bg-surface-2 px-4 py-3.5">
-        {label && <span className="text-sm font-semibold text-ink">{label}</span>}
-        <span className={figure}>{empty ? placeholder : value}</span>
+      <div className={`flex items-center justify-between gap-4 rounded-card px-5 py-4 ${field}`}>
+        {label && (
+          <span className={`text-xs font-bold uppercase tracking-wider ${labelTone}`}>{label}</span>
+        )}
+        <span className={`${figure} shrink-0`}>{empty ? placeholder : value}</span>
       </div>
     )
   }
 
+  /* `stacked` — the label along the top, the figure hard right under it. The
+     same shape as `plaque` at a smaller step, rather than the different box it
+     used to be: the two sit side by side on the till (a tender pad beside a
+     line edit) and reading as two unrelated controls was the whole complaint. */
   return (
-    <div className="rounded-control border border-border bg-canvas px-4 py-3">
-      {label && <span className="block text-xs font-semibold text-muted">{label}</span>}
-      <span className={figure}>{empty ? placeholder : value}</span>
+    <div className={`rounded-card px-5 py-4 ${field}`}>
+      {label && (
+        <span className={`block text-xs font-bold uppercase tracking-wider ${labelTone}`}>
+          {label}
+        </span>
+      )}
+      <span className={`mt-2 block text-right ${figure}`}>{empty ? placeholder : value}</span>
     </div>
   )
 }

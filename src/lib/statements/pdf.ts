@@ -79,9 +79,22 @@ export async function renderStatementPdf(
   data: StatementData,
   variant: StatementVariant = 'statement',
   siteId?: number,
+  /**
+   * The account's pay link, for a QR block aimed at "this document".
+   *
+   * A statement's square pays the BALANCE, not any one invoice — which is what
+   * a payment against a statement has always meant on a debtors ledger, and why
+   * it settles as an allocated receipt. See paidLinks.ts.
+   *
+   * Passed in rather than derived: this renders a REMITTANCE advice too (see
+   * StatementVariant), and a remittance is the shop telling a supplier what it
+   * has paid. A pay button on one would be asking a supplier to settle the
+   * shop's own payment to them.
+   */
+  payUrl?: string | null,
 ): Promise<Buffer> {
   if (siteId !== undefined) {
-    const designed = await renderDesignedStatement(data, variant, siteId).catch(() => null)
+    const designed = await renderDesignedStatement(data, variant, siteId, payUrl).catch(() => null)
     if (designed) return designed
   }
 
@@ -113,6 +126,7 @@ async function renderDesignedStatement(
   data: StatementData,
   variant: StatementVariant,
   siteId: number,
+  payUrl?: string | null,
 ): Promise<Buffer | null> {
   const { activeTemplate } = await import('../site/stationeryTemplates')
   const custom = await activeTemplate(siteId, 'statement').catch(() => null)
@@ -191,7 +205,13 @@ async function renderDesignedStatement(
   return renderSpecPdf(
     spec,
     'statement',
-    { ...input, pictures: await pictureIds(siteId), qr: await qrContextFor(siteId) },
+    {
+      ...input,
+      pictures: await pictureIds(siteId),
+      // Never on a remittance: that is the shop telling a SUPPLIER what it has
+      // paid, and a pay button on one asks them to settle our own payment.
+      qr: await qrContextFor(siteId, variant === 'statement' ? (payUrl ?? null) : null),
+    },
     logo?.bytes ?? null,
     usedPictures.length ? await pictureBytes(siteId, usedPictures) : undefined,
   )

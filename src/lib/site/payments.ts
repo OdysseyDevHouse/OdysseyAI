@@ -161,17 +161,87 @@ export async function saveGateway(
 /**
  * What is being paid for.
  *
- *   online_order   — a storefront order; target_id is an online order id
- *   debtor_invoice — an emailed invoice's pay-link; target_id is a
- *                    sales_documents id, and settling it posts a receipt to the
- *                    customer's account rather than invoicing an order
+ *   online_order     — a storefront order; target is an online_orders id
+ *   debtor_invoice   — an emailed invoice's pay-link; target is a
+ *                      sales_documents id, and settling it posts a receipt to
+ *                      the customer's account rather than invoicing an order
+ *   customer_account — a STATEMENT; target is a CUSTOMERS id, because a
+ *                      statement is a balance and not a document
+ *   layby            — an instalment; target is a laybys id
+ *   job_deposit      — a deposit on a job card; target is a job_cards id
+ *   document_deposit — a deposit against a quote or a sales order; target is a
+ *                      sales_documents id
  *
  * `purpose` plus target is what makes this table reusable, exactly as
  * 038_payments.sql anticipated: a new way to be paid is a new purpose and a
  * settlement handler, not a second gateway integration.
  */
-export const INTENT_PURPOSES = ['online_order', 'debtor_invoice'] as const
+export const INTENT_PURPOSES = [
+  'online_order',
+  'debtor_invoice',
+  'customer_account',
+  'layby',
+  'job_deposit',
+  'document_deposit',
+] as const
 export type IntentPurpose = (typeof INTENT_PURPOSES)[number]
+
+/**
+ * Which table a purpose's `target_id` points into.
+ *
+ * ── WHY THIS IS SPELLED OUT RATHER THAN KNOWN ────────────────────────────
+ *
+ * `target_id` is one untyped integer meaning four different things. With two
+ * purposes that was memorable; with six it is a bug waiting for a quiet
+ * afternoon, because every id in this system is a `number` and a swapped one
+ * COMPILES. It then reads a real row from the wrong table and settles somebody
+ * else's money — the failure is a wrong answer, not an error.
+ *
+ * No foreign key can catch it: the target table varies by row, which is the
+ * whole point of the design. So the guard has to be in the type system, and
+ * `intentTarget()` below is the only way to build one.
+ */
+export const INTENT_TARGET: Record<IntentPurpose, string> = {
+  online_order: 'online_orders',
+  debtor_invoice: 'sales_documents',
+  customer_account: 'customers',
+  layby: 'laybys',
+  job_deposit: 'job_cards',
+  document_deposit: 'sales_documents',
+}
+
+/**
+ * A purpose bound to the id that belongs with it.
+ *
+ * The union is what does the work: there is no way to write an `IntentTarget`
+ * whose purpose and id disagree, because each arm names its own id field. A
+ * caller reaching for `customerId` on a lay-by target does not compile, which
+ * is the whole reason the fields are not all called `targetId`.
+ */
+export type IntentTarget =
+  | { purpose: 'online_order'; orderId: number }
+  | { purpose: 'debtor_invoice'; documentId: number }
+  | { purpose: 'customer_account'; customerId: number }
+  | { purpose: 'layby'; laybyId: number }
+  | { purpose: 'job_deposit'; jobId: number }
+  | { purpose: 'document_deposit'; documentId: number }
+
+/** The integer that goes in `target_id`, chosen by the purpose itself. */
+export function targetIdOf(target: IntentTarget): number {
+  switch (target.purpose) {
+    case 'online_order':
+      return target.orderId
+    case 'debtor_invoice':
+    case 'document_deposit':
+      return target.documentId
+    case 'customer_account':
+      return target.customerId
+    case 'layby':
+      return target.laybyId
+    case 'job_deposit':
+      return target.jobId
+  }
+}
 
 export type PaymentIntent = {
   id: number
@@ -215,9 +285,16 @@ function newReference(): string {
   return `ODY-${randomBytes(18).toString('base64url')}`
 }
 
+/**
+ * Start a payment.
+ *
+ * Takes the TARGET UNION rather than a purpose and a loose integer, so the two
+ * cannot be minted out of step — see IntentTarget above for why that matters
+ * once there are six purposes and every id is a `number`.
+ */
 export async function createIntent(
   siteId: number,
-  input: { targetId: number; amountIncl: number; purpose?: IntentPurpose },
+  input: { target: IntentTarget; amountIncl: number },
 ): Promise<PaymentIntent> {
   const reference = newReference()
   const amount = round(input.amountIncl, 2)
@@ -226,7 +303,7 @@ export async function createIntent(
     siteId,
     `INSERT INTO payment_intents (reference, provider, purpose, target_id, amount_incl)
      VALUES (?, 'payfast', ?, ?, ?)`,
-    [reference, input.purpose ?? 'online_order', input.targetId, amount.toFixed(4)],
+    [reference, input.target.purpose, targetIdOf(input.target), amount.toFixed(4)],
   )
 
   const row = await siteQueryOne<Row>(

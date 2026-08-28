@@ -413,6 +413,23 @@ export async function declineQuote(
     action: 'quote_declined',
     detail: `${quote.documentNumber ?? `Quote #${id}`} declined — ${reason.trim()}`,
   })
+
+  /*
+   * Stop the deposit link on a declined quote.
+   *
+   * The customer said no, and the emailed PDF with its square is still in their
+   * inbox. Taking a deposit against an offer that has been turned down is money
+   * arriving for work nobody is going to do.
+   *
+   * Best effort and last: the decline is recorded and correct either way.
+   */
+  try {
+    const { revokePayLinks } = await import('./payLinks')
+    await revokePayLinks(siteId, 'document_deposit', id)
+  } catch (error) {
+    console.error('[pay-links] revoke failed for declined quote', id, error)
+  }
+
   return { ok: true }
 }
 

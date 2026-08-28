@@ -1,5 +1,5 @@
 import './document-a4.css'
-import { qrContextFor } from '@/lib/site/qrLinks'
+import { qrContextFor, documentPayUrl } from '@/lib/site/qrLinks'
 import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
@@ -195,7 +195,11 @@ export default async function SalesDocumentPrintPage({
     ...input,
     capabilities,
     pictures: await pictureIds(site.id),
-    qr: await qrContextFor(site.id),
+    // The pay link is what finally makes the designer's "this document" QR
+    // target resolve — it has been offered and printed nothing since it was
+    // written. Null on a credit note, a draft and a cancelled document, so a
+    // refund never carries a square asking to be paid. See documentPayUrl.
+    qr: await qrContextFor(site.id, await documentPayUrl(site.id, doc).catch(() => null)),
   })
 
   return (

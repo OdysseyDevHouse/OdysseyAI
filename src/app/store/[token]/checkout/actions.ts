@@ -455,7 +455,7 @@ export async function placeOrderAction(
   const amountDue = Math.round((result.total - result.voucherCredit) * 100) / 100
 
   const intent = await createIntent(siteId, {
-    targetId: result.orderId,
+    target: { purpose: 'online_order', orderId: result.orderId },
     amountIncl: amountDue,
   })
   await markOrderPayment(siteId, result.orderId, 'pending')

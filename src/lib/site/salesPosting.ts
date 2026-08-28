@@ -2362,6 +2362,33 @@ export async function voidDocument(
     console.error('[webhooks] enqueue failed for void of', document.id, error)
   }
 
+  /*
+   * Stop any printed pay link for this document.
+   *
+   * ── THE REASON pay_links HAS A revoked_at COLUMN ────────────────────────
+   *
+   * The QR is already on paper in somebody's hand and cannot be recalled, so
+   * this row is the only place the link can be stopped. Without it a voided
+   * invoice stays payable for a year, and the shop takes money for a sale it
+   * has just cancelled — which is a refund, a phone call, and a customer who is
+   * entirely right to be annoyed.
+   *
+   * Both purposes, because one document id can carry either: an invoice has a
+   * `debtor_invoice` link and a quote or order a `document_deposit` one, and
+   * this path voids whichever it was handed.
+   *
+   * Best effort, and last. The void has already happened and is correct; a
+   * failure here must not unwind it. It leaves a link live, which is visible
+   * and fixable, where a rolled-back void would leave the books wrong.
+   */
+  try {
+    const { revokePayLinks } = await import('./payLinks')
+    await revokePayLinks(siteId, 'debtor_invoice', document.id)
+    await revokePayLinks(siteId, 'document_deposit', document.id)
+  } catch (error) {
+    console.error('[pay-links] revoke failed for void of', document.id, error)
+  }
+
   return { ok: true }
 }
 

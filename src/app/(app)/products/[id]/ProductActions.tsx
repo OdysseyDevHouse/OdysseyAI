@@ -19,8 +19,14 @@ export default function ProductActions({
   isArchived,
   name,
   canDelete,
+  returnTo = null,
 }: {
   productId: number
+  /**
+   * The list this product was opened from, so archiving or deleting returns to
+   * it rather than to the bare catalogue. Null when it was reached directly.
+   */
+  returnTo?: string | null
   isArchived: boolean
   /** The product's description, repeated back in the delete confirm. */
   name: string
@@ -36,6 +42,7 @@ export default function ProductActions({
         <form action={archiveProductAction}>
           <input type="hidden" name="id" value={productId} />
           <input type="hidden" name="archived" value={isArchived ? '0' : '1'} />
+          {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
           <MenuItem type="submit">
             {isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
             {isArchived ? 'Restore' : 'Archive'}
@@ -55,6 +62,7 @@ export default function ProductActions({
       {/* Submitted by the confirm below — never directly. */}
       <form ref={deleteForm} action={deleteProductAction} className="hidden">
         <input type="hidden" name="id" value={productId} />
+        {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
       </form>
 
       <ConfirmModal

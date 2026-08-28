@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Pencil } from '@/components/ui/icons'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty } from '@/lib/decimals'
 import {
   Badge,
   ButtonLink,
@@ -46,6 +46,7 @@ export default function ProductsTable({
   showCost,
   empty,
   groupHrefs,
+  editSuffix,
   parentNames,
   dates,
   visibleColumns,
@@ -67,6 +68,19 @@ export default function ProductsTable({
    * URL helpers are server-side, exactly as departmentPaths is.
    */
   groupHrefs: Record<number, string>
+  /**
+   * Query string appended to every edit link, carrying THIS list's URL.
+   *
+   * A filtered list is a worklist: narrow the catalogue to ten products, then
+   * edit them one after another. Without this the trip back from a product
+   * lands on the bare `/products` and the filter has to be re-applied every
+   * time. Built on the server for the same reason groupHrefs is — the URL
+   * helpers do not cross into a client component.
+   *
+   * Empty string when the list is unfiltered, so a plain catalogue keeps the
+   * short, shareable `/products/123` links it has always had.
+   */
+  editSuffix: string
   /**
    * Parent id -> description, for the children a search turned up.
    *
@@ -125,9 +139,13 @@ export default function ProductsTable({
 }) {
   const router = useRouter()
 
-  /** Where a row leads: its group if it is a parent, else its own edit form. */
+  /** Where a row leads: its group if it is a parent, else its own edit form.
+   *
+   * Only the EDIT form carries the return suffix. A group href is itself a
+   * list URL — it already composes onto the current query — so appending the
+   * list's own address to it would nest one list inside another. */
   const rowHref = (p: ProductRow) =>
-    (p.hasVariants ? groupHrefs[p.id] : null) ?? `/products/${p.id}`
+    (p.hasVariants ? groupHrefs[p.id] : null) ?? `/products/${p.id}${editSuffix}`
 
   const columns: Column<ProductRow>[] = [
     {
@@ -207,7 +225,7 @@ export default function ProductsTable({
         p.hasVariants ? (
           <span className="text-faint">—</span>
         ) : (
-          <span className="text-muted">{formatMoney(p.cost.effective)}</span>
+          <span className="text-muted">{formatCost(p.cost.effective)}</span>
         ),
     },
     {
@@ -220,7 +238,7 @@ export default function ProductsTable({
         p.hasVariants ? (
           <span className="text-faint">—</span>
         ) : (
-          <span className="text-muted">{formatMoney(p.cost.effectiveIncl)}</span>
+          <span className="text-muted">{formatCost(p.cost.effectiveIncl)}</span>
         ),
     },
     {
@@ -467,7 +485,7 @@ export default function ProductsTable({
           </ButtonLink>
         ) : (
           <ButtonLink
-            href={`/products/${p.id}`}
+            href={`/products/${p.id}${editSuffix}`}
             variant="ghost"
             size="sm"
             iconOnly

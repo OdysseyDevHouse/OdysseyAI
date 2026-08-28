@@ -211,7 +211,10 @@ async function main() {
      SELECT ?, id, 'collect', ?, 250 FROM online_order_statuses WHERE role = 'new' LIMIT 1`,
     [`${TAG}-1`, TAG],
   )
-  const intent = await createIntent(SITE, { targetId: order.insertId, amountIncl: 250 })
+  const intent = await createIntent(SITE, {
+    target: { purpose: 'online_order', orderId: order.insertId },
+    amountIncl: 250,
+  })
 
   ok('a reference is unguessable', intent.reference.length > 20, intent.reference)
   ok('the expected amount is recorded up front', intent.amountIncl === 250)
@@ -243,7 +246,10 @@ async function main() {
      SELECT ?, id, 'collect', ?, 99 FROM online_order_statuses WHERE role = 'new' LIMIT 1`,
     [`${TAG}-2`, TAG],
   )
-  const intent2 = await createIntent(SITE, { targetId: order2.insertId, amountIncl: 99 })
+  const intent2 = await createIntent(SITE, {
+    target: { purpose: 'online_order', orderId: order2.insertId },
+    amountIncl: 99,
+  })
   const failed = await settleIntent(SITE, intent2.reference, { paid: false, failureReason: 'Card declined' })
   ok('a declined payment is recorded as failed', failed.outcome === 'failed')
   ok('with its reason', (await getIntent(SITE, intent2.reference))?.failureReason === 'Card declined')

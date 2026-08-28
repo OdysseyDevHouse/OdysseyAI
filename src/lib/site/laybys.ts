@@ -620,6 +620,23 @@ export async function completeLayby(
     [posted.documentId, laybyId],
   )
 
+  /*
+   * A completed lay-by is not payable either.
+   *
+   * The goods have been handed over and the invoice raised, so the square on
+   * the customer's card now points at a debt that no longer exists. Left live
+   * it would take an instalment with nothing to settle — the payer's own money,
+   * for something they have already collected.
+   *
+   * Best effort and last, for the same reason as the cancel path above.
+   */
+  try {
+    const { revokePayLinks } = await import('./payLinks')
+    await revokePayLinks(siteId, 'layby', laybyId)
+  } catch (error) {
+    console.error('[pay-links] revoke failed for completed lay-by', laybyId, error)
+  }
+
   return { ok: true, documentId: posted.documentId, documentNumber: posted.documentNumber }
 }
 
@@ -743,6 +760,24 @@ export async function cancelLayby(
       ] as never,
     )
   })
+
+  /*
+   * Stop the pay link on the lay-by card.
+   *
+   * The card is in the customer's wallet and its square is live for eighteen
+   * months. A cancelled lay-by that still takes instalments is money against
+   * goods that have been put back on the shelf.
+   *
+   * Best effort and last: the cancellation is already done and correct, and a
+   * failure here leaves a live link — visible and fixable — where unwinding the
+   * cancellation would leave the stock and the fee wrong.
+   */
+  try {
+    const { revokePayLinks } = await import('./payLinks')
+    await revokePayLinks(siteId, 'layby', laybyId)
+  } catch (error) {
+    console.error('[pay-links] revoke failed for cancelled lay-by', laybyId, error)
+  }
 
   return { ok: true, fee: outcome.fee, refund: outcome.refund, noFeeReason: outcome.noFeeReason }
 }

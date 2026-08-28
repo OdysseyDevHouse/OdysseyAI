@@ -1,9 +1,8 @@
 import { requireCapability } from '@/lib/auth'
 import { can, type Capability } from '@/lib/site/permissions'
-import { sourcesFor, fieldsFor, type CatalogSource } from '@/lib/reportBuilder/catalog'
-import { templatesFor, templateSpec } from '@/lib/reportBuilder/templates'
+import { sourcesFor } from '@/lib/reportBuilder/catalog'
 import { emptySpec, validateSpec, type CustomReportSpec } from '@/lib/reportBuilder/spec'
-import type { ClientSource } from '@/lib/reportBuilder/clientTypes'
+import { toClientSource } from '@/lib/reportBuilder/clientTypes'
 import { getSavedReport } from '@/lib/site/savedReports'
 import { resolveReport } from '@/lib/reportBuilder/resolve'
 import { PageHeader, PageBody } from '@/components/ui'
@@ -71,52 +70,19 @@ export default async function BuilderPage({
         subtitle="Pick what to read, choose the columns, and save it for everyone."
       />
       <PageBody>
+        {/* Starting from a report that nearly works still beats starting from
+            a blank one — but the way in is the Customise button on the report
+            itself (`?from=`, handled above), not a list of every built-in
+            dumped on this page. */}
         <BuilderShell
           sources={sources.map((s) => toClientSource(s, allow))}
           initialSpec={initial}
           savedId={savedId}
-          // Starting from a report that nearly works beats starting from a
-          // blank one, so the built-ins the user may run are offered as
-          // starting points. Each carries its own spec, cloned on pick.
-          templates={templatesFor(allow)
-            .filter((t) => sources.some((s) => s.key === t.spec.source))
-            .map((t) => ({
-              id: t.id,
-              name: t.name,
-              description: t.description,
-              source: t.spec.source,
-              spec: templateSpec(t),
-            }))}
         />
       </PageBody>
     </>
   )
 }
 
-/** The catalog as the browser sees it — SQL expressions stripped out. */
-function toClientSource(source: CatalogSource, allow: (c: Capability) => boolean): ClientSource {
-  return {
-    key: source.key,
-    label: source.label,
-    description: source.description,
-    category: source.category,
-    shape: source.shape,
-    note: source.note,
-    defaultFilters: source.defaultFilters ?? [],
-    // `expr` is deliberately NOT sent. The browser never needs it, and shipping
-    // the SQL for every field would put the whole schema in the page source for
-    // no benefit.
-    fields: fieldsFor(source, allow).map((f) => ({
-      key: f.key,
-      label: f.label,
-      type: f.type,
-      numeric: f.numeric ?? false,
-      starter: f.starter ?? false,
-      noTotal: f.noTotal ?? false,
-      hasRatio: !!f.ratio,
-      group: f.group ?? '',
-      hint: f.hint ?? '',
-      options: f.options ?? [],
-    })),
-  }
-}
+// toClientSource now lives in lib/reportBuilder/clientTypes, shared with the
+// advanced filter on the list screens.

@@ -4,10 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import {
   Badge,
   Button,
+  ButtonLink,
   Callout,
   Card,
   CardBody,
   CardHeader,
+  Checkbox,
   CodeArea,
   ConfirmModal,
   EmptyState,
@@ -24,12 +26,11 @@ import {
   previewTemplateAction,
   deleteTemplateAction,
   copyTemplateAction,
-  uploadLogoAction,
-  clearLogoAction,
   toMarkupAction,
   uploadPictureAction,
   deletePictureAction,
   saveReviewUrlAction,
+  savePayLinkSettingsAction,
   type PictureInfo,
 } from './actions'
 import SlipDesigner from './SlipDesigner'
@@ -92,11 +93,20 @@ type TemplateInfo = {
  * PRINTS and what is being EDITED are also different things and are labelled
  * as such: a design only reaches paper when it is made active.
  */
+export type PayLinkSettings = {
+  invoices: boolean
+  statements: boolean
+  laybys: boolean
+  quotes: boolean
+}
+
 export default function StationeryClient({
   siteName,
   logoFile,
   pictures: initialPictures,
   reviewUrl: initialReviewUrl,
+  payLinks: initialPayLinks,
+  gatewayReady,
   docs,
   templates: initialTemplates,
 }: {
@@ -106,6 +116,16 @@ export default function StationeryClient({
   pictures: PictureInfo[]
   /** Where a scan-to-rate QR points. Empty means such a QR prints nothing. */
   reviewUrl: string
+  /** Which documents carry a "pay online" link. */
+  payLinks: PayLinkSettings
+  /**
+   * Whether a payment account is actually connected and usable.
+   *
+   * Shown rather than hidden: the switches below need BOTH this and their own
+   * setting, so a shop that turns them on without a gateway would see nothing
+   * appear on any document and reasonably conclude the feature is broken.
+   */
+  gatewayReady: boolean
   docs: DocInfo[]
   templates: TemplateInfo[]
 }) {
@@ -403,8 +423,10 @@ export default function StationeryClient({
   )
 
   /* The stored name doubles as a cache-buster: the URL is constant per site, so
-     without it a replaced logo would keep showing the old picture. */
-  const [logo, setLogo] = useState(logoFile)
+     without it a replaced logo would keep showing the old picture. Read-only
+     here — the logo is changed in Setup › My store information, and this screen
+     picks the new one up on its next load. */
+  const logo = logoFile
   /*
    * The whole list comes back from every picture action rather than being
    * patched here — two tabs open on this screen would otherwise disagree about
@@ -423,8 +445,30 @@ export default function StationeryClient({
       toast.success(res.message)
     })
   }
-  const fileInput = useRef<HTMLInputElement>(null)
 
+  const [payLinks, setPayLinks] = useState(initialPayLinks)
+
+  /*
+   * Saved on the toggle, not behind a Save button.
+   *
+   * These are four independent switches rather than a form — there is nothing
+   * to review before committing, and a Save button beside four checkboxes is
+   * the shape that leaves a shop believing it turned something on when it did
+   * not. The optimistic state is corrected from the server's answer on failure.
+   */
+  function togglePayLink(key: keyof PayLinkSettings, on: boolean) {
+    const next = { ...payLinks, [key]: on }
+    setPayLinks(next)
+    start(async () => {
+      const res = await savePayLinkSettingsAction(next)
+      if (!res.ok) {
+        setPayLinks(payLinks)
+        toast.error(res.error)
+        return
+      }
+      toast.success(res.message)
+    })
+  }
   const pictureInput = useRef<HTMLInputElement>(null)
 
   function uploadPicture(file: File) {
@@ -454,35 +498,6 @@ export default function StationeryClient({
       }
       setPictures(res.pictures)
       toast.success(res.message)
-    })
-  }
-
-  function uploadLogo(file: File) {
-    const form = new FormData()
-    form.set('logo', file)
-    start(async () => {
-      const res = await uploadLogoAction(form)
-      if (!res.ok) {
-        toast.error(res.error)
-        return
-      }
-      toast.success(res.message)
-      // A new token, so the <img> and the preview both refetch.
-      setLogo(`${Date.now()}`)
-      if (body.trim()) runPreview(body)
-    })
-  }
-
-  function removeLogo() {
-    start(async () => {
-      const res = await clearLogoAction()
-      if (!res.ok) {
-        toast.error(res.error)
-        return
-      }
-      toast.success(res.message)
-      setLogo('')
-      if (body.trim()) runPreview(body)
     })
   }
 
@@ -590,10 +605,22 @@ export default function StationeryClient({
         </CardBody>
       </Card>
 
+      {/*
+        The logo is CHANGED in Setup › My store information, beside the name and
+        address it prints next to — it is one of the shop's own details, not a
+        property of any document. It is still SHOWN here, because a person
+        laying out a letterhead has to see what will actually print, and a
+        designer that silently omitted it would look like a broken one.
+      */}
       <Card>
         <CardHeader
           title="Your logo"
           description="Put it on any document by writing {site.logo} where it should go."
+          action={
+            <ButtonLink href="/setup/store-info" variant="secondary">
+              Change it
+            </ButtonLink>
+          }
         />
         <CardBody>
           <div className="flex flex-wrap items-center gap-4">
@@ -609,38 +636,13 @@ export default function StationeryClient({
             ) : (
               <p className="text-sm text-muted">No logo yet — documents print the name only.</p>
             )}
-
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) uploadLogo(f)
-                e.target.value = ''
-              }}
-            />
-            <Button
-              variant="secondary"
-              onClick={() => fileInput.current?.click()}
-              disabled={pending}
-            >
-              <Icons.Upload aria-hidden className="h-4 w-4" />
-              {logo ? 'Replace' : 'Upload a logo'}
-            </Button>
-            {logo && (
-              <Button variant="danger-ghost" onClick={removeLogo} disabled={pending}>
-                Remove
-              </Button>
-            )}
           </div>
           <p className="mt-3 text-xs text-muted">
-            PNG or JPEG reads everywhere; GIF and WebP print but are left off emailed
-            invoices. Keep it under 500&nbsp;KB — an emailed PDF carries the file itself, so a
-            larger logo is skipped there rather than attached to every invoice. In the
-            designer, add a <span className="font-medium text-ink">Your logo</span> block to
-            put it where you like and set how tall it prints.
+            Uploaded under{' '}
+            <span className="font-medium text-ink">Setup &rsaquo; My store information</span>,
+            with the rest of your business details. Here, add a{' '}
+            <span className="font-medium text-ink">Your logo</span> block to put it where you
+            like and set how tall it prints.
           </p>
         </CardBody>
       </Card>
@@ -748,6 +750,57 @@ export default function StationeryClient({
             Typed once here rather than into each design — a shop putting the same square on
             its invoice and its till slip changes the address in one place when it moves.
             Leave it empty and a QR pointing at it simply prints nothing.
+          </p>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Pay online"
+          description="Put a “pay now” button on what you send, and a QR code on what you print."
+        />
+        <CardBody>
+          {!gatewayReady ? (
+            <Callout tone="warning" className="mb-4">
+              No payment account is connected yet, so nothing below will appear on a document.
+              Connect one under Online store → Payments first.
+            </Callout>
+          ) : null}
+
+          {/* Checkbox is inline-flex, so space-y on a plain div does nothing and
+              the four run together on one line. A flex column stacks them. */}
+          <div className="flex flex-col items-start gap-3">
+            <Checkbox
+              label="Invoices — a button on the email, a QR on the PDF"
+              checked={payLinks.invoices}
+              disabled={pending}
+              onChange={(e) => togglePayLink('invoices', e.target.checked)}
+            />
+            <Checkbox
+              label="Statements — pays the account balance, oldest invoices first"
+              checked={payLinks.statements}
+              disabled={pending}
+              onChange={(e) => togglePayLink('statements', e.target.checked)}
+            />
+            <Checkbox
+              label="Lay-bys — an instalment can be paid without coming in"
+              checked={payLinks.laybys}
+              disabled={pending}
+              onChange={(e) => togglePayLink('laybys', e.target.checked)}
+            />
+            <Checkbox
+              label="Quotes and orders — takes a deposit, and does not convert them"
+              checked={payLinks.quotes}
+              disabled={pending}
+              onChange={(e) => togglePayLink('quotes', e.target.checked)}
+            />
+          </div>
+
+          <p className="mt-4 text-xs text-muted">
+            A link only ever asks for what is <strong>still owed today</strong>, so an invoice
+            part-paid by EFT asks for the remainder. Paying never changes a document itself:
+            money against a quote is held as a deposit until you convert it, so you are never
+            committed to supplying stock you do not have. Credit notes never carry one.
           </p>
         </CardBody>
       </Card>

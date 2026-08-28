@@ -10,8 +10,13 @@ import { Quote } from './icons'
  * which is read from three feet away by somebody standing at a counter — at
  * that distance a large figure in `ink` on `surface-2` is just more page.
  *
- * Use it sparingly and never more than once in a viewport. Two plaques is no
- * plaque: the whole effect is that it is the darkest thing on the screen.
+ * Use it sparingly — as a rule, once in a viewport. Two plaques is no plaque:
+ * the whole effect is that it is the darkest thing on the screen.
+ *
+ * The ONE standing exception is a number pad: `NumPadDisplay` and `PinPad`'s
+ * entry box wear this same plaque, and a screen carrying a pad carries exactly
+ * one of them — the figure being typed. That is the same rule, not a breach of
+ * it. Do not add a second plaque beside a pad for something else.
  *
  * The gradient is a token pair rather than a hardcoded pair of hexes, so a
  * future decision to flatten it is one edit in globals.css.

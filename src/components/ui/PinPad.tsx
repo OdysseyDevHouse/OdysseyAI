@@ -174,7 +174,12 @@ export function PinPad({
 
   // Taller keys on the lock screen, which owns the whole viewport; the override
   // popup inside a modal keeps the standard till size.
-  const keySize = wide ? 'touch-lg' : 'touch'
+  //
+  // `pad`/`pad-lg` rather than `touch`/`touch-lg`: the size carries this pad's
+  // type AND its weight, which a className cannot — asked for through one, the
+  // digits' `font-bold` lost to the size's own `font-medium` on source order
+  // and rendered at 500 and 600 while the class sat right there in the DOM.
+  const keySize = wide ? 'pad-lg' : 'pad'
 
   return (
     <div
@@ -220,14 +225,24 @@ export function PinPad({
             ))}
           </div>
         ) : (
-          <div className="flex h-[58px] w-full items-center justify-center rounded-card border border-border bg-canvas px-4">
+          /* THE DEEP PLAQUE, the same dark block NumPadDisplay and the till's
+             opening float wear. It was a pale `canvas` box, which made the one
+             field a cashier is filling in the palest thing on the screen — and
+             put the PIN prompt on a different ground from every amount prompt
+             they meet on the same till. */
+          <div className="flex h-[58px] w-full items-center justify-center rounded-card bg-gradient-to-br from-deep to-deep-2 px-4">
             {pin.length === 0 ? (
-              <span className="text-sm font-semibold text-muted">Enter PIN</span>
+              /* White, like every other plaque label. It names what the field
+                 wants, and in the muted step it read as a disabled field
+                 rather than an empty one. */
+              <span className="text-xs font-bold uppercase tracking-wider text-deep-ink">
+                Enter PIN
+              </span>
             ) : (
               /* pl-[8px]: letter-spacing is applied after the LAST bullet too, so
                  the glyph row carries a trailing gap and centring lands it 4px
                  left of true. The padding gives that space back. */
-              <span className="pl-[8px] text-[26px] font-extrabold tracking-[8px] text-ink">
+              <span className="pl-[8px] text-[26px] font-extrabold tracking-[8px] text-deep-ink">
                 {'•'.repeat(pin.length)}
               </span>
             )}
@@ -265,7 +280,7 @@ export function PinPad({
             size={keySize}
             onClick={() => press(digit)}
             disabled={busy}
-            className={`w-full font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
+            className="w-full"
           >
             {digit}
           </Button>
@@ -294,7 +309,7 @@ export function PinPad({
           size={keySize}
           onClick={() => press('0')}
           disabled={busy}
-          className={`w-full font-bold ${wide ? 'text-[22px]' : 'text-[19px]'}`}
+          className="w-full"
         >
           0
         </Button>

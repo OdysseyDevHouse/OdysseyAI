@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { qrContextFor } from '@/lib/site/qrLinks'
 import { setSetting } from '@/lib/site/settings'
+import { canTakePayments } from '@/lib/site/payments'
+import { logActivity } from '@/lib/site/activityLog'
 import { cleanCustomUrl, resolveQrUrl, whyNoUrl } from '@/lib/stationery/qrTarget'
 import { actorFor, requireSite } from '@/lib/auth'
 import {
@@ -28,7 +30,6 @@ import { parseSlip, validateSlip } from '@/lib/stationery/slip'
 import { parseSpec, validateSpec } from '@/lib/stationery/blocks'
 import { compileBlocks, compileDocument, supportsBlocks } from '@/lib/stationery/compile'
 import { slipPreviewHtml, slipBlockHtml } from '@/lib/stationery/slipHtml'
-import { setLogo, clearLogo } from '@/lib/site/documentLogo'
 import {
   pictureIds,
   addImage,
@@ -467,39 +468,24 @@ export async function toMarkupAction(input: {
   return { ok: true, body }
 }
 
-/**
- * Upload the business's logo.
+/*
+ * ── THE LOGO ACTIONS MOVED ──────────────────────────────────────────────────
  *
- * Takes a FormData rather than a typed object because a File cannot cross a
- * server-action boundary any other way. The bytes are proved to be a picture by
- * magic-byte sniffing in lib/uploads.ts — an .svg renamed to .png dies there,
- * which matters more here than elsewhere: an SVG executes script when opened
- * from the same origin, and this file is rendered into a document.
+ * uploadLogoAction and clearLogoAction now live in
+ * setup/store-info/actions.ts, beside the name and address the logo prints next
+ * to. Which picture is the shop's logo is one of the shop's own DETAILS, not a
+ * property of any document — and `setup.stationery` guards something narrower
+ * than that: markup a person types which leaves the building on a customer's
+ * invoice.
+ *
+ * They are deleted rather than left as unused exports. An exported server
+ * action is a live endpoint whether or not a screen calls it, so leaving them
+ * here would keep a second front door open onto the same file, gated on a
+ * different capability from the one that now owns it.
+ *
+ * The designer still SHOWS the logo — a letterhead being laid out has to — and
+ * links across to change it.
  */
-export async function uploadLogoAction(form: FormData): Promise<ActionResult> {
-  const ctx = await actorFor('setup.stationery')
-  if ('ok' in ctx) return ctx
-
-  const file = form.get('logo')
-  if (!(file instanceof File)) return { ok: false, error: 'Choose an image to upload.' }
-
-  const result = await setLogo(ctx.siteId, file)
-  if (!result.ok) return result
-
-  revalidatePath('/setup/stationery')
-  return { ok: true, message: 'Logo uploaded.' }
-}
-
-export async function clearLogoAction(): Promise<ActionResult> {
-  const ctx = await actorFor('setup.stationery')
-  if ('ok' in ctx) return ctx
-
-  const result = await clearLogo(ctx.siteId)
-  if (!result.ok) return result
-
-  revalidatePath('/setup/stationery')
-  return { ok: true, message: 'Logo removed. Documents will print without one.' }
-}
 
 export async function discardDraftAction(id: number): Promise<ActionResult> {
   const ctx = await actorFor('setup.stationery')
@@ -613,4 +599,77 @@ export async function saveReviewUrlAction(url: string): Promise<ActionResult> {
 
   revalidatePath('/setup/stationery')
   return { ok: true, message: 'Review link saved.' }
+}
+
+/**
+ * Which documents carry a "pay online" link.
+ *
+ * ── WHY THIS LIVES BESIDE THE REVIEW LINK ─────────────────────────────────
+ *
+ * Both decide what a QR square on this shop's paper points at, and both are
+ * changed by the person designing the stationery. Putting the pay switches on
+ * the online-store screen — where the gateway itself is configured — would hide
+ * them behind the `online_store` MODULE, and a shop with no storefront still
+ * emails invoices and posts statements. The gateway is a storefront concern;
+ * what goes on an invoice is not.
+ *
+ * ── ALL FOUR ARE SEPARATE ─────────────────────────────────────────────────
+ *
+ * They are genuinely different decisions made by different people. A business
+ * will happily put a pay button on an emailed invoice while wanting nothing on
+ * a printed till slip, because the slip is handed to somebody who has already
+ * paid. One switch would force all of it.
+ *
+ * Audited, because turning these on changes what every customer of this
+ * business receives from it.
+ */
+export async function savePayLinkSettingsAction(input: {
+  invoices: boolean
+  statements: boolean
+  laybys: boolean
+  quotes: boolean
+}): Promise<ActionResult> {
+  const ctx = await actorFor('setup.stationery')
+  if ('ok' in ctx) return ctx
+
+  const pairs = [
+    ['pay_link_on_invoices', input.invoices],
+    ['pay_link_on_statements', input.statements],
+    ['pay_link_on_laybys', input.laybys],
+    ['pay_link_on_quotes', input.quotes],
+  ] as const
+
+  for (const [key, on] of pairs) {
+    const saved = await setSetting(ctx.siteId, key, on ? '1' : '0')
+    if (!saved.ok) return saved
+  }
+
+  const on = pairs.filter(([, v]) => v).map(([k]) => k.replace('pay_link_on_', ''))
+  await logActivity(ctx.siteId, ctx.actor, {
+    entity: 'setting',
+    entityId: null,
+    action: 'pay_links',
+    detail: on.length ? `Pay links on: ${on.join(', ')}` : 'Pay links off everywhere',
+  }).catch(() => undefined)
+
+  revalidatePath('/setup/stationery')
+
+  /*
+   * The gateway is checked SEPARATELY from the switch, and said out loud.
+   *
+   * payLinksEnabled() requires both, so a shop can turn these on with no
+   * gateway connected and see nothing appear on any document — which looks
+   * exactly like a broken feature. Saying so here is the difference between a
+   * setting that seems ignored and one that explains itself.
+   */
+  const usable = await canTakePayments(ctx.siteId)
+  if (on.length > 0 && !usable) {
+    return {
+      ok: true,
+      message:
+        'Saved — but no payment account is connected yet, so nothing will appear until one is. See Online store → Payments.',
+    }
+  }
+
+  return { ok: true, message: on.length ? 'Pay links saved.' : 'Pay links turned off.' }
 }

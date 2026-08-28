@@ -595,10 +595,9 @@ export async function payLinkFor(
     const { createIntent } = await import('./payments')
     const { createCallbackToken } = await import('../callbackToken')
     const intent = await createIntent(siteId, {
-      targetId: documentId,
-      amountIncl: outstanding,
       // The purpose 038_payments.sql already anticipated for exactly this.
-      purpose: 'debtor_invoice',
+      target: { purpose: 'debtor_invoice', documentId },
+      amountIncl: outstanding,
     })
     const token = await createCallbackToken(siteId, intent.reference)
     return { ok: true, url: `/pay/${token}` }

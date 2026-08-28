@@ -461,6 +461,18 @@ export type ProductListOptions = {
    * the children carry their parent's name on screen for context.
    */
   collapseVariants?: boolean
+  /**
+   * Extra WHERE fragments from the list screen's advanced filter, with their
+   * bound values.
+   *
+   * Pre-compiled by lib/site/listFilterSql.ts rather than described here,
+   * because the vocabulary is the report builder's catalog and this query has
+   * no business knowing it. The contract is narrow on purpose: the fragments
+   * are catalog-authored SQL against THIS query's `p` alias, and every user
+   * value is already a `?` in `extraParams`. Nothing else may be passed.
+   */
+  extraWhere?: readonly string[]
+  extraParams?: readonly unknown[]
   /** Defaults to 'description' — the order the catalogue has always been in. */
   sort?: ProductSort
   direction?: 'asc' | 'desc'
@@ -551,6 +563,15 @@ export async function listProducts(
   if (opts.updatedSince) {
     where.push('COALESCE(p.last_edit_date, p.created_at) >= ?')
     params.push(opts.updatedSince)
+  }
+
+  /* The advanced filter's conditions, ANDed onto everything above. Pushed LAST
+     and as a pair, because the placeholders in these fragments are positional:
+     the values must arrive in the same order the fragments do, and appending
+     them anywhere but together would silently shift every parameter after. */
+  if (opts.extraWhere?.length) {
+    where.push(...opts.extraWhere)
+    params.push(...(opts.extraParams ?? []))
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''

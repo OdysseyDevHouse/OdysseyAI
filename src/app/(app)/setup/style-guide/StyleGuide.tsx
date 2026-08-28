@@ -34,6 +34,10 @@ import {
   InlineField,
   FileInput,
   FilterBar,
+  AdvancedFilter,
+  summariseCondition,
+  type FilterCondition,
+  type FilterField,
   FilterChip,
   Icons,
   Input,
@@ -216,6 +220,7 @@ export default function StyleGuidePage() {
         <LaneWeekSection />
         <ComboboxSection />
         <FilterBarSection />
+        <AdvancedFilterSection />
         <DateRangeSection />
         <CategoryTileSection />
         <TillTileSection />
@@ -275,7 +280,7 @@ function ButtonsSection() {
     { variant: 'ghost', note: 'Low-emphasis / toolbar', label: 'Cancel', icon: false },
     {
       variant: 'key',
-      note: 'A keypad key — neutral fill so ten of them read as a pad (the till’s PinPad)',
+      note: 'A keypad key — neutral fill so ten of them read as a pad. Every pad wears it: PinPad and NumPad both, at sizes pad / pad-lg / keypad-sm / keypad',
       label: '7',
       icon: false,
     },
@@ -2500,9 +2505,16 @@ function NumPadSection() {
         <Spec name='size="wide"' note="the same, at a scale a dialog can carry beside a field and a footer" />
         <Spec name="maxDecimals={0}" note="whole numbers; the point becomes a GAP, not a missing key" />
         <Spec name="numPadValue(v)" note='"" and "12." both mean the number to their left' />
-        <Spec name='layout="plaque"' note="brand-tinted, for a dialog whose only subject is the amount" />
+        <Spec name='layout="plaque"' note="the biggest figure, for a dialog whose only subject is the amount" />
+        <Spec
+          name="the deep plaque"
+          note="every layout sits on it — the same dark block the till's opening float wears, so the figure is in one place on one ground wherever a cashier meets it"
+        />
         <Spec name="suffix" note='the unit ON the figure — "%" — never a leading one; R goes first' />
-        <Spec name='tone="danger"' note="the entry is refused — over a line's discount ceiling" />
+        <Spec
+          name='tone="danger"'
+          note="the entry is refused — the SAME plaque, reddened; the figure must not move or resize to say no"
+        />
 
         {/* The two sizes SIDE BY SIDE, because the difference is the thing worth
             looking at and it is invisible in prose: `touch` keys are 56px tall
@@ -2512,8 +2524,13 @@ function NumPadSection() {
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
             Default — one control among controls
           </p>
-          <NumPadDisplay label="Quantity" value={small} />
-          <NumPad value={small} onChange={setSmall} />
+          {/* The pair in a gap-3 column, the way every dialog that uses them
+              lays them out — as bare siblings the keys butt against the
+              plaque's bottom edge, which is not a shape any real screen has. */}
+          <div className="flex flex-col gap-3">
+            <NumPadDisplay label="Quantity" value={small} />
+            <NumPad value={small} onChange={setSmall} />
+          </div>
         </div>
 
         <div className="w-full max-w-sm shrink-0">
@@ -2691,6 +2708,95 @@ function FilterBarSection() {
           <FilterChip label="Balance" value="Over limit" clearHref="#" />
         </FilterBar>
       </div>
+    </Card>
+  )
+}
+
+/**
+ * The advanced filter, live.
+ *
+ * Wired to real state so the panel actually opens, adds conditions and applies
+ * them — a static screenshot of a closed button would prove nothing about the
+ * thing worth checking, which is what the panel looks like with four rows in
+ * it. The fields below mirror the shape the products list passes.
+ */
+function AdvancedFilterSection() {
+  const [conditions, setConditions] = useState<FilterCondition[]>([
+    { field: 'visibleInPos', op: 'eq', value: 'Yes' },
+  ])
+  const [remembered, setRemembered] = useState(false)
+
+  const fields: FilterField[] = [
+    {
+      key: 'visibleInPos',
+      label: 'Visible on the till',
+      type: 'text',
+      numeric: false,
+      group: 'Behaviour',
+      hint: 'Whether the product shows on the POS.',
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+    },
+    {
+      key: 'productType',
+      label: 'Product type',
+      type: 'text',
+      numeric: false,
+      group: 'Classification',
+      hint: '',
+      options: [
+        { value: 'normal', label: 'Normal' },
+        { value: 'service', label: 'Service' },
+        { value: 'serial', label: 'Serial' },
+      ],
+    },
+    {
+      key: 'stockOnHand',
+      label: 'Stock on hand',
+      type: 'number',
+      numeric: true,
+      group: 'Quantities',
+      hint: '',
+      options: [],
+    },
+    { key: 'code', label: 'Product code', type: 'text', numeric: false, group: 'Identity', hint: '', options: [] },
+  ]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Advanced filter"
+        description="<AdvancedFilter /> — everything a list's toolbar cannot express, behind one button. Conditions come from the report builder's catalog, so the fields and operators are the same ones a report offers. Applying is the caller's job: filter state belongs in the URL."
+      />
+      <Row>
+        <Spec name="<AdvancedFilter>" note="Products, customers and suppliers lists" />
+        <div className="flex flex-col gap-3">
+          <AdvancedFilter
+            fields={fields}
+            value={conditions}
+            remembered={remembered}
+            onApply={(next, remember) => {
+              setConditions(next)
+              setRemembered(remember)
+            }}
+          />
+          {/* What the list screen renders beside the button — the applied
+              conditions in words. Without these a remembered filter is
+              invisible, and a short list looks like a broken screen. */}
+          <FilterBar>
+            {conditions.map((c, i) => (
+              <FilterChip
+                key={i}
+                label="Where"
+                value={summariseCondition(c, fields)}
+                clearHref="#"
+              />
+            ))}
+          </FilterBar>
+        </div>
+      </Row>
     </Card>
   )
 }
