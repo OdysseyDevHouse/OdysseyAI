@@ -13,12 +13,8 @@ import {
   Switch,
   useToast,
 } from '@/components/ui'
-import {
-  saveMailSettingsAction,
-  sendTestMailAction,
-  SMTP_PASS_MASK,
-  type MailSettingsInput,
-} from './actions'
+import { saveMailSettingsAction, sendTestMailAction, type MailSettingsInput } from './actions'
+import { SMTP_PASS_MASK } from './constants'
 
 /**
  * The shop's outgoing mail account.

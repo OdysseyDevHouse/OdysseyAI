@@ -3,7 +3,7 @@ import { getSettings } from '@/lib/site/settings'
 import { mailConfig } from '@/lib/mail'
 import { PageHeader, PageBody } from '@/components/ui'
 import EmailSettingsClient from './EmailSettingsClient'
-import { SMTP_PASS_MASK } from './actions'
+import { SMTP_PASS_MASK } from './constants'
 
 export const dynamic = 'force-dynamic'
 

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
 import { setSetting } from '@/lib/site/settings'
 import { verifyMailFor } from '@/lib/mail'
+import { SMTP_PASS_MASK } from './constants'
 
 /**
  * The shop's own outgoing mail account.
@@ -24,8 +25,8 @@ import { verifyMailFor } from '@/lib/mail'
 
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string }
 
-/** What the screen shows instead of the stored password. */
-export const SMTP_PASS_MASK = '••••••••'
+// SMTP_PASS_MASK moved to ./constants: a 'use server' module may only export
+// async functions, and exporting a const here failed the whole build.
 
 export type MailSettingsInput = {
   host: string
