@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
+import { listFieldDefs } from '@/lib/site/customFields'
 import { listSalesReasons } from '@/lib/site/salesReasons'
 import { toDocType } from '@/lib/site/salesDocuments'
 import { listPriceStructures } from '@/lib/site/lookups'
@@ -258,6 +259,30 @@ export default async function PosPage({
   )
   const scanSounds = String(depositSettings.pos_scan_sounds ?? '0') === '1'
 
+  /*
+   * The questions a sale may be asked at the pad.
+   *
+   * Shipped with the page rather than fetched when the pad opens, like every
+   * other till rule: the dialog stands between a cashier and a customer's
+   * money, and a round trip there is one somebody waits through. Active only —
+   * a retired field is one nobody may be asked any more.
+   *
+   * A shop with none gets an empty list, and the gate in PosShell then never
+   * fires however the tender flags happen to be set.
+   */
+  const saleCommentFields = (await listFieldDefs(site.id, 'sale').catch(() => []))
+    .filter((d) => d.isActive)
+    .map((d) => ({
+      fieldId: d.id,
+      code: d.code,
+      name: d.name,
+      hint: d.hint,
+      fieldType: d.fieldType,
+      options: d.options,
+      unit: d.unit,
+      isRequired: d.isRequired,
+    }))
+
   const keyProducts = keyProductIds.length
     ? await siteQuery<{ id: number; description: string }>(
         site.id,
@@ -336,6 +361,7 @@ export default async function PosPage({
       returnToLogin={returnToLogin}
       idleLogoutSeconds={idleLogoutSeconds}
       scanSounds={scanSounds}
+      saleCommentFields={saleCommentFields}
       specials={specials}
       pendingPrices={pendingPrices}
       posMenus={posMenus}

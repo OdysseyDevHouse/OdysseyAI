@@ -23,6 +23,7 @@ import type { VisitType } from '@/lib/site/visitTypes'
 import type { ServiceTier } from '@/lib/tipMath'
 import type { Department } from './types'
 import type { PickableReason, PosSignInSpecial } from '@/components/ui'
+import type { SaleCommentField } from './SaleCommentsModal'
 
 /**
  * Gate or till, decided on the CLIENT when the server could not decide it.
@@ -71,6 +72,7 @@ export default function PosEntry({
   returnToLogin,
   idleLogoutSeconds,
   scanSounds,
+  saleCommentFields,
   specials,
   pendingPrices,
   posMenus,
@@ -137,6 +139,8 @@ export default function PosEntry({
   idleLogoutSeconds: number
   /** Whether a scan beeps. Ignored on the invoicing screen — see PosShell. */
   scanSounds: boolean
+  /** The questions a sale may be asked at the pad. See PosShell. */
+  saleCommentFields: SaleCommentField[]
   specials: Special[]
   /** Approved price changes, moments unevaluated — the till decides on its clock. */
   pendingPrices: PendingSchedule[]
@@ -374,6 +378,7 @@ export default function PosEntry({
       returnToLogin={returnToLogin}
       idleLogoutSeconds={idleLogoutSeconds}
       scanSounds={scanSounds}
+      saleCommentFields={saleCommentFields}
       canOverrideDiscount={operator.canOverrideDiscount}
       canOverridePrice={operator.canOverridePrice}
       canVoid={operator.canVoid}

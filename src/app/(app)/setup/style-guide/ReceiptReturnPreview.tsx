@@ -135,6 +135,7 @@ const tender = (id: number, code: string, name: string, allowsRefund: boolean): 
   tipOnOverTender: false,
   tipInDrawer: false,
   requiresReference: false,
+  asksCustomComments: false,
   referenceLabel: null,
   roundsToCashDenomination: code === 'CASH',
   minAmount: 0,

@@ -41,6 +41,7 @@ import {
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
 import { endOfflineSession } from '@/lib/posOffline/signInOffline'
 import { scanOk, scanFailed } from '@/lib/posOffline/scanSound'
+import SaleCommentsModal, { type SaleCommentField } from './SaleCommentsModal'
 import { stockShortfalls, stockWarning } from '@/lib/stockWarning'
 import { type PosMode } from '@/lib/posMode'
 import { salePaperRoute } from '@/lib/salePaper'
@@ -99,6 +100,7 @@ import {
   productForTillAction,
   type OpenTab,
   type VoidEventPayload,
+  saveSaleCommentsAction,
 } from './actions'
 import { NewTableModal, type NewTableDetails } from './NewTableModal'
 import { tillSignOutAction } from './pinActions'
@@ -294,6 +296,7 @@ export default function PosShell({
   returnToLogin,
   idleLogoutSeconds,
   scanSounds,
+  saleCommentFields,
   canOverrideDiscount,
   canOverridePrice,
   canVoid,
@@ -386,6 +389,13 @@ export default function PosShell({
    * showroom, and the mis-scan this catches does not happen there.
    */
   scanSounds: boolean
+  /**
+   * The questions this shop asks on a sale, and which the pad may prompt for.
+   *
+   * Empty on a shop that has defined none, which is what makes the gate below
+   * cost nothing on the overwhelming majority of tills.
+   */
+  saleCommentFields: SaleCommentField[]
   canOverrideDiscount: boolean
   canOverridePrice: boolean
   /**
@@ -834,6 +844,28 @@ export default function PosShell({
   })
   const [confirmClear, setConfirmClear] = useState(false)
   const [tendering, setTendering] = useState(false)
+  /**
+   * A payment waiting on the sale's custom comments.
+   *
+   * Holds the ARGUMENTS `finalise` was called with, so answering the questions
+   * re-enters it unchanged rather than reconstructing a payment from state that
+   * may have moved. Null when nothing is waiting, which is every sale on a shop
+   * that has not set any of this up.
+   */
+  const [askingComments, setAskingComments] = useState<null | {
+    paid: { tenderTypeId: number; amount: number; reference?: string | null }[]
+    voucherCodes: string[]
+    tipInfo: { declared: Record<number, number>; serviceChargeWaived: boolean }
+  }>(null)
+  /**
+   * Answers captured for the payment in flight, read once by the finalise that
+   * follows and cleared by it.
+   *
+   * A ref rather than state because `finalise` reads it in the same tick it is
+   * set — a state write would not be visible until the next render, and the
+   * sale would post with no comments attached.
+   */
+  const pendingComments = useRef<{ fieldId: number; value: string }[] | null>(null)
   const [pickingCustomer, setPickingCustomer] = useState(false)
   const [showingSaved, setShowingSaved] = useState(false)
   const [showingOutbox, setShowingOutbox] = useState(false)
@@ -2161,6 +2193,36 @@ export default function PosShell({
     return plan.ok ? round(plan.tips.reduce((sum, t) => sum + t.amount, 0), 2) : 0
   }
 
+  /**
+   * Attach the pad's answers to the document that has just posted.
+   *
+   * ── NOT AWAITED, AND THAT IS THE DESIGN ─────────────────────────────────
+   *
+   * The money is already taken and the receipt is already going up. Holding
+   * either on a comment write would make a slow database the customer's
+   * problem, and refusing a completed sale because a note failed to save would
+   * be worse than the missing note — which anybody can add from the document
+   * screen afterwards.
+   *
+   * So a failure is REPORTED and nothing is undone. Silence would be the wrong
+   * answer too: a shop that turned these on wants to know when one did not
+   * land, or it discovers the gap at an audit.
+   *
+   * Offline this is skipped entirely — there is no document id yet, and the
+   * queued sale carries no comments. Said plainly at the call site rather than
+   * failing quietly.
+   */
+  function saveComments(documentId: number, comments: { fieldId: number; value: string }[] | null) {
+    if (!comments || comments.length === 0 || !documentId) return
+    void saveSaleCommentsAction(documentId, comments)
+      .then((result) => {
+        if (!result.ok) toast.error(`The sale went through, but its details did not save: ${result.error}`)
+      })
+      .catch(() => {
+        toast.error('The sale went through, but its details did not save. Add them from the sale.')
+      })
+  }
+
   function finalise(
     paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
     voucherCodes: string[] = [],
@@ -2176,6 +2238,37 @@ export default function PosShell({
       serviceChargeWaived: false,
     },
   ) {
+    /*
+     * ── DOES THIS PAYMENT OWE US SOME ANSWERS? ──────────────────────────────
+     *
+     * Asked here rather than at the pad because THIS is where the tenders are
+     * known — the pad can be reached and left several ways, and a check at each
+     * one is a check that will be missed by whichever path is added next. Every
+     * finalise comes through this function.
+     *
+     * Asked ONCE per payment: `pendingComments` is set by the dialog and read
+     * on the way back in, so re-entering does not re-prompt. Cleared here
+     * whatever happens, so a cancelled sale cannot leave answers behind for the
+     * next customer.
+     *
+     * Costs nothing where a shop has no sale fields — `saleCommentFields` is
+     * empty and the whole test short-circuits on its length.
+     */
+    const answered = pendingComments.current
+    pendingComments.current = null
+    if (
+      answered === null &&
+      saleCommentFields.length > 0 &&
+      paid.some((p) => tenders.find((t) => t.id === p.tenderTypeId)?.asksCustomComments)
+    ) {
+      setAskingComments({ paid, voucherCodes, tipInfo })
+      return
+    }
+    /* Held for the save that follows the post. `finalise` has several exits and
+       the document id only exists at the end of them, so the answers wait here
+       rather than being threaded through every branch. */
+    const commentsToSave = answered
+
     /*
      * A waived service charge is recorded BEFORE the sale posts, not after.
      *
@@ -2227,6 +2320,9 @@ export default function PosShell({
         setTendering(false)
         setEditing(null)
         setExchangeCredit(null)
+        // The comments go on the SALE half of the exchange, not the credit
+        // note: they are answers about the purchase being made.
+        saveComments(result.sale.documentId, commentsToSave)
         setReceipt({
           number: result.sale.documentNumber,
           change: round(result.sale.change + result.cashBack, 2),
@@ -2345,6 +2441,11 @@ export default function PosShell({
       setEditing(null)
       setConfirmClear(false)
       setPickingCustomer(false)
+      /* The comments, once there is a document to hang them on. AFTER the money
+         and not awaited: a sale that posts and then loses a note is fixable
+         from the document screen, and holding the receipt on a text box would
+         make it the customer's problem. See saveSaleCommentsAction. */
+      saveComments(result.documentId, commentsToSave)
       setReceipt({
         number: result.documentNumber,
         change: result.change,
@@ -7312,6 +7413,28 @@ export default function PosShell({
           }}
         />
       )}
+
+      {/* Between the pad and the post. Answering re-enters `finalise` with the
+          arguments it was called with, so nothing about the payment is rebuilt
+          from state that may have moved since. */}
+      <SaleCommentsModal
+        open={askingComments !== null}
+        fields={saleCommentFields}
+        pending={pending}
+        onCancel={() => setAskingComments(null)}
+        onConfirm={(values) => {
+          const held = askingComments
+          if (!held) return
+          setAskingComments(null)
+          /* A ref, because `finalise` reads it in this same tick — see the
+             declaration. Empty answers are dropped by the action. */
+          pendingComments.current = Object.entries(values).map(([fieldId, value]) => ({
+            fieldId: Number(fieldId),
+            value,
+          }))
+          finalise(held.paid, held.voucherCodes, held.tipInfo)
+        }}
+      />
 
       <ReceiptModal
         open={receipt !== null}

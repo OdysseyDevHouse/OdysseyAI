@@ -547,6 +547,13 @@ export async function reconcileCustomFields(siteId: number): Promise<CustomField
       job: 'job_cards',
       customer: 'customers',
       equipment: 'customer_assets',
+      /*
+       * The document, not the till's basket. A sale's comments are captured at
+       * finalise and attached to the row that results, so an orphan here means
+       * a document was deleted out from under its values — the same question
+       * this check asks of the other three.
+       */
+      sale: 'sales_documents',
     }
 
     const orphaned: CustomFieldDrift['orphaned'] = []

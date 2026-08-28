@@ -18,6 +18,8 @@ import { recordVoidEvents, type VoidType } from '@/lib/site/posVoids'
 import { requireSalesReason } from '@/lib/site/salesReasons'
 import { priceCheckForTill, getTillProduct, type TillProduct } from '@/lib/site/tillSearch'
 import { listPriceStructures } from '@/lib/site/lookups'
+import { listFieldDefs, setValues } from '@/lib/site/customFields'
+import type { CustomFieldType } from '@/lib/customFieldModel'
 import { terminalStockLocationId } from '@/lib/site/terminals'
 import type { BasketLine } from '@/lib/basket'
 
@@ -665,4 +667,72 @@ export async function productForTillAction(
     priceStructureId,
     await terminalStockLocationId(siteId, terminalId ?? null),
   )
+}
+
+/**
+ * Save the custom comments captured at the pad against the posted sale.
+ *
+ * ── WHY IT IS A SEPARATE CALL, AFTER THE SALE ───────────────────────────────
+ *
+ * The values attach to a DOCUMENT, and there is no document until the sale
+ * posts — the till holds a basket with no id. Folding this into the finalise
+ * action would mean widening a call that already carries lines, tenders, tips
+ * and vouchers, on the path where a failure costs the most.
+ *
+ * The ordering that follows is deliberate: MONEY FIRST, comments second. A sale
+ * that posts and then fails to record a comment has taken the payment and lost
+ * a note, which somebody can fix from the document screen. The other order
+ * would refuse a customer's card because a text box was unhappy.
+ *
+ * So this reports its failure and the caller shows it, but the sale is already
+ * done and the receipt is already on screen.
+ */
+export async function saveSaleCommentsAction(
+  documentId: number,
+  values: { fieldId: number; value: string }[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorForOrThrow('sales.till')
+  const operator = await withTillOperator(ctx)
+
+  if (!Number.isFinite(documentId) || documentId <= 0) {
+    return { ok: false, error: 'That sale could not be found to attach the details to.' }
+  }
+
+  /* Empty answers are not written. A blank optional field means "not answered",
+     and a row holding '' would be indistinguishable from one somebody cleared
+     on purpose — `setValues` treats null as the absence. */
+  const filled = values
+    .map((v) => ({ fieldId: v.fieldId, value: v.value.trim() }))
+    .filter((v) => v.value !== '')
+
+  if (filled.length === 0) return { ok: true }
+
+  return setValues(ctx.siteId, operator.actor, 'sale', documentId, filled)
+}
+
+/**
+ * The questions this shop asks on a sale, for the till to hold.
+ *
+ * Shipped with the page rather than fetched when the pad opens: the dialog
+ * stands between a cashier and a customer's money, and a round trip there is
+ * one somebody waits through. Active only — a retired field is one nobody may
+ * be asked any more.
+ */
+export async function saleCommentFieldsAction(): Promise<
+  { fieldId: number; code: string; name: string; hint: string | null; fieldType: CustomFieldType; options: string[]; unit: string | null; isRequired: boolean }[]
+> {
+  const ctx = await actorForOrThrow('sales.till')
+  const defs = await listFieldDefs(ctx.siteId, 'sale').catch(() => [])
+  return defs
+    .filter((d) => d.isActive)
+    .map((d) => ({
+      fieldId: d.id,
+      code: d.code,
+      name: d.name,
+      hint: d.hint,
+      fieldType: d.fieldType,
+      options: d.options,
+      unit: d.unit,
+      isRequired: d.isRequired,
+    }))
 }

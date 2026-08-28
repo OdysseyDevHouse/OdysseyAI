@@ -49,6 +49,15 @@ export type TenderType = {
   tipInDrawer: boolean
   requiresReference: boolean
   referenceLabel: string | null
+  /**
+   * Whether finalising on this tender asks for the sale's custom comments.
+   *
+   * The shop defines the questions once, under Setup › Custom fields › Sales;
+   * this decides WHICH payments ask them. One flag rather than a per-tender
+   * question set, so a split sale can never face two different sets of
+   * questions — see 242 for why that ambiguity is worth designing out.
+   */
+  asksCustomComments: boolean
   roundsToCashDenomination: boolean
   minAmount: number
   maxAmount: number
@@ -80,6 +89,7 @@ function mapTender(r: Row): TenderType {
     tipInDrawer: !!r.tip_in_drawer,
     requiresReference: !!r.requires_reference,
     referenceLabel: (r.reference_label as string | null) ?? null,
+    asksCustomComments: !!r.asks_custom_comments,
     roundsToCashDenomination: !!r.rounds_to_cash_denomination,
     minAmount: toNum(r.min_amount),
     maxAmount: toNum(r.max_amount),
@@ -99,7 +109,7 @@ const SELECT_TENDER = `
   SELECT id, code, name, posts_to_debtor, requires_customer, counts_as_drawer_cash,
          opens_cash_drawer, allows_change, allows_split, allows_refund,
                      tip_on_over_tender, tip_in_drawer,
-         requires_reference, reference_label, rounds_to_cash_denomination,
+         requires_reference, reference_label, asks_custom_comments, rounds_to_cash_denomination,
          min_amount, max_amount, surcharge_pct, integration_key,
          icon, color, position, is_active, is_system
     FROM tender_types
@@ -140,6 +150,7 @@ export type TenderInput = {
   tipOnOverTender?: boolean
   tipInDrawer?: boolean
   requiresReference?: boolean
+  asksCustomComments?: boolean
   referenceLabel?: string | null
   roundsToCashDenomination?: boolean
   minAmount?: number
@@ -219,6 +230,7 @@ function columns(input: TenderInput): unknown[] {
     input.postsToDebtor || input.tipInDrawer === false ? 0 : 1,
     input.requiresReference ? 1 : 0,
     input.requiresReference ? (input.referenceLabel?.trim() || 'Reference') : null,
+    input.asksCustomComments ? 1 : 0,
     input.roundsToCashDenomination ? 1 : 0,
     (input.minAmount ?? 0).toFixed(4),
     (input.maxAmount ?? 0).toFixed(4),
@@ -234,7 +246,8 @@ function columns(input: TenderInput): unknown[] {
 const COLUMN_LIST = `code, name, posts_to_debtor, requires_customer, counts_as_drawer_cash,
                      opens_cash_drawer, allows_change, allows_split, allows_refund,
                      tip_on_over_tender, tip_in_drawer,
-                     requires_reference, reference_label, rounds_to_cash_denomination,
+                     requires_reference, reference_label, asks_custom_comments,
+                     rounds_to_cash_denomination,
                      min_amount, max_amount, surcharge_pct, integration_key,
                      icon, color, position, is_active`
 
