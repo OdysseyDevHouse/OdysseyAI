@@ -324,8 +324,9 @@ async function main() {
      already failed and will collide every single time. */
   const ref2b = await newTopup(250)
   let threw = false
+  let retriedOutcome = ''
   try {
-    await settleTopup({
+    retriedOutcome = await settleTopup({
       pending: (await pendingByReference(ref2b))!,
       paymentStatus: 'FAILED',
       pfPaymentId: `${PF_PREFIX}failed`,
@@ -336,6 +337,11 @@ async function main() {
     threw = true
   }
   ok('A RETRIED FAILURE DOES NOT THROW', !threw, 'a throw becomes an endless PayFast retry')
+  ok(
+    '...and reports it as a duplicate',
+    retriedOutcome === 'duplicate',
+    `got ${retriedOutcome}`,
+  )
 
   const ref3 = await newTopup(250)
   const rejected = await settleTopup({
@@ -350,6 +356,65 @@ async function main() {
     'AN UNVERIFIED COMPLETE CREDITS NOTHING',
     (await balanceMicros(accountId)) === afterFailed,
     'a forged payload claiming COMPLETE must not pay',
+  )
+
+  /* ── The row must survive an answer that is not final ────────────────────
+     Both of these are the same bug in two costumes: an outcome that is NOT
+     terminal must leave the row settleable, or the retry that carries the real
+     answer arrives to find the checkout already spent. */
+
+  ok(
+    'an unverified payload leaves the checkout OPEN',
+    (await pendingByReference(ref3))!.status === 'pending',
+    'verifyItn returns false on a post-back NETWORK failure — the retry must still settle it',
+  )
+
+  const recovered = await settleTopup({
+    pending: (await pendingByReference(ref3))!,
+    paymentStatus: 'COMPLETE',
+    pfPaymentId: `${PF_PREFIX}unverified`,
+    rawPayload: 'test',
+    verified: true,
+  })
+  ok(
+    'THE RETRY AFTER A FAILED POST-BACK STILL CREDITS',
+    recovered === 'credited',
+    `got ${recovered} — money collected and never delivered if this fails`,
+  )
+  const afterRecovered = await balanceMicros(accountId)
+  ok(
+    '...for the full amount',
+    afterRecovered === afterFailed + localToMicros(250, 'ZAR'),
+  )
+
+  /* An EFT that has not cleared. PayFast sends PENDING now and COMPLETE later,
+     both for the same reference. */
+  const ref3b = await newTopup(250)
+  const stillClearing = await settleTopup({
+    pending: (await pendingByReference(ref3b))!,
+    paymentStatus: 'PENDING',
+    pfPaymentId: `${PF_PREFIX}clearing`,
+    rawPayload: 'test',
+    verified: true,
+  })
+  ok('a payment still clearing says so', stillClearing === 'pending', `got ${stillClearing}`)
+  ok('...and credits nothing yet', (await balanceMicros(accountId)) === afterRecovered)
+  ok(
+    '...and leaves the checkout OPEN',
+    (await pendingByReference(ref3b))!.status === 'pending',
+  )
+
+  const cleared = await settleTopup({
+    pending: (await pendingByReference(ref3b))!,
+    paymentStatus: 'COMPLETE',
+    pfPaymentId: `${PF_PREFIX}clearing`,
+    rawPayload: 'test',
+    verified: true,
+  })
+  ok('THE LATER COMPLETE SETTLES IT', cleared === 'credited', `got ${cleared}`)
+  ok(
+    '...for the full amount',
+    (await balanceMicros(accountId)) === afterRecovered + localToMicros(250, 'ZAR'),
   )
 
   /* ── The route ──────────────────────────────────────────────────────────── */
@@ -391,9 +456,15 @@ async function main() {
       (await balanceMicros(accountId)) === routeBefore,
       'the charge we recorded is what counts, never the payload',
     )
+    /* An amount mismatch reaches settleTopup as verified:false, the same shape
+       a failed post-back has — so it leaves the checkout open too. That is the
+       right way round: a wrong amount credits nothing either way, and the cost
+       of being wrong is a genuine payment nobody can settle. */
+    ok(
+      '...and leaves the checkout open rather than burning it',
+      (await pendingByReference(ref4))!.status === 'pending',
+    )
 
-    /* The amount check consumed that reference by marking it failed, so the
-       happy path needs a fresh one. */
     const ref5 = await newTopup(500)
     const token5 = await createAiTopupToken(accountId, ref5)
     const good = await post(

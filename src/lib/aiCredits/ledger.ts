@@ -189,7 +189,15 @@ export async function pendingByReference(reference: string): Promise<PendingTopu
   return row ? toPending(row) : null
 }
 
-export type SettleOutcome = 'credited' | 'duplicate' | 'failed' | 'rejected'
+/**
+ * What a notification did.
+ *
+ * `rejected` and `pending` both mean NOTHING WAS WRITTEN and the checkout is
+ * still open — the first because we could not verify the payload, the second
+ * because PayFast says the money has not cleared yet. Both expect a further
+ * notification for the same reference, and both must leave the row settleable.
+ */
+export type SettleOutcome = 'credited' | 'duplicate' | 'failed' | 'rejected' | 'pending'
 
 /**
  * Settle a verified notification.
@@ -207,6 +215,17 @@ export type SettleOutcome = 'credited' | 'duplicate' | 'failed' | 'rejected'
  * would be re-credited by the next retry; a settled row without its credit is
  * money taken and not delivered. Neither is allowed to happen alone.
  *
+ * ── THE ROW IS SINGLE-USE, SO ONLY A FINAL ANSWER MAY SPEND IT ─────────────
+ *
+ * Every write here is guarded by `status = 'pending'`, which is what makes a
+ * replay free — but it also means the FIRST write wins and no later
+ * notification for the same checkout can do anything at all.
+ *
+ * That is correct for an answer that is final (credited, genuinely failed) and
+ * catastrophic for one that is not. A payload we could not verify, or a payment
+ * PayFast says is still clearing, must therefore write NOTHING and leave the
+ * row exactly as it found it — see the branches below, each of which says why.
+ *
  * Throws on a real write failure — the caller answers 500 and PayFast retries,
  * which is the behaviour that saves the payment.
  */
@@ -217,12 +236,47 @@ export async function settleTopup(input: {
   rawPayload: string
   verified: boolean
 }): Promise<SettleOutcome> {
-  const complete = input.paymentStatus.toUpperCase() === 'COMPLETE'
+  const status = input.paymentStatus.toUpperCase()
+  const complete = status === 'COMPLETE'
+  /* What PayFast calls terminal. Anything else — PENDING on an EFT that has not
+     cleared, or a status this code has never seen — is an interim report on a
+     payment still in flight. */
+  const terminal = status === 'FAILED' || status === 'CANCELLED'
 
   return transaction(async (tx) => {
-    // Not COMPLETE, or our own verification failed: record the outcome and
-    // credit nothing. A failed checkout leaves the shop able to try again.
-    if (!complete || !input.verified) {
+    /* ── AN UNVERIFIED PAYLOAD LEAVES THE ROW ALONE ────────────────────────
+     *
+     * READ THIS BEFORE "TIDYING" IT INTO THE BRANCH BELOW.
+     *
+     * `verified: false` does NOT mean "this payment failed". It means we could
+     * not confirm it — and the commonest cause is step 3 of verifyItn, the
+     * post-back, whose own comment says a network failure is not a pass and
+     * that the payment should be left pending for the retry to settle.
+     *
+     * This row is single-use: every write below is guarded by
+     * `status = 'pending'`. So marking it failed here would CONSUME it, and
+     * PayFast's retry — arriving a minute later, when the network is back and
+     * the post-back succeeds — would fail that guard and return 'duplicate'
+     * having credited nothing. Money collected, wallet untouched, and no error
+     * anywhere.
+     *
+     * So: write nothing, and let the retry try again. The attempt is reported
+     * to the caller, which logs it. If the payload was genuinely forged the
+     * retries stop of their own accord and the row ages out as an abandoned
+     * checkout, which is exactly what it is. */
+    if (!input.verified) return 'rejected'
+
+    /* Terminal from PayFast, and verified: the payment really is dead. Consume
+       the row — a shop that wants to try again starts a new checkout, and a
+       fresh reference is what keeps that attempt separate from this one. */
+    if (!complete) {
+      if (!terminal) {
+        /* In flight — an EFT that has not cleared. Leave it pending so the
+           COMPLETE that follows can still settle it. Consuming the row here
+           would make the real payment unsettleable, which is the same bug as
+           the unverified case above wearing a different hat. */
+        return 'pending'
+      }
       try {
         await tx.execute(
           `UPDATE cp2_ai_topup_pending
@@ -231,15 +285,15 @@ export async function settleTopup(input: {
           [input.pfPaymentId, input.rawPayload, input.pending.id],
         )
       } catch (error) {
-        /* This payment id is already stamped on some row, so the failure has
-           been recorded. Swallowed rather than rethrown BECAUSE of what a throw
-           costs here: the route answers 500, PayFast treats that as undelivered
-           and retries — for ever, on a payment that already failed and will
-           duplicate-key every time. Recording a failure twice is nothing;
-           an unbreakable retry loop is not. */
+        /* The unique key: this payment id is stamped on some row already, so
+           this notification has been seen. Swallowed rather than rethrown
+           BECAUSE of what a throw costs — the route answers 500, PayFast treats
+           that as undelivered, and retries for ever on a payment that will
+           collide every single time. */
         if (!isDuplicateKey(error)) throw error
+        return 'duplicate'
       }
-      return input.verified ? 'failed' : 'rejected'
+      return 'failed'
     }
 
     let claimed = 0

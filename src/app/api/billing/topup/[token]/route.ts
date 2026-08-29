@@ -140,11 +140,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
     })
 
     if (outcome === 'rejected') {
-      console.warn('[payfast-topup] rejected', {
+      /* Nothing was written and the checkout is STILL OPEN — see settleTopup.
+         Said plainly here because the commonest cause is the post-back failing
+         on a bad line, and a log line reading "rejected" alone would send
+         somebody looking for a fraud attempt instead of a network blip. If the
+         retries stop and the shop says it paid, THAT is the one to investigate. */
+      console.warn('[payfast-topup] could not verify — left open for the retry', {
         accountId: claim.accountId,
         reference: claim.reference,
         pfPaymentId,
         reason: verified.valid ? 'unknown' : verified.reason,
+      })
+    } else if (outcome === 'pending') {
+      console.info('[payfast-topup] payment still clearing', {
+        accountId: claim.accountId,
+        reference: claim.reference,
+        status: fields.payment_status,
       })
     } else if (outcome === 'failed') {
       console.warn('[payfast-topup] payment did not complete', {
