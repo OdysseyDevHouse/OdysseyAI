@@ -35,7 +35,9 @@ import {
   isValidTopupAmount,
   topupPresets,
   FEATURE_ESTIMATE_MICROS,
+  MODEL_LABEL,
 } from '../src/lib/aiCredits/pricing'
+import { assertBalance, meterCall, isAiCreditsError } from '../src/lib/aiCredits/meter'
 
 const BASE = process.env.TEST_BASE ?? 'http://localhost:4100'
 const PASSPHRASE = process.env.PAYFAST_PASSPHRASE ?? ''
@@ -55,6 +57,11 @@ let accountId = 0
 
 /** Every reference and payment id this run created, so teardown is exact. */
 const madeReferences: string[] = []
+
+/* When this run started, so the usage sweep in teardown cannot reach a real
+   row written before it. DATETIME is read back as UTC by this pool, so the
+   comparison value is built the same way. */
+const startedAt = new Date().toISOString().slice(0, 19).replace('T', ' ')
 
 /* Unique per run. pf_payment_id is UNIQUE across the whole table, so a fixed
    prefix makes the suite collide with its own previous run the moment one
@@ -157,11 +164,14 @@ async function teardown() {
     `DELETE FROM cp2_ai_credit_ledger WHERE account_id = ? AND note LIKE 'test:%'`,
     [accountId],
   )
-  /* Usage rows carry no reference and no note, so they are identified by the
-     model label this suite alone writes. */
+  /* Usage rows carry no reference and no note, so they go by model label.
+     'test-model' is what recordUsage is called with directly; MODEL_LABEL is
+     what meterCall writes, and the gate checks below drive it with a stub. Both
+     are swept, bounded to rows this run created. */
   await execute(
-    `DELETE FROM cp2_ai_credit_ledger WHERE account_id = ? AND model = 'test-model'`,
-    [accountId],
+    `DELETE FROM cp2_ai_credit_ledger
+      WHERE account_id = ? AND model IN ('test-model', ?) AND created_at >= ?`,
+    [accountId, MODEL_LABEL, startedAt],
   )
 }
 
@@ -502,6 +512,105 @@ async function main() {
       'A MISMATCHED TOKEN CREDITS NOTHING',
       (await balanceMicros(accountId)) === afterGood,
     )
+  }
+
+  /* ── The gate ───────────────────────────────────────────────────────────── */
+
+  console.log('\n-- the gate --')
+
+  /* An empty wallet must refuse BOTH features. Asserted against the live
+     estimates rather than a literal, so tuning a price cannot quietly make this
+     pass for the wrong reason. */
+  const siteRow = await queryOne<{ site_id: number }>(
+    `SELECT site_id FROM cp2_billing_account_sites WHERE account_id = ? LIMIT 1`,
+    [accountId],
+  )
+  const siteId = Number(siteRow?.site_id ?? 0)
+
+  const spent = await balanceMicros(accountId)
+  if (spent > 0) {
+    await addCredit({
+      accountId,
+      amountMicros: -spent,
+      note: 'test: empty the wallet',
+      kind: 'adjustment',
+    })
+  }
+  ok('the wallet is empty for the gate checks', (await balanceMicros(accountId)) === 0)
+
+  for (const feature of ['doc_scan', 'ask_report'] as const) {
+    let refusedWith = ''
+    try {
+      await assertBalance(siteId, feature)
+    } catch (e) {
+      refusedWith = isAiCreditsError(e) ? e.reason : 'wrong error type'
+    }
+    ok(
+      `an empty wallet refuses ${feature}`,
+      refusedWith === 'insufficient',
+      `got ${refusedWith || 'NO REFUSAL — the call would have run unpaid'}`,
+    )
+  }
+
+  /* Enough for one, not the other. The gate is per feature, so a shop with a
+     little credit can still ask a question while a scan waits. */
+  await addCredit({
+    accountId,
+    amountMicros: FEATURE_ESTIMATE_MICROS.ask_report,
+    note: 'test: enough for a question only',
+  })
+
+  let askTicket: Awaited<ReturnType<typeof assertBalance>> | null = null
+  try {
+    askTicket = await assertBalance(siteId, 'ask_report')
+  } catch {
+    askTicket = null
+  }
+  ok('a wallet holding the smaller estimate allows ask_report', askTicket !== null)
+  ok('...and the ticket names the account', askTicket?.accountId === accountId)
+
+  let scanRefused = ''
+  try {
+    await assertBalance(siteId, 'doc_scan')
+  } catch (e) {
+    scanRefused = isAiCreditsError(e) ? e.reason : 'wrong error type'
+  }
+  ok('...but still refuses the dearer doc_scan', scanRefused === 'insufficient', `got ${scanRefused}`)
+
+  /* meterCall charges what the response reports, not the estimate. Driven with
+     a stub rather than a real Claude call: this is testing the meter, and a
+     live call would make the assertion depend on how many tokens a model
+     happened to use. */
+  if (askTicket) {
+    const beforeMeter = await balanceMicros(accountId)
+    const stub = { usage: { input_tokens: 1000, output_tokens: 1000 } }
+    const returned = await meterCall(askTicket, null, async () => stub)
+    ok('meterCall returns the response untouched', returned === stub)
+    ok(
+      'meterCall debits what the RESPONSE used, not the estimate',
+      (await balanceMicros(accountId)) === beforeMeter - 90_000,
+      `expected a 90000 debit, balance moved to ${await balanceMicros(accountId)}`,
+    )
+  }
+
+  /* A call that overruns its estimate takes the wallet negative rather than
+     being silently discounted. The ledger records what happened. */
+  if (askTicket) {
+    const beforeOverrun = await balanceMicros(accountId)
+    await meterCall(askTicket, null, async () => ({
+      usage: { input_tokens: 500_000, output_tokens: 100_000 },
+    }))
+    const afterOverrun = await balanceMicros(accountId)
+    ok('a call may overdraw the wallet', afterOverrun < 0, `balance ${afterOverrun}`)
+    ok('...by exactly what it cost', afterOverrun < beforeOverrun)
+
+    let refusedAfter = ''
+    try {
+      await assertBalance(siteId, 'ask_report')
+    } catch (e) {
+      refusedAfter = isAiCreditsError(e) ? e.reason : 'wrong'
+    }
+    ok('...and the NEXT call is then refused', refusedAfter === 'insufficient')
   }
 
   await teardown()

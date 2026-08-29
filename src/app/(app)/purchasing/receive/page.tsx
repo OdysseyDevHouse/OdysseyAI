@@ -1,4 +1,5 @@
 import { requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { listSuppliers } from '@/lib/site/suppliers'
 import {
   openOrders,
@@ -20,7 +21,7 @@ export default async function ReceivePage({
   searchParams: Promise<{ order?: string; draft?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('purchasing.edit')
+  const { siteId, capabilities } = await requireCapability('purchasing.edit')
   const params = await searchParams
 
   // A draft being reopened. Loaded before anything else so the rest of the
@@ -156,7 +157,8 @@ export default async function ReceivePage({
           name: l.name,
           isMain: l.isMain,
         }))}
-        scanConfigured={isScanConfigured()}
+        // Both halves: the key exists AND this person may spend on it.
+        scanConfigured={isScanConfigured() && can(capabilities, 'purchasing.ai')}
       />
     </>
   )

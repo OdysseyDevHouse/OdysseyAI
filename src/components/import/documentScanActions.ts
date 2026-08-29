@@ -11,10 +11,22 @@ import {
 /**
  * Reading a supplier's PDF for whichever purchasing screen asked.
  *
- * The sibling of readLinesAction, and guarded the same way: this reads the
- * product catalogue and returns nothing the calling screen could not already
- * see. Nothing is written, so purchasing.edit is the right boundary — the same
- * right needed to key the lines by hand.
+ * ── WHY THIS ONE IS NOT purchasing.edit ─────────────────────────────────────
+ *
+ * Its sibling readLinesAction reads a spreadsheet, returns nothing the calling
+ * screen could not already see, and writes nothing — so purchasing.edit, the
+ * right needed to key the lines by hand, is the right boundary for it.
+ *
+ * This one SPENDS. Every scan draws real money from the shop's AI wallet, and
+ * "may receive stock" is not the same question as "may spend". A shop with six
+ * receiving clerks may well want all six keying lines and only the manager
+ * burning credit, which purchasing.edit cannot express.
+ *
+ * So it takes its own capability, exactly as reports.ai does against
+ * reports.build. Note the consequence on the day this ships: purchasing.ai
+ * starts ungranted, so existing non-owner roles lose the scan button until
+ * somebody ticks it in Setup → Roles. Owners are unaffected — isOwner
+ * short-circuits every check.
  */
 export async function scanDocumentAction(input: {
   filename: string
@@ -23,19 +35,20 @@ export async function scanDocumentAction(input: {
   /** The supplier already chosen on screen, when there is one. */
   supplierId?: number | null
 }): Promise<ScanResult> {
-  const ctx = await actorForAny('purchasing.edit')
+  const ctx = await actorForAny('purchasing.ai')
   if ('ok' in ctx) return { ok: false, error: ctx.error }
 
   return scanPurchaseDocument(
     ctx.siteId,
     { name: input.filename, base64: input.base64 },
     input.supplierId ?? null,
+    ctx.actor.userId,
   )
 }
 
 /** Whether the button should offer itself at all. */
 export async function scanConfiguredAction(): Promise<boolean> {
-  const ctx = await actorForAny('purchasing.edit')
+  const ctx = await actorForAny('purchasing.ai')
   if ('ok' in ctx) return false
   return isScanConfigured()
 }

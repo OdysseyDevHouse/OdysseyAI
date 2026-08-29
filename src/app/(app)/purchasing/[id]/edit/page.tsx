@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
 import { getPurchaseDocument, productPositions } from '@/lib/site/purchaseDocuments'
 import { listSuppliers } from '@/lib/site/suppliers'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
@@ -16,7 +17,7 @@ export default async function EditOrderPage({
   params: Promise<{ id: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('purchasing.edit')
+  const { siteId, capabilities } = await requireCapability('purchasing.edit')
   const { id } = await params
 
   const documentId = Number(id)
@@ -122,7 +123,8 @@ export default async function EditOrderPage({
             jobCardLineId: l.jobCardLineId,
           })),
         }}
-        scanConfigured={isScanConfigured()}
+        // Both halves: the key exists AND this person may spend on it.
+        scanConfigured={isScanConfigured() && can(capabilities, 'purchasing.ai')}
       />
     </>
   )
