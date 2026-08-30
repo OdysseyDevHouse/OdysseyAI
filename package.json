@@ -227,6 +227,7 @@
     "test:payfast-subscription": "tsx --conditions=react-server --env-file=.env scripts/test-payfast-subscription.ts",
     "test:billing-subscription": "tsx --conditions=react-server --env-file=.env scripts/test-billing-subscription.ts",
     "test:billing-itn-route": "tsx --conditions=react-server --env-file=.env scripts/test-billing-itn-route.ts",
+    "test:ai-credits": "tsx --conditions=react-server --env-file=.env scripts/test-ai-credits.ts",
     "test:builder": "tsx --conditions=react-server --env-file=.env scripts/test-builder.ts",
     "test:storefront-theme": "tsx --conditions=react-server scripts/test-storefront-theme.ts",
     "test:listing-presets": "tsx --conditions=react-server --env-file=.env scripts/test-listing-presets.ts",

@@ -115,6 +115,17 @@ const PUBLIC_PREFIXES = [
   //
   // The trailing slash matters, as it does for the routes above.
   '/api/billing/payfast/',
+  // The same, for a once-off AI-credits top-up rather than the monthly
+  // subscription. A separate route because it settles a different thing, and a
+  // separate entry here because a prefix is a promise: adding it under the line
+  // above would have made every future '/api/billing/…' route public too.
+  //
+  // Guarded identically — a signed token naming one billing account and one
+  // checkout, plus a valid PayFast signature, a PayFast source IP and PayFast's
+  // own confirmation before anything is written.
+  //
+  // The trailing slash matters, as it does for the routes above.
+  '/api/billing/topup/',
   // A technician's calendar subscription. Google, Outlook and Apple all fetch it
   // on a schedule with no browser and no cookie, so behind the gate they would
   // fetch the login page for ever and render an empty calendar with no error —

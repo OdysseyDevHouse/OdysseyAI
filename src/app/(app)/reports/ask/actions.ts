@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { requireCapability } from '@/lib/auth'
 import { can, type Capability } from '@/lib/site/permissions'
 import { askForReport, AskNotConfiguredError } from '@/lib/site/askReport'
+import { isAiCreditsError } from '@/lib/aiCredits/meter'
 import { runBuilderSpec, ReportAccessError } from '@/lib/reportBuilder/run'
 import { PREVIEW_ROWS, type CustomReportSpec, type ReportColumn } from '@/lib/reportBuilder/spec'
 import { createSavedReport } from '@/lib/site/savedReports'
@@ -30,14 +31,17 @@ export type AskResult =
   | { ok: false; error: string }
 
 export async function askReportAction(question: string): Promise<AskResult> {
-  const { siteId, capabilities } = await requireCapability('reports.ai')
+  const { siteId, actor, capabilities } = await requireCapability('reports.ai')
   const allow = (c: Capability) => can(capabilities, c)
 
   try {
     // The model resolves relative periods against the STORE's today, passed in
     // rather than assumed — a model has no clock.
     const today = isoToday()
-    const { spec, reasoning } = await askForReport(question, allow, today)
+    const { spec, reasoning } = await askForReport(question, allow, today, {
+      siteId,
+      userId: actor.userId,
+    })
 
     // Run it immediately: a generated report nobody can see the numbers of is
     // just a promise. This is also the first check that the spec is runnable.
@@ -54,6 +58,10 @@ export async function askReportAction(question: string): Promise<AskResult> {
     }
   } catch (e) {
     if (e instanceof AskNotConfiguredError) return { ok: false, error: e.message }
+    /* Its own branch, above the generic one below, because the message names
+       what to do about it — top up, or check the connection — and the fallback
+       would flatten all of that into the error text of whatever threw. */
+    if (isAiCreditsError(e)) return { ok: false, error: e.userMessage }
     if (e instanceof ReportAccessError) {
       return { ok: false, error: 'That question needs data you do not have access to.' }
     }

@@ -175,6 +175,16 @@ const OPEN_ROUTES = new Set([
      valid PayFast signature, a PayFast source IP and PayFast's own
      confirmation of the payload before anything is written. */
   'src/app/api/billing/payfast/[token]/route.ts',
+  /* The same again, for a once-off AI-credits top-up rather than the recurring
+     subscription. A separate route because it settles a different thing, and a
+     separate entry here rather than a prefix, so a future route under
+     /api/billing/ cannot inherit an exemption nobody chose for it.
+
+     Guarded identically: a signed token naming one billing account AND one
+     checkout, a valid PayFast signature, a PayFast source IP, PayFast's own
+     confirmation, and the amount checked against what this server recorded when
+     it built the form. */
+  'src/app/api/billing/topup/[token]/route.ts',
   // Cron's heartbeat for scheduled reports. There is nobody signed in at 07:00,
   // so it proves itself with REPORT_CRON_SECRET compared by timingSafeEqual,
   // and refuses everything when that is unset. A capability check would be the
