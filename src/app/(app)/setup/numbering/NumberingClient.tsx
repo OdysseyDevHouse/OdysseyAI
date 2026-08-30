@@ -80,7 +80,7 @@ export default function NumberingClient({
 
   return (
     <>
-      <Card>
+      <Card id="document-numbering">
         <CardHeader
           title="Document numbers"
           description="Issued at finalise, never before. A number is never reused, and a voided document keeps its own."
@@ -159,7 +159,12 @@ export default function NumberingClient({
         </Card>
       )}
 
-      <Card>
+      {/* Anchored because the global search indexes cash rounding as a setting
+          of its own (lib/settingSearch.ts). Nobody looking for it types
+          "numbering" — they type "rounding" — so the hit has to land on this
+          card rather than merely on this screen, which is ten rows of prefixes
+          and next-numbers before it. */}
+      <Card id="cash-rounding">
         <CardHeader
           title="Posting rules"
           description="How money is rounded, and what may still be changed."

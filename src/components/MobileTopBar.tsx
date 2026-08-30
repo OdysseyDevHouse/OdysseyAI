@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Button, ButtonLink, Drawer, Icons } from '@/components/ui'
-import { breadcrumbFor, navFor, type NavSection } from '@/lib/nav'
+import { breadcrumbFor, navFor, GETTING_STARTED_HREF, type NavSection } from '@/lib/nav'
 
 /**
  * The phone's title bar and menu.
@@ -33,6 +33,7 @@ export function MobileTopBar({
   isOwner,
   modules,
   hiddenAreas = [],
+  gettingStartedHidden = false,
   userName,
   siteName,
   unreadNotifications,
@@ -42,6 +43,8 @@ export function MobileTopBar({
   modules: string[]
   /** As on Sidebar — switched off under Setup → Menu & modules, not unbought. */
   hiddenAreas?: string[]
+  /** As on Sidebar — the Getting started checklist, dismissed from its own page. */
+  gettingStartedHidden?: boolean
   userName: string
   siteName: string
   unreadNotifications: number
@@ -52,11 +55,16 @@ export function MobileTopBar({
   /* The same filter the sidebar runs, so the phone can never offer a screen the
      desktop hides — or hide one it offers. An owner passes every capability
      check; that is the rule NAV is written against. */
-  const sections: NavSection[] = navFor(
+  const all: NavSection[] = navFor(
     (capability) => isOwner || granted.includes(capability),
     (module) => modules.includes(module),
     (area) => hiddenAreas.includes(area),
   )
+  /* Dropped here too, for the reason the block above gives: the phone must never
+     offer a screen the desktop hides. */
+  const sections = gettingStartedHidden
+    ? all.filter((s) => s.href !== GETTING_STARTED_HREF)
+    : all
 
   /* The SCREEN's name, from the same breadcrumb source the desktop uses — not
      the store's, which sits underneath it. Passing the store name for both

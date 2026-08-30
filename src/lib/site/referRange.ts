@@ -970,76 +970,23 @@ export async function createReferRange(
  * till charges a sale at exactly that figure, so deriving the stored cost from
  * it is what stops the catalogue and the GP report disagreeing.
  *
- * ── WHY IT WALKS, RATHER THAN TAKING THE CHAIN ───────────────────────────
+ * ── WHY THE WALK ITSELF NOW LIVES ELSEWHERE ──────────────────────────────
  *
- * referChain() follows ONE branch up, choosing the smallest factor at each
- * fork. A ladder with a 6-pack and a 10-pack on the same single would leave
- * the loser un-costed. Every dependant is followed instead, breadth-first —
- * the same correction removeReferRung() makes for the same reason.
+ * This function used to own a breadth-first walk over product_refers alone.
+ * That was half an answer: the two link kinds INTERLEAVE — a six-pack of
+ * burgers is a refer onto a recipe, and a recipe can list a six-pack as an
+ * ingredient — so a walk that knew only one table stopped at the first rung of
+ * the other kind, leaving a cost climbing halfway up a mixed chain.
  *
- * Depth-capped rather than cycle-detected, matching resolveComponents.
- *
- * ── NEVER FAILS ITS CALLER ───────────────────────────────────────────────
- *
- * A cost that could not be recomputed leaves the stored figure alone and the
- * save still succeeds. The alternative is refusing to save a product because
- * an unrelated pack above it is misconfigured, which would make a broken
- * ladder impossible to edit your way out of. Returns how many were rewritten
- * so a caller can say so.
+ * cascadeCompositionCosts() walks the UNION of both tables and has no such
+ * seam. This is kept as its name, because "reprice the packs above this one"
+ * is what the call sites mean and a refer ladder is still exactly what it does
+ * when there is no recipe in the chain.
  */
 export async function cascadeReferCosts(
   siteId: number,
   baseId: number,
 ): Promise<number> {
-  const { compositionCost } = await import('./productComposition')
-  const MAX = 8
-
-  let frontier = [baseId]
-  const seen = new Set<number>([baseId])
-  let written = 0
-
-  for (let depth = 0; depth < MAX && frontier.length; depth++) {
-    const rows = await siteQuery<Row>(
-      siteId,
-      `SELECT f.product_id, p.product_type
-         FROM product_refers f
-         JOIN products p ON p.id = f.product_id
-        WHERE f.target_id IN (${frontier.map(() => '?').join(',')})`,
-      frontier,
-    )
-
-    const next: number[] = []
-    for (const r of rows) {
-      const id = Number(r.product_id)
-      if (seen.has(id)) continue
-      seen.add(id)
-      next.push(id)
-
-      // Resolved from the product's OWN type: a rung is normally 'refer', but
-      // the walk must not assume it — a fork built before the type was forced
-      // would silently resolve as its own single component and write the
-      // base's cost onto a pack of twelve.
-      const cost = await compositionCost(
-        siteId,
-        id,
-        String(r.product_type ?? 'refer') as Parameters<typeof compositionCost>[2],
-      ).catch(() => null)
-
-      // Null is "could not resolve", and 0 is very nearly always the same
-      // thing here — a ladder whose base genuinely costs nothing has no cost
-      // to spread. Writing the zero would only replace one wrong figure with
-      // another while destroying whatever was there.
-      if (cost === null || cost <= 0) continue
-
-      await siteQuery(
-        siteId,
-        'UPDATE products SET last_cost = ?, average_cost = ? WHERE id = ?',
-        [cost.toFixed(4), cost.toFixed(4), id],
-      )
-      written++
-    }
-    frontier = next
-  }
-
-  return written
+  const { cascadeCompositionCosts } = await import('./productComposition')
+  return cascadeCompositionCosts(siteId, baseId)
 }

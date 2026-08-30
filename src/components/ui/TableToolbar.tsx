@@ -31,33 +31,71 @@ import { CONTROL, CONTROL_H } from './styles'
 export function TableToolbar({
   children,
   actions,
+  filters,
   inCard = false,
   className = '',
+  id,
 }: {
   /** Left side — segmented control, search, filter selects. */
   children?: ReactNode
   /** Right side — Export, New, and friends. */
   actions?: ReactNode
   /**
+   * APPLIED filters — the chips saying what the list is currently narrowed to.
+   * They get a row of their own, under the controls and anchored left.
+   *
+   * ── WHY A SECOND ROW AND NOT MORE CHIPS IN THE FIRST ──────────────────
+   *
+   * The controls row and the chips answer different questions. A control is
+   * something you OPERATE — a search box, a picker, the Filter button. A chip
+   * REPORTS what is already on, and its only action is to remove itself. Mixed
+   * into one row they compete: a chip reading "Where: Product type is
+   * Returnable product" is far wider than any picker beside it, so it pushed
+   * the search box narrow and shoved the controls out of their usual places.
+   * The row a person reaches for stopped being the same shape from screen to
+   * screen, which is the one thing a toolbar has to be.
+   *
+   * Given its own line the chip can be as wide as its sentence needs, the
+   * controls keep their geometry however many filters are on, and the reading
+   * order comes out right: here is what you can do, and here is what is
+   * currently applied.
+   *
+   * Renders nothing at all when there are no chips, so the row costs an
+   * unfiltered list no vertical space. Pass a <FilterBar>, which already
+   * collapses itself when empty.
+   */
+  filters?: ReactNode
+  /**
    * The toolbar is a band inside a Card with content beneath it: take the
    * card gutter and a dividing rule. Leave it off for a free-standing row.
    */
   inCard?: boolean
   className?: string
+  /**
+   * For the global setting search to scroll to and flash, the same way <Card id>
+   * is used — see SettingAnchor. A toolbar is the right target where the setting
+   * somebody searched for IS the control in this band (the role picker on
+   * Roles & permissions) rather than any one card beneath it.
+   *
+   * Declared rather than spread from `...rest`: a prop this component does not
+   * name is dropped in silence, which is how an anchor comes to name an id that
+   * never reaches the DOM — and the anchor test would then fail on a screen
+   * whose source does contain the string.
+   */
+  id?: string
 }) {
   return (
-    <div
-      className={`flex flex-wrap items-center justify-between gap-3 ${
-        inCard ? TOOLBAR_IN_CARD : ''
-      } ${className}`}
-    >
-      {/* The left group takes the space it needs and the actions take the rest.
-          When a list carries enough filters to fill the row, the actions wrap
-          to a line of their own — and `ml-auto` keeps them against the RIGHT
-          edge when they do. Without it they landed bottom-left, under the
-          filters, where a table control reads as one more filter. */}
-      <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
-      {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
+    <div id={id} className={`${inCard ? TOOLBAR_IN_CARD : ''} ${className}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* The left group takes the space it needs and the actions take the rest.
+            When a list carries enough filters to fill the row, the actions wrap
+            to a line of their own — and `ml-auto` keeps them against the RIGHT
+            edge when they do. Without it they landed bottom-left, under the
+            filters, where a table control reads as one more filter. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
+        {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
+      </div>
+      {filters}
     </div>
   )
 }

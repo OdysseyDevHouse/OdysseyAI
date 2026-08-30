@@ -128,6 +128,7 @@ export const SETTINGS: SettingEntry[] = [
   {
     label: 'Manager override',
     href: '/setup/roles',
+    anchor: 'role-permissions',
     description:
       'Which role may approve the things a cashier cannot do alone — a discount, a void, a price change.',
     keywords:
@@ -138,29 +139,39 @@ export const SETTINGS: SettingEntry[] = [
   {
     label: 'VAT rate',
     href: '/setup/pricing',
+    /* Also SELECTS the tab. The VAT list is the second tab, so without this the
+       hit landed on Price types with nothing matching what was searched for and
+       nothing for the flash to find — an unselected tab renders no panel. The
+       screen reads this hash itself; see the effect in PricingClient. */
+    anchor: 'vat-rates',
     description: 'The tax rates charged on a sale, and which one a product uses by default.',
     keywords:
       'vat tax rate percentage 15 zero rated exempt gst sales tax change rate charged',
   },
+  /* Filed under money because that is what somebody is thinking about, but it
+     lives on the NUMBERING screen — cash rounding is a posting rule, sat beside
+     the VAT lock, rather than a price rule. That gap between where it reads as
+     belonging and where it is built is the whole reason this entry earns its
+     place: the obvious guess is Price types & VAT, and it is not there. */
   {
-    label: 'Rounding',
-    href: '/setup/pricing',
-    description: 'How a total is rounded when cash cannot make the exact amount.',
+    label: 'Cash rounding',
+    href: '/setup/numbering',
+    anchor: 'cash-rounding',
+    description:
+      'How the cash a customer hands over is rounded when coins cannot make the exact amount. Never changes the invoice.',
     keywords:
-      'rounding round up down nearest cent 5c 10c cash total swedish rounding smallest coin',
+      'rounding round up down nearest cent 5c 10c cash total swedish rounding smallest coin change drawer price types vat',
   },
-  {
-    label: 'Decimal places',
-    href: '/setup/decimals',
-    description: 'How many decimals quantities and costs are kept and shown to.',
-    keywords:
-      'decimals decimal places precision digits quantity qty cost accuracy fractions three four places',
-  },
+  /* No "Decimal places" entry: /setup/decimals is itself called Decimal places,
+     so this was a second row with the same words that could never outrank the
+     screen. Its extra synonyms (accuracy, fractions, three, four) were folded
+     into that screen's catalogue keywords, so nothing stopped being findable. */
 
   /* ── Documents and printing ────────────────────────────────────────────── */
   {
     label: 'Document numbering',
     href: '/setup/numbering',
+    anchor: 'document-numbering',
     description: 'The prefix and next number for invoices, quotes, orders and the rest.',
     keywords:
       'invoice number next number prefix start at sequence counter document numbering reset format autocode',
@@ -182,6 +193,7 @@ export const SETTINGS: SettingEntry[] = [
   {
     label: 'Terms on printed documents',
     href: '/setup/stationery',
+    anchor: 'document-design',
     description:
       'The layout, logo and footer wording on an invoice, quote or purchase order.',
     keywords:
@@ -206,11 +218,17 @@ export const SETTINGS: SettingEntry[] = [
 
   /* ── Stock rules ───────────────────────────────────────────────────────── */
   {
+    /* Not on /setup/pricing, where it was filed and where it reads as
+       belonging: this is the `price_below_cost` ALERT, set up with the other
+       alerts. The old description ("whether the till allows...") promised a
+       till guard that screen does not have — same shape of mistake as the
+       rounding one, and found the same way. */
     label: 'Selling below cost',
-    href: '/setup/pricing',
-    description: 'Whether the till allows a price that would sell an item at a loss.',
+    href: '/setup/alerts',
+    description:
+      'An alert that finds products priced under cost, or under the margin you set — usually after a cost increase nobody re-priced.',
     keywords:
-      'below cost loss making minimum price floor prevent block warn discount too much margin negative gp',
+      'below cost loss making minimum price floor prevent block warn discount too much margin negative gp alert notify pricing',
   },
   {
     label: 'Stock take variance approval',
@@ -231,17 +249,20 @@ export const SETTINGS: SettingEntry[] = [
   {
     label: 'Store name and VAT number',
     href: '/setup/store-info',
+    anchor: 'business-identity',
     description: 'The trading name, address, phone and registration numbers printed on documents.',
     keywords:
       'store name shop company trading name address phone telephone email vat number registration company details letterhead change name my details business information',
   },
-  {
-    label: 'Trading hours',
-    href: '/online-store/trading',
-    description: 'When the shop is open, and what happens outside those hours.',
-    keywords:
-      'trading hours open closed opening times holidays pause busy sold out collection times when open',
-  },
+  /* No "Trading hours" entry, though there was one and it looked reasonable.
+     The SCREEN at /online-store/trading is itself called "Trading hours"
+     (SUBPAGE_LABELS in nav.ts), so the entry printed the same words twice in
+     one result list — and a screen deliberately outranks a setting on an equal
+     score, so the duplicate never won and its anchor never fired. Driving the
+     palette showed both rows, which is what a reading of this file could not.
+     The `id="trading-hours"` on that card is kept: it costs nothing and the
+     screen is three cards deep, so it is there when a setting on it earns its
+     own row. See "WHAT BELONGS HERE" at the top. */
 ]
 
 /**

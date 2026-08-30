@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
@@ -63,6 +63,24 @@ export default function PricingClient({
   defaultEndingDirection: EndingDirection
 }) {
   const [tab, setTab] = useState<Tab>('structures')
+
+  /**
+   * Open the tab the search asked for.
+   *
+   * The global search indexes "VAT rate" as a setting of its own, and the VAT
+   * list is the tab that is NOT shown first. Landing on this screen therefore
+   * put somebody on Price types, looking at price tiers, with nothing on screen
+   * matching the thing they searched for — the flash SettingAnchor exists to
+   * give cannot fire either, because an unselected tab renders no panel at all
+   * and there is no id in the document to find.
+   *
+   * Hence the hash is read here rather than left to the shared anchor helper:
+   * only this component knows the hash names a tab. The anchor helper still
+   * does its half once the panel is mounted.
+   */
+  useEffect(() => {
+    if (window.location.hash === '#vat-rates') setTab('vat')
+  }, [])
   const [repricing, setRepricing] = useState(false)
   const [pending, startTransition] = useTransition()
   const toast = useToast()
@@ -187,7 +205,11 @@ export default function PricingClient({
           </div>
         </Card>
       ) : (
-        <div className="flex flex-col gap-5">
+        /* Anchored on the pair, not on either card: "VAT rate" in the search
+           index means sales AND purchase, and singling one out would answer a
+           question nobody asked. The effect that reads this also switches the
+           tab — see the hash effect above. */
+        <div id="vat-rates" className="flex flex-col gap-5">
           <Callout tone="brand">
             Changing a rate prices the future only. Every invoice, credit note and GRV already
             issued keeps the percentage it was raised at, so a VAT change never rewrites a

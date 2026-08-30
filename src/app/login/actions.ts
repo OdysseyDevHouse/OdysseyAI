@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { signIn, completeTotpSignIn, type SignInChoice, type SignInResult } from '@/lib/auth'
+import { landingFor } from '@/lib/site/gettingStarted'
 
 export type LoginState = {
   error: string | null
@@ -19,7 +20,7 @@ export type LoginState = {
 }
 
 /** The post-sign-in routing, shared by the password and the code step. */
-function afterSignIn(result: SignInResult & { ok: true }, next: string): LoginState {
+async function afterSignIn(result: SignInResult & { ok: true }, next: string): Promise<LoginState> {
   if ('needsTotp' in result) return { error: null, totp: true }
 
   // A temporary password gets them in and no further until they replace it.
@@ -44,7 +45,10 @@ function afterSignIn(result: SignInResult & { ok: true }, next: string): LoginSt
     redirect(isSafe ? `/select-site?next=${encodeURIComponent(next)}` : '/select-site')
   }
 
-  redirect(isSafe ? next : '/dashboard')
+  // A shop that has never rung up a sale lands on the checklist instead of a
+  // dashboard of zeroes. See landingFor() — it falls back to the dashboard on
+  // any failure, so this cannot turn a good password into an error.
+  redirect(isSafe ? next : await landingFor(result.siteId))
 }
 
 export async function loginAction(_prev: LoginState, formData: FormData): Promise<LoginState> {
@@ -54,7 +58,7 @@ export async function loginAction(_prev: LoginState, formData: FormData): Promis
 
   const result = await signIn(email, password)
   if (!result.ok) return { error: result.error }
-  return afterSignIn(result, next)
+  return await afterSignIn(result, next)
 }
 
 /** The six-digit step. Who is being verified rides the pending cookie. */
@@ -66,5 +70,5 @@ export async function totpAction(_prev: LoginState, formData: FormData): Promise
   // Failures stay ON the code step — the password already proved out, and
   // bouncing to the start for a typo would be punishment, not security.
   if (!result.ok) return { error: result.error, totp: true }
-  return afterSignIn(result, next)
+  return await afterSignIn(result, next)
 }

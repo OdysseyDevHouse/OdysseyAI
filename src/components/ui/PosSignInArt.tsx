@@ -167,11 +167,18 @@ export function PosSignInArt({
      * radius here as well would have drawn a second, smaller corner inside the
      * first down the seam between the halves.
      *
-     * 400px at `lg` and 440 above it. The pad beside it has ONE correct size —
-     * it is sized by the finger, not by the display — so the panel takes what is
-     * left, and at exactly 1024px (a real counter display) the pair has to still
-     * fit between the screen's own padding. That is what the narrower step is
-     * for; a single 440 overflowed it by the width of a thumb.
+     * 574px — the SAME width as the pad beside it, so the seam falls down the
+     * middle of the card and neither half reads as the leftover space around the
+     * other. The pad's 574 is fixed (it is sized by the finger, not by the
+     * display), so matching it is the only way the two stay equal.
+     *
+     * But 574 + 574 is 1148, and at exactly 1024px (a real counter display) that
+     * does not fit between the screen's own padding. So this panel is NOT
+     * `shrink-0` the way the pad is: 574 is what it ASKS for, and on a display
+     * too narrow to grant it the PICTURE gives way rather than the pad — a
+     * photograph 150px narrower still reads, and a pad narrower than its own keys
+     * does not. Everything inside takes that squeeze without breaking: a scrim, an
+     * `object-cover` image, and text that wraps.
      *
      * ── max-h-full IS NOT OPTIONAL ────────────────────────────────────────────
      *
@@ -181,7 +188,7 @@ export function PosSignInArt({
      * the identity block is `min-h-0 flex-1` precisely so that it yields and the
      * specials card does not get clipped.
      */
-    <div className="relative isolate hidden h-[706px] max-h-full shrink-0 overflow-hidden bg-brand lg:flex lg:w-[400px] lg:flex-col xl:w-[440px]">
+    <div className="relative isolate hidden h-[706px] max-h-full min-w-0 overflow-hidden bg-brand lg:flex lg:w-[574px] lg:flex-col">
       {/* ── The backdrop ────────────────────────────────────────────────── */}
       {/* A gradient ALWAYS, with the photograph over it. Two reasons: a picture
           that is still loading shows brand colour rather than a white flash on

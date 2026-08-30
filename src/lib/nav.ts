@@ -40,6 +40,7 @@ import {
   Repeat,
   Ticket,
   Wrench,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -134,25 +135,39 @@ export type NavSection = {
   keywords?: string
 }
 
+/**
+ * The Getting started row's address, named once.
+ *
+ * The sidebar drops this row when a shop has dismissed the checklist, and the
+ * page's own redirect reads the same setting. Both need to name the route, and
+ * a string typed twice is a string that eventually disagrees with itself —
+ * silently, because a filter that matches nothing simply leaves the row there.
+ */
+export const GETTING_STARTED_HREF = '/getting-started'
+
 export const NAV: NavSection[] = [
+  /* Above the Dashboard, and with NO capability, deliberately.
+     A shop lands here the day it signs up, when the dashboard is all zeroes and
+     says nothing about what to do. It stays in the menu afterwards because the
+     list is not only for day one — the optional half (suppliers, customer
+     accounts, a second location) is what a shop comes back to in month two. The
+     screen filters its own steps to what the reader may do, so a cashier sees
+     the till step and nothing about permissions; gating the ROW on a capability
+     would instead hide it from exactly the new owner it is written for. */
+  { label: 'Getting started', icon: Sparkles, href: GETTING_STARTED_HREF, built: true, keywords: 'setup wizard onboarding first steps new account welcome checklist start here tour', description: 'Set the shop up and take your first sale' },
   { label: 'Dashboard', icon: Home, href: '/dashboard', built: true, capability: 'dashboard.view', description: 'How the shop is trading today' },
   {
     label: 'Sales',
     icon: LineChart,
     items: [
       { label: 'Point of sale', href: '/pos', icon: ShoppingCart, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
-      /* Directly under the till it configures, rather than in the setup hub.
-         A quick key is changed BECAUSE of what happened at the till — a line
-         that is rung up twenty times a day and is three taps deep — so it is
-         the same visit, by the same person, as serving. Beside Point of sale
-         and not down by the cash-up because it belongs to the till itself,
-         not to the end of a shift.
-         Route, breadcrumb and capability all as the menu designer's: the
-         screen has not moved, the menu names it so `breadcrumbFor`'s section
-         scan reads "Sales › Quick keys", and `setup.edit` still gates it —
-         arranging what every till shows is a manager's decision, whoever else
-         may serve on one. */
-      { label: 'Quick keys', href: '/setup/quick-keys', icon: LayoutGrid, built: true, capability: 'setup.edit', keywords: 'quick keys buttons tiles favourites shortcuts till pos grid bar', description: 'The buttons on the till — the things this shop sells most' },
+      /* No Quick keys row: it is a tile on the setup hub, under Store & stock
+         with Tills and Rotating menus. It sat here on the argument that a quick
+         key is changed BECAUSE of what happened at the till, so it belonged
+         beside serving rather than on a settings visit — but it is gated on
+         `setup.edit`, which most of the people who serve do not have, so for
+         them the row was a permanent tease. Grouped with the other things that
+         decide what a till SHOWS, it is one visit to find any of them. */
       /* One row, not two. Invoicing was the capture worklist and Documents the
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
@@ -785,12 +800,13 @@ export const SUBPAGE_LABELS = {
   '/setup/modules': 'Menu & modules',
   '/setup/decimals': 'Decimal places',
   '/setup/numbering': 'Numbering',
-  /* Neither '/setup/quick-keys' nor '/setup/menu-designer' is here: the two
-     till designers are menu rows now — Quick keys under Sales, Menu designer
-     under Products — and a hub screen is by definition one the menu does NOT
-     name. Leaving either here would let the setup catalogue claim it again
-     (the key type is what makes a tile compile) and give the screen two front
-     doors that can disagree. */
+  /* Quick keys is a hub screen again — the menu no longer names it, so the
+     setup catalogue may claim it, which is what makes the tile compile.
+     '/setup/menu-designer' stays out: that one IS still a menu row, under
+     Products beside the file it arranges, and a hub screen is by definition
+     one the menu does not name. Listing it here as well would give it two
+     front doors that can disagree. */
+  '/setup/quick-keys': 'Quick keys',
   '/setup/pos-menus': 'Rotating menus',
   '/setup/tables': 'Tables',
   '/setup/reservations': 'Reservations',

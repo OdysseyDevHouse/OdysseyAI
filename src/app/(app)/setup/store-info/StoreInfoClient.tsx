@@ -219,7 +219,11 @@ export default function StoreInfoClient({
         </Callout>
       )}
 
-      <Card>
+      {/* Anchored for the search's "Store name and VAT number": both fields are
+          in THIS card. The tax card further down is what the tax is CALLED
+          (VAT, HST) rather than your number, so pointing the search there would
+          answer a different question. */}
+      <Card id="business-identity">
         <CardHeader
           title="Who this business is"
           description="The names and numbers that print on every invoice, statement and order you send out."

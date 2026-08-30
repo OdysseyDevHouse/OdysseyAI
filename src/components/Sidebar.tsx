@@ -10,6 +10,7 @@ import GlobalSearch from '@/components/GlobalSearch'
 import SettingAnchor from '@/components/SettingAnchor'
 import {
   NAV,
+  GETTING_STARTED_HREF,
   hubFor,
   navFor,
   type NavItem,
@@ -98,6 +99,7 @@ export default function Sidebar({
   isOwner,
   modules,
   hiddenAreas = [],
+  gettingStartedHidden = false,
 }: {
   granted: string[]
   isOwner: boolean
@@ -114,6 +116,17 @@ export default function Sidebar({
    * distinction — see the note on that field in lib/nav.ts.
    */
   hiddenAreas?: string[]
+  /**
+   * Whether this shop has pressed "Don't show this again" on Getting started.
+   *
+   * Its own prop rather than a `MenuArea`, because it is not one: those seven
+   * are parts of the product a shop either uses or does not, offered as
+   * switches on Setup → Menu & modules. This is a screen somebody FINISHES
+   * with, hidden from the screen itself and restored from the same place. Put
+   * in that list it would read as an eighth feature, and its switch would sit
+   * among them long after the shop had forgotten what it was.
+   */
+  gettingStartedHidden?: boolean
 }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
@@ -141,13 +154,20 @@ export default function Sidebar({
        round trip and changes nothing. A module is something they would have to
        BUY, and showing an owner a menu of features their shop does not have
        would be a link to a page that turns them away. */
-    return navFor(
+    const sections = navFor(
       (capability) => isOwner || held.has(capability),
       (module) => bought.has(module),
       (module) => switchedOff.has(module),
     )
+    /* Filtered here rather than inside navFor: this is one dismissed SCREEN, not
+       a menu area, and navFor's three predicates are the vocabulary every other
+       caller shares. A fourth argument meaning "except this one row" would be a
+       special case in a function whose whole value is that it has none. */
+    return gettingStartedHidden
+      ? sections.filter((s) => s.href !== GETTING_STARTED_HREF)
+      : sections
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grantedKey, modulesKey, hiddenKey, isOwner])
+  }, [grantedKey, modulesKey, hiddenKey, isOwner, gettingStartedHidden])
 
   /**
    * ONE open section, not a set of them.

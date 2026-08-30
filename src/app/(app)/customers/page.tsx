@@ -236,6 +236,56 @@ export default async function CustomersPage({
         </StatStrip>
 
         <TableToolbar
+          /* Applied filters take the second row — see TableToolbar's `filters`
+             note. Status has no chip: the segmented control above already
+             shows the active slice and how to leave it.
+
+             Clearing goes to an EMPTY `?f=`, not a bare /customers: an absent
+             parameter means "nobody has said", which is exactly when a
+             remembered filter comes back. A plain link would appear to do
+             nothing. */
+          filters={
+            <FilterBar inToolbar clearHref={`/customers?${FILTER_PARAM}=`}>
+              {groupName && (
+                <FilterChip label="Group" value={groupName} clearHref={filterHref({ group: null })} />
+              )}
+              {repName && (
+                <FilterChip label="Rep" value={repName} clearHref={filterHref({ rep: null })} />
+              )}
+              {category && (
+                <FilterChip
+                  label="Category"
+                  value={category}
+                  clearHref={filterHref({ category: null })}
+                />
+              )}
+              {params.balance === 'owing' && (
+                <FilterChip label="Balance" value="Owing" clearHref={filterHref({ balance: null })} />
+              )}
+              {params.balance === 'over' && (
+                <FilterChip
+                  label="Balance"
+                  value="Over limit"
+                  clearHref={filterHref({ balance: null })}
+                />
+              )}
+
+              {/* One chip per advanced condition, spelled out in words. This is
+                  what keeps a REMEMBERED filter honest: it applies without
+                  anyone having typed a URL, so the screen has to say plainly
+                  what it is currently showing. */}
+              {conditions.map((condition, i) => (
+                <FilterChip
+                  key={`${condition.field}-${i}`}
+                  label="Where"
+                  value={summariseCondition(condition, filterFields)}
+                  clearHref={filterHref({
+                    [FILTER_PARAM]: encodeFilters(conditions.filter((_, j) => j !== i)),
+                  })}
+                />
+              ))}
+            </FilterBar>
+          }
           actions={
             <Menu label="Export" variant="ghost">
               <MenuItem href={`/api/customers/export${withParams(params, { format: 'xlsx' })}`} download>
@@ -304,47 +354,14 @@ export default async function CustomersPage({
           />
         </TableToolbar>
 
-        {/* Status has no chip — the segmented control above already shows the
-            active slice and how to leave it. */}
-        {/* Clearing goes to an EMPTY `?f=`, not a bare /customers: an absent
-            parameter means "nobody has said", which is exactly when a
-            remembered filter comes back. A plain link would appear to do
-            nothing. */}
-        <FilterBar clearHref={`/customers?${FILTER_PARAM}=`} className="-mx-6 -my-2">
-          {groupName && (
-            <FilterChip label="Group" value={groupName} clearHref={filterHref({ group: null })} />
-          )}
-          {repName && <FilterChip label="Rep" value={repName} clearHref={filterHref({ rep: null })} />}
-          {category && (
-            <FilterChip label="Category" value={category} clearHref={filterHref({ category: null })} />
-          )}
-          {params.balance === 'owing' && (
-            <FilterChip label="Balance" value="Owing" clearHref={filterHref({ balance: null })} />
-          )}
-          {params.balance === 'over' && (
-            <FilterChip label="Balance" value="Over limit" clearHref={filterHref({ balance: null })} />
-          )}
-
-          {/* One chip per advanced condition, spelled out in words. This is
-              what keeps a REMEMBERED filter honest: it applies without anyone
-              having typed a URL, so the screen has to say plainly what it is
-              currently showing. */}
-          {conditions.map((condition, i) => (
-            <FilterChip
-              key={`${condition.field}-${i}`}
-              label="Where"
-              value={summariseCondition(condition, filterFields)}
-              clearHref={filterHref({
-                [FILTER_PARAM]: encodeFilters(conditions.filter((_, j) => j !== i)),
-              })}
-            />
-          ))}
-        </FilterBar>
-
         <Card>
           <CustomerListClient
             rows={items}
             total={total}
+            /* The whole book, not the filtered slice — see the prop's note.
+               summary.total is COUNT(*) over every account, which is exactly
+               the "has this shop got any customers at all" question. */
+            hasAny={summary.total > 0}
             search={params.q}
             editSuffix={editSuffix}
             filters={{

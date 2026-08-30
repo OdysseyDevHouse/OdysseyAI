@@ -24,6 +24,7 @@ import {
   ButtonLink,
   Card,
   SearchBar,
+  FilterBar,
   FilterChip,
   summariseCondition,
   Pagination,
@@ -255,6 +256,19 @@ export default async function ProductsPage({
      matches" when there are plenty. */
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
 
+  /* Clears every chip at once.
+   *
+   * The advanced filter goes to an EMPTY `?f=`, not a dropped parameter: an
+   * absent one means "nobody has said", which is exactly when a remembered
+   * filter rehydrates — so removing the key would put the filter straight back
+   * on the next render and the link would appear to do nothing. The customers
+   * and suppliers lists clear the same way, for the same reason. */
+  const clearFiltersHref = filterHref({
+    department: null,
+    type: null,
+    [FILTER_PARAM]: '',
+  })
+
   /* Opening a group keeps the department filter and the slice — the question
      "which of these are below minimum" survives the click — but drops the
      search, which is what un-collapsed the groups in the first place.
@@ -302,21 +316,6 @@ export default async function ProductsPage({
     instructionGroups: instructionGroups.map((g) => ({ id: g.id, name: g.name })),
     locations: locations.map((l) => ({ id: l.id, name: l.name, isMain: l.isMain })),
   }
-
-  /* The type picker. Eight kinds is too many for a segmented bar and they are
-     read by name rather than by position, so it is a select — the same
-     reasoning that makes the department filter one. The stored ids are dropped
-     in favour of the names the product form uses, minus the trailing
-     "product": the label above the control already says what is being
-     filtered. */
-  const typeOptions = [
-    { value: '', label: 'All types', href: filterHref({ type: null }) },
-    ...PRODUCT_TYPES.map((t) => ({
-      value: t.id,
-      label: t.name.replace(/ product$/i, ''),
-      href: filterHref({ type: t.id }),
-    })),
-  ]
 
   /* Sorting keeps its own page — unlike a filter, re-ordering does not change
      WHICH products match, so page 4 of the same result set is still a page of
@@ -497,6 +496,53 @@ export default async function ProductsPage({
               canSetColumns={can(capabilities, 'setup.edit')}
             />
           }
+          /* Applied filters get the second row. A "Where" chip spells its
+             condition out in a sentence — "Product type is Returnable
+             product" — which is far wider than any picker, and inline it
+             squeezed the search box and pushed the controls out of the
+             positions they hold on every other list. */
+          filters={
+            <FilterBar inToolbar clearHref={clearFiltersHref}>
+              {filterLabel && (
+                <FilterChip
+                  label="Department"
+                  value={filterLabel}
+                  clearHref={filterHref({ department: null })}
+                />
+              )}
+
+              {/* The toolbar no longer offers a type picker — the advanced
+                  filter asks the same question and asks it better, with "is
+                  not" and "is any of" alongside "is". But `?type=` still works
+                  when a link carries it, so the chip has to stay: a URL that
+                  narrows the catalogue with nothing on screen saying why is
+                  the exact failure this strip exists to prevent. Clearing it
+                  is now the only way back, which is reason enough to render
+                  it. */}
+              {typeLabel && (
+                <FilterChip label="Type" value={typeLabel} clearHref={filterHref({ type: null })} />
+              )}
+
+              {/* One chip per advanced condition, spelled out in words.
+
+                  This is what keeps a REMEMBERED filter honest: it applies
+                  without anyone having typed a URL, so the only thing standing
+                  between that and "the catalogue has lost three thousand
+                  products" is the screen saying, plainly and always, what it is
+                  currently showing. Each chip clears just itself; the count in
+                  the subtitle says the rest. */}
+              {conditions.map((condition, i) => (
+                <FilterChip
+                  key={`${condition.field}-${i}`}
+                  label="Where"
+                  value={summariseCondition(condition, filterFields)}
+                  clearHref={filterHref({
+                    [FILTER_PARAM]: encodeFilters(conditions.filter((_, j) => j !== i)),
+                  })}
+                />
+              ))}
+            </FilterBar>
+          }
         >
           <div className="w-80 max-w-full">
             <SearchBar
@@ -535,14 +581,6 @@ export default async function ProductsPage({
             className="w-44"
           />
 
-          <LinkSelect
-            aria-label="Filter by product type"
-            icon={<Icons.Tag size={16} />}
-            value={productType ?? ''}
-            options={typeOptions}
-            className="w-48"
-          />
-
           {/* Sort sits with the filters rather than in the actions slot: it is
               a statement about the list, not something done to it. The column
               headers offer the same four orderings and flip the direction — the
@@ -572,35 +610,6 @@ export default async function ProductsPage({
             builderHref="/reports/builder?source=products"
           />
 
-          {filterLabel && (
-            <FilterChip
-              label="Department"
-              value={filterLabel}
-              clearHref={filterHref({ department: null })}
-            />
-          )}
-
-          {typeLabel && (
-            <FilterChip label="Type" value={typeLabel} clearHref={filterHref({ type: null })} />
-          )}
-
-          {/* One chip per advanced condition, spelled out in words.
-
-              This is what keeps a REMEMBERED filter honest: it applies without
-              anyone having typed a URL, so the only thing standing between that
-              and "the catalogue has lost three thousand products" is the screen
-              saying, plainly and always, what it is currently showing. Each
-              chip clears just itself; the count in the subtitle says the rest. */}
-          {conditions.map((condition, i) => (
-            <FilterChip
-              key={`${condition.field}-${i}`}
-              label="Where"
-              value={summariseCondition(condition, filterFields)}
-              clearHref={filterHref({
-                [FILTER_PARAM]: encodeFilters(conditions.filter((_, j) => j !== i)),
-              })}
-            />
-          ))}
         </TableToolbar>
 
         <Card>

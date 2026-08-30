@@ -50,13 +50,25 @@ export default async function AppLayout({ children }: { children: React.ReactNod
    * A failed read leaves the defaults in place, which are exactly what these
    * functions printed before the setting existed. `PrecisionProvider` below
    * carries the same two numbers into the client half of the tree.
+   *
+   * `getting_started_hidden` rides along on this read rather than taking one of
+   * its own: it is wanted on every page load, because the sidebar is drawn on
+   * all of them, and it comes out of the same settings row these two do.
    */
-  const decimals = await getSettings(site.id, ['qty_decimals', 'cost_decimals']).catch(() => null)
+  const decimals = await getSettings(site.id, [
+    'qty_decimals',
+    'cost_decimals',
+    'getting_started_hidden',
+  ]).catch(() => null)
   const precision = {
     qty: Number(decimals?.qty_decimals ?? 2),
     cost: Number(decimals?.cost_decimals ?? 2),
   }
   setDisplayPrecision(precision)
+
+  /* Defaults to SHOWN when the read failed. The row is how a new shop finds the
+     screen written for it, so a settings blip must not be what takes it away. */
+  const gettingStartedHidden = decimals?.getting_started_hidden === '1'
 
   /*
    * ── OUT OF LEASE: NOTHING ELSE RENDERS ──────────────────────────────────
@@ -164,6 +176,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           isOwner={capabilities.isOwner}
           modules={menuModules}
           hiddenAreas={hiddenAreaKeys}
+          gettingStartedHidden={gettingStartedHidden}
           userName={user.name}
           siteName={site.displayName}
           unreadNotifications={unread}
@@ -191,6 +204,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         isOwner={capabilities.isOwner}
         modules={menuModules}
         hiddenAreas={hiddenAreaKeys}
+        gettingStartedHidden={gettingStartedHidden}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar

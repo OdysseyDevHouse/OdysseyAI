@@ -247,7 +247,21 @@ export function AdvancedFilter({
                 </Select>
 
                 {needs >= 1 &&
-                  (field.options.length > 0 && condition.op !== 'in' ? (
+                  (field.options.length > 0 && condition.op === 'in' ? (
+                    /* "Is any of" over a closed set. The one-value case is a
+                       <Select> below; this is the same promise for the many-
+                       value one — the alternative was a text box asking for
+                       "A, B, C", which on a choice field means typing the
+                       stored spellings by hand. That is exactly what a picker
+                       exists to prevent, and it is worse here than anywhere
+                       else because the values are not always what the labels
+                       say: a statement cycle is stored '14day'. */
+                    <ChoiceList
+                      field={field}
+                      value={condition.value ?? ''}
+                      onChange={(next) => update(i, { value: next })}
+                    />
+                  ) : field.options.length > 0 ? (
                     <Select
                       aria-label={`Value for ${field.label}`}
                       value={condition.value ?? ''}
@@ -338,5 +352,70 @@ export function AdvancedFilter({
         </div>
       </Modal>
     </>
+  )
+}
+
+/**
+ * "Is any of", over a closed set — tick the ones you mean.
+ *
+ * The wire format is the comma-joined string filterClause already splits on
+ * (see the `in` case in reportBuilder/run.ts), so this changes how the value is
+ * COMPOSED and nothing about how it is compiled, stored in a URL, or read back
+ * by a chip. A filter saved before this existed still loads: the values parse
+ * out of the same string, and any that no longer match an option are kept in
+ * place rather than dropped, so opening a stale filter cannot silently narrow
+ * it to fewer values than the list is actually being filtered by.
+ *
+ * Laid out as a wrapping row of checkboxes rather than a multi-select: a
+ * <select multiple> requires ctrl-click to pick a second value, which is the
+ * single least discoverable interaction on the web, and it is unusable on the
+ * touch screens half of this product runs on.
+ */
+function ChoiceList({
+  field,
+  value,
+  onChange,
+}: {
+  field: FilterField
+  value: string
+  onChange: (next: string) => void
+}) {
+  const picked = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  /* Values in the saved filter that are not offered any more — an option
+     renamed in the catalogue, or a filter built before this control existed.
+     Shown, ticked, so toggling something else does not quietly discard them. */
+  const known = new Set(field.options.map((o) => o.value))
+  const strays = picked.filter((v) => !known.has(v)).map((v) => ({ value: v, label: v }))
+
+  function toggle(option: string, on: boolean) {
+    const next = on ? [...picked, option] : picked.filter((v) => v !== option)
+    /* Emitted in the CATALOGUE's order, not the order they were clicked, so
+       the chip above the list reads the same whichever way it was built. */
+    const order = [...field.options.map((o) => o.value), ...strays.map((s) => s.value)]
+    onChange(next.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join(', '))
+  }
+
+  return (
+    <div
+      role="group"
+      aria-label={`Values for ${field.label}`}
+      /* Scrolls at ten-ish rows. A source can offer a long enum — the sale
+         statuses, the product types — and an unbounded list would push Apply
+         past the dialog's 60vh and out of reach. */
+      className="flex max-h-40 min-w-40 flex-1 flex-wrap items-center gap-x-4 gap-y-1.5 overflow-y-auto rounded-control border border-border bg-surface-2 px-2.5 py-2"
+    >
+      {[...field.options, ...strays].map((option) => (
+        <Checkbox
+          key={option.value}
+          label={<span className="text-xs">{option.label}</span>}
+          checked={picked.includes(option.value)}
+          onChange={(e) => toggle(option.value, e.target.checked)}
+        />
+      ))}
+    </div>
   )
 }

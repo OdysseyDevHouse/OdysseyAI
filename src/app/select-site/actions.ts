@@ -5,6 +5,7 @@ import { requireSession } from '@/lib/auth'
 import { createSessionToken, setSessionCookie } from '@/lib/session'
 import { getSiteForUser } from '@/lib/sites'
 import { opensHere } from '@/lib/desktopBackOffice'
+import { landingFor } from '@/lib/site/gettingStarted'
 
 /**
  * Re-issues the session JWT with a different site open.
@@ -48,5 +49,10 @@ export async function selectSiteAction(form: FormData): Promise<void> {
     !next.startsWith('/login') &&
     !next.startsWith('/select-site')
 
-  redirect(isSafe ? next : '/dashboard')
+  // As on the login form: a store that has never rung up a sale opens on the
+  // checklist rather than a dashboard of zeroes. Per STORE, not per account,
+  // which is the point of doing it here as well — somebody who runs a trading
+  // shop and a brand-new second branch gets the right screen for whichever they
+  // just picked.
+  redirect(isSafe ? next : await landingFor(site.id))
 }

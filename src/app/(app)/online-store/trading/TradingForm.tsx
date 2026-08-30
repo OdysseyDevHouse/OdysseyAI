@@ -193,7 +193,7 @@ export default function TradingForm({
         </CardBody>
       </Card>
 
-      <Card>
+      <Card id="trading-hours">
         <CardHeader
           title="Trading hours"
           description="When this shop can have an online order ready. Leave every day closed to stay always open."

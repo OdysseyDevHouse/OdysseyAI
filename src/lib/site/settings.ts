@@ -1511,6 +1511,65 @@ export const SETTING_DEFAULTS = {
    * hides Loyalty, forgets, and cannot find the thing it is being charged for.
    */
   hidden_modules: '',
+
+  /* ── THE FIRST-RUN WIZARD'S MEMORY ────────────────────────────────────────
+     Two keys, because "where did I get to" and "am I done with this" are
+     different questions and answering both from one value is how a resumable
+     flow gets stuck.
+
+     `onboarding_state` is 'pending' until somebody reaches the end, then
+     'done'. It is the ONLY thing the layout redirect reads. 'dismissed' is not
+     a third value on purpose — a person who skips the wizard has not answered
+     the questions, and the Setup hub should keep offering it. What skipping
+     changes is the REDIRECT, and that is what the next key is for.
+
+     Why the KV and not a column on the site row: a shop's answers live in its
+     own database, and this is a fact about that database rather than about the
+     account that opened it. A local install has no control-panel row to write
+     back to (see updateSiteDetails and whyLocked in store-info/actions.ts), so
+     a column there would be unreachable exactly where a fresh install needs it. */
+  onboarding_state: 'pending',
+  /**
+   * Which steps have been finished, comma-separated — 'store,tax,pricing'.
+   *
+   * A LIST rather than a step number, because the wizard lets a person skip
+   * ahead and come back: a number can only say "got to 4", which would mark
+   * three skipped steps as done and lose the one thing the resume banner is
+   * for. An unrecognised key here is ignored rather than an error, so removing
+   * a step in a later version cannot strand a shop mid-flow.
+   */
+  onboarding_done_steps: '',
+
+  /**
+   * "Do not show me the Getting started checklist again."
+   *
+   * ── WHY THIS IS NOT ONE OF THE TWO KEYS ABOVE ─────────────────────────────
+   *
+   * Those two belong to the first-run WIZARD — where somebody got to in it, and
+   * whether they reached the end. This one belongs to the Getting started
+   * CHECKLIST, which is a different screen answering a different question: the
+   * wizard asks a shop to make decisions, the checklist reports what the shop's
+   * data already shows. Folding them together would mean finishing the wizard
+   * silently hid the checklist, or dismissing the checklist marked the wizard
+   * done — and neither is what the person pressed.
+   *
+   * ── WHY A SETTING AND NOT A PER-USER PREFERENCE ───────────────────────────
+   *
+   * It is a fact about the SHOP, not about the person reading. A shop that is
+   * set up is set up for everybody, and a per-user flag would mean each new
+   * manager gets a checklist of work their colleagues finished last year. The
+   * cost is that one person dismisses it for the whole store — which is why the
+   * screen says so where it is dismissed, and why nothing is deleted: the row
+   * comes back the moment this is set to '0'.
+   *
+   * ── WHY DISMISSING DOES NOT MEAN DONE ─────────────────────────────────────
+   *
+   * Stored apart from any measure of progress, deliberately. A shop may dismiss
+   * this at 3 of 6 because it does not intend to do the rest, and reading the
+   * dismissal as completion would tell the dashboard a lie. Nothing else reads
+   * this key: it hides a menu row and a redirect, and changes no other fact.
+   */
+  getting_started_hidden: '0',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -1597,6 +1656,20 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === 'average' || value === 'last'
         ? null
         : "Cost basis must be 'average' or 'last'."
+
+    case 'onboarding_state':
+      return value === 'pending' || value === 'done'
+        ? null
+        : "Onboarding state must be 'pending' or 'done'."
+
+    /* Shape only. WHICH keys are real is the wizard's business — see
+       lib/site/onboarding.ts, which filters unknown ones on the way out rather
+       than refusing them here. A step renamed in a later version would
+       otherwise make a shop's stored progress unwritable. */
+    case 'onboarding_done_steps':
+      return /^[a-z-]*(,[a-z-]+)*$/.test(value)
+        ? null
+        : 'Completed steps must be a comma-separated list of step keys.'
 
     case 'tax_label': {
       const label = value.trim()

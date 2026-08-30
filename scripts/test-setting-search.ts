@@ -48,6 +48,23 @@ function check(what: string, ok: boolean, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}${ok || !detail ? '' : `  (${detail})`}`)
 }
 
+let warnings = 0
+
+/**
+ * A real finding that is not yet a broken promise.
+ *
+ * Used for the missing anchors below. They are the same CLASS of defect as the
+ * bug this file was extended for — a hit that lands on a screen rather than on
+ * a setting — but every one of them still opens the right screen, so failing
+ * the suite over them would block unrelated work and teach the next person to
+ * reach for --force. They are printed every run instead, with a count, so the
+ * list cannot quietly grow while nobody is looking.
+ */
+function warn(what: string, ok: boolean, detail = '') {
+  if (!ok) warnings++
+  if (!ok) console.log(`WARN  ${what}${detail ? `  (${detail})` : ''}`)
+}
+
 /* ── 1. every route is a screen that exists ───────────────────────────────── */
 
 for (const setting of SETTINGS) {
@@ -83,7 +100,33 @@ function sourceFor(href: string): string {
   return combined
 }
 
+/**
+ * The same directory, minus the files that are not the screen.
+ *
+ * `sourceFor` reads everything on purpose — an anchor may be rendered anywhere,
+ * so for THAT question a wide net is right. Counting panels is the opposite
+ * question and a wide net is wrong: `loading.tsx` mirrors the screen in
+ * skeletons, and a modal is a Card somebody has to open rather than one they
+ * scan past. Counting either turned a one-panel screen (Users, which is a
+ * single table plus its edit dialog) into a four-panel one and warned about a
+ * setting nobody could miss.
+ */
+function panelSourceFor(href: string): string {
+  const dir = join(ROOT, 'src', 'app', '(app)', href.replace(/^\//, ''))
+  if (!existsSync(dir)) return ''
+
+  let combined = ''
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.tsx')) continue
+    if (entry === 'loading.tsx' || entry.endsWith('Modal.tsx')) continue
+    const path = join(dir, entry)
+    if (statSync(path).isFile()) combined += readFileSync(path, 'utf8')
+  }
+  return combined
+}
+
 const sources = new Map<string, string>()
+const panelSources = new Map<string, string>()
 
 for (const setting of SETTINGS) {
   if (!setting.anchor) continue
@@ -95,6 +138,81 @@ for (const setting of SETTINGS) {
     `anchor rendered: ${setting.href}#${setting.anchor}`,
     source.includes(`id="${setting.anchor}"`),
     'no element on that screen carries the id — the flash will never fire',
+  )
+}
+
+/* ── 2b. a setting on a crowded screen carries an anchor ──────────────────── */
+
+/**
+ * The reported bug: "Rounding" pointed at /setup/pricing, and cash rounding is
+ * on /setup/numbering. Every check above passed — the route was real, the
+ * ranking put it first, the link opened a working screen. Only the destination
+ * was wrong, and nothing structural could see it, because "is this setting on
+ * this screen" is a question about meaning.
+ *
+ * What made it undetectable was the MISSING ANCHOR. An anchored entry names an
+ * id, §2 above demands that the named screen renders that id, and the two
+ * together pin an entry to a specific panel rather than a whole page — so the
+ * same mistake made today fails there instead of shipping. Re-pointing the
+ * fixed entry back at /setup/pricing was tried, and §2 does now catch it.
+ *
+ * Hence this: on a screen with several cards, an anchor is not decoration. It
+ * is what makes the entry checkable at all, and what stops a hit landing on a
+ * screen of ten panels with no clue which one was meant. Screens with a single
+ * card are exempt — landing on them IS landing on the setting, which is the
+ * rule settingSearch.ts states for omitting an anchor.
+ *
+ * A word-matching check was tried here first and removed: the index is written
+ * in the words somebody TYPES rather than the words on the screen, and screens
+ * that render rows from a lib file (roles, from CAPABILITY_GROUPS) carry none
+ * of their setting names in their own source. It failed five honest entries and
+ * caught nothing this does not.
+ */
+for (const setting of SETTINGS) {
+  if (setting.anchor) continue
+
+  if (!panelSources.has(setting.href)) {
+    panelSources.set(setting.href, panelSourceFor(setting.href))
+  }
+  const source = panelSources.get(setting.href) ?? ''
+  if (!source) continue
+
+  /* Cards are the unit a reader scans and the unit SettingAnchor flashes, so
+     counting them is the closest cheap measure of "could somebody tell which
+     panel was meant". */
+  const cards = source.match(/<Card[\s>]/g)?.length ?? 0
+
+  warn(
+    `no anchor: "${setting.label}" on ${setting.href}`,
+    cards <= 1,
+    `${cards} cards on that screen — the hit lands on the page, not the setting`,
+  )
+}
+
+/* ── 2c. no setting restates the name of its own screen ───────────────────── */
+
+/**
+ * "Trading hours" was indexed as a setting on /online-store/trading — a screen
+ * whose own name is "Trading hours". The palette therefore offered two rows
+ * reading the same words, and because a screen deliberately outranks a setting
+ * on an equal score, the one somebody clicked was the screen: the anchored
+ * entry could never win, and its flash never fired. Every check in this file
+ * passed throughout, and only driving the real palette showed the two rows.
+ *
+ * The rule it broke is the one settingSearch.ts states at the top — a screen
+ * whose whole job is one thing is already findable as a screen, and repeating
+ * it here just prints the same row twice under two headings.
+ */
+for (const setting of SETTINGS) {
+  const screen = SUBPAGE_LABELS[setting.href]
+  if (!screen) continue
+
+  const normalise = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+  check(
+    `not a restatement of its screen: "${setting.label}"`,
+    normalise(setting.label) !== normalise(screen),
+    `the screen at ${setting.href} is itself called "${screen}" — two rows, same words, and the screen wins`,
   )
 }
 
@@ -130,6 +248,13 @@ const WANTED: [string, string][] = [
   /* A few neighbours, so this is a test of the INDEX and not of one lucky row. */
   ['cash drawer', 'Cash drawer kick'],
   ['vat rate', 'VAT rate'],
+  /* Reported: "rounding" returned this row pointing at Price types & VAT, which
+     is where it READS as belonging and not where it is built. The link 200s and
+     the screen renders, so nothing above catches it — only the destination is
+     wrong, and it is wrong in the most convincing way possible. */
+  ['rounding', 'Cash rounding'],
+  ['round', 'Cash rounding'],
+  ['5c', 'Cash rounding'],
   ['clock in', 'Force clock in before selling'],
   ['below cost', 'Selling below cost'],
   ['smtp', 'Outgoing email server'],
@@ -169,4 +294,10 @@ console.log(
     ? `\nAll good — ${SETTINGS.length} settings indexed.`
     : `\n${failures} FAILED`,
 )
+
+if (warnings > 0) {
+  console.log(
+    `${warnings} settings land on a screen rather than on themselves — see the WARN lines above.`,
+  )
+}
 process.exit(failures === 0 ? 0 : 1)

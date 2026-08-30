@@ -334,15 +334,23 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'sky',
         capability: 'setup.edit',
       },
-      /* Neither till designer is here any more. Both are sidebar rows now —
-         Quick keys under Sales, beside the till it configures, and Menu
-         designer under Products, beside the file it arranges. Each is edited
-         because of what the daily screen showed, not on a settings visit.
-         A cross-reference tile would be the second front door this hub exists
-         to avoid; both are named by the menu, so neither is a SUBPAGE_LABELS
-         key and `SetupHref` no longer admits them.
-         Terminals and Rotating menus stay: which machine is which, and WHICH
-         menu the till shows at 11am, are each set once — this hub's job. */
+      /* Beside Tills and Rotating menus, which is the company it keeps: all
+         three decide what a till SHOWS rather than what it sells. It was a
+         sidebar row under Sales on the argument that a quick key gets changed
+         because of what happened at the till — true, but the screen needs
+         `setup.edit`, which the people serving on a till mostly do not have.
+         Menu designer is still NOT here: it stays a row under Products, beside
+         the product file it arranges, so it remains out of SUBPAGE_LABELS and
+         `SetupHref` does not admit it. */
+      {
+        href: '/setup/quick-keys',
+        description: 'The buttons on the till — the things this shop sells most.',
+        keywords:
+          'quick keys buttons tiles favourites shortcuts till pos grid bar hot keys speed keys top sellers',
+        icon: 'LayoutGrid',
+        tone: 'violet',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/pos-menus',
         description: 'Breakfast, lunch and dinner — the till switches by the clock.',
@@ -458,8 +466,11 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
            what it does, and neither changes a stored figure. */
         href: '/setup/decimals',
         description: 'How many decimals your quantities and costs are shown with.',
+        /* The last four came off a settingSearch entry that named this screen
+           and duplicated its label, printing the same row twice. Folded in here
+           rather than dropped with it. */
         keywords:
-          'decimals decimal places precision rounding quantity qty cost digits display format weight',
+          'decimals decimal places precision rounding quantity qty cost digits display format weight accuracy fractions three four places',
         icon: 'Hash',
         tone: 'slate',
         capability: 'setup.edit',

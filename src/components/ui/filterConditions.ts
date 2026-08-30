@@ -111,6 +111,20 @@ export function summarise(condition: FilterCondition, fields: readonly FilterFie
   if (condition.op === 'between') {
     return `${label} ${op} ${pretty(condition.value ?? '')} and ${pretty(condition.value2 ?? '')}`
   }
+
+  /* "Is any of" holds a comma-joined LIST, so it has to be prettied item by
+     item — passing the whole string through pretty() matches no option and
+     printed the stored values back ("Product type is any of service, buyout").
+     Split on the same separator the SQL compiler splits on. */
+  if (condition.op === 'in') {
+    const items = (condition.value ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map(pretty)
+    return `${label} ${op} ${items.join(', ')}`
+  }
+
   return `${label} ${op} ${pretty(condition.value ?? '')}`
 }
 

@@ -503,7 +503,10 @@ export default function StationeryClient({
 
   return (
     <div className="flex flex-col gap-5">
-      <Card>
+      {/* The search's landing point for this screen's thirteen cards: picking
+          the document is the first move for anything else here, so a hit that
+          means "change the wording on my invoice" starts in the right place. */}
+      <Card id="document-design">
         <CardHeader
           title="Which document"
           description="Design one document at a time. Everything else keeps the standard layout."

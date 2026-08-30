@@ -781,8 +781,8 @@ function SelectableCardSection() {
           onChange={setChoice}
           badge={
             <Badge tone="brand">
-              <Icons.Globe size={11} />
-              Online only
+              <Icons.Barcode size={11} />
+              Tracked
             </Badge>
           }
           footer={

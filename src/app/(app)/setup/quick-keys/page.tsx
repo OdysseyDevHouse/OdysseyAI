@@ -17,16 +17,21 @@ export const dynamic = 'force-dynamic'
  * drag-and-drop designer on a full-screen touch till would also mean a cashier could
  * rearrange the bar mid-shift by holding a key half a second too long.
  *
- * ── WHY IT IS REACHED FROM SALES, NOT FROM SETUP ──────────────────────────
+ * ── WHY IT IS REACHED FROM SETUP ──────────────────────────────────────────
  *
- * It used to be a tile in the setup hub, beside tender types and terminals. It is a
- * menu row under Sales now, directly below Point of sale: a quick key is changed
- * BECAUSE of what happened at the till — a line rung up twenty times a day that sits
- * three taps deep — so it is the same visit as serving, not a settings visit.
+ * It spent a while as a menu row under Sales, directly below Point of sale, on the
+ * argument that a quick key is changed BECAUSE of what happened at the till — a line
+ * rung up twenty times a day that sits three taps deep — and so belongs to the same
+ * visit as serving. The flaw was the capability: this screen needs `setup.edit`, and
+ * most of the people standing at a till do not have it, so the row was a permanent
+ * tease to exactly the audience the placement was arguing for.
  *
- * The ROUTE stayed under /setup so no existing link breaks. That is safe because
- * `breadcrumbFor` resolves a path the menu NAMES by its section scan before it ever
- * consults `hubFor`, so the trail reads "Sales › Quick keys". The capability stayed
+ * It is a setup hub tile again, in Store & stock beside Tills and Rotating menus —
+ * the other two screens that decide what a till SHOWS rather than what it sells, so
+ * one visit finds any of them. The trail reads "Setup › Quick keys", resolved by
+ * `hubFor` on the /setup prefix now that the menu no longer names it.
+ *
+ * The ROUTE has never moved, so no existing link breaks. The capability stays
  * `setup.edit` for the reason it always was: arranging what every till shows is a
  * manager's decision, whoever else may serve on one.
  *

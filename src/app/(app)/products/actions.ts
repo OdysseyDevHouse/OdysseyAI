@@ -457,16 +457,24 @@ export async function saveProductAction(
    * nothing, which is worse than its absence.
    *
    * The COST is the exception, and it moves the other way — down the form and
-   * up the ladder. A case of 24 costs 24 singles, so repricing the single has
-   * to reprice every pack drawing on it; nothing on the Refer tab offers a
-   * cost box precisely because the factor already decides the answer. Without
-   * this the packs kept whatever they were seeded with — usually 0.00 — and
-   * reported a 100% margin on every sale.
+   * up every chain built on this product. A case of 24 costs 24 singles, so
+   * repricing the single has to reprice every pack drawing on it; nothing on
+   * the Refer tab offers a cost box precisely because the factor already
+   * decides the answer. Without this the packs kept whatever they were seeded
+   * with — usually 0.00 — and reported a 100% margin on every sale.
    *
-   * Runs for EVERY product, not just one typed 'refer': the base of a ladder
-   * is deliberately an ordinary product (see createReferRange), so a type
-   * check here would skip the one rung people actually reprice. A product with
-   * nothing above it costs one cheap query and writes nothing.
+   * RECIPES CLIMB THE SAME WALK. Type a new cost on tomatoes and every burger
+   * listing tomatoes is recosted, including burgers reached through another
+   * made item. A recipe's stored cost is a cache of compositionCost(), and a
+   * cache nothing invalidates is a wrong number that looks authoritative —
+   * before this it moved only when the burger itself was next saved, so the
+   * till charged one cost and every report showed another.
+   *
+   * Runs for EVERY product, not just one typed 'refer' or 'recipe': the thing
+   * being repriced is the INGREDIENT or the base of a ladder, which is
+   * deliberately an ordinary product (see createReferRange). A type check here
+   * would skip the one rung people actually reprice. A product with nothing
+   * above it costs one cheap query and writes nothing.
    */
   const { cascadeReferCosts } = await import('@/lib/site/referRange')
   await cascadeReferCosts(siteId, result.id).catch(() => 0)
@@ -811,6 +819,25 @@ export async function quickEditProductAction(
     userName: ctx.actor.userName,
   })
   if (!result.ok) return { ok: false, error: result.error }
+
+  /*
+   * Everything built out of this product, when its COST moved.
+   *
+   * The same cascade saveProductAction runs, for the same reason and with the
+   * same "never fails the save" contract. It was missing here, and the gap was
+   * invisible in exactly the way that matters: this panel is the quickest way
+   * to reprice an ingredient, so it is the path somebody actually uses to put
+   * mince up from 118 to 180 — and every burger containing that mince kept the
+   * cost it had, while the recipe screen went on showing 118.
+   *
+   * Guarded on the patch naming a cost: a description or barcode edit changes
+   * nothing any recipe reads, and walking the tree for one would be work with
+   * no possible result.
+   */
+  if (patch.lastCost !== undefined) {
+    const { cascadeCompositionCosts } = await import('@/lib/site/productComposition')
+    await cascadeCompositionCosts(siteId, id).catch(() => 0)
+  }
 
   /*
    * ── KEEPING A LINKED GROUP IN STEP ───────────────────────────────────────

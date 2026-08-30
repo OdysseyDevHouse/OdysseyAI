@@ -1254,15 +1254,22 @@ export async function receiveGoods(
     })
 
     /*
-     * The pack costs above whatever this receipt repriced.
+     * Everything built out of whatever this receipt repriced.
      *
-     * After the commit, on the same terms as the GL mirror below: a pack whose
-     * derived cost could not be rewritten is a reporting gap, never a reason to
-     * un-receive goods that are on the shelf. cascadeReferCosts swallows its
-     * own failures for that reason; the catch is belt and braces.
+     * Packs above a repriced single, and RECIPES above a repriced ingredient:
+     * receive tomatoes at a new price and every burger listing tomatoes is
+     * recosted, through however many rungs of pack and recipe the chain has.
+     * This is the path that matters most — a GRV is where an ingredient cost
+     * actually moves in daily trade, and a burger whose cost never followed it
+     * reported last month's margin on this month's mince.
      *
-     * It re-reads the base's committed cost, which is why it cannot be done
-     * inside the transaction above — it would either deadlock on the rows just
+     * After the commit, on the same terms as the GL mirror below: a dependant
+     * whose derived cost could not be rewritten is a reporting gap, never a
+     * reason to un-receive goods that are on the shelf. The cascade swallows
+     * its own failures for that reason; the catch is belt and braces.
+     *
+     * It re-reads the committed cost, which is why it cannot be done inside
+     * the transaction above — it would either deadlock on the rows just
      * written or read the pre-receipt figure and spread that.
      */
     const { cascadeReferCosts } = await import('./referRange')
