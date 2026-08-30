@@ -1,20 +1,22 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Pencil } from '@/components/ui/icons'
 import { formatCost, formatMoney, formatQty } from '@/lib/decimals'
 import {
   Badge,
+  Button,
   ButtonLink,
   DataTable,
   Icons,
   RowTile,
-  TextLink,
   type Column,
 } from '@/components/ui'
 import { PRODUCT_TYPES } from '@/lib/productTypes'
 import type { listProducts, ProductSort } from '@/lib/site/products'
+import QuickEditDrawer, { type QuickEditTarget } from './QuickEditDrawer'
 
 type ProductRow = Awaited<ReturnType<typeof listProducts>>['items'][number]
 type Empty = { title: string; hint?: string; icon?: React.ReactNode; action?: React.ReactNode }
@@ -54,6 +56,7 @@ export default function ProductsTable({
   sortHrefs,
   selectedKeys,
   onSelectionChange,
+  departments,
 }: {
   items: ProductRow[]
   /** Department id -> its full path, resolved on the server. */
@@ -136,8 +139,15 @@ export default function ProductsTable({
    */
   selectedKeys?: ReadonlySet<string>
   onSelectionChange?: (next: ReadonlySet<string>) => void
+  /** Id + full path for the quick-edit panel's department picker. */
+  departments: { id: number; label: string }[]
 }) {
   const router = useRouter()
+
+  /* The row the quick-edit panel is open on, or null. The ROW rather than its
+     id: the panel seeds its fields from what the list already loaded, so
+     opening it costs no round trip. */
+  const [quickEdit, setQuickEdit] = useState<QuickEditTarget | null>(null)
 
   /** Where a row leads: its group if it is a parent, else its own edit form.
    *
@@ -149,37 +159,45 @@ export default function ProductsTable({
 
   const columns: Column<ProductRow>[] = [
     {
-      key: 'code',
-      header: 'Code',
-      sortable: true,
-      // A parent's code is not orderable or scannable, so it points at the
-      // group rather than at an edit form for a row nobody transacts against.
-      cell: (p) => <TextLink href={rowHref(p)}>{p.code}</TextLink>,
-    },
-    {
       key: 'description',
       header: 'Product',
       sortable: true,
+      /* Description and code are ONE identity, not two columns the eye has to
+         join up — the name reads first, its code a step down underneath, the
+         way the manufacturing and credit lists already name a record.
+         Sorting by code has not gone anywhere: the toolbar's sort picker still
+         offers it, which is what a header affordance would have done. */
+      /* A LINK still, even though the whole row now navigates to the same
+         place. onRowClick is a click handler, not an anchor: without this the
+         product could not be opened in a new tab, copied as a link, or reached
+         by keyboard at all. The row click is the convenience on top. */
       cell: (p) => (
         <Link href={rowHref(p)} className="flex items-center gap-2.5 hover:text-brand">
           <RowTile label={p.description} token={p.imageColor} />
-          <span className="min-w-0 truncate text-ink">{p.description}</span>
-          {/* The badge is the whole point of collapsing: it says this one row
-              stands for several products, and that it can be opened. */}
-          {p.hasVariants && (
-            <Badge tone="brand">
-              {p.variantCount} variant{p.variantCount === 1 ? '' : 's'}
-            </Badge>
-          )}
-          {/* Only when a search has un-collapsed the groups. Inside a group the
-              page header already names the parent, and repeating it on all
-              twenty rows is noise under a heading that just said it. */}
-          {p.parentId !== null && parentNames[p.parentId] && (
-            <span className="min-w-0 shrink truncate text-xs text-muted">
-              in {parentNames[p.parentId]}
+          <span className="flex min-w-0 flex-col">
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span className="min-w-0 truncate text-ink">{p.description}</span>
+              {/* The badge is the whole point of collapsing: it says this one
+                  row stands for several products, and that it can be opened. */}
+              {p.hasVariants && (
+                <Badge tone="brand">
+                  {p.variantCount} variant{p.variantCount === 1 ? '' : 's'}
+                </Badge>
+              )}
+              {/* Only when a search has un-collapsed the groups. Inside a group
+                  the page header already names the parent, and repeating it on
+                  all twenty rows is noise under a heading that just said it. */}
+              {p.parentId !== null && parentNames[p.parentId] && (
+                <span className="min-w-0 shrink truncate text-xs text-muted">
+                  in {parentNames[p.parentId]}
+                </span>
+              )}
+              {p.isArchived && <Badge>Archived</Badge>}
             </span>
-          )}
-          {p.isArchived && <Badge>Archived</Badge>}
+            {/* The code is what gets typed, scanned and quoted, so it stays on
+                the row rather than only inside the record. */}
+            <span className="numeric mt-0.5 truncate text-xs text-muted">{p.code}</span>
+          </span>
         </Link>
       ),
     },
@@ -453,6 +471,7 @@ export default function ProductsTable({
   })
 
   return (
+    <>
     <DataTable
       columns={sort ? shown : shown.map((c) => ({ ...c, sortable: false }))}
       rows={items}
@@ -466,37 +485,78 @@ export default function ProductsTable({
           : undefined
       }
       getRowKey={(p) => p.id}
+      /* The whole row goes where its name already went — the full product, or
+         the group for a variant parent. The pencil is the exception, and it
+         stops the click from reaching here. */
+      onRowClick={(p) => router.push(rowHref(p))}
       selectedKeys={selectedKeys}
       onSelectionChange={onSelectionChange}
       // A variant parent is a collapsed group heading, not a product: it holds
       // no stock and most bulk changes would refuse it anyway. Ticking one and
       // being told afterwards that it was skipped is worse than not offering it.
       isRowSelectable={(p) => !p.hasVariants}
-      actions={(p) =>
-        p.hasVariants ? (
-          <ButtonLink
-            href={rowHref(p)}
+      /* The pencil opens the quick-edit panel; the chevron still says a group
+         can be opened. Both sit beside the row click rather than duplicating
+         it — the row is how you get to the whole product, and the pencil is
+         how you change six fields without going there.
+
+         A group keeps its chevron AND gains a pencil: a parent has no price or
+         stock, but its description and code are as worth fixing as any other
+         row's, and the panel shows only the fields it actually has. */
+      actions={(p) => (
+        <>
+          <Button
             variant="ghost"
             size="sm"
             iconOnly
-            aria-label={`Show the ${p.variantCount} variants of ${p.description}`}
-          >
-            <Icons.ChevronRight size={14} />
-          </ButtonLink>
-        ) : (
-          <ButtonLink
-            href={`/products/${p.id}${editSuffix}`}
-            variant="ghost"
-            size="sm"
-            iconOnly
-            aria-label={`Edit ${p.description}`}
+            aria-label={`Quick edit ${p.description}`}
+            onClick={() => setQuickEdit(toQuickEditTarget(p))}
           >
             <Pencil size={14} />
-          </ButtonLink>
-        )
-      }
+          </Button>
+          {p.hasVariants && (
+            <ButtonLink
+              href={rowHref(p)}
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Show the ${p.variantCount} variants of ${p.description}`}
+            >
+              <Icons.ChevronRight size={14} />
+            </ButtonLink>
+          )}
+        </>
+      )}
       actionsOnHover
       empty={empty}
     />
+
+      <QuickEditDrawer
+        target={quickEdit}
+        onClose={() => setQuickEdit(null)}
+        departments={departments}
+        showCost={showCost}
+        costBasis={costBasis}
+        editSuffix={editSuffix}
+      />
+    </>
   )
+}
+
+/** The row, reduced to what the quick-edit panel seeds its fields from. */
+function toQuickEditTarget(p: ProductRow): QuickEditTarget {
+  const price = defaultPrice(p)
+  return {
+    id: p.id,
+    code: p.code,
+    description: p.description,
+    barcode: p.barcode,
+    departmentId: p.departmentId,
+    lastCost: p.lastCost ?? 0,
+    priceIncl: price?.sellIncl ?? 0,
+    isParent: p.hasVariants,
+    /* Says the panel's one price box is not the whole story, so a product
+       priced on several structures does not look like it only has one. */
+    hasOtherPrices: p.prices.length > 1,
+  }
 }

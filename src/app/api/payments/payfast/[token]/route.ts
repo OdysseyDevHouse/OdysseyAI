@@ -46,6 +46,70 @@ function sourceIp(req: NextRequest): string | null {
   return req.headers.get('x-real-ip')
 }
 
+/**
+ * Name what was paid, and ring the bell.
+ *
+ * The lookup is per purpose because `target_id` means a different table in each
+ * case — the same reason the settlement branch above is a switch. A notification
+ * saying "R575 received — #9" would be useless; it has to say the document
+ * NUMBER, which is the only thing a person recognises.
+ *
+ * Every read is best-effort. This runs after the money is recorded, so a failed
+ * lookup costs a good title and nothing else — the notification still goes out
+ * naming what it can.
+ */
+async function announce(
+  siteId: number,
+  purpose: string,
+  targetId: number,
+  amount: number,
+  providerRef: string,
+): Promise<void> {
+  const { announcePayment } = await import('@/lib/site/paidLinks')
+
+  let what = `#${targetId}`
+  let href: string | null = null
+  let customerId: number | null = null
+
+  try {
+    if (purpose === 'debtor_invoice' || purpose === 'document_deposit') {
+      const { getDocument } = await import('@/lib/site/salesDocuments')
+      const doc = await getDocument(siteId, targetId)
+      if (doc) {
+        what = doc.documentNumber ?? `${doc.docLabel} #${targetId}`
+        customerId = doc.customerId
+        href = `/invoicing/${targetId}`
+      }
+    } else if (purpose === 'customer_account') {
+      const { getCustomer } = await import('@/lib/site/customers')
+      const customer = await getCustomer(siteId, targetId)
+      if (customer) {
+        what = `account ${customer.code}`
+        customerId = customer.id
+        href = `/customers/${targetId}`
+      }
+    } else if (purpose === 'layby') {
+      const { getLayby } = await import('@/lib/site/laybys')
+      const layby = await getLayby(siteId, targetId)
+      if (layby) {
+        what = `lay-by ${layby.laybyNumber ?? `#${targetId}`}`
+        customerId = layby.customerId
+        href = `/invoicing/laybys/${targetId}`
+      }
+    } else if (purpose === 'job_deposit') {
+      what = `job #${targetId}`
+      href = `/job-cards/${targetId}`
+    } else if (purpose === 'online_order') {
+      what = `online order #${targetId}`
+      href = `/online-store/orders/${targetId}`
+    }
+  } catch {
+    /* A title is worth having, not worth failing for. */
+  }
+
+  await announcePayment(siteId, { purpose, what, amount, providerRef, href, customerId })
+}
+
 export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params
 
@@ -173,6 +237,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
         `[payfast] settled ${claim.reference} but could not post ${outcome.intent.purpose} ${targetId}: ${posted.error}`,
       )
     }
+
+    /*
+     * 6. Tell somebody. LAST, and it cannot fail the callback.
+     *
+     * Until this, an online payment was entirely silent: the receipt landed on
+     * the account and the deposit on the document, and nothing announced
+     * either — so a customer could pay overnight and the shop would find out by
+     * happening to open the right screen.
+     *
+     * After the posting rather than instead of it, and swallowing its own
+     * errors: the money has arrived and been recorded by now, and a failure to
+     * ring a bell must not make this endpoint report an error PayFast would
+     * answer by retrying a payment that is already settled.
+     */
+    await announce(claim.siteId, outcome.intent.purpose, targetId, amount, providerRef).catch(
+      (error) => console.error('[payfast] announce failed', error),
+    )
 
     return ack()
   } catch (error) {

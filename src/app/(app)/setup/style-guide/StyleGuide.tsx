@@ -39,6 +39,11 @@ import {
   type FilterCondition,
   type FilterField,
   FilterChip,
+  CHIP_BASE,
+  ClockChip,
+  LOGOUT_CHIP,
+  OperatorChip,
+  StatusChip,
   Icons,
   Input,
   MiniStat,
@@ -220,6 +225,7 @@ export default function StyleGuidePage() {
         <LaneWeekSection />
         <ComboboxSection />
         <FilterBarSection />
+        <StatusChipSection />
         <AdvancedFilterSection />
         <DateRangeSection />
         <CategoryTileSection />
@@ -1367,6 +1373,18 @@ function IdentitySection() {
             INV001311
           </TextLinkButton>
           <span>opens where it stands — no navigation</span>
+        </div>
+        {/* size="lg" — the same tile at page-heading scale, for the identity of
+            the ONE record a screen is about rather than a row in a list. The
+            customer portal heads its account page with it. */}
+        <div className="flex items-center gap-3 border-t border-border pt-3">
+          <RowTile label="Tiaan Smith" size="lg" />
+          <span>
+            <span className="block font-medium text-ink">size=&quot;lg&quot;</span>
+            <span className="block text-xs text-muted">
+              the record a whole screen is about, not a row in a list
+            </span>
+          </span>
         </div>
       </CardBody>
     </Card>
@@ -2681,6 +2699,69 @@ function ComboboxSection() {
         </div>
         <p className="text-xs text-muted">{picked ? `Picked: ${picked}` : 'Nothing picked yet'}</p>
       </Row>
+    </Card>
+  )
+}
+
+/**
+ * The counter status chips.
+ *
+ * The row across the top of the till and the invoicing counter. Both windows
+ * build it from these, so the two cannot drift in height, radius or shadow —
+ * which matters because a shop sees them side by side.
+ */
+function StatusChipSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Status chips"
+        description="<StatusChip />, <OperatorChip /> and <ClockChip /> — the counter strip. All 46px so a row of them cannot look ragged; CHIP_BASE and LOGOUT_CHIP are exported for the tappable ones."
+      />
+      {/* The strip as the two counters actually wear it, in their order:
+          what is wrong first, then the queue, the drawer, the machine, the
+          person, the clock, and the way out last. */}
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-border py-3">
+        <span className={`${CHIP_BASE} border-success/40 bg-success-soft text-success-ink`}>
+          <Icons.Check size={16} />
+          Sales synced
+        </span>
+        <button type="button" data-kit-ok className={`${CHIP_BASE} border-border bg-surface text-ink-2`}>
+          <Icons.Coins size={16} />
+          Shift 42
+        </button>
+        <StatusChip>
+          <Icons.Terminal size={16} className="text-muted" />
+          Counter
+        </StatusChip>
+        <OperatorChip name="Nomsa Dlamini" />
+        <ClockChip />
+        <button type="button" data-kit-ok className={LOGOUT_CHIP}>
+          <Icons.LogOut size={16} />
+          Logout
+        </button>
+      </div>
+
+      {/* The states each chip can take. */}
+      <div className="flex flex-wrap items-center gap-2.5 py-3">
+        <span className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}>
+          <Icons.Offline size={16} />
+          Offline
+        </span>
+        <span className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}>
+          <Icons.Coins size={16} />
+          No shift
+        </span>
+        <OperatorChip name="Nomsa Dlamini" />
+        <StatusChip>
+          <Icons.Terminal size={16} className="text-muted" />
+          TILL-01
+        </StatusChip>
+        <StatusChip>
+          <Icons.Coins size={16} className="text-muted" />
+          Shift 42
+        </StatusChip>
+        <ClockChip />
+      </div>
     </Card>
   )
 }

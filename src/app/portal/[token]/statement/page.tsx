@@ -2,18 +2,23 @@ import type { Metadata } from 'next'
 import { requireSection } from '../guard'
 import { customerStatement } from '@/lib/site/customerAuth'
 import { portalProfile } from '@/lib/site/portalData'
-import { publicSiteName } from '@/lib/sites'
+import { letterheadFor } from '../letterhead'
 import PortalShell, { PortalNav } from '../PortalShell'
 import SignOutButton from '../SignOutButton'
 import LedgerTable from '../LedgerTable'
-import { ButtonLink, Card, Icons, LinkTabs, StatStrip, StatTile } from '@/components/ui'
+import PayAccountButton from '../PayAccountButton'
+import { ButtonLink, Card, Icons, LinkTabs, Pagination, StatStrip, StatTile } from '@/components/ui'
+import { pageCountFor } from '@/lib/searchParams'
 import { formatMoney } from '@/lib/decimals'
 import { documentHref } from '../documents'
 
 export const dynamic = 'force-dynamic'
 
+/** Matches the back office's list default, so both paginate the same way. */
+const PAGE_SIZE = 25
+
 export const metadata: Metadata = {
-  title: 'Your statement',
+  title: 'Statement',
   robots: { index: false, follow: false },
 }
 
@@ -27,29 +32,34 @@ export const metadata: Metadata = {
  * the Transactions tab — kept here as well because somebody who came looking
  * for a statement should not have to know we file the two separately.
  *
- * ── THE PAY BUTTON IS THE EXISTING ONE ─────────────────────────────────────
+ * ── TWO PAY BUTTONS, AT TWO DIFFERENT SCOPES ───────────────────────────────
  *
- * Same component and same action as the Invoices tab, which mints an intent and
- * hands off to /pay. A second payment path is a second place for money to go
- * wrong, so there isn't one.
+ * The row buttons are the Invoices tab's, settling one document each. The one
+ * in the header settles the ACCOUNT — the balance, across every open item —
+ * which is what somebody looking at eleven overdue invoices actually wants,
+ * and what doing it row by row would charge eleven gateway fees for.
+ *
+ * Both mint an intent and hand off to /pay; neither is a second payment path.
+ * The difference is the intent's purpose, and everything downstream of that
+ * already existed — see paidLinks.settleAccountPayment.
  */
 export default async function PortalStatementPage({
   params,
   searchParams,
 }: {
   params: Promise<{ token: string }>
-  searchParams: Promise<{ all?: string }>
+  searchParams: Promise<{ all?: string; page?: string }>
 }) {
   const { token } = await params
-  const { all } = await searchParams
+  const { all, page: pageRaw } = await searchParams
   const ctx = await requireSection(token, 'statement')
 
   const showAll = all === '1'
 
-  const [lines, profile, name] = await Promise.all([
-    customerStatement(ctx.siteId, ctx.customerId, { openOnly: !showAll, limit: 200 }),
+  const [lines, profile, head] = await Promise.all([
+    customerStatement(ctx.siteId, ctx.customerId, { openOnly: !showAll, limit: 500 }),
     portalProfile(ctx.siteId, ctx.customerId),
-    publicSiteName(ctx.siteId).catch(() => null),
+    letterheadFor(ctx.siteId),
   ])
 
   const balance = profile?.balance ?? 0
@@ -63,7 +73,7 @@ export default async function PortalStatementPage({
   /* Whether a separate Overdue tile would repeat the Still-owing figure. */
   const allOwedIsOverdue = owed > 0.005 && Math.abs(overdueTotal - owed) < 0.005
 
-  const rows = lines.map((line) => ({
+  const allRows = lines.map((line) => ({
     transactionId: line.transactionId,
     docType: line.docType,
     docNumber: line.docNumber,
@@ -76,26 +86,51 @@ export default async function PortalStatementPage({
     sourceDocId: line.sourceDocId,
   }))
 
+  const pageCount = pageCountFor(allRows.length, PAGE_SIZE)
+  const page = Math.min(Math.max(Number(pageRaw) || 1, 1), Math.max(pageCount, 1))
+  const rows = allRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  /* The filter lives in the URL, so paging has to carry it — and changing the
+     filter has to drop the page, or "Everything" would open on page 3 of a
+     list it has never shown. */
+  const hrefFor = (next: number) => {
+    const qs = new URLSearchParams()
+    if (showAll) qs.set('all', '1')
+    if (next > 1) qs.set('page', String(next))
+    const q = qs.toString()
+    return `/portal/${token}/statement${q ? `?${q}` : ''}`
+  }
+
   return (
     <PortalShell
-      name={name ?? undefined}
-      nav={
-        <PortalNav
-          token={token}
-          active="statement"
-          settings={ctx.settings}
-          onSignOut={<SignOutButton token={token} />}
-        />
-      }
-      title="Your statement"
+      name={head.name ?? undefined}
+      hasLogo={head.hasLogo}
+      token={token}
+      onSignOut={<SignOutButton token={token} />}
+      nav={<PortalNav token={token} active="statement" settings={ctx.settings} />}
+      title="Statement"
       subtitle="What is owed on your account, document by document."
       /* The one action on this screen. Secondary, not primary — the primary
          act here is paying, and those buttons live on the rows. */
+      /*
+       * ── THE ACCOUNT-LEVEL PAY BUTTON LIVES HERE ─────────────────────────
+       *
+       * The row buttons settle ONE invoice each; this settles the account. On
+       * a statement with eleven open items "pay the lot" is the action most
+       * people came for, and doing it row by row is eleven card payments and
+       * eleven gateway fees against one debt.
+       *
+       * It is the primary action and the PDF is now secondary — downloading a
+       * statement is what you do when you cannot settle it here.
+       */
       action={
-        <ButtonLink href={`/portal/${token}/statement/pdf`} variant="secondary">
-          <Icons.Download size={15} />
-          Download PDF
-        </ButtonLink>
+        <div className="flex items-center gap-2">
+          <ButtonLink href={`/portal/${token}/statement/pdf`} variant="secondary">
+            <Icons.Download size={15} />
+            Download PDF
+          </ButtonLink>
+          {ctx.settings.allowPay && <PayAccountButton token={token} balance={balance} />}
+        </div>
       }
       card={false}
     >
@@ -170,6 +205,13 @@ export default async function PortalStatementPage({
               ? 'Invoices and payments will show up here.'
               : 'Every invoice on your account is settled.'
           }
+        />
+        <Pagination
+          page={page}
+          pageCount={pageCount}
+          total={allRows.length}
+          pageSize={PAGE_SIZE}
+          hrefFor={hrefFor}
         />
       </Card>
     </PortalShell>

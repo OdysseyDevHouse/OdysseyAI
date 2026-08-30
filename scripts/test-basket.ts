@@ -310,6 +310,59 @@ function main() {
     ok('a zero-quantity reward grants nothing', zero.length === 1)
   }
 
+  /* ── A RETURNABLE PAYS THE CUSTOMER ───────────────────────────────────────
+   *
+   * A bottle store takes empties over the counter and hands out cash. The line
+   * has to owe the customer money, and it has to put the bottle on the shelf,
+   * and those two facts are carried by DIFFERENT fields on purpose:
+   *
+   *   qty   stays positive — `qty * stockDirectionFor('returnable')` is +1, so
+   *         the empty comes IN. Negating it would send the bottle back out.
+   *   price goes negative — which is what makes the slip pay out.
+   */
+  {
+    const empty = product({
+      id: 55,
+      code: 'EMPTY',
+      description: 'Empty bottle',
+      productType: 'returnable',
+      priceIncl: 5,
+    })
+
+    const line = lineFromProduct(empty, 6, 0)
+    ok('*** a returnable is priced NEGATIVE ***', line.unitPriceIncl === -5, String(line.unitPriceIncl))
+    ok(
+      '*** and its quantity stays POSITIVE, so the empty comes IN ***',
+      line.qty === 6,
+      'qty carries the stock direction; only the price carries the money',
+    )
+    ok('  so it does not read as a refund line', !isRefundLine(line))
+    ok(
+      '  the shelf figure is signed to match',
+      line.shelfPriceIncl === -5,
+      'or every deposit would wear a "price changed" badge',
+    )
+    ok('  and the line is therefore not an override', !isPriceOverridden(line))
+
+    const basket = addToBasket(addToBasket([], product({ priceIncl: 100 }), 1), empty, 6)
+    const total = basket.reduce((sum, l) => sum + l.qty * l.unitPriceIncl, 0)
+    ok('*** the empties come off the sale: 100 - 30 = 70 ***', total === 70, String(total))
+
+    const alone = [lineFromProduct(empty, 6, 0)]
+    const owed = alone.reduce((sum, l) => sum + l.qty * l.unitPriceIncl, 0)
+    ok('*** empties alone owe the customer 30 ***', owed === -30, String(owed))
+
+    // A recalled basket re-signs lines that are already negative.
+    ok(
+      '  signing is idempotent, so a recalled deposit stays a payout',
+      lineFromProduct({ ...empty, priceIncl: -5 } as TillProduct, 1, 0).unitPriceIncl === -5,
+    )
+    ok(
+      '  an ordinary product is untouched by the rule',
+      lineFromProduct(product({ priceIncl: 14.99 }), 1, 0).unitPriceIncl === 14.99,
+    )
+  }
+
   console.log(fails === 0 ? '\nAll basket checks passed.' : `\n${fails} check(s) failed.`)
   process.exit(fails === 0 ? 0 : 1)
 }

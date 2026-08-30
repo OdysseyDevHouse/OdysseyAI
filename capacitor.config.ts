@@ -71,6 +71,47 @@ const url = new URL(APP_URL)
  */
 const isDev = url.protocol === 'http:'
 
+/*
+ * A TILL build, rather than the back office in a box.
+ *
+ * `ODYSSEY_POS_ONLY=1` produces an APK that opens on the touch till, for a
+ * counter tablet. The two are genuinely different products on the same server:
+ * the back office is a manager checking figures on the move, the till is the
+ * thing a shop trades on, and they want opposite chrome.
+ *
+ * A build input rather than a setting, for the same reason the URL is one — a
+ * device is bought to be one or the other, and a till a cashier can navigate
+ * out of is a back office one tap behind the basket.
+ */
+const posOnly = process.env.ODYSSEY_POS_ONLY === '1'
+
+/*
+ * Which shop this till belongs to.
+ *
+ * A counter tablet trades for ONE shop, and the exchange has no way to know
+ * which: it runs before any screen exists, so there is nobody to ask. Without
+ * this it falls back to the first store the account can open — an arbitrary
+ * row, not a choice — and a multi-store owner gets a till ringing up sales
+ * against whichever shop happens to sort first.
+ *
+ * A build input rather than a picker, for the reason the URL and the start
+ * path are: the device is installed at a counter and its shop does not change.
+ * A picker would also be a picker a cashier could get WRONG, which is a sale
+ * posted to another branch.
+ *
+ * Optional. Left unset the old behaviour stands, which is right for the back
+ * office — a manager on the move genuinely does switch stores.
+ */
+const rawSiteId = process.env.ODYSSEY_SITE_ID
+const siteId = rawSiteId ? Number(rawSiteId) : undefined
+
+if (rawSiteId && !Number.isInteger(siteId)) {
+  throw new Error(
+    `ODYSSEY_SITE_ID must be a whole number — got "${rawSiteId}".\n` +
+      '  example:  ODYSSEY_SITE_ID=53 ODYSSEY_POS_ONLY=1 npm run mobile:sync',
+  )
+}
+
 const config: CapacitorConfig = {
   appId: 'za.co.odyssey.backoffice',
   appName: 'Odyssey',
@@ -87,6 +128,25 @@ const config: CapacitorConfig = {
     allowNavigation: [url.host],
     cleartext: isDev,
     androidScheme: isDev ? 'http' : 'https',
+    /*
+     * Where the WebView opens, on a till build.
+     *
+     * Read natively as `server.appStartPath` and appended to the app URL
+     * BEFORE the first load, so the till is the first paint rather than a
+     * redirect away from a dashboard the person on a counter tablet is never
+     * meant to see.
+     *
+     * Cast because this CLI version's `CapacitorConfig` type does not declare
+     * the key. The Android runtime reads it from the generated JSON regardless
+     * — see `CapConfig.getStartPath`, which does `appUrl += startPath`.
+     */
+    ...(posOnly ? ({ appStartPath: '/pos' } as { appStartPath: string }) : {}),
+    /*
+     * Read by the native shell, not by Capacitor — it rides in this file
+     * because `BuildConfigUrl` already parses it and a second config would be
+     * a second thing to keep in step with the URL.
+     */
+    ...(siteId === undefined ? {} : ({ odysseySiteId: siteId } as { odysseySiteId: number })),
   },
 
   android: {

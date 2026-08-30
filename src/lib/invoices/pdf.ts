@@ -108,6 +108,24 @@ export type InvoiceData = {
   paymentUrl?: string | null
   /** Free text under the totals — "Contract CON000012, March 2027". */
   footNote?: string | null
+  /**
+   * Nothing is owed on this invoice any more.
+   *
+   * ── WHY THE CALLER DECIDES, AND NOT THIS FILE ────────────────────────────
+   *
+   * "Paid" is a question about the LEDGER, not about the document: an account
+   * invoice is settled by a receipt allocated against it, which lives in the
+   * customer database and is not part of the figures used to draw the page. A
+   * renderer that went looking would be a print path issuing its own queries,
+   * and would make every emailed invoice slower to satisfy a stamp.
+   *
+   * So the caller — which has already asked `outstandingForDocument` for its own
+   * reasons — says so. Undefined means "not known", which prints nothing rather
+   * than claiming unpaid: an invoice wrongly stamped PAID is a debt nobody
+   * chases, and one wrongly stamped UNPAID is an argument with a customer who
+   * has the receipt.
+   */
+  paidInFull?: boolean
   generatedAt: Date
 }
 

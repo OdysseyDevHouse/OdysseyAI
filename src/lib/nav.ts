@@ -141,6 +141,18 @@ export const NAV: NavSection[] = [
     icon: LineChart,
     items: [
       { label: 'Point of sale', href: '/pos', icon: ShoppingCart, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
+      /* Directly under the till it configures, rather than in the setup hub.
+         A quick key is changed BECAUSE of what happened at the till — a line
+         that is rung up twenty times a day and is three taps deep — so it is
+         the same visit, by the same person, as serving. Beside Point of sale
+         and not down by the cash-up because it belongs to the till itself,
+         not to the end of a shift.
+         Route, breadcrumb and capability all as the menu designer's: the
+         screen has not moved, the menu names it so `breadcrumbFor`'s section
+         scan reads "Sales › Quick keys", and `setup.edit` still gates it —
+         arranging what every till shows is a manager's decision, whoever else
+         may serve on one. */
+      { label: 'Quick keys', href: '/setup/quick-keys', icon: LayoutGrid, built: true, capability: 'setup.edit', keywords: 'quick keys buttons tiles favourites shortcuts till pos grid bar', description: 'The buttons on the till — the things this shop sells most' },
       /* One row, not two. Invoicing was the capture worklist and Documents the
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
@@ -217,6 +229,17 @@ export const NAV: NavSection[] = [
          which price types exist, what VAT applies — which is a different job. */
       { label: 'Price changes', href: '/pricing-schedules', icon: CalendarClock, built: true, capability: 'products.edit', description: 'New prices approved now to take effect later' },
       { label: 'Instructions', href: '/instructions', icon: Lightbulb, built: true, capability: 'products.view', description: 'The questions a till asks when an item is sold' },
+      /* A menu row rather than a setup tile, and here rather than beside the
+         quick keys: arranging the browse menu is done WITH the product file
+         open — a product filed in the wrong department is spotted on /products
+         and fixed here — so it is the same visit, not a settings visit.
+         The ROUTE stays under /setup because the screen has not moved. It is
+         named by the menu now, so `breadcrumbFor` resolves it by the section
+         scan and the trail reads "Products › Menu designer"; it is no longer a
+         SUBPAGE_LABELS key, for the same reason the Loyalty rows are not.
+         No "arrange" in the keywords: every SUBSTRING of one matches, and it
+         would make this a hit for "rang" — which is how somebody finds Tills. */
+      { label: 'Menu designer', href: '/setup/menu-designer', icon: LayoutGrid, built: true, capability: 'setup.edit', keywords: 'menu designer browse grid departments categories order sort drag tiles till pos catalogue', description: 'The till’s browse menu — departments and products, in the order they appear' },
     ],
   },
   {
@@ -762,8 +785,12 @@ export const SUBPAGE_LABELS = {
   '/setup/modules': 'Menu & modules',
   '/setup/decimals': 'Decimal places',
   '/setup/numbering': 'Numbering',
-  '/setup/quick-keys': 'Quick keys',
-  '/setup/menu-designer': 'Menu designer',
+  /* Neither '/setup/quick-keys' nor '/setup/menu-designer' is here: the two
+     till designers are menu rows now — Quick keys under Sales, Menu designer
+     under Products — and a hub screen is by definition one the menu does NOT
+     name. Leaving either here would let the setup catalogue claim it again
+     (the key type is what makes a tile compile) and give the screen two front
+     doors that can disagree. */
   '/setup/pos-menus': 'Rotating menus',
   '/setup/tables': 'Tables',
   '/setup/reservations': 'Reservations',
@@ -1042,11 +1069,8 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
     'menu modules hide show sidebar navigation simplify remove sections turn off disable declutter tidy job cards loyalty online store accounting customers',
   '/setup/numbering': 'sequences document numbers prefix autocode',
   '/setup/decimals': 'decimals decimal places precision rounding quantity qty cost digits',
-  '/setup/quick-keys': 'buttons tiles favourites shortcuts till pos grid',
-  /* No "arrange": every substring of a keyword matches, and it would make this
-     screen a hit for "rang" — which is how somebody finds Tills. */
-  '/setup/menu-designer':
-    'menu designer browse grid departments categories order sort drag tiles till pos catalogue',
+  /* The two till designers' synonyms moved onto their NAV rows, where a menu
+     item carries its own. This map is only for screens the menu does not name. */
   '/setup/pos-menus':
     'rotating menus breakfast lunch dinner day part daypart time of day service hours schedule till pos grid',
   '/setup/tables': 'restaurant hospitality floor sections covers waiter bills',

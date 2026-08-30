@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import { verifyPortalToken } from '@/lib/publicPortalToken'
 import { getCustomerSession } from '@/lib/customerSession'
 import { portalSettings, portalIsOpen } from '@/lib/site/portalAuth'
-import { publicSiteName } from '@/lib/sites'
+import { letterheadFor } from './letterhead'
 import PortalShell from './PortalShell'
 import SignInForm from './SignInForm'
 
@@ -47,8 +47,8 @@ export default async function PortalSignInPage({
     )
   }
 
-  const [name, settings, session] = await Promise.all([
-    publicSiteName(siteId).catch(() => null),
+  const [head, settings, session] = await Promise.all([
+    letterheadFor(siteId),
     portalSettings(siteId),
     getCustomerSession(siteId),
   ])
@@ -72,7 +72,7 @@ export default async function PortalSignInPage({
   ].filter(Boolean) as string[]
 
   return (
-    <PortalShell name={name ?? undefined}>
+    <PortalShell name={head.name ?? undefined} hasLogo={head.hasLogo} token={token}>
       <SignInForm token={token} offers={offers.join(' and ')} />
     </PortalShell>
   )

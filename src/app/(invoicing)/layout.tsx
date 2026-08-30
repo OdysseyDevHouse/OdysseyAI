@@ -118,7 +118,6 @@ export default async function InvoicingLayout({ children }: { children: React.Re
             fact; see InvoicingLicenceGate. */}
         <InvoicingLicenceGate>
           <InvoicingChrome
-            siteName={site.displayName}
             /* The BROWSER session's rights still decide which of the four
                screens the menu offers — they are the same reads the back office
                allows. */

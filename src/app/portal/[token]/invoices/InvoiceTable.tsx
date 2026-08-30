@@ -68,11 +68,11 @@ export default function InvoiceTable({
        * left genuinely differ and the Total alone would mislead.
        */
       cell: (row) => {
-        if (row.isPaid) return <Badge tone="success">Paid</Badge>
+        if (row.isPaid) return <Badge tone="success" dot>Paid</Badge>
         return Math.abs(row.outstanding - row.total) > 0.005 ? (
-          <Badge tone="warning">{formatMoney(row.outstanding)} left</Badge>
+          <Badge tone="warning" dot>{formatMoney(row.outstanding)} left</Badge>
         ) : (
-          <Badge tone="warning">Unpaid</Badge>
+          <Badge tone="warning" dot>Unpaid</Badge>
         )
       },
       sortValue: (row) => (row.isPaid ? 0 : row.outstanding),

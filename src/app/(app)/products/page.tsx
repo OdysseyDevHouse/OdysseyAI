@@ -28,7 +28,6 @@ import {
   summariseCondition,
   Pagination,
   TableToolbar,
-  LinkSegmentedControl,
   LinkSelect,
   Icons,
 } from '@/components/ui'
@@ -380,9 +379,11 @@ export default async function ProductsPage({
     ? PRODUCT_TYPES.find((t) => t.id === productType)!.name.replace(/ product$/i, '')
     : null
 
-  /* Which slice the segmented control shows. The two flags are mutually
-     exclusive here: a segmented control is one choice, and "archived products
-     below minimum" was a combination nobody ever asked for. */
+  /* Which slice a URL is asking for. The toolbar no longer offers the choice,
+     but both flags still work when a link carries them — and this is what
+     tells the empty state to say "nothing fits the filters" rather than
+     "nothing on file". Kept mutually exclusive: "archived products below
+     minimum" was a combination nobody ever asked for. */
   const slice = archived === '1' ? 'archived' : low === '1' ? 'low' : 'all'
 
   /* Empty means one of three things — say which, and offer the way out. */
@@ -479,7 +480,13 @@ export default async function ProductsPage({
         }
       />
 
-      <PageBody>
+      {/* `flush` because this screen ENDS in a viewport-capped table. The table
+          is sized by useFitViewport to the room left below it, and that hook
+          counts PageBody's pb-10 as space to reserve — so on a page that does
+          not scroll, the 40px is not breathing room under the last card, it is
+          40px the table was refused and nothing else uses. The card's own
+          padding still keeps the last row off the window edge. */}
+      <PageBody flush>
         {/* Columns goes in the actions slot — right-aligned, beside the other
             things you do TO the list, rather than in a strip of its own
             between the toolbar and the table. */}
@@ -504,33 +511,28 @@ export default async function ProductsPage({
             />
           </div>
 
-          <LinkSegmentedControl
-            aria-label="Filter products"
-            value={slice}
-            options={[
-              { value: 'all', label: 'Active', href: filterHref({ low: null, archived: null }) },
-              {
-                value: 'low',
-                label: 'At or below minimum',
-                href: filterHref({ low: '1', archived: null }),
-              },
-              {
-                value: 'archived',
-                label: 'Include archived',
-                href: filterHref({ archived: '1', low: null }),
-              },
-            ]}
-          />
+          {/* The Active / At-or-below-minimum / Include-archived control used to
+              sit here. Both flags still work when a URL carries them — the
+              query, the count line and the empty state all still read them —
+              so a saved link or a bookmark keeps doing what it did. What is
+              gone is the toolbar making the choice. Archived stays reachable
+              through the Filter button, which offers it as a yes/no field. */}
 
           {/* Options carry their own href, built here on the server: a function
               prop cannot cross into a client component, and this keeps the URL
               helpers out of the browser bundle. */}
+          {/* A FIXED width, narrower than the longest option it can hold. A
+              department path can be "Food > Bakery > Morning goods", and a
+              picker sized to fit that is a control whose width is decided by
+              the deepest branch in the tree — different in every shop, and
+              wider than the pickers beside it here. The chosen value truncates
+              instead; the open menu is what shows a long path in full. */}
           <LinkSelect
             aria-label="Filter by department"
             icon={<Icons.LayoutGrid size={16} />}
             value={filterIds ? String(departmentId) : ''}
             options={departmentOptions}
-            className="w-64"
+            className="w-44"
           />
 
           <LinkSelect

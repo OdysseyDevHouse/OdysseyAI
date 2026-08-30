@@ -144,16 +144,16 @@ export default function LedgerTable({
                  * line is what separates the two.
                  */
                 return row.amountSigned < 0 ? (
-                  <Badge tone="success">Received</Badge>
+                  <Badge tone="success" dot>Received</Badge>
                 ) : (
-                  <Badge tone="success">Settled</Badge>
+                  <Badge tone="success" dot>Settled</Badge>
                 )
               }
               if (Math.abs(row.amountOutstanding - row.amountSigned) > 0.005) {
-                return <Badge tone="warning">{formatMoney(row.amountOutstanding)} left</Badge>
+                return <Badge tone="warning" dot>{formatMoney(row.amountOutstanding)} left</Badge>
               }
               return row.dueDate && row.dueDate < today ? (
-                <Badge tone="danger">Overdue</Badge>
+                <Badge tone="danger" dot>Overdue</Badge>
               ) : null
             },
             sortValue: (row: LedgerRow) => row.amountOutstanding,

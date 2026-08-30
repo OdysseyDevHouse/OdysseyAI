@@ -606,6 +606,97 @@ export async function payLinkFor(
   }
 }
 
+
+/**
+ * A link to pay ANY amount onto the account itself.
+ *
+ * ── WHY THIS EXISTS BESIDE payLinkFor AND IS NOT A CASE OF IT ──────────────
+ *
+ * `payLinkFor` settles one document; this settles a BALANCE. They differ in the
+ * only way that matters to the money: the invoice case has an outstanding
+ * figure the system computed and the customer may only accept, and this case
+ * has a figure the CUSTOMER chose. A shared function taking an optional amount
+ * would put "how much" under the caller's control on the invoice path too,
+ * which is exactly the guard payLinkFor exists to hold.
+ *
+ * ── THE AMOUNT IS THE CUSTOMER'S, WITHIN LIMITS ────────────────────────────
+ *
+ * Paying MORE than is owed is the point — a top-up leaves the account in
+ * credit, which the ledger already models and `settleAccountPayment` already
+ * handles: autoAllocate settles what open items there are oldest-first and any
+ * remainder simply sits as an unallocated credit. That is what a deposit onto
+ * an account has always meant on a debtors ledger, so nothing new is needed
+ * downstream.
+ *
+ * What IS checked here is that the number is a real one. It is typed into a box
+ * on a public page, so it arrives as a claim: NaN, Infinity, a negative, a
+ * thousand decimal places, or a figure large enough to be a typo rather than an
+ * intention. Each of those becomes a refusal rather than a payment intent,
+ * because an intent is what the gateway callback is verified against — a bad
+ * one is money that cannot be reconciled, not an error somebody sees.
+ *
+ * ── A NEGATIVE IS REFUSED, NOT CLAMPED ────────────────────────────────────
+ *
+ * Clamping would take a customer who typed "-500" meaning a refund and charge
+ * their card 500. The ledger clamps payment signs of its own accord (a negative
+ * payment posts as another credit), so a negative reaching that far is a silent
+ * wrong answer rather than a failure. It stops here.
+ */
+
+/** The most a customer may put on their account in one go. */
+const MAX_ACCOUNT_PAYMENT = 1_000_000
+
+export async function accountPayLinkFor(
+  siteId: number,
+  customerId: number,
+  amountIncl: number,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  // Number, and a sane one. `Number.isFinite` rejects NaN and both infinities;
+  // the typed box can produce all three from ordinary input.
+  if (!Number.isFinite(amountIncl)) {
+    return { ok: false, error: 'Please enter an amount to pay.' }
+  }
+
+  const amount = Math.round(amountIncl * 100) / 100
+  if (amount <= 0) {
+    return { ok: false, error: 'Please enter an amount greater than zero.' }
+  }
+  if (amount > MAX_ACCOUNT_PAYMENT) {
+    return { ok: false, error: 'That amount is too large to pay online. Please contact us.' }
+  }
+
+  /*
+   * The customer still has to exist and still be somebody we may take money
+   * from. The session proves who they are; it does not prove the account was
+   * not archived in the meantime, and banking a payment onto a closed account
+   * leaves money on a record nobody looks at.
+   */
+  const customer = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id, status FROM customers WHERE id = ?`,
+    [customerId],
+  ).catch(() => null)
+  if (!customer) return { ok: false, error: 'We could not find your account.' }
+  if (String(customer.status ?? '') === 'closed') {
+    return { ok: false, error: 'This account is closed. Please contact us.' }
+  }
+
+  try {
+    const { createIntent } = await import('./payments')
+    const { createCallbackToken } = await import('../callbackToken')
+    const intent = await createIntent(siteId, {
+      // A statement's target is a CUSTOMER, not a document — a balance is not
+      // a thing with a number. See INTENT_TARGET in payments.ts.
+      target: { purpose: 'customer_account', customerId },
+      amountIncl: amount,
+    })
+    const token = await createCallbackToken(siteId, intent.reference)
+    return { ok: true, url: `/pay/${token}` }
+  } catch {
+    return { ok: false, error: 'Paying online is not available at the moment.' }
+  }
+}
+
 /**
  * A customer attaches a photo to their own job.
  *

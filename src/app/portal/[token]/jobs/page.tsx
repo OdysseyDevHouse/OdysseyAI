@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { requireSection } from '../guard'
 import { portalJobs } from '@/lib/site/portalData'
-import { publicSiteName } from '@/lib/sites'
+import { letterheadFor } from '../letterhead'
 import PortalShell, { PortalNav } from '../PortalShell'
 import SignOutButton from '../SignOutButton'
 import { Badge, EmptyState, Icons, TextLink } from '@/components/ui'
@@ -29,9 +29,9 @@ export default async function PortalJobsPage({
   const { token } = await params
   const ctx = await requireSection(token, 'jobs')
 
-  const [jobs, name] = await Promise.all([
+  const [jobs, head] = await Promise.all([
     portalJobs(ctx.siteId, ctx.customerId),
-    publicSiteName(ctx.siteId).catch(() => null),
+    letterheadFor(ctx.siteId),
   ])
 
   const open = jobs.filter((j) => !j.isClosed)
@@ -39,8 +39,11 @@ export default async function PortalJobsPage({
 
   return (
     <PortalShell
-      name={name ?? undefined}
-      nav={<PortalNav token={token} active="jobs" settings={ctx.settings} onSignOut={<SignOutButton token={token} />} />}
+      name={head.name ?? undefined}
+      hasLogo={head.hasLogo}
+      token={token}
+      onSignOut={<SignOutButton token={token} />}
+      nav={<PortalNav token={token} active="jobs" settings={ctx.settings} />}
     >
       <h1 className="text-xl font-semibold text-ink">Your jobs</h1>
       <p className="mt-1 text-sm text-muted">Signed in as {ctx.customerName}.</p>

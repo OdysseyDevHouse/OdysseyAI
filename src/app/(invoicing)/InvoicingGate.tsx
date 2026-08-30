@@ -3,7 +3,8 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { Card, PinPad } from '@/components/ui'
+import Link from 'next/link'
+import { Card, Icons, PinPad } from '@/components/ui'
 import { counterSignInAction } from './pinActions'
 import { ensureWindowId } from '@/lib/windowSession'
 
@@ -107,6 +108,33 @@ export default function InvoicingGate({ siteName }: { siteName: string }) {
           </p>
 
           <PinPad wide onSubmit={submit} error={error} busy={pending} rejectedAt={rejects} />
+
+          {/*
+            ── THE WAY OUT, AND WHY IT IS HERE ──────────────────────────────
+
+            It used to sit in the counter's header, one tap from Save and in the
+            corner a hand reaches for, on a screen that usually has a half-typed
+            document on it. A control whose only job is to abandon that does not
+            belong beside the controls that finish it.
+
+            Here it is harmless and still findable: this screen is what an
+            operator sees when they hand over, so somebody who wants the back
+            office signs out first — which is the correct order anyway, since
+            leaving the counter signed in is what the gate exists to prevent.
+
+            A plain link, not a Button: it navigates, and it must read as the
+            quiet second option beside the pad rather than compete with it.
+          */}
+          <div className="mt-4 flex justify-center border-t border-border pt-4">
+            <Link
+              href="/dashboard"
+              data-kit-ok
+              className="flex h-control items-center gap-2 rounded-control px-3 text-[13px] font-medium text-muted transition hover:bg-brand-soft hover:text-brand"
+            >
+              <Icons.ArrowLeft size={16} />
+              Back to back office
+            </Link>
+          </div>
         </div>
       </Card>
     </div>

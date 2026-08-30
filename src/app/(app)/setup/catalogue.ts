@@ -334,26 +334,15 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'sky',
         capability: 'setup.edit',
       },
-      {
-        href: '/setup/quick-keys',
-        description: 'The buttons on the till — the things this shop sells most.',
-        keywords: 'quick keys buttons tiles favourites shortcuts till pos grid',
-        icon: 'LayoutGrid',
-        tone: 'violet',
-        capability: 'setup.edit',
-      },
-      {
-        href: '/setup/menu-designer',
-        description: 'The till’s browse menu — departments and products, in the order they appear.',
-        /* No "arrange" here, deliberately: every SUBSTRING of a keyword matches,
-           so it makes this screen a hit for "rang" — and "rang up" is how
-           somebody looks for the Tills screen. */
-        keywords:
-          'menu designer browse grid departments categories order sort drag tiles till pos catalogue',
-        icon: 'LayoutGrid',
-        tone: 'emerald',
-        capability: 'setup.edit',
-      },
+      /* Neither till designer is here any more. Both are sidebar rows now —
+         Quick keys under Sales, beside the till it configures, and Menu
+         designer under Products, beside the file it arranges. Each is edited
+         because of what the daily screen showed, not on a settings visit.
+         A cross-reference tile would be the second front door this hub exists
+         to avoid; both are named by the menu, so neither is a SUBPAGE_LABELS
+         key and `SetupHref` no longer admits them.
+         Terminals and Rotating menus stay: which machine is which, and WHICH
+         menu the till shows at 11am, are each set once — this hub's job. */
       {
         href: '/setup/pos-menus',
         description: 'Breakfast, lunch and dinner — the till switches by the clock.',

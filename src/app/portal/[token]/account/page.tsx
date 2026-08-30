@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
+import type { ReactNode } from 'react'
 import { requireSection } from '../guard'
 import { portalProfile, portalAddresses } from '@/lib/site/portalData'
-import { publicSiteName } from '@/lib/sites'
+import { letterheadFor } from '../letterhead'
 import PortalShell, { PortalNav } from '../PortalShell'
 import SignOutButton from '../SignOutButton'
+import PayAccountButton from '../PayAccountButton'
 import {
   Badge,
   Card,
@@ -11,6 +13,7 @@ import {
   CardHeader,
   EmptyState,
   Icons,
+  RowTile,
   StatStrip,
   StatTile,
 } from '@/components/ui'
@@ -49,20 +52,19 @@ export default async function PortalAccountPage({
   const { token } = await params
   const ctx = await requireSection(token, 'account')
 
-  const [profile, addresses, name] = await Promise.all([
+  const [profile, addresses, head] = await Promise.all([
     portalProfile(ctx.siteId, ctx.customerId),
     portalAddresses(ctx.siteId, ctx.customerId),
-    publicSiteName(ctx.siteId).catch(() => null),
+    letterheadFor(ctx.siteId),
   ])
 
-  const nav = (
-    <PortalNav
-      token={token}
-      active="account"
-      settings={ctx.settings}
-      onSignOut={<SignOutButton token={token} />}
-    />
-  )
+  const frame = {
+    name: head.name ?? undefined,
+    hasLogo: head.hasLogo,
+    token,
+    onSignOut: <SignOutButton token={token} />,
+    nav: <PortalNav token={token} active="account" settings={ctx.settings} />,
+  }
 
   /*
    * Signed in, but the customer record has gone — deleted or archived between
@@ -71,7 +73,7 @@ export default async function PortalAccountPage({
    */
   if (!profile) {
     return (
-      <PortalShell name={name ?? undefined} nav={nav}>
+      <PortalShell {...frame}>
         <EmptyState
           icon={<Icons.User size={22} />}
           title="We could not find your account"
@@ -85,48 +87,52 @@ export default async function PortalAccountPage({
   const inCredit = profile.balance < -0.005
 
   /*
-   * The details, as label/value pairs.
+   * The details, with a glyph each.
    *
    * Built as data rather than markup so the empty ones can be dropped in one
    * place: a row reading "VAT number —" on a customer who has none is a line
    * the reader has to process to learn nothing. What IS shown is then all
    * true, which is the point of the page.
    */
-  const details: [string, string][] = [
-    ['Contact', profile.contactName ?? ''],
-    ['Email', profile.email ?? ''],
-    ['Phone', profile.phone ?? ''],
-    ['VAT number', profile.vatNumber ?? ''],
-    ['Address', profile.addressLines.join('\n')],
-    /*
-     * Payment terms are NOT here — they are a stat tile above. Shown in both
-     * places the page stated the same fact twice within one screen, which
-     * makes a reader check whether the two agree instead of reading either.
-     * It falls back into this list only when there are no terms to headline.
-     */
-    ...(profile.paymentTermsDays > 0
-      ? []
-      : ([['Payment terms', 'On invoice']] as [string, string][])),
-  ]
-  const shown = details.filter(([, value]) => value.trim().length > 0)
+  const details: { label: string; value: string; icon: ReactNode }[] = [
+    { label: 'Contact', value: profile.contactName ?? '', icon: <Icons.User size={14} /> },
+    { label: 'Email', value: profile.email ?? '', icon: <Icons.Mail size={14} /> },
+    { label: 'Phone', value: profile.phone ?? '', icon: <Icons.Phone size={14} /> },
+    { label: 'VAT number', value: profile.vatNumber ?? '', icon: <Icons.FileText size={14} /> },
+    {
+      label: 'Address',
+      value: profile.addressLines.join('\n'),
+      icon: <Icons.MapPin size={14} />,
+    },
+  ].filter((row) => row.value.trim().length > 0)
 
   return (
-    <PortalShell
-      name={name ?? undefined}
-      nav={nav}
-      title={profile.name}
-      subtitle={<span className="numeric">Account {profile.code}</span>}
-      card={false}
-    >
+    <PortalShell {...frame} card={false}>
       {/*
-       * The balance is the one number somebody opens this page for, so it gets
-       * the kit's headline treatment rather than small print in the corner —
-       * and a TONE, because "you owe money" is an exception and "settled" is
-       * not. Colour here is the whole signal.
+       * ── IDENTITY AND THE HEADLINE NUMBERS SHARE ONE ROW ─────────────────
+       *
+       * Who this account belongs to and what it stands at are one question, and
+       * a customer opening this page asks both at once. Stacking the name above
+       * a full-width strip pushed the balance below the fold on a phone and
+       * left a band of empty canvas beside the name on a laptop.
        */}
+      <div className="flex items-center gap-3">
+        <RowTile label={profile.name} size="lg" />
+        <div className="min-w-0">
+          <h1 className="truncate text-xl font-semibold text-ink">{profile.name}</h1>
+          <p className="numeric mt-0.5 text-sm text-muted">Account {profile.code}</p>
+        </div>
+      </div>
+
+      {/* StatStrip rather than a hand-built flex row: StatTile takes no
+          className by design, so sizing tiles at the call site would mean the
+          kit no longer decides how a stat tile looks. The strip already lays
+          them out and collapses to two-up on a phone. */}
       <StatStrip columns={2}>
+        {/* The balance carries a TONE, because "you owe money" is an exception
+            and "settled" is not. Colour here is the whole signal. */}
         <StatTile
-          label={inCredit ? 'In credit' : 'Balance'}
+          label={inCredit ? 'In credit' : 'Current balance'}
           value={formatMoney(Math.abs(profile.balance))}
           tone={owing ? 'warning' : inCredit ? 'success' : 'default'}
           hint={owing ? 'Owing on your account' : inCredit ? 'We owe you' : 'Nothing outstanding'}
@@ -137,29 +143,60 @@ export default async function PortalAccountPage({
             label="Payment terms"
             value={`${profile.paymentTermsDays} days`}
             hint="From the date of invoice"
-            icon={<Icons.Clock size={16} />}
+            icon={<Icons.Calendar size={16} />}
           />
         )}
       </StatStrip>
 
+      {/*
+       * ── PAYING FROM THE PAGE THAT STATES THE BALANCE ───────────────────
+       *
+       * The tile above says what the account stands at; this is what to do
+       * about it, directly beneath. A customer who reads "you owe R4 320"
+       * and has to find the Statement tab to act on it has been told a fact
+       * and denied the response to it.
+       *
+       * It shows on a SETTLED account too, worded as a top-up. That is the
+       * whole reason this page carries the button as well as the statement:
+       * a statement is about what is owed, and an account in credit is a
+       * legitimate thing to want — it is how a customer on cash terms keeps
+       * buying without a card at the counter every time.
+       */}
+      {ctx.settings.allowPay && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-border bg-surface px-4 py-3">
+          <p className="text-sm text-muted">
+            {owing
+              ? 'Settle your balance, or pay part of it, with a card.'
+              : 'Pay money onto your account to use against future invoices.'}
+          </p>
+          <PayAccountButton token={token} balance={profile.balance} />
+        </div>
+      )}
+
       <Card>
+        {/* "Contact details", not "Your details" — that is the name of the TAB,
+            and a card repeating its own tab's title tells the reader nothing
+            about what is inside it. */}
         <CardHeader
           icon={<Icons.User size={16} />}
-          title="Your details"
+          title="Contact details"
           description="What we have on file for you. Contact us if anything here is wrong."
         />
         <CardBody>
           <dl className="divide-y divide-border">
-            {shown.map(([label, value]) => (
+            {details.map((row) => (
               <div
-                key={label}
+                key={row.label}
                 className="flex flex-wrap gap-x-4 gap-y-0.5 py-2.5 text-sm first:pt-0 last:pb-0"
               >
                 {/* A plain definition list rather than SummaryList: that one is
                     a totals panel and right-aligns every value as a number,
                     which turns a postal address into a ragged column. */}
-                <dt className="w-32 shrink-0 text-muted">{label}</dt>
-                <dd className="min-w-0 flex-1 whitespace-pre-line text-ink-2">{value}</dd>
+                <dt className="flex w-36 shrink-0 items-center gap-2 text-muted">
+                  <span className="text-faint">{row.icon}</span>
+                  {row.label}
+                </dt>
+                <dd className="min-w-0 flex-1 whitespace-pre-line text-ink-2">{row.value}</dd>
               </div>
             ))}
           </dl>

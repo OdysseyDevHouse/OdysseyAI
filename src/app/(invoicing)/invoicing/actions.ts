@@ -51,8 +51,30 @@ export type InvoicePayload = {
   customerName: string | null
   priceStructureId: number | null
   documentDate: string
-  /** The customer's own order number, shown as "Invoice order number". */
+  /**
+   * The CUSTOMER's own handle on the job — their purchase-order number, their
+   * job number, whatever they quote back at you. Shown as "Customer reference".
+   *
+   * Never the sale's name. A draft is named by `customerName`, which is what
+   * `requireName` below is about: this field belongs to the customer and is
+   * free for whatever they use it for. Always optional.
+   */
   reference: string | null
+  /**
+   * Refuse the save unless `customerName` names the document.
+   *
+   * Set by the Save (draft) button and nothing else. A draft is the one state
+   * with no number of its own — the number is allocated at issue — so it is the
+   * one state where the name is not optional. The editor asks for it in a
+   * dialog before it ever gets here; this is the boundary that means a crafted
+   * request cannot skip the question.
+   *
+   * Finalising and issuing a quote both go through the same save and both leave
+   * it OFF, deliberately: each ends by allocating a document number, which is a
+   * better handle than any name, and refusing to take money from a customer
+   * standing at the counter over a blank text box would be absurd.
+   */
+  requireName?: boolean
   notes: string | null
   /**
    * Which MACHINE is capturing, not which till.
@@ -144,6 +166,43 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
     payload.lines,
   )
   if (refused) return { ok: false, error: refused }
+
+  /*
+   * ── A SAVED DRAFT MUST BE CALLABLE BY SOMETHING ─────────────────────────
+   *
+   * A draft is a document nobody has issued yet: it has no number — the number
+   * is allocated at issue — so the only handle anyone has on it is the name it
+   * was saved under. Without one the register lists a row with a dash where its
+   * identity should be, and whoever parked it half an hour ago has to open
+   * documents until they recognise their own lines.
+   *
+   * The same rule the till already keeps: parking a basket asks for a name
+   * before it will save, and stores it as `customer_name`. This window parks
+   * into the SAME column, so it asks the same question.
+   *
+   * NOT the reference. That is the customer's own number for the job and is
+   * theirs to spend on whatever they like — a shop-invented name has no
+   * business taking the field over.
+   *
+   * ── AND IT IS CHECKED HERE ──────────────────────────────────────────────
+   *
+   * The editor checks first and marks the field red, which is the version a
+   * person actually sees. This is the boundary: it catches the crafted request,
+   * and it is the one place the rule is stated once for whatever else learns to
+   * park a draft here later.
+   *
+   * Deliberately NOT a disabled Save button. A button that will not press and
+   * does not say why is the worst of the three options — the click has to be
+   * allowed so it can explain itself and put the cursor in the box.
+   */
+  if (payload.requireName && !payload.customerName?.trim()) {
+    return {
+      ok: false,
+      error:
+        'Give this sale a name before saving it. A draft has no document number yet, ' +
+        'so the name is the only way to find it again.',
+    }
+  }
 
   /*
    * Which till this invoice was captured on, resolved from the machine.

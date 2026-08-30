@@ -34,7 +34,9 @@ import {
   getProduct,
   propertyColumnMap,
   bulkUpdateProducts,
+  quickUpdateProduct,
   type ProductInput,
+  type ProductQuickEdit,
   type ProductBulkChange,
   type ProductBulkResult,
 } from '@/lib/site/products'
@@ -764,4 +766,104 @@ export async function runProductReportAction(
       error: e instanceof Error ? e.message : 'This report could not be run.',
     }
   }
+}
+
+/* ── Quick edit ──────────────────────────────────────────────────────────── */
+
+/**
+ * The products list's slide-in panel: a few fields, changed without opening the
+ * product.
+ *
+ * Deliberately NOT `saveProductAction` with a smaller form. That action reads a
+ * whole ProductInput out of the FormData and hands it to `updateProduct`, which
+ * writes a whole product — so a six-field form posted through it would clear
+ * the prices, recipe lines and supplier links it never rendered. This one names
+ * the fields it changes and leaves everything else alone.
+ */
+export async function quickEditProductAction(
+  id: number,
+  /*
+   * The code is NOT accepted here, though quickUpdateProduct can write one.
+   *
+   * A product code is its identity — printed on labels, quoted on orders, sat
+   * in documents already issued — so changing one belongs on the full product
+   * where that weight is obvious, not in a panel opened to fix a price. The
+   * panel renders it read-only; this makes the endpoint agree, because a
+   * server action is a public entry point and a greyed box is not a boundary.
+   */
+  patch: Omit<ProductQuickEdit, 'code'>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error ?? 'You may not edit products.' }
+  const { siteId } = ctx
+
+  const existing = await getProduct(siteId, id)
+  if (!existing) return { ok: false, error: 'That product no longer exists.' }
+
+  /* The same ownership rule the full editor enforces: a product belongs to the
+     store whose catalogue created it, and only that store may change what it
+     IS. The panel is a courtesy; this is the boundary. */
+  const { editRefusal } = await import('@/lib/site/productOwnership')
+  const refusal = await editRefusal(siteId, existing.code)
+  if (refusal) return { ok: false, error: refusal }
+
+  const result = await quickUpdateProduct(siteId, id, patch, {
+    userName: ctx.actor.userName,
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  /*
+   * ── KEEPING A LINKED GROUP IN STEP ───────────────────────────────────────
+   *
+   * Descriptive fields always travel to the other stores in a group — they are
+   * what makes it the same product everywhere — and cost and price travel when
+   * the group shares them. A quick edit that skipped this would leave one store
+   * showing the new description and every sibling showing the old one, with
+   * nothing on screen to say why.
+   *
+   * Fanned out from the product as it now STANDS, re-read after the write,
+   * rather than from the patch: the patch is a handful of fields, and
+   * FanoutValues wants the whole picture. Reading it back sends the saved
+   * truth instead of a reconstruction of it.
+   *
+   * Everything here concerns OTHER databases and must never turn a successful
+   * save into a failed one — the same rule saveProductAction follows.
+   */
+  const saved = await getProduct(siteId, id).catch(() => null)
+  const stores = await linkedStores(siteId).catch(() => [])
+  if (saved && stores.length > 1) {
+    const rates = await listVatRates(siteId).catch(() => [])
+    const rateOf = (rateId: number | null | undefined) =>
+      rateId == null ? undefined : rates.find((r) => r.id === rateId)?.rate
+    const structures = await listPriceStructures(siteId).catch(() => [])
+
+    await fanoutProduct(
+      siteId,
+      saved.code,
+      {
+        lastCost: saved.lastCost ?? 0,
+        prices: Object.fromEntries(saved.prices.map((p) => [p.priceStructureId, p.sellIncl])),
+        description: saved.description,
+        barcode: saved.barcode,
+        extraDescription: saved.extraDescription ?? null,
+        productType: saved.productType ?? 'normal',
+        purchaseVatPercent: rateOf(saved.purchaseVatRateId),
+        sellingVatPercent: rateOf(saved.sellingVatRateId),
+        /* By NAME, not id: department ids are per-database, so sending the id
+           would file the product under whatever happened to share that number
+           in the target store. */
+        departmentName: saved.departmentId
+          ? ((await listDepartments(siteId).catch(() => [])).find(
+              (d) => d.id === saved.departmentId,
+            )?.name ?? null)
+          : null,
+      },
+      structures.map((s) => ({ id: s.id, name: s.name })),
+      /* No availability map: this panel shows no store toggles, and an empty
+         map means every store keeps what it had. */
+    ).catch(() => [])
+  }
+
+  revalidatePath('/products')
+  return { ok: true }
 }

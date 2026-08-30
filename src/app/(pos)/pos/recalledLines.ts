@@ -4,7 +4,7 @@ import { getTillProduct } from '@/lib/site/tillSearch'
 import { terminalStockLocationId } from '@/lib/site/terminals'
 import { sentQtyByLineAndPrinter } from '@/lib/site/kitchenPrinters'
 import type { getDocument } from '@/lib/site/salesDocuments'
-import type { BasketLine } from '@/lib/basket'
+import { returnablePrice, type BasketLine } from '@/lib/basket'
 
 /**
  * Turning a stored sales document back into basket lines.
@@ -152,7 +152,13 @@ export async function basketLinesForDocument(
       unitCostExcl: line.unitCostExcl,
       // Fresh from the product, not from the stored line — see the note above.
       maxDiscountPct: product?.maxDiscountPct ?? 0,
-      shelfPriceIncl: product && !product.askPriceAtSale ? product.priceIncl : null,
+      /* Signed like the stored line: a returnable's catalogue price is positive
+         but its line is negative, so comparing the two raw would badge every
+         recalled deposit as a changed price. See `returnablePrice`. */
+      shelfPriceIncl:
+        product && !product.askPriceAtSale
+          ? returnablePrice(line.productType, product.priceIncl)
+          : null,
       allowFractions: product?.allowFractions ?? false,
       /* From the LINE, not the product — see the note on the type. What was
          ordered is a fact about this bill, not about the menu as it stands

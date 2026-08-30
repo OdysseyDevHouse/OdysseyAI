@@ -114,14 +114,26 @@ export function invoiceDataTokens(
     'doc.closing': extra.closing ?? '',
 
     /*
-     * The three kind-specific dates and the status banner are printed-page
-     * concepts. An email is always a finalised invoice, never a quote and never
-     * a reprint, so these are empty and the rows carrying them drop themselves.
+     * The kind-specific dates are printed-page concepts. An email is always a
+     * finalised invoice and never a quote, so these are empty and the rows
+     * carrying them drop themselves.
      */
     'doc.validUntil': '',
     'doc.deliveryDate': '',
     'doc.customerReference': data.reference ?? '',
-    'doc.statusBanner': '',
+    /*
+     * PAID says something the emailed copy could not before.
+     *
+     * The banner was hardcoded empty here on the reasoning that an email is
+     * never a reprint and never a pro forma — true, and it missed the one
+     * status an emailed invoice genuinely can carry. A customer who pays a link
+     * and then opens the attachment they were sent should not be looking at a
+     * document that still reads as a demand.
+     *
+     * Only when the caller has actually established it — see `paidInFull` on
+     * InvoiceData for why silence is the right default.
+     */
+    'doc.statusBanner': data.paidInFull ? 'PAID' : '',
 
     // The two an email has and paper does not.
     'doc.paymentUrl': data.paymentUrl ?? '',

@@ -11,12 +11,24 @@ export const dynamic = 'force-dynamic'
 /**
  * Arranging the till's quick keys.
  *
- * ── WHY THIS LIVES IN SETUP AND NOT ON THE TILL ───────────────────────────
+ * ── WHY THIS IS NOT ON THE TILL ───────────────────────────────────────────
  *
- * It is configuration a manager does once, so it belongs beside tender types and
- * terminals — and it needs the back-office chrome the till deliberately does not have.
- * Putting a drag-and-drop designer on a full-screen touch till would also mean a cashier
- * could rearrange the bar mid-shift by holding a key half a second too long.
+ * It needs the back-office chrome the till deliberately does not have. Putting a
+ * drag-and-drop designer on a full-screen touch till would also mean a cashier could
+ * rearrange the bar mid-shift by holding a key half a second too long.
+ *
+ * ── WHY IT IS REACHED FROM SALES, NOT FROM SETUP ──────────────────────────
+ *
+ * It used to be a tile in the setup hub, beside tender types and terminals. It is a
+ * menu row under Sales now, directly below Point of sale: a quick key is changed
+ * BECAUSE of what happened at the till — a line rung up twenty times a day that sits
+ * three taps deep — so it is the same visit as serving, not a settings visit.
+ *
+ * The ROUTE stayed under /setup so no existing link breaks. That is safe because
+ * `breadcrumbFor` resolves a path the menu NAMES by its section scan before it ever
+ * consults `hubFor`, so the trail reads "Sales › Quick keys". The capability stayed
+ * `setup.edit` for the reason it always was: arranging what every till shows is a
+ * manager's decision, whoever else may serve on one.
  *
  * ── THE NAMES ARE RESOLVED HERE ───────────────────────────────────────────
  *

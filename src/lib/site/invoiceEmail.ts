@@ -104,7 +104,18 @@ export async function emailInvoiceDocument(
       ? await mintPaymentLink(siteId, documentId, outstanding, opts.origin).catch(() => null)
       : null
 
-  const data = await buildInvoice(siteId, site, documentId, { paymentUrl })
+  const data = await buildInvoice(siteId, site, documentId, {
+    paymentUrl,
+    /*
+     * Stamps PAID on the attachment when nothing is owed.
+     *
+     * `outstanding` is already in hand above — it decides whether to mint a pay
+     * link at all — so this costs no extra query. Only for an INVOICE: a credit
+     * note is not something anybody pays, and marking one PAID would say the
+     * refund had been made.
+     */
+    paidInFull: document.docType === 'invoice' ? outstanding <= 0.005 : undefined,
+  })
   if (!data) return { ok: false, error: 'The document could not be built.' }
 
   let pdf: Buffer

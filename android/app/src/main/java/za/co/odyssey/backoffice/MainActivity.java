@@ -32,7 +32,40 @@ public class MainActivity extends BridgeActivity {
       getBridge().setWebViewClient(new OfflineAwareClient(this));
     }
 
-    declareMobileShell();
+    /*
+     * Only the back-office build announces itself as a phone shell.
+     *
+     * A till build renders the touch till, which draws its own full-screen
+     * chrome and reads no such signal — and the cookie would be a standing
+     * instruction to strip the sidebar off any back-office page that did get
+     * opened, quietly making the wrong product look deliberate.
+     *
+     * The start path is the discriminator because it is already in the
+     * generated config and needs no second flag to drift out of step with it.
+     */
+    if (!isTillBuild()) {
+      declareMobileShell();
+    }
+  }
+
+  /**
+   * Is this the counter-tablet build?
+   *
+   * `ODYSSEY_POS_ONLY=1` at sync time writes `server.appStartPath` into
+   * capacitor.config.json, and the bridge appends it to the server URL — so
+   * the app URL ending at the till's path IS the build flag, already carried
+   * across the boundary. Reading it back beats a second BuildConfig field
+   * that could disagree with the path the WebView actually opens.
+   */
+  private boolean isTillBuild() {
+    try {
+      String url = getBridge().getAppUrl();
+      return url != null && url.endsWith("/pos");
+    } catch (Exception ignored) {
+      /* Fall back to the back-office behaviour: a till that gets the cookie
+         is cosmetically wrong, while a crash here is a dead launcher. */
+      return false;
+    }
   }
 
   /**

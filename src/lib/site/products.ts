@@ -1891,3 +1891,147 @@ async function bulkDeleteProducts(
 
   return { updated: deleted, skipped }
 }
+
+/* ── Quick edit ──────────────────────────────────────────────────────────── */
+
+/**
+ * The handful of fields the products list can change without opening a product.
+ *
+ * Every field is OPTIONAL and absent means "leave it alone" — which is the
+ * whole difference between this and `updateProduct`. That function takes a
+ * whole ProductInput and writes a whole product, so a form that renders six
+ * fields and posts them through it deletes the prices, recipe lines and
+ * supplier links it never rendered. A panel that edits six things has to write
+ * six things.
+ *
+ * `priceIncl` is the DEFAULT price structure's shelf price, because that is the
+ * one the list shows. A product priced on several structures keeps the rest
+ * exactly as they were, and the panel says so rather than pretending one box
+ * covers them.
+ */
+export type ProductQuickEdit = {
+  description?: string
+  code?: string
+  barcode?: string | null
+  departmentId?: number | null
+  /** Excluding tax, written to last_cost — average cost is derived, never typed. */
+  lastCost?: number
+  /** Including tax, against the default price structure. */
+  priceIncl?: number
+}
+
+/** What a quick edit may refuse, before anything is written. */
+function validateQuickEdit(patch: ProductQuickEdit): string | null {
+  if (patch.code !== undefined) {
+    if (!patch.code.trim()) return 'A product code is required.'
+    if (patch.code.trim().length > 48) return 'Product code must be 48 characters or fewer.'
+  }
+  if (patch.description !== undefined) {
+    if (!patch.description.trim()) return 'A description is required.'
+    if (patch.description.trim().length > 190)
+      return 'Description must be 190 characters or fewer.'
+  }
+  if (patch.barcode !== undefined && (patch.barcode ?? '').length > 48)
+    return 'Barcode must be 48 characters or fewer.'
+  if (patch.lastCost !== undefined && patch.lastCost < 0) return 'Cost cannot be negative.'
+  if (patch.priceIncl !== undefined && patch.priceIncl < 0)
+    return 'Selling price cannot be negative.'
+  return null
+}
+
+/**
+ * Writes only the fields the patch names.
+ *
+ * The price goes through `writePriceRows` like every other price write, so a
+ * shelf change made from the list lands on the price history (144) beside one
+ * made in the editor. Skipping that would make the list the one way to move a
+ * price without leaving a trace.
+ */
+export async function quickUpdateProduct(
+  siteId: number,
+  id: number,
+  patch: ProductQuickEdit,
+  audit?: { userName: string },
+): Promise<SaveResult> {
+  const invalid = validateQuickEdit(patch)
+  if (invalid) return { ok: false, error: invalid }
+
+  const existing = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    'SELECT id, has_variants FROM products WHERE id = ? LIMIT 1',
+    [id],
+  )
+  if (!existing) return { ok: false, error: 'That product no longer exists.' }
+
+  if (patch.code !== undefined) {
+    const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+      siteId,
+      'SELECT id FROM products WHERE code = ? AND id <> ? LIMIT 1',
+      [patch.code.trim(), id],
+    )
+    if (clash) return { ok: false, error: `Product code "${patch.code.trim()}" is already in use.` }
+  }
+
+  /* A variant PARENT holds no stock and is never bought or sold — its price and
+     cost columns are zeros meaning "not applicable", which is why the list
+     renders them as a dash. Letting a panel type a figure into one would put a
+     number nobody can act on behind a row nobody transacts against. */
+  const isParent = Number(existing.has_variants ?? 0) === 1
+  if (isParent && (patch.lastCost !== undefined || patch.priceIncl !== undefined))
+    return { ok: false, error: 'A variant group has no cost or price of its own.' }
+
+  const sets: string[] = []
+  const args: unknown[] = []
+  if (patch.description !== undefined) {
+    sets.push('description = ?')
+    args.push(patch.description.trim())
+  }
+  if (patch.code !== undefined) {
+    sets.push('code = ?')
+    args.push(patch.code.trim())
+  }
+  if (patch.barcode !== undefined) {
+    sets.push('barcode = ?')
+    args.push(patch.barcode?.trim() || null)
+  }
+  if (patch.departmentId !== undefined) {
+    sets.push('department_id = ?')
+    args.push(patch.departmentId)
+  }
+  if (patch.lastCost !== undefined) {
+    sets.push('last_cost = ?')
+    args.push(patch.lastCost)
+  }
+
+  return siteTransaction(siteId, async (tx) => {
+    if (sets.length > 0) {
+      sets.push('last_edit_date = NOW()')
+      await tx.execute(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`, [
+        ...args,
+        id,
+      ] as never)
+    }
+
+    if (patch.priceIncl !== undefined) {
+      /* The DEFAULT structure, resolved here rather than taken from the client:
+         which structure is default is the site's answer, and a panel that sent
+         an id could be made to move a price the user never saw. */
+      const [structures] = await tx.execute(
+        `SELECT id FROM price_structures
+          WHERE is_active = 1
+          ORDER BY is_default DESC, position ASC, id ASC
+          LIMIT 1`,
+      )
+      const structureId = Number((structures as RowDataPacket[])[0]?.id ?? 0)
+      if (structureId > 0) {
+        await writePriceRows(
+          tx,
+          [{ productId: id, priceStructureId: structureId, priceIncl: patch.priceIncl }],
+          { source: 'editor', userName: audit?.userName ?? '' },
+        )
+      }
+    }
+
+    return { ok: true as const, id }
+  })
+}

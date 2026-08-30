@@ -1,6 +1,31 @@
 import type { ReactNode } from 'react'
-import { TextLink } from '@/components/ui'
+import { LinkTabs } from '@/components/ui'
 import type { PortalSettings } from '@/lib/site/portalAuth'
+
+/**
+ * The letterhead: the shop's logo where it has one, its name either way.
+ *
+ * A plain <img> rather than next/image: the source is a route that streams
+ * bytes from disk with no known dimensions, and the optimiser would want a
+ * width and a height this cannot supply. `alt=""` because the name is already
+ * beside it in text — a screen reader announcing both would say it twice.
+ */
+function Letterhead({ token, name, hasLogo }: { token: string; name?: string; hasLogo: boolean }) {
+  if (!name && !hasLogo) return null
+  return (
+    <div className="flex items-center gap-2.5">
+      {hasLogo && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`/portal/${token}/logo`}
+          alt=""
+          className="h-8 w-auto max-w-[160px] object-contain"
+        />
+      )}
+      {name ? <span className="truncate text-base font-semibold text-ink">{name}</span> : null}
+    </div>
+  )
+}
 
 /**
  * The frame every portal page sits in.
@@ -39,6 +64,11 @@ export default function PortalShell({
    * prose and keep the panel.
    */
   card = true,
+  /** The site token, for the logo route. Omitted on pages with no letterhead. */
+  token,
+  hasLogo = false,
+  /** Sign out, rendered in the letterhead row rather than beside the tabs. */
+  onSignOut,
   children,
 }: {
   name?: string
@@ -48,6 +78,9 @@ export default function PortalShell({
   subtitle?: ReactNode
   action?: ReactNode
   card?: boolean
+  token?: string
+  hasLogo?: boolean
+  onSignOut?: ReactNode
   children: ReactNode
 }) {
   return (
@@ -59,10 +92,27 @@ export default function PortalShell({
        * the list look untidy rather than dense.
        */}
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-        <div className="flex flex-col gap-3">
-          {name ? <p className="text-sm text-muted">{name}</p> : null}
-          {nav}
-        </div>
+        {/*
+         * ── THE LETTERHEAD IS A ROW, NOT A LINE OF SMALL PRINT ─────────────
+         *
+         * The business name used to be a muted 14px line above the tabs, which
+         * read as a caption rather than as whose page this is. It now carries
+         * the shop's logo and its name at full weight, with Sign out opposite —
+         * the arrangement every letter, invoice and statement from this
+         * business already uses.
+         *
+         * Sign out moved here from beside the tabs for the same reason: it is
+         * an action on the SESSION, not on the section being viewed, and
+         * sitting in the tab strip it read as a fifth tab.
+         */}
+        {(name || hasLogo || onSignOut) && (
+          <div className="flex items-center justify-between gap-4">
+            <Letterhead token={token ?? ''} name={name} hasLogo={hasLogo && Boolean(token)} />
+            {onSignOut ? <div className="shrink-0">{onSignOut}</div> : null}
+          </div>
+        )}
+
+        {nav}
 
         {title ? (
           /* The same shape as PageHeader in the back office — title, subtitle
@@ -114,47 +164,42 @@ export function PortalNav({
   token,
   active,
   settings,
-  onSignOut,
 }: {
   token: string
   active: PortalTab
   settings: PortalSettings
-  onSignOut: ReactNode
 }) {
-  const tab = (href: string, label: string, isActive: boolean) => (
-    <TextLink
-      key={href}
-      href={href}
-      className={
-        isActive
-          ? 'border-b-2 border-brand pb-2 text-sm font-medium text-ink no-underline'
-          : 'border-b-2 border-transparent pb-2 text-sm text-muted no-underline'
-      }
-    >
-      {label}
-    </TextLink>
-  )
+  /*
+   * LinkTabs, not a hand-rolled strip.
+   *
+   * This drew its own <a>s with its own border-b-2 active treatment — a second
+   * spelling of the tab bar the whole back office already uses, which would
+   * drift the first time either was restyled. The kit's version is href-driven,
+   * which is what a server-rendered page needs.
+   */
+  const items = [
+    settings.isEnabled && { value: 'jobs' as const, label: 'Your jobs', href: `/portal/${token}/jobs` },
+    settings.accountsEnabled && {
+      value: 'account' as const,
+      label: 'Your details',
+      href: `/portal/${token}/account`,
+    },
+    settings.showTransactions && {
+      value: 'transactions' as const,
+      label: 'Transactions',
+      href: `/portal/${token}/transactions`,
+    },
+    settings.showStatement && {
+      value: 'statement' as const,
+      label: 'Statement',
+      href: `/portal/${token}/statement`,
+    },
+    settings.accountsEnabled && {
+      value: 'invoices' as const,
+      label: 'Invoices',
+      href: `/portal/${token}/invoices`,
+    },
+  ].filter(Boolean) as { value: PortalTab; label: string; href: string }[]
 
-  const tabs = [
-    settings.isEnabled && tab(`/portal/${token}/jobs`, 'Your jobs', active === 'jobs'),
-    settings.accountsEnabled &&
-      tab(`/portal/${token}/account`, 'Your details', active === 'account'),
-    settings.showTransactions &&
-      tab(`/portal/${token}/transactions`, 'Transactions', active === 'transactions'),
-    settings.showStatement &&
-      tab(`/portal/${token}/statement`, 'Statement', active === 'statement'),
-    settings.accountsEnabled &&
-      tab(`/portal/${token}/invoices`, 'Invoices', active === 'invoices'),
-  ].filter(Boolean)
-
-  return (
-    <div className="mb-4 flex items-end justify-between gap-4 border-b border-border">
-      {/* Scrolls rather than wraps: five tabs on a phone would otherwise stack
-          into two rows and push the content down the page. */}
-      <nav className="flex gap-5 overflow-x-auto" aria-label="Your account">
-        {tabs}
-      </nav>
-      <div className="shrink-0 pb-1">{onSignOut}</div>
-    </div>
-  )
+  return <LinkTabs items={items} value={active} aria-label="Your account" />
 }

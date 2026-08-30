@@ -553,7 +553,31 @@ export async function finaliseDocument(
    * The till refuses first, with the way through (see `openTender`). This is the
    * boundary that counts — the action is a public endpoint.
    */
-  if (payable < 0) {
+  /*
+   * ── EXCEPT WHEN IT IS PAYING FOR RETURNABLES ───────────────────────────────
+   *
+   * A bottle store takes empties over the counter and hands out cash for them.
+   * That slip owes the customer money by design, and the objections above do not
+   * apply to it: there is nothing to authorise, because the deposit is the shelf
+   * price and nobody may type another figure (see `returnablePrice` and
+   * `validateDocument`), and there is nothing to give a reason for, because the
+   * reason IS the product type.
+   *
+   * A credit note cannot do this job, which is worth recording since it is the
+   * obvious alternative: it moves stock by `|qty| * -direction`, so a returnable
+   * on one leaves the shelf whatever sign it carries — the opposite of an empty
+   * arriving. Only an invoice at a positive quantity books the bottle in.
+   *
+   * So the refusal narrows to what it was defending: a slip paying out for
+   * anything OTHER than returnables still has no refund tender, no reason and no
+   * supervisor, and still belongs on a credit note.
+   */
+  const payoutIsAllReturnables =
+    payable < 0 && document.lines.every((line) => line.lineTotalIncl <= 0
+      ? line.productType === 'returnable'
+      : true)
+
+  if (payable < 0 && !payoutIsAllReturnables) {
     return {
       ok: false,
       error:
@@ -564,7 +588,11 @@ export async function finaliseDocument(
   const netPayable = round(Math.max(0, payable - voucherCredit), 2)
   const tenderedTotal = tenders.reduce((sum, t) => round(sum + t.input.amount, 2), 0)
   const preCheckTips = planTips({
-    totalExcess: round(Math.max(0, tenderedTotal - netPayable), 2),
+    /* Zero on a payout, for the reason given at the second planTips below:
+       money going out is not the customer over-paying. */
+    totalExcess: payoutIsAllReturnables
+      ? 0
+      : round(Math.max(0, tenderedTotal - netPayable), 2),
     tenders: tenders.map(({ input, type }) => ({
       tenderTypeId: type.id,
       amount: input.amount,
@@ -586,12 +614,75 @@ export async function finaliseDocument(
     2,
   )
 
-  const check = checkTenders(
-    tenders.map((t) => ({ tender: t.type, amount: t.input.amount, reference: t.input.reference })),
-    netPayable,
-    customerId !== null,
-    tippableExcess,
-  )
+  /*
+   * ── A PAYOUT IS CHECKED ON ITS OWN TERMS ───────────────────────────────────
+   *
+   * `checkTenders` is written for money coming IN: it refuses a non-positive
+   * amount, works out change from the excess, and apportions tips. None of that
+   * describes a drawer paying out for empties — there is no change to give on
+   * money going the other way, and no tip on a refund — and threading negatives
+   * through it would put the whole ordinary sale path at risk to serve one case.
+   *
+   * So a payout is validated here instead, against the two things that actually
+   * matter: the money must LEAVE by a method that can pay out, and it must match
+   * what the slip says is owed. `allowsRefund` is the same flag a credit note
+   * checks (see salesReversal), so a tender that cannot be refunded at the till
+   * cannot be refunded here either.
+   *
+   * Amounts arrive positive — "R30 out of the drawer" — and are stored negative
+   * below, so the drawer reconciles by a plain SUM with no CASE on direction.
+   */
+  const owedToCustomer = round(-payable, 2)
+  if (payoutIsAllReturnables) {
+    if (tenders.length === 0) {
+      return { ok: false, error: `Choose how the ${owedToCustomer.toFixed(2)} is paid out.` }
+    }
+    for (const { input: tender, type } of tenders) {
+      if (round(tender.amount, 2) <= 0) {
+        return { ok: false, error: `${type.name}: enter an amount.` }
+      }
+      if (!type.allowsRefund) {
+        return {
+          ok: false,
+          error: `${type.name} cannot be paid out at the till — refund it through the bank instead.`,
+        }
+      }
+    }
+    const paidOut = tenders.reduce((sum, t) => round(sum + t.input.amount, 2), 0)
+    if (Math.abs(paidOut - owedToCustomer) > 0.005) {
+      return {
+        ok: false,
+        error: `Pay out ${owedToCustomer.toFixed(2)} — ${paidOut.toFixed(2)} was entered.`,
+      }
+    }
+  }
+
+  /*
+   * The ordinary check still runs for every ordinary sale, unchanged.
+   *
+   * A payout skips it — see above — and is described here instead as what it is:
+   * the money left the drawer, none of it was change, and none of it was a tip.
+   * Stated rather than left to `checkTenders` returning zeroes, so the rows
+   * written from these figures below say the same thing whichever path ran.
+   */
+  const check = payoutIsAllReturnables
+    ? {
+        errors: [] as string[],
+        tendered: round(-owedToCustomer, 2),
+        change: 0,
+        outstanding: 0,
+        surcharge: 0,
+      }
+    : checkTenders(
+        tenders.map((t) => ({
+          tender: t.type,
+          amount: t.input.amount,
+          reference: t.input.reference,
+        })),
+        netPayable,
+        customerId !== null,
+        tippableExcess,
+      )
   if (check.errors.length > 0) return { ok: false, error: check.errors[0] }
   if (check.outstanding > 0) {
     return { ok: false, error: `${check.outstanding.toFixed(2)} still to pay.` }
@@ -1122,7 +1213,12 @@ export async function finaliseDocument(
        * planning a second time against a figure that has already been reduced.
        */
       const tipPlan = planTips({
-        totalExcess: round(Math.max(0, tenderedTotal - netPayable), 2),
+        /* Never an excess on a payout. `netPayable` is clamped at zero, so the
+           money handed OVER the counter would otherwise read as the customer
+           over-paying by the whole amount — and nobody tips a bottle return. */
+        totalExcess: payoutIsAllReturnables
+          ? 0
+          : round(Math.max(0, tenderedTotal - netPayable), 2),
         tenders: tenders.map(({ input: paid, type }) => ({
           tenderTypeId: type.id,
           amount: paid.amount,
@@ -1171,11 +1267,38 @@ export async function finaliseDocument(
 
       // 3. Tenders, as handed over. Change is recorded against the tender that
       //    gave it, so the drawer reconciles — and it divides what is left AFTER tips.
-      let remainingChange = tipPlan.changeRemaining
+      /*
+       * A payout gives no change, so it starts with none to divide.
+       *
+       * Stated rather than relying on the plan: `tipPlan` works change out from
+       * the excess of what was tendered over what was payable, and on a payout
+       * BOTH of those are about money leaving — so it read the R30 handed over
+       * as a R30 over-tender and recorded change against it. MEASURED: the
+       * tender row came out amount −30 with change_given 30, which is the same
+       * thirty rand counted out of the drawer twice.
+       */
+      let remainingChange = payoutIsAllReturnables ? 0 : tipPlan.changeRemaining
       for (const { input: tender, type } of tenders) {
         const changeHere =
           type.allowsChange && remainingChange > 0 ? Math.min(remainingChange, tender.amount) : 0
         remainingChange = round(remainingChange - changeHere, 2)
+
+        /*
+         * A payout is stored NEGATIVE — money out of the drawer.
+         *
+         * The cashier enters "30" meaning thirty rand handed over, and the row
+         * says −30 so that every till-up, banking figure and drawer count is a
+         * plain SUM over `amount` with no CASE on which way the money went. It
+         * is the same convention `createCreditNote` uses for a refund and the
+         * same one the sales_documents totals already follow.
+         *
+         * There is no change and no surcharge on one: nothing was over-tendered
+         * because the amount had to match what was owed exactly, and a shop does
+         * not levy a card fee on money it is paying back.
+         */
+        const signedAmount = payoutIsAllReturnables
+          ? round(-Math.abs(tender.amount), 2)
+          : round(tender.amount, 2)
 
         await tx.execute(
           `INSERT INTO sales_tenders
@@ -1186,9 +1309,9 @@ export async function finaliseDocument(
             type.id,
             type.code,
             type.name,
-            round(tender.amount, 2).toFixed(4),
+            signedAmount.toFixed(4),
             changeHere.toFixed(4),
-            type.surchargePct > 0
+            type.surchargePct > 0 && !payoutIsAllReturnables
               ? round(tender.amount * (type.surchargePct / 100), 2).toFixed(4)
               : '0.0000',
             tender.reference?.trim() || null,

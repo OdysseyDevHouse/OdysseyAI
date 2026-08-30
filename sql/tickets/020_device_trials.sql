@@ -93,20 +93,50 @@ CREATE TABLE IF NOT EXISTS cp2_device_trials (
 --
 -- Only rows migration 009 wrote are touched. Anybody who has since used the
 -- billing screen has made a real decision, and this must not overwrite it.
-UPDATE cp2_site_device_orders o
-  JOIN cp2_sites s ON s.id = o.site_id
-   SET o.requested  = COALESCE(s.paid_device_count, 0),
-       o.updated_by = 'migration 020'
- WHERE o.updated_by = 'migration 009';
+-- ── BOTH RECONCILIATIONS ARE GUARDED ON THE COLUMN EXISTING ────────────────
+--
+-- `cp2_sites.paid_device_count` belongs to the v2 backend, and this codebase
+-- never creates it: cp2_* tables are shared, and adding a column to one from
+-- here is how two products end up disagreeing about a schema neither fully
+-- owns. A control database whose v2 side predates the subscription column
+-- therefore does not have it, and the two statements below referenced it
+-- unguarded -- so the whole file failed on such a database, AFTER the table
+-- above had already been created. The table existed, the ledger row did not,
+-- and every later run retried and failed on this same line.
+--
+-- The trial does not need the reconciliation: `deviceOffer` reads
+-- cp2_site_device_orders, and a site with no row there is offered a trial,
+-- which is the correct answer for a shop that has bought no tills. So the
+-- right behaviour where the column is absent is to skip these two and let the
+-- rest of the migration stand, rather than to fail the file.
+--
+-- Same guard shape as 019, and for the same reason -- see the note there about
+-- apostrophes inside comments in a multipleStatements batch.
+SET @has_paid_count := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cp2_sites'
+     AND COLUMN_NAME = 'paid_device_count');
+
+SET @sql := IF(@has_paid_count = 1,
+  'UPDATE cp2_site_device_orders o
+     JOIN cp2_sites s ON s.id = o.site_id
+      SET o.requested  = COALESCE(s.paid_device_count, 0),
+          o.updated_by = ''migration 020''
+    WHERE o.updated_by = ''migration 009''',
+  'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- A site the v2 backend created after 009 ran has a subscription and no order
 -- row. Give it one that matches, so the billing screen and the till door read
 -- the same number the day the site is opened.
-INSERT INTO cp2_site_device_orders (site_id, requested, updated_by)
-SELECT s.id, COALESCE(s.paid_device_count, 0), 'migration 020'
-  FROM cp2_sites s
- WHERE s.status IN ('active', 'suspended')
-ON DUPLICATE KEY UPDATE requested = requested;
+SET @sql := IF(@has_paid_count = 1,
+  'INSERT INTO cp2_site_device_orders (site_id, requested, updated_by)
+   SELECT s.id, COALESCE(s.paid_device_count, 0), ''migration 020''
+     FROM cp2_sites s
+    WHERE s.status IN (''active'', ''suspended'')
+   ON DUPLICATE KEY UPDATE requested = requested',
+  'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- ── ZERO IS NOW A LEGAL ANSWER ──────────────────────────────────────────────
 --

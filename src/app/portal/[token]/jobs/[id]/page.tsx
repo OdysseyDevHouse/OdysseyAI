@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { requireSection } from '../../guard'
 import { portalJob } from '@/lib/site/portalData'
-import { publicSiteName } from '@/lib/sites'
+import { letterheadFor } from '../../letterhead'
 import PortalShell, { PortalNav } from '../../PortalShell'
 import SignOutButton from '../../SignOutButton'
 import PortalJobActions from './PortalJobActions'
@@ -47,9 +47,9 @@ export default async function PortalJobPage({
   const jobId = Number(id)
   if (!Number.isFinite(jobId) || jobId <= 0) notFound()
 
-  const [job, name] = await Promise.all([
+  const [job, head] = await Promise.all([
     portalJob(ctx.siteId, ctx.customerId, jobId),
-    publicSiteName(ctx.siteId).catch(() => null),
+    letterheadFor(ctx.siteId),
   ])
   if (!job) notFound()
 
@@ -59,8 +59,11 @@ export default async function PortalJobPage({
 
   return (
     <PortalShell
-      name={name ?? undefined}
-      nav={<PortalNav token={token} active="jobs" settings={ctx.settings} onSignOut={<SignOutButton token={token} />} />}
+      name={head.name ?? undefined}
+      hasLogo={head.hasLogo}
+      token={token}
+      onSignOut={<SignOutButton token={token} />}
+      nav={<PortalNav token={token} active="jobs" settings={ctx.settings} />}
     >
       <p className="text-xs text-muted">
         <TextLink href={`/portal/${token}/jobs`}>&larr; All your jobs</TextLink>

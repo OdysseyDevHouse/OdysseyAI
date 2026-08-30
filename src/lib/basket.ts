@@ -180,6 +180,53 @@ export function accountDiscountFor(product: TillProduct, defaultDiscountPct: num
   return Math.min(wanted, ceiling)
 }
 
+/**
+ * A returnable's price, signed the way the money actually moves.
+ *
+ * ── WHAT A RETURNABLE IS ──────────────────────────────────────────────────
+ *
+ * A bottle store takes empties back over the counter and pays cash for them.
+ * Ringing one up is therefore TWO facts at once: a bottle arrives on the shelf,
+ * and money leaves the drawer. The type carried only the first — see
+ * `stockDirectionFor`, which has always returned +1 for it — so the second half
+ * simply charged the customer, which is backwards.
+ *
+ * ── WHY THE PRICE CARRIES THE SIGN AND THE QUANTITY DOES NOT ──────────────
+ *
+ * Stock moves by `qty * stockDirectionFor(type)` (salesPosting), and a
+ * returnable's direction is already +1. That is what puts the empty ON the
+ * shelf, and it is only correct while the quantity stays POSITIVE. Negating the
+ * quantity to express a refund would negate that product too — paying the
+ * customer AND sending the bottle back out — which is the trap documented above
+ * `stockDirectionFor` and a drift that would not surface until a stock take.
+ *
+ * A credit note cannot express it either, and that is worth stating because it
+ * is the obvious place to reach for: it moves stock by `|qty| * -direction`, so
+ * a returnable on a credit note leaves the shelf whatever sign it carries. Only
+ * an invoice at a positive quantity puts an empty back where it belongs.
+ *
+ * So: QUANTITY is the physical fact and stays positive. PRICE is the money and
+ * goes negative. `documentMath` is sign-blind by construction — `splitIncl`
+ * handles a negative amount, which is what a credit note line has always needed
+ * — so the total nets and the VAT splits correctly with no special case.
+ *
+ * ── ALWAYS THE SHELF PRICE ────────────────────────────────────────────────
+ *
+ * The deposit is whatever the product file says it is. Nobody types it at the
+ * till and no supervisor overrides it, so this is a pure restatement of the
+ * catalogue figure rather than a decision anyone makes per sale.
+ *
+ * `Math.abs` rather than a plain negation, so re-signing an already-negative
+ * figure is a no-op: a recalled basket or a parked tab runs this over lines
+ * that were signed when they were first rung.
+ */
+export function returnablePrice(
+  productType: TillProduct['productType'],
+  priceIncl: number,
+): number {
+  return productType === 'returnable' ? -Math.abs(priceIncl) : priceIncl
+}
+
 export function lineFromProduct(
   product: TillProduct,
   qty: number,
@@ -188,6 +235,11 @@ export function lineFromProduct(
   /** The attached account's standing discount. See accountDiscountFor. */
   defaultDiscountPct = 0,
 ): BasketLine {
+  /* Both figures signed together — the charged one and the shelf one — so
+     `isPriceOverridden` compares like with like and a deposit does not wear a
+     "price changed" badge for being what the catalogue says it is. */
+  const charged = returnablePrice(product.productType, product.scannedPrice ?? resolvedIncl)
+  const shelf = returnablePrice(product.productType, resolvedIncl)
   return {
     key: basketKey(product.id, index),
     productId: product.id,
@@ -197,12 +249,12 @@ export function lineFromProduct(
     departmentId: product.departmentId,
     qty,
     // A scanned price wins: a variable-weight barcode carries the money in it.
-    unitPriceIncl: product.scannedPrice ?? resolvedIncl,
+    unitPriceIncl: charged,
     discountPct: accountDiscountFor(product, defaultDiscountPct),
     vatRatePct: product.vatRatePct,
     unitCostExcl: product.costExcl,
     maxDiscountPct: product.maxDiscountPct,
-    shelfPriceIncl: product.askPriceAtSale ? null : resolvedIncl,
+    shelfPriceIncl: product.askPriceAtSale ? null : shelf,
     allowFractions: product.allowFractions,
     instructions: [],
     note: '',

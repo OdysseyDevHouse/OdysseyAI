@@ -76,6 +76,8 @@ export type InvoiceSources = {
   customerOrderNo?: string | null
   /** Whether this document has been on paper before. */
   isReprint?: boolean
+  /** Nothing is owed on it any more — stamps PAID. See statusBanner. */
+  paidInFull?: boolean
   /**
    * What the paper calls itself.
    *
@@ -131,9 +133,31 @@ function vatSummary(doc: SalesDocument, taxLabel: string): string {
  * be printed repeatedly while it is negotiated, and stamping the second copy of
  * one as a reprint would say something about the document that is not true.
  */
-function statusBanner(doc: SalesDocument, isReprint: boolean): string {
+function statusBanner(
+  doc: SalesDocument,
+  isReprint: boolean,
+  paidInFull?: boolean,
+): string {
   if (doc.status === 'cancelled') return 'CANCELLED'
   if (doc.docType === 'invoice' && doc.status !== 'finalised') return 'PRO FORMA'
+
+  /*
+   * PAID outranks REPRINT, and the order is the whole point.
+   *
+   * A paid invoice is nearly always ALSO a reprint — somebody prints it again
+   * precisely because the customer has now paid and wants a copy that says so.
+   * Ranked the other way round, the one status a reader actually needs would be
+   * hidden behind a note about how many times the page has been through a
+   * printer, on every single copy that mattered.
+   *
+   * CANCELLED still outranks both: a voided invoice that was paid is a refund
+   * waiting to happen, and "CANCELLED" is the thing to say about it.
+   *
+   * Undefined means the caller did not ask, which prints nothing — never
+   * "UNPAID". See `paidInFull` on InvoiceData.
+   */
+  if (paidInFull && doc.docType === 'invoice' && doc.status === 'finalised') return 'PAID'
+
   if (isReprint && doc.docType === 'invoice' && doc.status === 'finalised') return 'REPRINT'
   return ''
 }
@@ -185,7 +209,7 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
      * that had to choose between two would get it wrong for half the shops.
      */
     'doc.customerReference': src.customerOrderNo ?? doc.reference ?? '',
-    'doc.statusBanner': statusBanner(doc, src.isReprint ?? false),
+    'doc.statusBanner': statusBanner(doc, src.isReprint ?? false, src.paidInFull),
     // The route's own answer where it gave one; otherwise s20(4): only a VAT
     // vendor may call its document a tax invoice.
     'doc.heading': src.heading ?? (site.vatNumber ? 'TAX INVOICE' : 'INVOICE'),

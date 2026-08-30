@@ -185,7 +185,24 @@ public final class OdysseyAuth {
     String token = prefs().getString(TOKEN_KEY, null);
     if (token == null || token.isEmpty()) return null;
 
-    Response res = post("/api/mobile/auth/session", "{}", "Bearer " + token);
+    /*
+     * A till build names its shop; the back office sends `{}` and lets the
+     * server pick. The id is NOT trusted on the far side — the route checks it
+     * against this user's own stores and falls back to the default if it does
+     * not match — so a wrong number here opens the ordinary store rather than
+     * somebody else's data.
+     */
+    int site = BuildConfigUrl.siteId(context);
+    String body = "{}";
+    if (site > 0) {
+      try {
+        body = new JSONObject().put("siteId", site).toString();
+      } catch (Exception ignored) {
+        /* Keep `{}`: a till on the default store still trades. */
+      }
+    }
+
+    Response res = post("/api/mobile/auth/session", body, "Bearer " + token);
 
     if (res.failed()) return null;
     if (res.status == 401) {

@@ -1,5 +1,6 @@
 import 'server-only'
 import { getTenderByCode } from './tenderTypes'
+import { formatMoney } from '../decimals'
 import { postTransaction } from './customerLedger'
 import { takePayment } from './laybys'
 import { takeDeposit } from './deposits'
@@ -42,6 +43,88 @@ import type { Actor } from './activityLog'
  */
 
 export type SettleResult = { ok: true; detail: string } | { ok: false; error: string }
+
+/** What each purpose is called in a notification, in the shop's words. */
+const PURPOSE_LABEL: Record<string, string> = {
+  debtor_invoice: 'invoice',
+  customer_account: 'account',
+  layby: 'lay-by',
+  document_deposit: 'deposit',
+  job_deposit: 'job deposit',
+  online_order: 'online order',
+}
+
+/**
+ * Tell the shop money arrived, and record it on the customer's timeline.
+ *
+ * ── THE GAP THIS CLOSES ───────────────────────────────────────────────────
+ *
+ * Every other part of a pay link was DISCOVERABLE — the receipt sits on the
+ * account, the deposit sits on the document — and none of it was ANNOUNCED. So
+ * a customer could pay at eleven at night and the business would find out by
+ * happening to look at the right screen. A shop that cannot tell whether it has
+ * been paid keeps phoning to ask, which is the call the feature existed to stop.
+ *
+ * ── IT NEVER THROWS, AND IS ALWAYS CALLED LAST ────────────────────────────
+ *
+ * The money has already arrived and the posting has already happened by the
+ * time this runs. A failure here must not turn a settled payment into an error
+ * the callback reports — PayFast would retry a payment that is already
+ * recorded. Both writes swallow their own failures for the same reason.
+ */
+export async function announcePayment(
+  siteId: number,
+  input: {
+    purpose: string
+    /** What was paid — "INV000123", "Lay-by LAY-88", an account code. */
+    what: string
+    amount: number
+    /** PayFast's own id, so a query to the gateway can be matched up. */
+    providerRef: string
+    /** Where the bell should take somebody. */
+    href?: string | null
+    /** The account it belongs to, where there is one. */
+    customerId?: number | null
+  },
+): Promise<void> {
+  const label = PURPOSE_LABEL[input.purpose] ?? 'payment'
+  const money = formatMoney(input.amount)
+
+  try {
+    const { notify } = await import('./notifications')
+    await notify(siteId, {
+      event: 'online_payment_received',
+      // Whoever may see sales may see that a sale was paid for. Not a narrower
+      // right: the person who raised the invoice is rarely the one chasing it.
+      audience: 'sales.view',
+      title: `${money} received — ${input.what}`,
+      body: `Paid online against this ${label}. PayFast reference ${input.providerRef}.`,
+      href: input.href ?? null,
+    })
+  } catch (error) {
+    console.error('[pay-links] notify failed for', input.what, error)
+  }
+
+  // The customer's own timeline. Nothing else on the money paths writes this
+  // for an online payment, so an account's history simply skipped them.
+  if (input.customerId) {
+    try {
+      const { logActivity } = await import('./activityLog')
+      await logActivity(
+        siteId,
+        { userId: 0, userName: 'Online payment' },
+        {
+          entity: 'customer',
+          entityId: input.customerId,
+          action: 'online_payment',
+          detail: `${money} paid online against ${input.what} — PayFast ${input.providerRef}`,
+        },
+      )
+    } catch (error) {
+      console.error('[pay-links] activity log failed for', input.what, error)
+    }
+  }
+}
 
 /**
  * The tender every online payment is banked against.

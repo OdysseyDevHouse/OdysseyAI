@@ -154,6 +154,14 @@ export {
 export { ColumnPicker, type ColumnOption } from './ColumnPicker'
 export { Pagination } from './Pagination'
 export { FilterBar, FilterChip } from './FilterBar'
+export {
+  CHIP_BASE,
+  ClockChip,
+  LOGOUT_CHIP,
+  OperatorChip,
+  StatusChip,
+  initials,
+} from './StatusChip'
 export { AdvancedFilter } from './AdvancedFilter'
 /* The pure half, from a PLAIN module rather than the 'use client' one: every
    export of a "use client" file is a client reference the server may render but

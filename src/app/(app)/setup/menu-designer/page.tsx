@@ -8,13 +8,26 @@ export const dynamic = 'force-dynamic'
 /**
  * The menu designer — the till's browse menu, arranged by dragging it.
  *
- * ── WHY THIS LIVES IN SETUP AND NOT ON THE TILL ────────────────────────────
+ * ── WHY THIS IS NOT ON THE TILL ────────────────────────────────────────────
  *
- * It is configuration a manager does once, so it belongs beside the quick keys
- * and the tender types — and it needs the back-office chrome a full-screen
- * touch till deliberately does not have. Putting a drag-and-drop designer on
- * the till would also let a cashier rearrange the menu mid-shift by holding a
- * tile half a second too long.
+ * It needs the back-office chrome a full-screen touch till deliberately does
+ * not have. Putting a drag-and-drop designer on the till would also let a
+ * cashier rearrange the menu mid-shift by holding a tile half a second too
+ * long.
+ *
+ * ── WHY IT IS REACHED FROM PRODUCTS, NOT FROM SETUP ────────────────────────
+ *
+ * It used to be a tile in the setup hub, beside the quick keys. It is a menu
+ * row under Products now: this is not a set-once setting, it is edited whenever
+ * the product file is, because a product filed in the wrong department is
+ * spotted on /products and fixed here — the same visit.
+ *
+ * The ROUTE stayed under /setup so no existing link breaks. That is safe
+ * because `breadcrumbFor` resolves a path the menu NAMES by its section scan
+ * before it ever consults `hubFor`, so the trail reads "Products › Menu
+ * designer". The capability stayed `setup.edit` for the same reason it always
+ * was: arranging what every till shows is a manager's decision, whoever else
+ * may edit a product.
  *
  * ── WHY IT IS NOT THE DEPARTMENTS SCREEN ───────────────────────────────────
  *

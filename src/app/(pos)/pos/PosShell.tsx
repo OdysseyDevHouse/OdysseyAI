@@ -2773,7 +2773,9 @@ export default function PosShell({
               state.customer?.name || state.customerName.trim() || tabCustomer.trim() || 'Walk-in',
             customerVatNo: state.customer?.vatNumber ?? null,
             customerPhone: state.customer?.phone ?? null,
-            reference: (tabLabel ?? '').trim() || null,
+            /* No `reference` — see park(). A deposit does not rename the
+               document, and stamping the tab's identity here would undo on the
+               deposit path exactly what park() stopped doing. */
             personCount: tabPeople,
             visitTypeId: tabVisitTypeId,
             terminalId: terminal?.id ?? null,
@@ -2811,12 +2813,39 @@ export default function PosShell({
     })
   }
 
-  function park(label?: string, details?: { people: number | null; visitTypeId: number | null }) {
+  function park(
+    label?: string,
+    details?: { people: number | null; visitTypeId: number | null; customerName?: string },
+  ) {
+    /* Passed through rather than read off `tabCustomer`, for the same reason
+       `label` is: nameTab calls this in the same tick as its own setState, so
+       the state still holds the PREVIOUS tab's customer when this runs. */
+    const nameFallback = details?.customerName?.trim() || ''
     if (!till.online) {
       startTransition(parkLocally)
       return
     }
-    const reference = (label ?? tabLabel ?? '').trim() || null
+    /*
+     * ── THE TAB'S NAME IS NOT ITS REFERENCE ────────────────────────────────
+     *
+     * This used to send the tab's identity — table number, or the customer's
+     * name when there was no table — as `reference`. On a named tab that wrote
+     * the SAME STRING into `reference` and `customer_name`, and on a numbered
+     * one it put the table number in a column meant for the customer's own
+     * paperwork. Either way `reference` was spent saying something the row
+     * already said.
+     *
+     * A saved sale is named by `customer_name` now, which is where the name was
+     * going all along and what every screen that lists one already falls back
+     * to: the floor tile (`table ?? label ?? customerName`) and Saved sales
+     * (which titles rows by the customer outright). Nothing displayed loses a
+     * word — the copy was redundant, not load-bearing.
+     *
+     * `reference` is therefore left alone here, free for what a reference is
+     * for: the customer's own order or job number, entered against the sale.
+     * The table number is not lost either — it lives on the TABLE the bill is
+     * seated at, which is the thing that actually knows about tables.
+     */
     const people = details ? details.people : tabPeople
     const visitTypeId = details ? details.visitTypeId : tabVisitTypeId
     startTransition(async () => {
@@ -2827,17 +2856,28 @@ export default function PosShell({
       try {
         saved = await saveSaleAction(state.documentId, {
           customerId: state.customer?.id ?? null,
+          /*
+           * WHAT THIS SAVED SALE IS CALLED.
+           *
+           * An attached debtor wins — that is a real customer record and a tab
+           * name typed at the counter must not overwrite it — then a name typed
+           * onto the basket, then the one typed into the naming dialog. 'Walk-in'
+           * last, so the column is never blank and never has to be read as one.
+           *
+           * This is the sale's NAME as well as its customer, now that the
+           * reference no longer carries a copy. See the note above.
+           */
           customerName:
             state.customer?.name ||
             state.customerName.trim() ||
             tabCustomer.trim() ||
+            nameFallback ||
             'Walk-in',
           customerVatNo: state.customer?.vatNumber ?? null,
           customerPhone: state.customer?.phone ?? null,
-          /* What the floor will CALL this bill. Without it the tab lists under
-             the customer's name, or "N/A" — findable, but not what the waiter
-             typed. */
-          reference,
+          /* No `reference`. It is the customer's own paperwork number, not this
+             till's name for the bill — see the note at the top of park(). Left
+             untouched so a reference already on the document survives a park. */
           personCount: people,
           visitTypeId,
           terminalId: terminal?.id ?? null,
@@ -2886,7 +2926,12 @@ export default function PosShell({
         toast.error(parked.error)
         return
       }
-      toast.success(reference ? `${reference} saved.` : 'Sale saved.')
+      /* Named by the tab's identity — the table number, or the customer — which
+         is what the waiter will look for on the floor. Not the reference: that
+         is the customer's number for the job and means nothing to the person
+         who just pressed Save. */
+      const savedAs = (label ?? tabLabel ?? '').trim() || nameFallback
+      toast.success(savedAs ? `${savedAs} saved.` : 'Sale saved.')
       /* The second of the three commit points. `saved.documentId` rather than
          `state.documentId`: a basket saved for the first time only acquired an
          id on the call above, and that is exactly the case with the most to
@@ -3506,6 +3551,30 @@ export default function PosShell({
      * swap, which posts cleanly with a zero tender and is a real thing shops do.
      */
     if (totals.doc.totalIncl < 0) {
+      /*
+       * ── EXCEPT A BOTTLE RETURN, WHICH PAYS OUT AT THE TENDER PAD ──────────
+       *
+       * A basket whose negative side is all returnables is a shop buying empties
+       * back, and it goes through the ordinary pad: the cashier picks Cash, the
+       * amount leaves the drawer, and `finaliseDocument` stores the tender
+       * negative so the till-up reconciles. Nothing here needs authorising —
+       * the deposit is the shelf price and no one may type another figure.
+       *
+       * The refusal below still stands for everything else. A slip paying out
+       * for ordinary goods has no reason code and no supervisor against it, and
+       * that is what a credit note carries.
+       *
+       * Only the negative lines are tested. A basket that also SELLS something
+       * is fine — a customer buying R100 of liquor against R30 of empties nets
+       * to R70 owed and never reaches this branch at all.
+       */
+      const paysOutForEmptiesOnly = state.lines.every((l) =>
+        l.qty * l.unitPriceIncl < 0 ? l.productType === 'returnable' : true,
+      )
+      if (paysOutForEmptiesOnly) {
+        setTendering(true)
+        return
+      }
       toast.info(
         'This slip pays money back. Take the returned goods on their own — use Credit sale for a receipted return, or the Return toggle without one.',
       )
@@ -3578,7 +3647,8 @@ export default function PosShell({
           customerName: state.customer?.name ?? null,
           customerVatNo: state.customer?.vatNumber ?? null,
           customerPhone: state.customer?.phone ?? null,
-          reference: (tabLabel ?? '').trim() || null,
+          /* No `reference` — see park(). An order is named by its customer,
+             which this path has already insisted on above. */
           terminalId: terminal?.id ?? null,
           terminalCode: terminal?.code ?? null,
           priceStructureId,
@@ -3690,7 +3760,17 @@ export default function PosShell({
     setClosePrompt(true)
   }
 
-  /** The dialog came back with a name. Open a tab on it, or park onto it. */
+  /**
+   * The dialog came back with a name. Open a tab on it, or park onto it.
+   *
+   * `label` is this tab's IDENTITY — the table number, or the customer's name
+   * when there is no table. It is what the header shows, what Split labels its
+   * picker with, and what tells Save and Close that this basket already knows
+   * what it is. That is why it still falls back to the name: an unnumbered tab
+   * with a blank identity would send the waiter back through this same dialog.
+   *
+   * It is NOT what gets stored as the document's reference — see park().
+   */
   function nameTab(details: NewTableDetails, closing: boolean) {
     const label = details.tableNumber || details.customerName
     setTabLabel(label)
@@ -3706,6 +3786,10 @@ export default function PosShell({
       park(label, {
         people: details.personCount || null,
         visitTypeId: details.visitTypeId,
+        /* The name the dialog just took, for the same same-tick reason `label`
+           is passed: `tabCustomer` still holds the previous tab's when this
+           runs, and this is the value that NAMES the saved sale. */
+        customerName: details.customerName,
       })
       return
     }

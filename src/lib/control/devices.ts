@@ -656,11 +656,38 @@ export async function startTrial(
       return { ok: false as const, error: 'This machine is already registered in this store.' }
     }
 
+    /*
+     * `notes` is written only where the column exists.
+     *
+     * cp2_devices is the v2 backend's table and this codebase never alters it,
+     * so its shape varies with how old the backend beside us is. An older one
+     * has no `notes`, and naming it unconditionally made the INSERT fail —
+     * which surfaced as a crash on the one button standing between a new shop
+     * and a working till.
+     *
+     * Skipping it costs nothing that is not recorded anyway: the sentence it
+     * held restates `started_on`, `ends_on` and `started_by`, and those go into
+     * cp2_device_trials below, which is this codebase's own table and is
+     * therefore always the right shape. The audit trail is the trials row; the
+     * note was a convenience for somebody reading the licence register.
+     */
+    const [noteCol] = await tx.execute(
+      `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'cp2_devices'
+          AND COLUMN_NAME = 'notes'`,
+    )
+    const hasNotes = Number((noteCol as Row[])[0]?.n ?? 0) === 1
+
     const [result] = await tx.execute(
-      `INSERT INTO cp2_devices
-         (site_id, device_name, serial_number, device_type, terminal_id, status, is_paid,
-          expiry_date, notes, last_seen_at)
-       VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, NOW())`,
+      hasNotes
+        ? `INSERT INTO cp2_devices
+             (site_id, device_name, serial_number, device_type, terminal_id, status, is_paid,
+              expiry_date, notes, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, NOW())`
+        : `INSERT INTO cp2_devices
+             (site_id, device_name, serial_number, device_type, terminal_id, status, is_paid,
+              expiry_date, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, 'active', 0, ?, NOW())`,
       [
         siteId,
         label.slice(0, 60) || 'Trial till',
@@ -668,7 +695,7 @@ export async function startTrial(
         label.slice(0, 60) || null,
         terminalId,
         endsOn,
-        `${TRIAL_DAYS}-day evaluation started ${startedOn}`,
+        ...(hasNotes ? [`${TRIAL_DAYS}-day evaluation started ${startedOn}`] : []),
       ],
     )
     const deviceRowId = Number((result as unknown as { insertId: number }).insertId)

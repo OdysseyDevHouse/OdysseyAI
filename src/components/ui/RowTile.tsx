@@ -9,22 +9,37 @@ import { tileClass } from './tiles'
  * with no token the colour is derived from the label, which is still stable
  * across renders and sorts.
  */
+/**
+ * `lg` is the same tile at page-heading scale.
+ *
+ * A size rather than a className override at the call site: the 26px default is
+ * tuned for a table row, and a page header that scaled it with a utility would
+ * be the second place deciding how big an identity tile is. Both steps keep the
+ * initials optically centred, which is what a bare `size-*` override loses.
+ */
+const SIZE = {
+  default: 'size-[26px] rounded-control text-[11px]',
+  lg: 'size-11 rounded-card text-sm',
+} as const
+
 export function RowTile({
   label,
   token,
+  size = 'default',
   className = '',
 }: {
   /** The record's name — initials are derived from its first two words. */
   label: string
   /** A stored tile-swatch token (see tiles.ts). Omit to derive from the label. */
   token?: string | null
+  size?: keyof typeof SIZE
   className?: string
 }) {
   const swatch = token ?? `tile-${(hash(label) % 7) + 1}`
   return (
     <span
       aria-hidden
-      className={`flex size-[26px] shrink-0 items-center justify-center rounded-control text-[11px] font-semibold text-white ${tileClass(swatch)} ${className}`}
+      className={`flex shrink-0 items-center justify-center font-semibold text-white ${SIZE[size]} ${tileClass(swatch)} ${className}`}
     >
       {initials(label)}
     </span>

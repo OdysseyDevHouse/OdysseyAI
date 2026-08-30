@@ -63,6 +63,10 @@ const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2
 const INK = '#16191d'
 const MUTED = '#667085'
 const LINE = '#d0d5dd'
+/* The status stamp's two meanings — matched to globals.css --color-success-ink
+   and --color-danger, and to the same hex in compile.ts BLOCK_STYLE. */
+const SUCCESS = '#0f7b37'
+const DANGER = '#b42318'
 
 /**
  * What one percent of band height is worth, in points.
@@ -306,6 +310,64 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
       for (const [i, t] of (b.tokens ?? []).entries()) {
         const text = tokenValue(t, v, docKey)
         if (text === '') continue
+
+        /*
+         * ── THE STATUS BANNER IS A STAMP, NOT A DETAIL LINE ────────────────
+         *
+         * PAID, CANCELLED, PRO FORMA, REPRINT — the most consequential word on
+         * the page, and it used to draw at 9pt grey like the document date, as
+         * a fourth line under it. On paper that is invisible: a shop printed a
+         * settled invoice and reported that no status had printed at all.
+         *
+         * Drawn in a box here, matching the bordered treatment the HTML path
+         * gives it (see compile.ts docTitle), so the two engines produce the
+         * same document rather than one that stamps and one that whispers.
+         */
+        if (t === 'doc.statusBanner') {
+          const size = 10
+          /*
+           * Coloured by what it says, matching the HTML path exactly (see
+           * BLOCK_STYLE in compile.ts). Not simply green: PAID is good news,
+           * CANCELLED says the document is void, and PRO FORMA and REPRINT are
+           * neither — a green REPRINT would read as a reassurance nobody
+           * offered. The box takes the same colour as the word.
+           */
+          const stampColour =
+            text.toUpperCase() === 'PAID'
+              ? SUCCESS
+              : text.toUpperCase() === 'CANCELLED'
+                ? DANGER
+                : INK
+          doc.font('Helvetica-Bold').fontSize(size)
+          const textWidth = doc.widthOfString(text.toUpperCase(), { characterSpacing: 1 })
+          const padX = 5
+          const padY = 3
+          const boxW = textWidth + padX * 2
+          const boxH = size + padY * 2
+          // Boxed at the block's own alignment, so a right-aligned title block
+          // gets a right-aligned stamp rather than one adrift on the left.
+          const x =
+            align === 'right'
+              ? box.x + box.w - boxW
+              : align === 'center'
+                ? box.x + (box.w - boxW) / 2
+                : box.x
+          const y = doc.y + 4
+
+          doc.lineWidth(0.75).strokeColor(stampColour).rect(x, y, boxW, boxH).stroke()
+          doc
+            .fillColor(stampColour)
+            .text(text.toUpperCase(), x + padX, y + padY, {
+              width: textWidth,
+              characterSpacing: 1,
+              lineBreak: false,
+            })
+          // pdfkit leaves the cursor mid-box after a positioned draw, so put it
+          // below the stamp for whatever the design stacks next.
+          doc.y = y + boxH
+          continue
+        }
+
         doc
           .font(i === 0 ? 'Helvetica-Bold' : 'Helvetica')
           .fontSize(i === 0 ? 11 : 9)

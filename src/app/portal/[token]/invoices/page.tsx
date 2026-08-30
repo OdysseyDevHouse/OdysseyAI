@@ -1,17 +1,22 @@
 import type { Metadata } from 'next'
 import { requireSection } from '../guard'
 import { portalInvoices } from '@/lib/site/portalData'
-import { publicSiteName } from '@/lib/sites'
+import { letterheadFor } from '../letterhead'
 import PortalShell, { PortalNav } from '../PortalShell'
 import SignOutButton from '../SignOutButton'
+import PayAccountButton from '../PayAccountButton'
 import InvoiceTable from './InvoiceTable'
-import { Card, Icons, StatStrip, StatTile } from '@/components/ui'
+import { Card, Icons, Pagination, StatStrip, StatTile } from '@/components/ui'
+import { pageCountFor } from '@/lib/searchParams'
 import { formatMoney } from '@/lib/decimals'
 
 export const dynamic = 'force-dynamic'
 
+/** Matches the back office's list default, so both paginate the same way. */
+const PAGE_SIZE = 25
+
 export const metadata: Metadata = {
-  title: 'Your invoices',
+  title: 'Invoices',
   robots: { index: false, follow: false },
 }
 
@@ -33,33 +38,57 @@ export const metadata: Metadata = {
  */
 export default async function PortalInvoicesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>
+  searchParams: Promise<{ page?: string }>
 }) {
   const { token } = await params
+  const { page: pageRaw } = await searchParams
   const ctx = await requireSection(token, 'account')
 
-  const [invoices, name] = await Promise.all([
+  const [invoices, head] = await Promise.all([
     portalInvoices(ctx.siteId, ctx.customerId),
-    publicSiteName(ctx.siteId).catch(() => null),
+    letterheadFor(ctx.siteId),
   ])
 
   const owing = invoices.filter((i) => !i.isPaid)
   const owed = owing.reduce((sum, i) => sum + i.outstanding, 0)
 
+  const pageCount = pageCountFor(invoices.length, PAGE_SIZE)
+  const page = Math.min(Math.max(Number(pageRaw) || 1, 1), Math.max(pageCount, 1))
+  // The TILES count every invoice, not the page — a total that changed as you
+  // paged would be a different fact on every screen.
+  const rows = invoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
   return (
     <PortalShell
-      name={name ?? undefined}
-      nav={
-        <PortalNav
-          token={token}
-          active="invoices"
-          settings={ctx.settings}
-          onSignOut={<SignOutButton token={token} />}
-        />
-      }
-      title="Your invoices"
+      name={head.name ?? undefined}
+      hasLogo={head.hasLogo}
+      token={token}
+      onSignOut={<SignOutButton token={token} />}
+      nav={<PortalNav token={token} active="invoices" settings={ctx.settings} />}
+      title="Invoices"
       subtitle="Everything the business has invoiced you for."
+      /*
+       * ── "PAY THEM ALL" SITS ABOVE THE PER-INVOICE BUTTONS ──────────────
+       *
+       * The list already offers "Pay it" on every open row, and on an account
+       * with several that is the wrong unit of work: each press is its own
+       * card payment and its own gateway fee for what the customer thinks of
+       * as one debt. This pays the balance in one go and lets the ledger
+       * allocate it oldest-first, which is what a payment against a statement
+       * has always meant.
+       *
+       * Only when something is owed. A page of settled invoices has nothing
+       * to pay, and the top-up framing belongs on the account page rather
+       * than at the head of a list of documents.
+       */
+      action={
+        ctx.settings.allowPay && owed > 0.005 ? (
+          <PayAccountButton token={token} balance={owed} label="Pay all" />
+        ) : null
+      }
       card={false}
     >
       {invoices.length > 0 && (
@@ -89,7 +118,7 @@ export default async function PortalInvoicesPage({
 
       <Card>
         <InvoiceTable
-          rows={invoices.map((inv) => ({
+          rows={rows.map((inv) => ({
             id: inv.id,
             documentNumber: inv.documentNumber,
             docDate: inv.docDate,
@@ -99,6 +128,15 @@ export default async function PortalInvoicesPage({
           }))}
           token={token}
           allowPay={ctx.settings.allowPay}
+        />
+        <Pagination
+          page={page}
+          pageCount={pageCount}
+          total={invoices.length}
+          pageSize={PAGE_SIZE}
+          hrefFor={(next) =>
+            next === 1 ? `/portal/${token}/invoices` : `/portal/${token}/invoices?page=${next}`
+          }
         />
       </Card>
     </PortalShell>

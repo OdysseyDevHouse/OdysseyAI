@@ -16,17 +16,17 @@ import type { ColumnOption } from '@/components/ui/ColumnPicker'
  * conditional string — there is nothing there a picker can label itself with.
  * Same convention as PURCHASE_COLUMNS beside the purchasing grid.
  *
- * `locked` is the pair a product list is meaningless without: a row with no
- * code and no description identifies nothing. `group` gives the picker its
- * headings.
+ * `locked` is the column a product list is meaningless without: the Product
+ * column carries the description WITH its code underneath, and a row with
+ * neither identifies nothing. There is no separate `code` option because there
+ * is no separate code column to hide. `group` gives the picker its headings.
  *
  * Order here is the order the table renders in. It is NOT stored per store — a
  * list whose columns come out in a different order in each shop is a support
  * call nobody can reproduce.
  */
 export const PRODUCT_COLUMNS: ColumnOption[] = [
-  { id: 'code', label: 'Product code', group: 'Identity', locked: true },
-  { id: 'description', label: 'Description', group: 'Identity', locked: true },
+  { id: 'description', label: 'Description and code', group: 'Identity', locked: true },
   { id: 'barcode', label: 'Barcode', group: 'Identity' },
   { id: 'department', label: 'Department', group: 'Identity' },
   { id: 'productType', label: 'Product type', group: 'Identity' },
@@ -69,7 +69,6 @@ export const PRODUCT_COLUMN_IDS = PRODUCT_COLUMNS.map((c) => c.id)
  * sight of a cost.
  */
 export const PRODUCT_DEFAULT_COLUMNS = [
-  'code',
   'description',
   'department',
   'cost',
