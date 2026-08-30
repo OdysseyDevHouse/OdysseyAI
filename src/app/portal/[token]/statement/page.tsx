@@ -1,15 +1,14 @@
 import type { Metadata } from 'next'
-import Link from 'next/link'
 import { requireSection } from '../guard'
 import { customerStatement } from '@/lib/site/customerAuth'
 import { portalProfile } from '@/lib/site/portalData'
 import { publicSiteName } from '@/lib/sites'
 import PortalShell, { PortalNav } from '../PortalShell'
 import SignOutButton from '../SignOutButton'
-import PayButton from '../invoices/PayButton'
-import { Badge, ButtonLink, EmptyState, Icons } from '@/components/ui'
+import LedgerTable from '../LedgerTable'
+import { ButtonLink, Card, Icons, LinkTabs, StatStrip, StatTile } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import { documentHref, DOC_LABEL } from '../documents'
+import { documentHref } from '../documents'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +20,7 @@ export const metadata: Metadata = {
 /**
  * What the customer owes, document by document, with a way to settle it.
  *
- * ── OPEN ITEMS FIRST, EVERYTHING BEHIND A LINK ─────────────────────────────
+ * ── OPEN ITEMS FIRST, EVERYTHING BEHIND A TAB ──────────────────────────────
  *
  * The question this page answers is "what do I still owe you", so it opens on
  * the lines that are still open. The full history is one click away and is also
@@ -54,6 +53,28 @@ export default async function PortalStatementPage({
   ])
 
   const balance = profile?.balance ?? 0
+  const owing = lines.filter((line) => line.amountOutstanding > 0.005)
+  const owed = owing.reduce((sum, line) => sum + line.amountOutstanding, 0)
+  // Local midnight, matching LedgerTable: a customer reads "overdue" against
+  // their own calendar rather than UTC.
+  const today = new Date().toLocaleDateString('en-CA')
+  const overdue = owing.filter((line) => line.dueDate && line.dueDate < today)
+  const overdueTotal = overdue.reduce((sum, line) => sum + line.amountOutstanding, 0)
+  /* Whether a separate Overdue tile would repeat the Still-owing figure. */
+  const allOwedIsOverdue = owed > 0.005 && Math.abs(overdueTotal - owed) < 0.005
+
+  const rows = lines.map((line) => ({
+    transactionId: line.transactionId,
+    docType: line.docType,
+    docNumber: line.docNumber,
+    docDate: line.docDate,
+    dueDate: line.dueDate,
+    amountSigned: line.amountSigned,
+    amountOutstanding: line.amountOutstanding,
+    runningBalance: line.runningBalance,
+    href: documentHref(token, line),
+    sourceDocId: line.sourceDocId,
+  }))
 
   return (
     <PortalShell
@@ -66,113 +87,91 @@ export default async function PortalStatementPage({
           onSignOut={<SignOutButton token={token} />}
         />
       }
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-ink">Your statement</h1>
-          <p className="mt-0.5 text-sm text-muted">
-            Balance{' '}
-            <span className="numeric font-semibold text-ink">
-              {formatMoney(Math.abs(balance))}
-            </span>
-            {balance < -0.005 && ' in credit'}
-          </p>
-        </div>
-        {/* A real download rather than browser print: this is the document a
-            customer forwards to their own bookkeeper, and it goes out on the
-            shop's stationery. */}
-        <ButtonLink href={`/portal/${token}/statement/pdf`} variant="secondary" size="sm">
+      title="Your statement"
+      subtitle="What is owed on your account, document by document."
+      /* The one action on this screen. Secondary, not primary — the primary
+         act here is paying, and those buttons live on the rows. */
+      action={
+        <ButtonLink href={`/portal/${token}/statement/pdf`} variant="secondary">
+          <Icons.Download size={15} />
           Download PDF
         </ButtonLink>
-      </div>
-
-      <div className="mt-4 flex gap-3 text-sm">
-        <Link
-          href={`/portal/${token}/statement`}
-          className={showAll ? 'text-brand hover:underline' : 'font-semibold text-ink'}
-        >
-          Still owing
-        </Link>
-        <Link
-          href={`/portal/${token}/statement?all=1`}
-          className={showAll ? 'font-semibold text-ink' : 'text-brand hover:underline'}
-        >
-          Everything
-        </Link>
-      </div>
-
-      {lines.length === 0 ? (
-        <div className="mt-6">
-          <EmptyState
-            icon={<Icons.Receipt size={22} />}
-            title={showAll ? 'Nothing on the account yet' : 'Nothing owing'}
-            hint={
-              showAll
-                ? 'Invoices and payments will show up here.'
-                : 'Every invoice on your account is settled.'
-            }
+      }
+      card={false}
+    >
+      {/*
+       * ── THE OVERDUE TILE ONLY APPEARS WHEN IT SAYS SOMETHING NEW ─────────
+       *
+       * On an account where every open invoice is past due — the common case
+       * for anyone who opens this page — "Still owing" and "Overdue" print the
+       * identical figure, and a third tile repeating the second in red is the
+       * danger token spent on nothing. It is shown only when the two differ,
+       * and then it is the loudest thing on the screen, which is what that
+       * colour is for.
+       *
+       * When they are equal the "Still owing" tile takes the tone instead, so
+       * the fact is stated once, in the right colour, in one place.
+       */}
+      <StatStrip columns={allOwedIsOverdue ? 2 : 3}>
+        <StatTile
+          label="Balance"
+          value={formatMoney(Math.abs(balance))}
+          hint={balance < -0.005 ? 'In credit' : balance > 0.005 ? 'On your account' : 'Settled'}
+          tone={balance < -0.005 ? 'success' : 'default'}
+          icon={<Icons.Coins size={16} />}
+        />
+        <StatTile
+          label="Still owing"
+          value={formatMoney(owed)}
+          tone={allOwedIsOverdue && owed > 0.005 ? 'danger' : 'default'}
+          hint={
+            allOwedIsOverdue && owed > 0.005
+              ? `All ${owing.length} past the due date`
+              : `${owing.length} open ${owing.length === 1 ? 'item' : 'items'}`
+          }
+          icon={<Icons.Receipt size={16} />}
+        />
+        {!allOwedIsOverdue && (
+          <StatTile
+            label="Overdue"
+            value={formatMoney(overdueTotal)}
+            tone={overdueTotal > 0.005 ? 'danger' : 'default'}
+            hint={overdueTotal > 0.005 ? 'Past the due date' : 'Nothing past due'}
+            icon={<Icons.Clock size={16} />}
           />
-        </div>
-      ) : (
-        <ul className="mt-5 divide-y divide-border">
-          {lines.map((line) => {
-            const href = documentHref(token, line)
-            const open = line.amountOutstanding > 0.005
-            return (
-              <li
-                key={line.transactionId}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="numeric block text-sm font-medium text-ink">
-                    {line.docNumber || DOC_LABEL[line.docType] || line.docType}
-                  </span>
-                  <span className="block text-xs text-muted">
-                    {line.docDate}
-                    {line.dueDate ? ` · due ${line.dueDate}` : ''} ·{' '}
-                    {DOC_LABEL[line.docType] ?? line.docType}
-                  </span>
-                </span>
+        )}
+      </StatStrip>
 
-                {/* ── THE BADGE SAYS WHAT THE AMOUNT CANNOT ──────────────────
-                    It used to repeat the outstanding figure beside the amount
-                    it equalled on every untouched invoice — noise that also
-                    buried the one line worth a second look. It now carries the
-                    PART-PAID figure, which is the only case where "what this
-                    was" and "what is left" differ.
-
-                    On the "Everything" view a bare "Open" still earns its
-                    place, because settled and unsettled lines sit together and
-                    nothing else distinguishes them. */}
-                {open &&
-                  (Math.abs(line.amountOutstanding - line.amountSigned) > 0.005 ? (
-                    <Badge tone="warning">{formatMoney(line.amountOutstanding)} left</Badge>
-                  ) : showAll ? (
-                    <Badge tone="warning">Open</Badge>
-                  ) : null)}
-
-                <span className="numeric text-sm font-medium text-ink">
-                  {line.amountSigned < 0 ? '−' : ''}
-                  {formatMoney(Math.abs(line.amountSigned))}
-                </span>
-
-                {href && (
-                  <Link href={href} className="text-xs text-brand hover:underline">
-                    PDF
-                  </Link>
-                )}
-
-                {/* Only an invoice can be paid, and only one that came from a
-                    sales document — an interest charge has nothing to settle
-                    against. sourceDocId is what payLinkFor looks up. */}
-                {ctx.settings.allowPay && open && line.docType === 'invoice' && line.sourceDocId && (
-                  <PayButton token={token} documentId={line.sourceDocId} />
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      )}
+      <Card>
+        {/* Filters one list into slices, so it is a tab bar rather than the
+            record-section Tabs — and href-driven, because the filter lives in
+            the URL and this page is server-rendered. */}
+        <LinkTabs
+          className="px-4 pt-1"
+          aria-label="Which lines to show"
+          value={showAll ? 'all' : 'open'}
+          items={[
+            {
+              value: 'open',
+              label: 'Still owing',
+              href: `/portal/${token}/statement`,
+              count: owing.length,
+            },
+            { value: 'all', label: 'Everything', href: `/portal/${token}/statement?all=1` },
+          ]}
+        />
+        <LedgerTable
+          rows={rows}
+          token={token}
+          allowPay={ctx.settings.allowPay}
+          emptyTitle={showAll ? 'Nothing on the account yet' : 'Nothing owing'}
+          emptyHint={
+            showAll
+              ? 'Invoices and payments will show up here.'
+              : 'Every invoice on your account is settled.'
+          }
+        />
+      </Card>
     </PortalShell>
   )
 }

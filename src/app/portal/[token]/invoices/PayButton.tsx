@@ -36,7 +36,12 @@ export default function PayButton({
 
   return (
     <>
-      <Button size="sm" onClick={pay} disabled={pending}>
+      {/* Secondary, not primary. This renders once per open invoice, so on a
+          statement with eleven of them a primary variant put eleven competing
+          "loudest things" on one screen — which is the same as none. The row
+          the customer wants is found by its number and its amount; the button
+          only has to be reachable once they are looking at it. */}
+      <Button size="sm" variant="secondary" onClick={pay} disabled={pending}>
         {pending ? 'One moment…' : 'Pay it'}
       </Button>
       {error && (

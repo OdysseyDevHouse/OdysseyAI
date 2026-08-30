@@ -59,9 +59,21 @@ export default async function PortalSignInPage({
   // straight back out through the section guard.
   if (session) redirect(`/portal/${token}${settings.isEnabled ? '/jobs' : '/account'}`)
 
+  /*
+   * What this shop actually offers, in the customer's words.
+   *
+   * The blurb was fixed at "your jobs, quotes and invoices", which on a
+   * statements-only shop promises a section that is not there — and on a
+   * jobs-only one fails to mention the invoices it does have.
+   */
+  const offers = [
+    settings.isEnabled ? 'your jobs and quotes' : null,
+    settings.accountsEnabled ? 'your invoices and statement' : null,
+  ].filter(Boolean) as string[]
+
   return (
     <PortalShell name={name ?? undefined}>
-      <SignInForm token={token} />
+      <SignInForm token={token} offers={offers.join(' and ')} />
     </PortalShell>
   )
 }

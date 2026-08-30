@@ -18,23 +18,73 @@ import type { PortalSettings } from '@/lib/site/portalAuth'
 export default function PortalShell({
   name,
   nav,
+  /** The page's own heading and its one action, laid out like PageHeader. */
+  title,
+  subtitle,
+  action,
+  /**
+   * Wrap the children in a card.
+   *
+   * ── THE SHELL USED TO DO THIS UNCONDITIONALLY, AND IT WAS THE BUG ────────
+   *
+   * Every page came pre-wrapped in one big bordered panel, so a page that
+   * wanted two Cards — details and addresses, say — could not have them
+   * without nesting a card inside a card. The result was pages hand-rolling
+   * `rounded-card border border-border` on a <dl> and a <ul> to fake what the
+   * kit already draws, which is exactly the drift the design system exists to
+   * stop.
+   *
+   * So the frame is now opt-in. Signed-in pages compose their own Cards and
+   * pass `false`; the sign-in, closed and expired pages are a single block of
+   * prose and keep the panel.
+   */
+  card = true,
   children,
 }: {
   name?: string
   /** Signed-in pages pass their tabs; the sign-in page has none. */
   nav?: ReactNode
+  title?: ReactNode
+  subtitle?: ReactNode
+  action?: ReactNode
+  card?: boolean
   children: ReactNode
 }) {
   return (
     <main className="min-h-screen bg-canvas px-4 py-8">
-      <div className="mx-auto w-full max-w-3xl">
-        {name ? (
-          <p className="mb-3 text-sm text-muted">{name}</p>
-        ) : null}
-        {nav}
-        <div className="rounded-card border border-border bg-surface p-6 shadow-card">
-          {children}
+      {/*
+       * Wider than the old max-w-3xl. A statement row carries a document
+       * number, two dates, a badge, an amount, a PDF link and a Pay button —
+       * at 48rem those wrap onto a second line on a laptop, which is what made
+       * the list look untidy rather than dense.
+       */}
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+        <div className="flex flex-col gap-3">
+          {name ? <p className="text-sm text-muted">{name}</p> : null}
+          {nav}
         </div>
+
+        {title ? (
+          /* The same shape as PageHeader in the back office — title, subtitle
+             under it, one action hard right — without importing it, since that
+             component carries breadcrumbs and a back link that mean nothing to
+             a customer. */
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-xl font-semibold text-ink">{title}</h1>
+              {subtitle ? <div className="mt-0.5 text-sm text-muted">{subtitle}</div> : null}
+            </div>
+            {action ? <div className="shrink-0">{action}</div> : null}
+          </div>
+        ) : null}
+
+        {card ? (
+          <div className="rounded-card border border-border bg-surface p-6 shadow-card">
+            {children}
+          </div>
+        ) : (
+          children
+        )}
         {/*
          * Deliberately no "powered by" and no link back to the app. This page
          * belongs to the business the customer deals with, not to the software

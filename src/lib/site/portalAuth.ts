@@ -5,6 +5,24 @@ import { customerExecute, customerQuery, customerQueryOne } from './customerDb'
 import { getSetting } from './settings'
 import { sendAs, isConfiguredFor } from '../mail'
 import { createPortalToken } from '../publicPortalToken'
+import { publicSiteName } from '../sites'
+import { logActivity } from './activityLog'
+
+/*
+ * Four replaces, copied rather than imported.
+ *
+ * invoiceEmail exports the same function, but importing it here would pull the
+ * PDF renderer, the payments gateway and the document builder into the
+ * SIGN-IN path — a module chain that has no business loading so somebody can
+ * ask for a link. The duplication is two lines; the coupling would not be.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 /**
  * Signing a customer in to the portal, with a link instead of a password.
@@ -220,15 +238,82 @@ export async function requestLink(
            * means the email and the route cannot disagree about the shape.
            */
           const siteToken = await createPortalToken(siteId)
-          await sendAs(siteId, {
+          const url = `${base}/portal/${siteToken}/enter/${token}`
+          // Tolerant AND non-null: an unnamed site drops the wording that uses
+          // it rather than mailing "Sign in to your account with null".
+          const siteName = (await publicSiteName(siteId).catch(() => '')) ?? ''
+          const who = String(customer.name ?? '').trim()
+
+          /*
+           * ── IT IS SHAPED LIKE THE INVOICE EMAIL, AND THAT IS THE FIX ──────
+           *
+           * This used to send text/plain whose entire body was a greeting-less
+           * sentence and a bare 200-character URL ending in 43 random
+           * characters. An invoice from the same server, to the same address,
+           * arrived; this did not — because that shape is a near-perfect match
+           * for a phishing template, and filters score it accordingly.
+           *
+           * So it now carries what every other message this system sends
+           * carries: a subject naming the business, a greeting to a named
+           * person, an HTML part with a real anchor, and a sign-off. The plain
+           * part is kept in step for clients that will not render HTML — a
+           * message with no text//alternative is itself a spam signal.
+           *
+           * The URL stays visible in the text part on purpose. A link a person
+           * can read and paste is one they can check before clicking, and it is
+           * the only thing that still works when the button does not render.
+           */
+          const from = siteName ? ` from ${siteName}` : ''
+          const result = await sendAs(siteId, {
             to: String(customer.email),
-            subject: 'Your sign-in link',
+            subject: siteName ? `Sign in to your account with ${siteName}` : 'Sign in to your account',
             text:
-              `Here is your link to sign in and see your account:\n\n` +
-              `${base}/portal/${siteToken}/enter/${token}\n\n` +
-              `It works once and lasts ${LINK_MINUTES} minutes. ` +
-              `If you did not ask for it, you can ignore this email.`,
-          }).catch(() => undefined)
+              `Good day${who ? ` ${who}` : ''},\n\n` +
+              `Here is your link to sign in and see your account${from}:\n\n` +
+              `${url}\n\n` +
+              `It works once and lasts ${LINK_MINUTES} minutes.\n\n` +
+              `If you did not ask for it, you can ignore this email.\n\n` +
+              (siteName ? `Kind regards,\n${siteName}` : ''),
+            html: `<div style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#16191d;line-height:1.5">
+  <p>Good day${who ? ` ${escapeHtml(who)}` : ''},</p>
+  <p>Here is your link to sign in and see your account${from ? ` from ${escapeHtml(siteName)}` : ''}.</p>
+  <p style="margin:20px 0"><a href="${escapeHtml(url)}" style="background:#16191d;color:#ffffff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Sign in to your account</a></p>
+  <p style="color:#667085;font-size:13px">It works once and lasts ${LINK_MINUTES} minutes. If you did not ask for it, you can ignore this email.</p>
+  ${siteName ? `<p>Kind regards,<br>${escapeHtml(siteName)}</p>` : ''}
+</div>`,
+          })
+
+          /*
+           * ── A FAILED SEND IS RECORDED, NEVER RETURNED ─────────────────────
+           *
+           * sendAs answers with {ok:false, error} rather than throwing, and
+           * this call used to discard the result entirely — so a genuine
+           * failure left no trace anywhere, and the shop had no way to tell
+           * "we sent it, check your spam" from "it never left the building".
+           *
+           * The CUSTOMER is still told nothing: the anti-enumeration rule at
+           * the top of this file is not negotiable, and the caller's answer is
+           * unchanged. This writes to the activity log, which only staff read.
+           *
+           * Logged against the customer, so it surfaces on the timeline of the
+           * person who did not get their link — which is where somebody
+           * investigating "they say it never arrived" will actually look.
+           */
+          if (!result.ok) {
+            await logActivity(
+              siteId,
+              { userId: 0, userName: 'Customer portal' },
+              {
+                entity: 'customer',
+                entityId: customerId,
+                action: 'portal_link_failed',
+                // The address and the reason. No token — an activity log is
+                // read by more people than the mailbox is, and a sign-in link
+                // in one would be a credential sitting in a report.
+                detail: `Sign-in link to ${String(customer.email)} could not be sent — ${result.error}`,
+              },
+            ).catch(() => undefined)
+          }
         }
       }
     }
