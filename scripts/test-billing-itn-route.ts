@@ -222,7 +222,7 @@ async function main() {
     ok('a GET probe is answered', getProbe.status === 200)
 
     // ── A payload with no payment id cannot be keyed ─────────────────────
-    const token = await createBillingCallbackToken(accountId, 'ref-x')
+    const token = await createBillingCallbackToken(accountId)
     const noId = await post(token, signedBody(itnFields({ pf_payment_id: '' })))
     ok('a payload with no pf_payment_id is refused', noId.status === 200)
     ok('  and nothing was recorded for it',
@@ -252,7 +252,7 @@ async function main() {
     const beforeLicences = await query('SELECT id FROM cp2_devices WHERE site_id = ?', [SCRATCH_SITE])
     ok('the site starts at its known licence count', beforeLicences.length === existingDeviceIds.length, String(beforeLicences.length))
 
-    const payToken = await createBillingCallbackToken(accountId, attempt.reference)
+    const payToken = await createBillingCallbackToken(accountId)
     const paid = await post(
       payToken,
       signedBody(itnFields({ m_payment_id: attempt.reference, pf_payment_id: 'pf-live-1' })),
@@ -316,7 +316,7 @@ async function main() {
     ok('a failed collection marks past_due', (await subscriptionForAccount(accountId))?.status === 'past_due')
 
     // ── An account that is not ours ──────────────────────────────────────
-    const otherToken = await createBillingCallbackToken(999_999, 'ref-y')
+    const otherToken = await createBillingCallbackToken(999_999)
     const other = await post(otherToken, signedBody(itnFields({ pf_payment_id: 'pf-other' })))
     ok('a token for an unknown account is acknowledged', other.status === 200)
     ok('  and records nothing',

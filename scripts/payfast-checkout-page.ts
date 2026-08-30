@@ -68,7 +68,7 @@ async function main() {
     process.exit(1)
   }
 
-  const token = await createBillingCallbackToken(account.id, attempt.reference)
+  const token = await createBillingCallbackToken(account.id)
   const today = new Date().toISOString().slice(0, 10)
   const firstCollection = nextBillingDate(today, safeBillingDay(account.billing_day))
 

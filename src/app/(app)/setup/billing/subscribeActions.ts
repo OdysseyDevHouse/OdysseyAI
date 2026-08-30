@@ -69,7 +69,7 @@ export async function startSubscriptionAction(): Promise<
   if (!attempt.ok) return { ok: false, error: attempt.error }
 
   const config = platformPayFast()
-  const token = await createBillingCallbackToken(account.id, attempt.reference)
+  const token = await createBillingCallbackToken(account.id)
 
   /* The first collection is the account's next billing day, so the customer's
      debit order lands on the day they already expect to be charged rather than

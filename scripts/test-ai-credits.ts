@@ -17,7 +17,10 @@
 import { createHash } from 'node:crypto'
 import { query, queryOne, execute } from '../src/lib/db'
 import { phpUrlEncode } from '../src/lib/payfast/signature'
+import { randomUUID } from 'node:crypto'
 import { createAiTopupToken } from '../src/lib/aiTopupToken'
+import { createBillingCallbackToken } from '../src/lib/billingCallbackToken'
+import { platformPayFast, platformPayFastStatus } from '../src/lib/payfast/platformConfig'
 import {
   balanceMicros,
   recordUsage,
@@ -443,7 +446,7 @@ async function main() {
   if (reachable) {
     const routeBefore = await balanceMicros(accountId)
     const ref4 = await newTopup(500)
-    const token = await createAiTopupToken(accountId, ref4)
+    const token = createAiTopupToken(ref4)
 
     const bad = await post('not-a-token', signedBody(itnFields({ m_payment_id: ref4 })))
     ok('an unreadable token is acknowledged, not retried', bad.status === 200)
@@ -476,7 +479,7 @@ async function main() {
     )
 
     const ref5 = await newTopup(500)
-    const token5 = await createAiTopupToken(accountId, ref5)
+    const token5 = createAiTopupToken(ref5)
     const good = await post(
       token5,
       signedBody(itnFields({ m_payment_id: ref5, pf_payment_id: `${PF_PREFIX}good` })),
@@ -499,18 +502,60 @@ async function main() {
       'this is the single most expensive bug this feature could have',
     )
 
-    /* A token for one account paired with another account's reference. The
-       token is valid and the signature is valid; only the pairing is wrong. */
+    /* A token we really did mint, but for a DIFFERENT checkout, presented
+       against this one. Both the token and the PayFast signature are valid;
+       only the pairing is wrong. This is what stops somebody replaying a
+       notify URL they were legitimately given against a reference they
+       guessed. */
     const ref6 = await newTopup(250)
-    const mismatched = await createAiTopupToken(accountId + 99_999, ref6)
+    const ref7 = await newTopup(250)
+    const wrongPairing = createAiTopupToken(ref7)
     const crossed = await post(
-      mismatched,
+      wrongPairing,
       signedBody(itnFields({ m_payment_id: ref6, pf_payment_id: `${PF_PREFIX}crossed` })),
     )
-    ok('a token naming another account is acknowledged', crossed.status === 200)
+    ok('a token minted for another checkout is acknowledged', crossed.status === 200)
     ok(
-      'A MISMATCHED TOKEN CREDITS NOTHING',
+      'A TOKEN THAT DOES NOT MATCH ITS REFERENCE CREDITS NOTHING',
       (await balanceMicros(accountId)) === afterGood,
+    )
+    ok(
+      '...and leaves both checkouts untouched',
+      (await pendingByReference(ref6))!.status === 'pending' &&
+        (await pendingByReference(ref7))!.status === 'pending',
+    )
+
+  }
+
+  /* ── The notify URL has to fit ───────────────────────────────────────────
+     PayFast caps notify_url at 255 characters and DROPS the field when it is
+     longer, falling back to whatever the merchant dashboard holds. The payment
+     then succeeds, the customer is charged, and the callback never arrives —
+     no error at either end.
+
+     Measured against the REAL configured URL rather than a test host, because
+     the length depends entirely on the deployed host name: a token that fits
+     behind `localhost` can be over the limit behind a tunnel or a subdomain.
+     Both callbacks are checked; the subscription one had the same bug. */
+  console.log('\n-- notify url length --')
+
+  const cfg = platformPayFastStatus().ok ? platformPayFast() : null
+  if (!cfg) {
+    console.log('SKIP  PayFast is not configured, so there is no URL to measure')
+  } else {
+    const base = cfg.notifyUrl.replace(/\/+$/, '').replace(/\/api\/billing\/payfast$/, '')
+    const topupUrl = `${base}/api/billing/topup/${createAiTopupToken(randomUUID())}`
+    const subUrl = `${cfg.notifyUrl}/${await createBillingCallbackToken(accountId)}`
+
+    ok(
+      'THE TOP-UP NOTIFY URL FITS PAYFAST 255-CHAR LIMIT',
+      topupUrl.length <= 255,
+      `${topupUrl.length} chars — over the limit means PayFast silently never calls back`,
+    )
+    ok(
+      'THE SUBSCRIPTION NOTIFY URL FITS TOO',
+      subUrl.length <= 255,
+      `${subUrl.length} chars — same failure, and it costs a renewal every month`,
     )
   }
 

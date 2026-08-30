@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { readAiTopupToken } from '@/lib/aiTopupToken'
+import { verifyAiTopupToken } from '@/lib/aiTopupToken'
 import { platformPayFast } from '@/lib/payfast/platformConfig'
 import { verifyItn, parseItnBody } from '@/lib/payfast/itn'
 import { pendingByReference, settleTopup } from '@/lib/aiCredits/ledger'
@@ -64,51 +64,41 @@ function postBackDisabled(): boolean {
 export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params
 
-  // 1. Which account and which checkout — from a value WE minted and signed,
-  //    never from the body.
-  const claim = await readAiTopupToken(token)
-  if (!claim) {
-    console.warn('[payfast-topup] callback with an unreadable token')
-    return ack()
-  }
-
   // The RAW body. The ITN signature is built over the fields in the order they
   // arrive, so anything that parses into an object first breaks verification.
   const rawBody = await req.text()
   const fields = Object.fromEntries(parseItnBody(rawBody))
   const pfPaymentId = (fields.pf_payment_id ?? '').trim()
+  const reference = (fields.m_payment_id ?? '').trim()
+
+  /* 1. Which checkout, from the payload's own m_payment_id — the reference WE
+        sent at checkout and PayFast echoes back. It is not trusted on its own:
+        the token below must be the one we minted FOR this reference, and the
+        row it names is then read from our own database rather than from
+        anything the payload claims about itself. */
+  if (!reference || !verifyAiTopupToken(token, reference)) {
+    console.warn('[payfast-topup] callback with a token that does not match its reference', {
+      reference: reference || '(none)',
+      pfPaymentId: pfPaymentId || '(none)',
+    })
+    return ack()
+  }
 
   /* 2. No payment id, no idempotency key. The unique index would accept
         unlimited NULLs, so a payload without one cannot be made replay-safe and
         is refused before anything is written. */
   if (!pfPaymentId) {
-    console.warn('[payfast-topup] payload with no pf_payment_id', {
-      accountId: claim.accountId,
-      reference: claim.reference,
-    })
+    console.warn('[payfast-topup] payload with no pf_payment_id', { reference })
     return ack()
   }
 
   try {
-    const pending = await pendingByReference(claim.reference)
+    const pending = await pendingByReference(reference)
 
     if (!pending) {
       console.warn('[payfast-topup] no pending top-up for reference', {
-        accountId: claim.accountId,
-        reference: claim.reference,
+        reference,
         pfPaymentId,
-      })
-      return ack()
-    }
-
-    /* 3. The token said which account; the row must agree. A mismatch means a
-          token and a reference from different checkouts have been combined,
-          which is not something an honest notification can do. */
-    if (pending.accountId !== claim.accountId) {
-      console.warn('[payfast-topup] reference belongs to another account', {
-        tokenAccountId: claim.accountId,
-        rowAccountId: pending.accountId,
-        reference: claim.reference,
       })
       return ack()
     }
@@ -146,27 +136,27 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
          somebody looking for a fraud attempt instead of a network blip. If the
          retries stop and the shop says it paid, THAT is the one to investigate. */
       console.warn('[payfast-topup] could not verify — left open for the retry', {
-        accountId: claim.accountId,
-        reference: claim.reference,
+        accountId: pending.accountId,
+        reference,
         pfPaymentId,
         reason: verified.valid ? 'unknown' : verified.reason,
       })
     } else if (outcome === 'pending') {
       console.info('[payfast-topup] payment still clearing', {
-        accountId: claim.accountId,
-        reference: claim.reference,
+        accountId: pending.accountId,
+        reference,
         status: fields.payment_status,
       })
     } else if (outcome === 'failed') {
       console.warn('[payfast-topup] payment did not complete', {
-        accountId: claim.accountId,
-        reference: claim.reference,
+        accountId: pending.accountId,
+        reference,
         status: fields.payment_status,
       })
     } else if (outcome === 'credited') {
       console.info('[payfast-topup] credited', {
-        accountId: claim.accountId,
-        reference: claim.reference,
+        accountId: pending.accountId,
+        reference,
         amountMicros: pending.amountMicros,
       })
     }
@@ -179,8 +169,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
        the payment is real and unrecorded — and PayFast's retry is what saves
        it. */
     console.error('[payfast-topup] could not record', {
-      accountId: claim.accountId,
-      reference: claim.reference,
+      reference,
       pfPaymentId,
       error,
     })

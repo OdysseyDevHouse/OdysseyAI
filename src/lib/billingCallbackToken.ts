@@ -54,27 +54,46 @@ function secret(): Uint8Array {
  * PayFast reuses the notify URL across collections, so by month three the
  * reference is historical.
  */
-export async function createBillingCallbackToken(
-  accountId: number,
-  reference: string,
-): Promise<string> {
-  return new SignJWT({ accountId, reference })
+/**
+ * ── EVERY BYTE HERE IS SPENT AGAINST A 255-CHARACTER LIMIT ─────────────────
+ *
+ * READ THIS BEFORE ADDING A CLAIM.
+ *
+ * PayFast caps `notify_url` at 255 characters and DROPS the field when it is
+ * longer — silently, falling back to whatever the merchant dashboard holds.
+ * The symptom is the worst kind: the payment succeeds, the customer is
+ * charged, and the callback never arrives, with no error at either end.
+ *
+ * This token carried `accountId`, `reference` and an `iat`, which came to 215
+ * characters and put the URL at 291 — over the limit on any host name longer
+ * than a short domain. It now carries the account and nothing else: 113
+ * characters.
+ *
+ * `reference` is gone because nothing read it. The route resolves the
+ * subscription from the ACCOUNT (subscriptionForAccount), and by month three
+ * the reference names a checkout attempt that is historical anyway — the
+ * docblock above already said as much. `iat` is gone because there is no
+ * expiry to measure it against.
+ *
+ * The claim is `a`, not `accountId`, for the same reason: eight characters of
+ * JSON, twice over in the base64, on a budget this tight.
+ */
+export async function createBillingCallbackToken(accountId: number): Promise<string> {
+  return new SignJWT({ a: accountId })
     .setProtectedHeader({ alg: 'HS256' })
     .setAudience(AUDIENCE)
-    .setIssuedAt()
     // No expiry. See the docblock — this is load-bearing.
     .sign(secret())
 }
 
 export async function readBillingCallbackToken(
   token: string,
-): Promise<{ accountId: number; reference: string } | null> {
+): Promise<{ accountId: number } | null> {
   try {
     const { payload } = await jwtVerify(token, secret(), { audience: AUDIENCE })
-    const accountId = Number(payload.accountId)
-    const reference = typeof payload.reference === 'string' ? payload.reference : ''
+    const accountId = Number(payload.a)
     if (!Number.isInteger(accountId) || accountId <= 0) return null
-    return { accountId, reference }
+    return { accountId }
   } catch {
     return null
   }

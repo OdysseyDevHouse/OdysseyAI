@@ -74,7 +74,7 @@ export async function startTopupAction(
   })
 
   const config = platformPayFast()
-  const token = await createAiTopupToken(account.id, reference)
+  const token = createAiTopupToken(reference)
 
   const form = buildTopupForm({
     config,
