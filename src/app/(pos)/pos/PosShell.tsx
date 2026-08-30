@@ -25,6 +25,8 @@ import {
   storedPosMenus,
   storedInstructions,
   storedSettings,
+  variantChildren,
+  storedVariantAxes,
 } from '@/lib/posOffline/catalog'
 import {
   activeMenu,
@@ -83,6 +85,8 @@ import {
   scanAction,
   lotsForProductAction,
   serialsForProductAction,
+  variantChildrenAction,
+  variantAxesAction,
   finaliseSaleAction,
   createCreditNoteAction,
   saveSaleAction,
@@ -221,8 +225,10 @@ import type { Capability } from '@/lib/site/permissions'
 import type { OfflineSale } from '@/lib/posOffline/types'
 import { WeighModal } from './WeighModal'
 import { LotModal } from './LotModal'
+import { VariantModal } from './VariantModal'
 import { SerialModal } from './SerialModal'
 import type { TillLot } from '@/lib/site/batches'
+import type { VariantAxis } from '@/lib/site/productVariants'
 import { lotCaptureFor, type LotCapture } from '@/lib/gs1'
 import { GiftCardModal, GiftCardBalanceModal } from './GiftCardModal'
 import { lookupGiftCardAction } from './giftCardActions'
@@ -974,6 +980,26 @@ export default function PosShell({
   const [serialling, setSerialling] = useState<TillProduct | null>(null)
   const [serialOptions, setSerialOptions] = useState<{ id: number; serial: string }[]>([])
   const [serialsLoading, setSerialsLoading] = useState(false)
+
+  /**
+   * A variant group waiting for somebody to say WHICH one (070).
+   *
+   * Carries the qty for the same reason `lotting` does: the modal does not
+   * change it, so a "3" typed before the tile was tapped has to survive the
+   * round trip or three shirts silently become one.
+   *
+   * Unlike the lots and serials beside it there is no `loading` flag and no
+   * empty-list fallback. The members are ordinary cached products, so offline
+   * they are read straight out of Dexie with no round trip at all — and a group
+   * with no members never reaches here, because `browseForTill` will not draw a
+   * tile for one (see LIVE_GROUP_ONLY).
+   */
+  const [picking, setPicking] = useState<{
+    parent: TillProduct
+    qty: number
+    children: TillProduct[]
+    axes: VariantAxis[]
+  } | null>(null)
 
   /**
    * The product being asked about, if any. Null closes the dialog.
@@ -1739,6 +1765,11 @@ export default function PosShell({
           priceStructureId,
           limit: 200,
           terminalId: terminal?.id ?? null,
+          /* Groups, not their members — the till draws one tile per garment
+             and asks for the size at the tap. `browseOffline` filters the
+             same way against its own cache, so the grid does not rearrange
+             itself the moment the network drops. */
+          includeVariantParents: true,
         }).catch(() => browseOffline(siteId, openDepartment))
       : browseOffline(siteId, openDepartment)
     lookup
@@ -1864,6 +1895,28 @@ export default function PosShell({
 
   function add(product: TillProduct, qty = 1) {
     /*
+     * A variant GROUP is not a thing that can be sold — it is a question (070).
+     *
+     * FIRST, ahead of even the offline guard, because every check below asks
+     * something about the item being sold and a group is not one: it holds no
+     * stock, has no price of its own, and `recordMovement` refuses it outright.
+     * A parent that got past here would fail at the tender pad with the card
+     * already out, which is the failure this whole chain exists to prevent.
+     *
+     * The modal calls add() again with the CHILD, so everything below still
+     * runs — a variant that is also a batch item gets its lot prompt next, for
+     * free, rather than needing this branch to know about lots.
+     *
+     * Here rather than at the tile for the reason the four checks below are
+     * here: every add path converges on add(), and the one a narrower check
+     * would miss is the scanner.
+     */
+    if (product.hasVariants) {
+      openVariantPicker(product, qty)
+      return
+    }
+
+    /*
      * Some products cannot be sold with the server gone, and it is kinder to refuse
      * at the tile than at the tender pad with a queue waiting. A serial-tracked item
      * needs the serial table to pick a unit and to mark it sold in the same
@@ -1982,6 +2035,52 @@ export default function PosShell({
        who is looking elsewhere that an item went in when it has not. */
     if (soundOn) scanOk()
     dispatch({ type: 'ADD', product, qty, resolvedIncl: priceFor(product) })
+  }
+
+  /**
+   * Open the size/colour picker for a group (070).
+   *
+   * Read ONLINE where possible and from Dexie otherwise, the same order every
+   * other till read follows. The offline path is not a degraded fallback here:
+   * members are ordinary cached products and the axis labels ride the catalog
+   * feed, so a till that has been off the network all day opens the same picker
+   * with the same captions.
+   *
+   * Opened only once the members are in hand, rather than opening empty and
+   * filling in. A picker that appears with no buttons and then grows them is
+   * one a cashier taps through at the wrong moment — and this read is local or
+   * one round trip, not something worth a spinner.
+   */
+  function openVariantPicker(parent: TillProduct, qty: number) {
+    startTransition(async () => {
+      const [children, axes] = till.online
+        ? await Promise.all([
+            variantChildrenAction(parent.id, priceStructureId, terminal?.id ?? null).catch(() =>
+              variantChildren(siteId, parent.id),
+            ),
+            variantAxesAction(parent.id).catch(async () =>
+              (await storedVariantAxes(siteId))[parent.id] ?? [],
+            ),
+          ])
+        : await Promise.all([
+            variantChildren(siteId, parent.id),
+            storedVariantAxes(siteId).then((all) => all[parent.id] ?? []),
+          ])
+
+      /*
+       * A group with nothing sellable in it.
+       *
+       * `browseForTill` will not draw a tile for one, so reaching this means
+       * the shop emptied the group since this till last synced. Saying so is
+       * the only honest answer — an empty picker would look like a broken
+       * till, and adding the parent is exactly what must never happen.
+       */
+      if (children.length === 0) {
+        toast.error(`${parent.description} has no sizes on this till right now.`)
+        return
+      }
+      setPicking({ parent, qty, children, axes })
+    })
   }
 
   /**
@@ -7470,6 +7569,25 @@ export default function PosShell({
             // weight does: the guard passes, the lot lands on the line, and
             // this line will not merge with another of the same product.
             add({ ...product, scannedBatchNo: batchNo }, qty)
+          }}
+        />
+      )}
+
+      {picking && (
+        <VariantModal
+          parent={picking.parent}
+          childrenProducts={picking.children}
+          axes={picking.axes}
+          priceFor={priceFor}
+          onCancel={() => setPicking(null)}
+          onConfirm={(child) => {
+            const { qty } = picking
+            setPicking(null)
+            /* Back through add() with the CHILD, which is an ordinary product
+               — so it meets the offline guard, the weigh check, the lot prompt
+               and everything else exactly as it would had it been tapped
+               directly. Nothing here needs to know which of those apply. */
+            add(child, qty)
           }}
         />
       )}

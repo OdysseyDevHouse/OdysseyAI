@@ -13,6 +13,10 @@ import type { PosMenu } from '../posMenuEngine'
    `OfflineOperator` below, and for the same reason: one definition of the shape
    the two halves exchange, rather than two that can drift. */
 import type { TillInstructionGroup } from '../site/instructions'
+/* Type-only for the same reason, and the same trick: `productVariants.ts` is
+   `server-only`, and erasing the import at compile time keeps it out of the
+   browser bundle while both halves share one definition of the shape. */
+import type { VariantAxis } from '../site/productVariants'
 
 /**
  * Pulling the shop down onto the till, and keeping it current.
@@ -65,8 +69,16 @@ import type { TillInstructionGroup } from '../site/instructions'
  * glyphs on a shop that has uploaded a picture for every department. A delta
  * cannot fix it: products would gain their icon one at a time as each happened
  * to be edited, leaving a grid half in pictures and half in glyphs.
+ *
+ * 8 added the variant GROUPS (070). The feed now sends a parent INSTEAD of its
+ * children, plus the axis labels in their own map. A till on 7 holds the
+ * children as loose tiles, which is what it drew before the feature and is not
+ * wrong — only flat. The reason this is a bump rather than a delta is that a
+ * till must never hold BOTH: patching parents in beside children a till
+ * already has would draw one shirt six times, and no later delta would ever
+ * remove the extras.
  */
-const SCHEMA = 7
+const SCHEMA = 8
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -148,6 +160,15 @@ type CatalogResponse = {
    */
   instructionGroups?: TillInstructionGroup[]
   productInstructionGroups?: Record<number, number[]>
+  /**
+   * What each variant group's axes are called, keyed by parent id (070).
+   *
+   * Optional for the same reason as the instruction library above: a server on
+   * schema 7 sends none, and a site that has not run 070 sends an empty map.
+   * Both mean "no groups" to the till, which is the flat grid — so the default
+   * at the store covers both without a special case.
+   */
+  variantAxes?: Record<number, VariantAxis[]>
 }
 
 export type CatalogResult =
@@ -261,6 +282,10 @@ export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
          the same reason as the pending prices above. */
       { key: KV.instructionGroups, value: body.instructionGroups ?? [] },
       { key: KV.productInstructions, value: body.productInstructionGroups ?? {} },
+      /* Empty map on a schema-7 server or an unmigrated site — see the type.
+         The picker then captions its rows generically, which is the right
+         behaviour for a shop that has no groups anyway. */
+      { key: KV.variantAxes, value: body.variantAxes ?? {} },
     ])
   })
 
@@ -453,8 +478,65 @@ export async function browseOffline(
   limit = 200,
 ): Promise<TillProduct[]> {
   const rows = await posDb(siteId).products.where('departmentId').equals(departmentId).toArray()
-  rows.sort(menuOrder)
-  return rows.slice(0, limit)
+  /* Members of a variant group are held but not drawn — the group's own tile
+     stands for them, and the picker behind it is where they appear. Filtered
+     BEFORE the limit so a department of shirts is not cut to 200 rows that are
+     mostly sizes of the same three garments. */
+  const tiles = rows.filter((p) => p.parentId === null || p.parentId === undefined)
+  tiles.sort(menuOrder)
+  return tiles.slice(0, limit)
+}
+
+/**
+ * The members of one variant group, for the picker (070).
+ *
+ * Runs at the moment a cashier taps a group tile, so it reads the `parentId`
+ * index rather than scanning: on a 40,000-row file the difference is the pause
+ * between a tap and a picker appearing, with somebody waiting at the counter.
+ *
+ * Archived members never reach the till at all — `browseForTill` excludes them
+ * — so there is nothing to filter here. `visible_in_pos` is likewise already
+ * applied, which is what makes hiding one size thin the picker rather than
+ * needing a second rule on this side.
+ *
+ * Sorted by the shop's own `variant_sort` and NOT by `menuOrder`: sizes are not
+ * alphabetical, and S/M/L/XL sorting to L/M/S/XL is the exact nonsense that
+ * column exists to prevent (see 070). Ties fall back to the axis values so the
+ * order is at least stable on a group nobody has ordered.
+ */
+export async function variantChildren(
+  siteId: number,
+  parentId: number,
+): Promise<TillProduct[]> {
+  const rows = await posDb(siteId)
+    .products.where('parentId')
+    .equals(parentId)
+    .toArray()
+    .catch(() => [] as TillProduct[])
+  return rows.sort(variantOrder)
+}
+
+/**
+ * The picker's order: the shop's own `variant_sort`, then the axis values.
+ *
+ * ⚠ Must match `getGroup`'s ORDER BY in lib/site/productVariants.ts, which is
+ * what the back office shows. A picker that ordered its sizes differently from
+ * the screen where they were arranged would make the arranging look broken.
+ *
+ * Note 0 sorts FIRST here, unlike `menuOrder` above — the two look alike and
+ * mean opposite things. There, 0 is "never placed" and goes after everything a
+ * shop positioned deliberately. Here it is the ordinary state: `attachChild`
+ * leaves the column at its default until somebody drags the sizes into order,
+ * so a whole group sits at 0 and falls through to the axis tiebreak. Pushing 0
+ * last would reverse an unordered group for no reason and, worse, single out
+ * the one member that had been dragged to the front.
+ */
+function variantOrder(a: TillProduct, b: TillProduct): number {
+  return (
+    a.variantSort - b.variantSort ||
+    a.axis1Value.localeCompare(b.axis1Value) ||
+    a.axis2Value.localeCompare(b.axis2Value)
+  )
 }
 
 /**
@@ -503,6 +585,23 @@ export async function storedOperators(siteId: number): Promise<OfflineOperator[]
  */
 export async function storedPendingPrices(siteId: number): Promise<PendingSchedule[]> {
   return (await kvGet<PendingSchedule[]>(siteId, KV.pendingPrices)) ?? []
+}
+
+/**
+ * What this till's variant groups call their axes, keyed by parent id (070).
+ *
+ * Read from storage rather than the page's props for the reason every reader
+ * here is: the props are right on a fresh load and gone after a reload with no
+ * network, and a picker that lost its captions mid-shift would ask a cashier
+ * to choose between 'S' and 'M' without saying what that means.
+ *
+ * Empty is the ordinary case — most shops have no groups — and the picker
+ * falls back to generic captions rather than refusing to open.
+ */
+export async function storedVariantAxes(
+  siteId: number,
+): Promise<Record<number, VariantAxis[]>> {
+  return (await kvGet<Record<number, VariantAxis[]>>(siteId, KV.variantAxes)) ?? {}
 }
 
 /**

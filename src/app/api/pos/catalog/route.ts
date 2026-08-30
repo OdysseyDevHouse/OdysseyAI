@@ -14,6 +14,7 @@ import { operatorsForDevice } from '@/lib/site/offlineOperators'
 import { listAllQuickKeys } from '@/lib/site/quickKeys'
 import { livePosMenus } from '@/lib/site/posMenus'
 import { readInstructionLibrary } from '@/lib/site/instructions'
+import { allVariantAxes } from '@/lib/site/productVariants'
 import { siteQuery } from '@/lib/siteDb'
 
 export const dynamic = 'force-dynamic'
@@ -71,11 +72,20 @@ export const dynamic = 'force-dynamic'
  * the products beside them would only gain their icon as each one happened to be
  * edited — a grid half in pictures and half in glyphs, settling over weeks.
  *
+ * 8 added the variant GROUPS (070). Two changes at once, and a till on 7 gets
+ * neither: the feed now carries parent rows instead of their children, and the
+ * axis LABELS ('Size', 'Colour') arrive in their own map because they live on
+ * the group rather than on any product row. A till on 7 holds the children as
+ * loose tiles — today's behaviour, and correct, just not the feature. What it
+ * must NOT do is hold both, which is why this is a schema bump and not a
+ * delta: patching parents in beside the children a till already has would put
+ * a shirt on the grid six times.
+ *
  * ⚠ MUST match `SCHEMA` in lib/posOffline/catalog.ts. The till sends its own
  * number and this route decides whether a delta is safe; bump only one and every
  * till in the shop full-loads on every poll, forever, with no error to show for it.
  */
-const CATALOG_SCHEMA = 7
+const CATALOG_SCHEMA = 8
 
 /**
  * Ceiling on one response.
@@ -168,6 +178,7 @@ export async function GET(req: NextRequest) {
     settings,
     operators,
     instructions,
+    variantAxes,
   ] = await Promise.all([
     productsSince(siteId, cutoff, priceStructure?.id ?? null, terminal?.stockLocationId ?? null),
     wantsDelta ? removedSince(siteId, cutoff!) : Promise.resolve<number[]>([]),
@@ -245,6 +256,17 @@ export async function GET(req: NextRequest) {
        must still be able to sell, and an empty library asks no questions — which
        is exactly how that shop behaves today. */
     readInstructionLibrary(siteId).catch(() => ({ groups: [], byProduct: {} })),
+    /*
+     * The axis labels, whole, for the same reason the instruction library is:
+     * renaming an axis touches `product_variant_axes` and nothing on any
+     * product, so a products-only delta would leave a till captioning its
+     * picker 'Size' long after the shop renamed it 'Length'.
+     *
+     * Tolerant of the table not existing, matching the line above: a site that
+     * has not run 070 has no groups, so an empty map is the honest answer and
+     * the till draws the flat grid it drew before the feature.
+     */
+    allVariantAxes(siteId).catch(() => ({})),
   ])
 
   // This till's own invoice sequence, so it can number a sale with no server.
@@ -428,6 +450,14 @@ export async function GET(req: NextRequest) {
        * lunch menu at 11:00.
        */
       posMenus,
+      /*
+       * What each group's axes are CALLED, keyed by parent id — 'Size',
+       * 'Colour'. The values ('M', 'Red') are already on the product rows;
+       * only the captions live on the group.
+       *
+       * Empty on a shop with no groups, which is most of them.
+       */
+      variantAxes,
     },
     {
       // Never cached by anything in between. A catalog is per-site, per-device and
@@ -448,6 +478,23 @@ export async function GET(req: NextRequest) {
  * the structure, with stock and the `askPriceAtSale` / `allowFractions` /
  * `maxDiscountPct` flags the basket rules need. A second query here is a second
  * thing to keep in step with pricing.
+ *
+ * ── THE FEED CARRIES BOTH HALVES OF A VARIANT GROUP ──────────────────────
+ *
+ * Called TWICE where a shop has groups (070), and the second call is not an
+ * optimisation to remove. The till needs the PARENTS to draw its grid and the
+ * CHILDREN to fill its picker, and the picker runs with the server gone — so a
+ * feed that shipped only what the grid draws would give an offline till a tile
+ * that opens on nothing, which is worse than the flat grid it replaced.
+ *
+ * Filtering happens at the GRID, not here. `CatalogPane` draws what
+ * `productsForGrid` hands it — parents and loose products, never a child — and
+ * `findByCode` still resolves a child by its own barcode, which is what makes
+ * scanning one off the shelf work exactly as it did before this feature.
+ *
+ * Both calls share `browseForTill` rather than one of them getting a bespoke
+ * SELECT, for the reason above: pricing has one definition and a second copy is
+ * what drifts.
  */
 async function productsSince(
   siteId: number,
@@ -465,12 +512,12 @@ async function productsSince(
    */
   locationId: number | null,
 ) {
-  if (!cutoff) {
-    return browseForTill(siteId, { priceStructureId, limit: PRODUCT_LIMIT, locationId })
-  }
-  // A delta still goes through browseForTill, filtered afterwards by id: the
-  // alternative is duplicating its 60-line SELECT with one extra WHERE, and the
-  // duplicate is what drifts when pricing changes.
+  const everything = await tillRows(siteId, priceStructureId, locationId)
+  if (!cutoff) return everything
+
+  // A delta still goes through the same reads, filtered afterwards by id: the
+  // alternative is duplicating their 60-line SELECT with one extra WHERE, and
+  // the duplicate is what drifts when pricing changes.
   const changed = await siteQuery<{ id: number }>(
     siteId,
     'SELECT id FROM products WHERE updated_at >= ? - INTERVAL 60 SECOND',
@@ -478,27 +525,80 @@ async function productsSince(
   )
   if (changed.length === 0) return []
   const ids = new Set(changed.map((r) => Number(r.id)))
-  const all = await browseForTill(siteId, { priceStructureId, limit: PRODUCT_LIMIT, locationId })
-  return all.filter((p) => ids.has(p.id))
+  return everything.filter((p) => ids.has(p.id))
 }
 
 /**
- * Products the till should forget: archived, no longer sold at the till, or
- * turned into a variant parent.
+ * Every row this till should hold: the grid's tiles AND the pickers' options.
  *
- * The parent case is the one that MUST be here rather than only in the snapshot
- * query. browseForTill already excludes parents, so a fresh sync never caches
- * one — but a till that synced yesterday is holding the row from before it
- * became a parent, and a delta only sends what changed. Without this line that
- * till keeps a sellable copy of a product the server would refuse, and it is
- * exactly the till running offline that cannot be told otherwise.
+ * The first read is the grid — loose products and variant GROUPS. The second is
+ * the members of those groups, which the grid never draws but the picker cannot
+ * work without.
+ *
+ * Deduplicated by id on the way out. The two sets are disjoint today (a parent
+ * is never a child, and rule 3 in productVariants.ts forbids grandchildren), but
+ * a duplicate here would put two rows with one id into Dexie's `products` store
+ * and the loser would win at random on the next scan.
+ *
+ * The second read is skipped entirely where a shop has no groups, which is most
+ * of them: `some(hasVariants)` over rows already in hand costs nothing, and a
+ * shop with no variants pays not one extra query for this feature.
+ */
+async function tillRows(
+  siteId: number,
+  priceStructureId: number | null,
+  locationId: number | null,
+) {
+  const grid = await browseForTill(siteId, {
+    priceStructureId,
+    limit: PRODUCT_LIMIT,
+    locationId,
+    // The till has a picker, so it takes GROUPS and resolves a member at the
+    // tile. Its guard is PosShell's add(): a row with hasVariants opens the
+    // picker and can never become a line.
+    includeVariantParents: true,
+  })
+  if (!grid.some((p) => p.hasVariants)) return grid
+
+  /* The members. `includeVariantParents` off is the ordinary till read — every
+     sellable row, parents excluded — from which the loose products are dropped
+     because the grid list above already holds them. */
+  const members = await browseForTill(siteId, {
+    priceStructureId,
+    limit: PRODUCT_LIMIT,
+    locationId,
+  })
+  const seen = new Set(grid.map((p) => p.id))
+  return [...grid, ...members.filter((p) => p.parentId !== null && !seen.has(p.id))]
+}
+
+/**
+ * Products the till should forget: archived, or no longer sold at the till.
+ *
+ * ── WHY BECOMING A VARIANT PARENT NO LONGER BELONGS HERE ─────────────────
+ *
+ * It used to. `browseForTill` excluded parents, so a fresh sync never cached
+ * one — but a till that synced yesterday held the row from before it became a
+ * parent, and a delta only sends what changed. Without a delete that till kept
+ * a sellable copy of a product the server would refuse.
+ *
+ * Since schema 8 a parent is a legitimate row: it is the group's tile, and
+ * deleting it would make every group vanish from the grid the moment somebody
+ * edited it. What keeps it from being SOLD is no longer its absence but the
+ * guard in PosShell's add(), which is a better place for it — absence relied on
+ * a delta arriving, and the guard holds on a till that has been offline for a
+ * week.
+ *
+ * Children are not listed here either, for the same reason: the till holds them
+ * deliberately, to fill the picker with the server gone. The grid does not draw
+ * them, but that is the GRID's filter, not a deletion.
  */
 async function removedSince(siteId: number, cutoff: string): Promise<number[]> {
   const rows = await siteQuery<{ id: number }>(
     siteId,
     `SELECT id FROM products
       WHERE updated_at >= ? - INTERVAL 60 SECOND
-        AND (is_archived = 1 OR visible_in_pos = 0 OR has_variants = 1)`,
+        AND (is_archived = 1 OR visible_in_pos = 0)`,
     [cutoff],
   ).catch(() => [])
   return rows.map((r) => Number(r.id))

@@ -34,6 +34,7 @@ import { terminalStockLocationId } from '@/lib/site/terminals'
 import { lotsForTill, type TillLot } from '@/lib/site/batches'
 import { mainLocationId } from '@/lib/site/stockLocations'
 import { availableSerials } from '@/lib/site/serials'
+import { getGroup, type VariantAxis } from '@/lib/site/productVariants'
 import { listDepartments, flattenTree } from '@/lib/site/departments'
 import {
   searchCustomersForTill,
@@ -105,6 +106,16 @@ export async function browseProductsAction(options: {
   priceStructureId?: number | null
   limit?: number
   terminalId?: number | null
+  /**
+   * Draw variant GROUPS instead of their members (070). Default false.
+   *
+   * Only the till passes this, and only because only the till has a picker to
+   * resolve a group with. The invoice editor shares this action and must go on
+   * seeing the members: a parent cannot be put on an invoice line — it holds no
+   * stock and `recordMovement` refuses it — so handing one to a screen with no
+   * way to choose a size would be an unsellable row in a picker.
+   */
+  includeVariantParents?: boolean
 }): Promise<TillProduct[]> {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
@@ -207,6 +218,67 @@ export async function serialsForProductAction(
   const locationId = (await tillLocation(siteId, terminalId)) ?? (await mainLocationId(siteId))
   const units = await availableSerials(siteId, productId, locationId)
   return units.map((unit) => ({ id: unit.id, serial: unit.serial }))
+}
+
+/**
+ * The members of a variant group, for the till's picker (070).
+ *
+ * Priced and stocked through `browseForTill` rather than read straight off
+ * `products`, which is the whole reason this goes through the till's own query:
+ * the picker shows a price and a sold-out mark per size, and those must be the
+ * same figures the tile behind it showed. A second SELECT here would be a
+ * second definition of what something costs.
+ *
+ * Scoped to the till's own room like the lots and serials beside it, so a size
+ * sitting in the back warehouse is not offered at this counter.
+ *
+ * Returns the members ALREADY ORDERED by the shop's `variant_sort` — sizes are
+ * not alphabetical (070) — and never includes the parent itself: the default
+ * `includeVariantParents: false` excludes it, which is exactly right here.
+ */
+export async function variantChildrenAction(
+  parentId: number,
+  priceStructureId: number | null,
+  terminalId?: number | null,
+): Promise<TillProduct[]> {
+  const ctx = await actorForOrThrow('sales.till')
+  const { siteId } = ctx
+  /*
+   * The whole till-visible file, filtered by parent in JS.
+   *
+   * Deliberate, and the alternative was a `parentId` option on browseForTill.
+   * A group is a handful of rows out of tens of thousands, so this reads far
+   * more than it needs — but it reads it through the ONE query that knows how
+   * to price and count stock, and the filter is over rows already in memory.
+   * If a shop's file ever makes this measurable, the fix is an option on the
+   * query, not a bespoke SELECT here.
+   */
+  const all = await browseForTill(siteId, {
+    priceStructureId,
+    limit: 50_000,
+    locationId: await tillLocation(siteId, terminalId),
+  })
+  return all
+    .filter((p) => p.parentId === parentId)
+    .sort(
+      (a, b) =>
+        a.variantSort - b.variantSort ||
+        a.axis1Value.localeCompare(b.axis1Value) ||
+        a.axis2Value.localeCompare(b.axis2Value),
+    )
+}
+
+/**
+ * What a group's axes are called, for the picker's captions.
+ *
+ * Its own read rather than riding the members above, because the labels live on
+ * the parent in `product_variant_axes` and not on any child row — see 070 for
+ * why they are not repeated per member.
+ */
+export async function variantAxesAction(parentId: number): Promise<VariantAxis[]> {
+  const ctx = await actorForOrThrow('sales.till')
+  const group = await getGroup(ctx.siteId, parentId)
+  return group?.axes ?? []
 }
 
 export async function searchCustomersAction(term: string): Promise<TillCustomer[]> {

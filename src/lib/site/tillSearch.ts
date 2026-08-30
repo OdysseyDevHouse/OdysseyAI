@@ -123,6 +123,42 @@ export type TillProduct = {
    */
   pickedSerialId?: number
   pickedSerial?: string
+
+  /* ── The variant scheme (070) ──────────────────────────────────────────── */
+
+  /**
+   * True when this row is a variant PARENT — a grouping tile, never a line.
+   *
+   * A parent holds no stock and `recordMovement` refuses it, so one reaching
+   * the basket would fail at the tender pad with the card already out. The
+   * till's guard is in `add()`: a parent opens the picker instead of adding.
+   *
+   * Only `browseForTill` can return one, and only when asked (see
+   * `includeVariantParents`). Search and scan never do: a scanned barcode is a
+   * physical item in somebody's hand, which a group by definition is not.
+   */
+  hasVariants: boolean
+  /** Set when this product is somebody's variant. Null on an ordinary product. */
+  parentId: number | null
+  /**
+   * What distinguishes this child from its siblings — 'M', 'Red'. Empty on
+   * everything that is not a variant.
+   *
+   * The VALUES only. Their labels ('Size', 'Colour') belong to the group as a
+   * whole and ride the catalog feed separately, keyed by parent id — held per
+   * child they would repeat on every row and could disagree.
+   */
+  axis1Value: string
+  axis2Value: string
+  /**
+   * Where this member sits in its group's picker. 0 on everything else.
+   *
+   * Its own column rather than reusing `posSortOrder`, which orders TILES in a
+   * department — a member has no tile. And the reason it exists at all is that
+   * sizes are not alphabetical: S, M, L, XL sorts to L, M, S, XL, which is
+   * nonsense on a shelf edge and worse in a picker (see 070).
+   */
+  variantSort: number
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -158,6 +194,11 @@ function mapProduct(r: Row): TillProduct {
        would draw a broken image on every product that once had an icon. */
     imageIcon: (r.image_icon as string | null) || null,
     posSortOrder: Number(r.pos_sort_order ?? 0),
+    hasVariants: Number(r.has_variants ?? 0) === 1,
+    parentId: r.parent_id === null || r.parent_id === undefined ? null : Number(r.parent_id),
+    axis1Value: String(r.axis_1_value ?? ''),
+    axis2Value: String(r.axis_2_value ?? ''),
+    variantSort: Number(r.variant_sort ?? 0),
   }
 }
 
@@ -183,11 +224,40 @@ function mapProduct(r: Row): TillProduct {
  * that pair the wrong way round and the query still runs, silently counting the
  * wrong room and pricing off structure 0.
  */
+/**
+ * A group is only a tile if something is actually IN it.
+ *
+ * `makeParent` creates a group with no children, and `detachChild` can empty
+ * one — so a shopkeeper mid-setup, or one who ungrouped a range, leaves a
+ * parent standing with nothing under it. Without this the till draws a tile
+ * that opens a picker with no options, which is a dead end a cashier cannot
+ * explain to the person at the counter.
+ *
+ * `visible_in_pos` is deliberately NOT checked on the child here: hiding one
+ * size from the till should thin the picker, not delete the whole group. The
+ * picker applies that flag itself. `is_archived` is checked, because an
+ * archived child is gone rather than hidden.
+ *
+ * Written once and shared by `browseForTill` and `tillProductCounts` — they
+ * must agree, and the way two copies of a clause drift is that one is edited.
+ */
+const LIVE_GROUP_ONLY = `AND (
+  p.has_variants = 0
+  OR EXISTS (SELECT 1 FROM products c
+              WHERE c.parent_id = p.id AND c.is_archived = 0)
+)`
+
 function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
            p.ask_price_at_sale, p.allow_fractions, p.scale_item, p.variable_type,
            p.max_discount_pct, p.image_color, p.image_icon,
+           -- The variant scheme (070). Shipped on every row rather than only
+           -- where a group exists: the till's guard in add() reads
+           -- hasVariants on whatever it is handed, and a column that were
+           -- present on some reads and absent on others would make that guard
+           -- pass by accident on exactly the path that skipped it.
+           p.has_variants, p.parent_id, p.axis_1_value, p.axis_2_value, p.variant_sort,
            -- Where the shop dragged this tile (121). Shipped rather than left
            -- behind because the offline till sorts its own cached grid, and a
            -- column the server ordered by but never sent would give an online
@@ -336,6 +406,18 @@ export async function browseForTill(
     limit?: number
     /** The room this till sells from. Null counts the main location, as before. */
     locationId?: number | null
+    /**
+     * Show variant GROUPS instead of their members. Default FALSE.
+     *
+     * Opt-in rather than automatic because this function has three other
+     * callers — the invoice picker, trade entry, the offline catalog — and a
+     * parent is unsellable to all of them. Only the till's tile grid can do
+     * anything with a group, because only it has a picker to resolve one.
+     *
+     * The caller that turns this on takes on the obligation in `add()`: a
+     * product with `hasVariants` must open the picker, never become a line.
+     */
+    includeVariantParents?: boolean
   } = {},
 ): Promise<TillProduct[]> {
   const { cost_basis: costBasis } = await getSettings(siteId, ['cost_basis'])
@@ -401,17 +483,35 @@ export async function browseForTill(
       ? ''
       : `CASE WHEN p.pos_sort_order = 0 THEN 1 ELSE 0 END, p.pos_sort_order ASC,`
 
+  /*
+   * Variant groups: the GROUP or its MEMBERS, never both.
+   *
+   * Off (the default) this is the clause every till read has always carried —
+   * parents excluded, children appearing as ordinary products. Every caller
+   * that is not the till's tile grid keeps exactly that.
+   *
+   * On, the two swap: the parent stands for its children and the children drop
+   * out. Showing both would put a shirt on the grid six times — five sizes and
+   * the group that contains them — which is the pile of competing tiles the
+   * whole feature exists to collapse.
+   *
+   * `visible_in_pos` still applies to the parent on its own, so hiding a group
+   * from the till hides the group. A child hidden individually stays hidden
+   * inside the picker, which reads the same flag.
+   *
+   * ⚠ Whatever this clause admits, `tillProductCounts` must count. It is a
+   * promise about what tapping the department tile will show.
+   */
+  const variantScope = options.includeVariantParents
+    ? `AND p.parent_id IS NULL ${LIVE_GROUP_ONLY}`
+    : 'AND p.has_variants = 0'
+
   const rows = await siteQuery<Row>(
     siteId,
     `${selectProduct(costBasis)}
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
-        -- A variant parent holds no stock and recordMovement refuses it, so it
-        -- must never reach a till line. Its variants are ordinary products and
-        -- appear here normally. Not folded into visible_in_pos: that flag is
-        -- the shopkeeper's to toggle, and switching it on must not be able to
-        -- make an unsellable row sellable.
-        AND p.has_variants = 0
+        ${variantScope}
         ${scope}
         ${filter}
       ORDER BY ${ranking} ${menuOrder} p.description ASC
@@ -663,7 +763,12 @@ export async function tillProductCounts(siteId: number): Promise<Record<number, 
        FROM products p
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
-        AND p.has_variants = 0
+        -- The GROUP counts as one, its members not at all — matching
+        -- browseForTill under includeVariantParents, which is how the till
+        -- grid reads. Counting the children instead would promise five tiles
+        -- for a shirt and open on one.
+        AND p.parent_id IS NULL
+        ${LIVE_GROUP_ONLY}
         AND p.department_id IS NOT NULL
       GROUP BY p.department_id`,
   )

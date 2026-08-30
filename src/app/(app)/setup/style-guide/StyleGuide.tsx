@@ -151,6 +151,7 @@ import { VoidReasonModal } from '@/app/(pos)/pos/VoidReasonModal'
 import type { VoidType } from '@/lib/site/posVoids'
 import { SplitPreview } from './SplitPreview'
 import { ReceiptReturnPreview } from './ReceiptReturnPreview'
+import { VariantPreview } from './VariantPreview'
 import { BillPreview } from './BillPreview'
 import { GatePreview, FloorPreview, OpenTillPreview, PosGatePreview } from './GatePreview'
 import { ModuleMenuPreview } from './ModuleMenuPreview'
@@ -235,6 +236,7 @@ export default function StyleGuidePage() {
         <InstructionsSection />
         <ReceiptSection />
         <ReceiptReturnSection />
+        <VariantPickerSection />
         <SplitBillSection />
         <BillSection />
         <TableGateSection />
@@ -3357,6 +3359,32 @@ function ReceiptReturnSection() {
           note="The two reads, injectable and defaulted to the real actions. The till passes neither; the preview beside this passes both, which is the only way to look at a screen that lives behind a clerk PIN."
         />
         <ReceiptReturnPreview />
+      </Row>
+    </Card>
+  )
+}
+
+function VariantPickerSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Which size"
+        description="<VariantModal /> — what a variant group's tile opens (070). A shirt in five sizes is ONE tile on the grid and this is where the size is chosen, rather than five tiles competing for the same square of glass. The group itself can never be sold: it holds no stock and recordMovement refuses it, so this modal hands back a different product from the one that opened it — the member — which then runs the whole of add() itself and picks up its own lot or serial prompt if it has one."
+      />
+      <Row>
+        <Spec
+          name="<VariantModal parent childrenProducts axes priceFor onConfirm>"
+          note="Buttons, not a dropdown: a till is a touch screen and the values are short. The footer carries the chosen member's code and price beside the button that commits it, because a long range scrolls and what is about to be rung up must not scroll away with it."
+        />
+        <Spec
+          name="Sold out still sells"
+          note="The same call LotModal makes about expired lots. The shop's count is a claim about the stockroom; the customer is holding the garment. A sold-out size is marked so it prompts a word with the customer, and sells."
+        />
+        <Spec
+          name="Impossible combinations are disabled, not hidden"
+          note="Open the two-axis preview: there is no XL in red. Hiding it would make the colour row change length as sizes are tapped, so a finger already moving lands on something else. Disabled, the shape of the range holds still."
+        />
+        <VariantPreview />
       </Row>
     </Card>
   )

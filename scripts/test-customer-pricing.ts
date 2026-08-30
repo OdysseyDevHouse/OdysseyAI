@@ -54,6 +54,13 @@ function fakeProduct(overrides: Partial<TillProduct> = {}): TillProduct {
     imageColor: null,
     imageIcon: null,
     posSortOrder: 0,
+    // An ordinary product: in no variant group and standing for nothing. A
+    // parent could not be priced here anyway — it never becomes a line.
+    hasVariants: false,
+    parentId: null,
+    axis1Value: '',
+    axis2Value: '',
+    variantSort: 0,
     ...overrides,
   }
 }
