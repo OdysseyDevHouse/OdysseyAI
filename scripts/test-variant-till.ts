@@ -51,7 +51,7 @@ async function makeProduct(
   code: string,
   description: string,
   departmentId: number,
-  opts: { stock?: number; barcode?: string } = {},
+  opts: { stock?: number; barcode?: string; price?: number } = {},
 ): Promise<number> {
   await siteExecute(
     SITE,
@@ -61,11 +61,44 @@ async function makeProduct(
     [code, description, (opts.stock ?? 0).toFixed(3), departmentId, opts.barcode ?? null],
   )
   const [row] = await siteQuery<any>(SITE, 'SELECT id FROM products WHERE code = ?', [code])
-  return Number(row.id)
+  const id = Number(row.id)
+
+  /*
+   * The PER-LOCATION row, not just the total on the product.
+   *
+   * The till reads its own room (see selectProduct), so a fixture that wrote
+   * only `products.stock_on_hand` would have every assertion here read zero and
+   * pass or fail for the wrong reason. This is exactly how the tile bug hid: a
+   * hand-seeded product looks stocked in the database and empty at the counter.
+   */
+  if (opts.stock) {
+    await siteExecute(
+      SITE,
+      `INSERT INTO product_location_stock (product_id, location_id, stock_on_hand)
+       VALUES (?, (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1), ?)
+       ON DUPLICATE KEY UPDATE stock_on_hand = VALUES(stock_on_hand)`,
+      [id, opts.stock.toFixed(3)],
+    )
+  }
+  if (opts.price) {
+    await siteExecute(
+      SITE,
+      `INSERT INTO product_prices (product_id, price_structure_id, selling_price_incl)
+       VALUES (?,1,?) ON DUPLICATE KEY UPDATE selling_price_incl = VALUES(selling_price_incl)`,
+      [id, opts.price.toFixed(2)],
+    )
+  }
+  return id
 }
 
 async function cleanup() {
-  // Children first: fk_product_parent is ON DELETE RESTRICT.
+  /* The rows hanging off the products go first — a leaked product_prices or
+     product_location_stock row outlives its product and shows up as a failure
+     in an unrelated suite that counts them. */
+  const owned = `SELECT id FROM products WHERE code LIKE '${TAG}%'`
+  await siteExecute(SITE, `DELETE FROM product_location_stock WHERE product_id IN (${owned})`)
+  await siteExecute(SITE, `DELETE FROM product_prices WHERE product_id IN (${owned})`)
+  // Children next: fk_product_parent is ON DELETE RESTRICT.
   await siteExecute(SITE, `DELETE FROM products WHERE code LIKE '${TAG}%' AND parent_id IS NOT NULL`)
   await siteExecute(SITE, `DELETE FROM products WHERE code LIKE '${TAG}%'`)
   await siteExecute(SITE, `DELETE FROM departments WHERE name LIKE '${TAG}%'`)
@@ -82,9 +115,17 @@ async function main() {
      three shapes the grid has to tell apart. */
   const shirt = await makeProduct(`${TAG}-SHIRT`, 'Test shirt', dept)
   await makeParent(SITE, shirt, [{ position: 1, label: 'Size' }])
-  const small = await makeProduct(`${TAG}-S`, 'Test shirt S', dept, { stock: 4, barcode: `${TAG}S` })
-  const medium = await makeProduct(`${TAG}-M`, 'Test shirt M', dept, { stock: 0 })
-  const large = await makeProduct(`${TAG}-L`, 'Test shirt L', dept, { stock: 2 })
+  /* Prices differ deliberately: the large costs more, so "the group quotes its
+     cheapest" is a real assertion rather than one true by coincidence. And the
+     sizes are attached S, M, L — the order a person types them, and the order
+     the picker must show rather than the alphabet's L, M, S. */
+  const small = await makeProduct(`${TAG}-S`, 'Test shirt S', dept, {
+    stock: 4,
+    barcode: `${TAG}S`,
+    price: 100,
+  })
+  const medium = await makeProduct(`${TAG}-M`, 'Test shirt M', dept, { stock: 0, price: 100 })
+  const large = await makeProduct(`${TAG}-L`, 'Test shirt L', dept, { stock: 2, price: 150 })
   await attachChild(SITE, shirt, small, 'S', '')
   await attachChild(SITE, shirt, medium, 'M', '')
   await attachChild(SITE, shirt, large, 'L', '')
@@ -96,7 +137,7 @@ async function main() {
 
   /* ── 1. The grid: groups stand for their members ─────────────────────── */
 
-  const grid = await browseForTill(SITE, { departmentId: dept, includeVariantParents: true })
+  const grid = await browseForTill(SITE, { departmentId: dept, priceStructureId: 1, includeVariantParents: true })
   ok(
     'the grid draws the GROUP, not its sizes',
     codes(grid) === `${TAG}-CAP,${TAG}-SHIRT`,
@@ -115,7 +156,7 @@ async function main() {
 
   /* ── 2. Without the flag, nothing changed ────────────────────────────── */
 
-  const oldWay = await browseForTill(SITE, { departmentId: dept })
+  const oldWay = await browseForTill(SITE, { departmentId: dept, priceStructureId: 1 })
   ok(
     'the default read is exactly what it always was',
     codes(oldWay) === `${TAG}-CAP,${TAG}-L,${TAG}-M,${TAG}-S`,
@@ -163,7 +204,40 @@ async function main() {
   ok('a scanned barcode resolves to the SIZE', scanned?.code === `${TAG}-S`, scanned?.code ?? 'null')
   ok('and it is not a group', scanned?.hasVariants === false)
 
-  /* ── 6. The count is a promise about the tile ────────────────────────── */
+  /* ── 6. What the GROUP'S TILE says about itself ──────────────────────── */
+
+  /*
+   * Both of these were wrong on a real till before they were checked here, and
+   * neither showed up in a fixture: a parent has no stock row and no price row
+   * of its own, so the tile read "none on hand · R0.00" for a shirt with 17 on
+   * the shelf. A cashier reading that would tell a customer the shop was out.
+   */
+  const tile = grid.find((p) => p.code === `${TAG}-SHIRT`)!
+  ok(
+    'the group tile sums its members’ stock',
+    tile.stockOnHand === 6,
+    `read ${tile.stockOnHand}, expected 4+0+2`,
+  )
+  ok(
+    'and quotes its cheapest member',
+    tile.priceIncl === 100,
+    `read ${tile.priceIncl}, expected the 100 not the 150`,
+  )
+
+  /*
+   * The order the picker shows, which is the whole reason variant_sort exists.
+   * Alphabetically these sort L, M, S — nonsense on a shelf edge. attachChild
+   * assigns a position so attachment order wins, and it is the order a person
+   * types sizes in.
+   */
+  const ordered = oldWay
+    .filter((p) => p.parentId === shirt)
+    .sort((a, b) => a.variantSort - b.variantSort)
+    .map((p) => p.axis1Value)
+    .join(',')
+  ok('members carry a real position, in attachment order', ordered === 'S,M,L', ordered)
+
+  /* ── 7. The count is a promise about the tile ────────────────────────── */
 
   const counts = await tillProductCounts(SITE)
   ok(

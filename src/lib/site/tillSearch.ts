@@ -213,16 +213,27 @@ function mapProduct(r: Row): TillProduct {
  *
  * ── PARAMETER ORDER MATTERS AND IS EASY TO GET WRONG ─────────────────────
  *
- * It takes TWO bound parameters, in this order:
+ * It takes FOUR bound parameters, in this order:
  *
- *   1. the stock location id, or null for "whichever is main"
- *   2. the price structure id
+ *   1. the stock location id — for a GROUP, summing its members' piles
+ *   2. the stock location id AGAIN — for an ordinary product's own pile
+ *   3. the price structure id — for a GROUP, finding its cheapest member
+ *   4. the price structure id AGAIN — the price join at the foot of the query
  *
- * The location one is first because its subquery appears above the price join
- * in the text, and mysql2 binds positionally. Every caller therefore starts its
- * params array with `locationId, priceStructureId` before adding its own — get
- * that pair the wrong way round and the query still runs, silently counting the
- * wrong room and pricing off structure 0.
+ * Null is allowed for the location and means "whichever is main".
+ *
+ * Ordered by where each appears in the TEXT, because mysql2 binds positionally
+ * and the variant CASE arms sit above the joins they mirror. Every caller
+ * therefore starts its params array with `PARAMS(locationId, priceStructureId)`
+ * before adding its own — use that helper rather than writing the four out, or
+ * the query still runs and silently counts the wrong room and prices off
+ * structure 0.
+ *
+ * The location and structure are each bound TWICE rather than once because a
+ * variant PARENT has neither a stock row nor a price row of its own: rule 4
+ * keeps its stock at 0 and it never gets a `product_prices` row. Both figures
+ * therefore have to be derived from its members, and a derivation cannot reuse
+ * the join that returned nothing.
  */
 /**
  * A group is only a tile if something is actually IN it.
@@ -246,6 +257,22 @@ const LIVE_GROUP_ONLY = `AND (
   OR EXISTS (SELECT 1 FROM products c
               WHERE c.parent_id = p.id AND c.is_archived = 0)
 )`
+
+/**
+ * The four leading parameters `selectProduct` needs, in its own order.
+ *
+ * A helper rather than four literals at each of the six call sites: the pairs
+ * repeat, so writing them out is exactly the kind of thing that gets copied
+ * with one element wrong — and the failure is silent, since a query with the
+ * location and structure transposed still runs and simply answers about the
+ * wrong room at the wrong price.
+ */
+const PARAMS = (locationId: number | null, priceStructureId: number | null): unknown[] => [
+  locationId ?? null,
+  locationId ?? null,
+  priceStructureId ?? 0,
+  priceStructureId ?? 0,
+]
 
 function selectProduct(costBasis: string): string {
   return `
@@ -280,15 +307,44 @@ function selectProduct(costBasis: string): string {
            --
            -- The COALESCE is on the PARAMETER rather than on two branches of
            -- SQL, so there is one query plan and one place the room is decided.
-           COALESCE((
+           --
+           -- A GROUP reports its MEMBERS' pile, in the same room. Rule 4 keeps
+           -- a parent's own column at 0, and showing that zero would print
+           -- "none on hand" on a tile for a shirt with 300 on the shelf — the
+           -- same call lib/site/products.ts makes for the back-office list, and
+           -- for the same reason. The CASE costs nothing on the ordinary row:
+           -- has_variants is 0 and the subquery is never run.
+           CASE WHEN p.has_variants = 1 THEN COALESCE((
+             SELECT SUM(cls.stock_on_hand)
+               FROM products c
+               JOIN product_location_stock cls ON cls.product_id = c.id
+              WHERE c.parent_id = p.id AND c.is_archived = 0
+                AND cls.location_id = COALESCE(
+                      ?, (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1))
+           ), 0) ELSE COALESCE((
              SELECT pls.stock_on_hand
                FROM product_location_stock pls
               WHERE pls.product_id = p.id
                 AND pls.location_id = COALESCE(
                       ?, (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1))
               LIMIT 1
-           ), 0)                                                      AS stock_on_hand,
-           COALESCE(pp.selling_price_incl, 0)                         AS price_incl,
+           ), 0) END                                                  AS stock_on_hand,
+           -- And a group shows what its CHEAPEST member costs, since it has no
+           -- price of its own — a tile reading R0.00 for a shirt is worse than
+           -- one reading "from R199". The picker states the exact price of
+           -- whichever size is chosen, so this figure only has to be the honest
+           -- lowest rather than the one that will be charged.
+           -- Binds the structure id AGAIN rather than reading it off pp: that
+           -- join is a LEFT JOIN and is NULL on a parent, which has no price
+           -- row of its own — so pp.price_structure_id would be NULL here and
+           -- match no child at all, putting every group back at R0.00.
+           CASE WHEN p.has_variants = 1 THEN COALESCE((
+             SELECT MIN(cpp.selling_price_incl)
+               FROM products c
+               JOIN product_prices cpp ON cpp.product_id = c.id
+                AND cpp.price_structure_id = ?
+              WHERE c.parent_id = p.id AND c.is_archived = 0
+           ), 0) ELSE COALESCE(pp.selling_price_incl, 0) END           AS price_incl,
            COALESCE(v.rate, 0)                                        AS vat_rate,
            ${costBasis === 'last' ? 'p.last_cost' : 'p.average_cost'} AS cost_excl,
            -- Spoken for: open sales orders PLUS open lay-bys. Correlated
@@ -361,7 +417,7 @@ export async function searchForTill(
              THEN 0 ELSE 1 END,
         p.description ASC
       LIMIT ${capped}`,
-    [locationId, priceStructureId ?? 0, needle, like, like, needle, needle, needle, needle],
+    [...PARAMS(locationId, priceStructureId), needle, like, like, needle, needle, needle, needle],
   )
 
   return rows.map(mapProduct)
@@ -440,8 +496,8 @@ export async function browseForTill(
        )`
     : ''
 
-  // Location first, then price structure — see selectProduct's docblock.
-  const params: unknown[] = [options.locationId ?? null, options.priceStructureId ?? 0]
+  // The four leading parameters, in selectProduct's own order — see its docblock.
+  const params: unknown[] = PARAMS(options.locationId ?? null, options.priceStructureId ?? null)
   if (options.departmentId) params.push(options.departmentId)
 
   /* Same matching rule as searchForTill: barcode exact, code and description
@@ -574,7 +630,7 @@ export async function resolveScan(
                OR EXISTS (SELECT 1 FROM product_barcodes pb
                            WHERE pb.barcode IN (${placeholders}) AND pb.product_id = p.id))
         LIMIT 1`,
-      [locationId, priceStructureId ?? 0, ...candidates, ...candidates, ...candidates],
+      [...PARAMS(locationId, priceStructureId), ...candidates, ...candidates, ...candidates],
     )
     if (byGtin) {
       const product = mapProduct(byGtin)
@@ -602,7 +658,7 @@ export async function resolveScan(
         AND (p.barcode = ? OR p.code = ?
              OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
       LIMIT 1`,
-    [locationId, priceStructureId ?? 0, code, code, code],
+    [...PARAMS(locationId, priceStructureId), code, code, code],
   )
   if (exact) return mapProduct(exact)
 
@@ -622,7 +678,7 @@ export async function resolveScan(
         AND (p.code = ? OR p.barcode = ?
              OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
       LIMIT 1`,
-    [locationId, priceStructureId ?? 0, variable.plu, variable.plu, variable.plu],
+    [...PARAMS(locationId, priceStructureId), variable.plu, variable.plu, variable.plu],
   )
   if (!byPlu) return null
 
@@ -665,7 +721,7 @@ export async function getTillProduct(
   const row = await siteQueryOne<Row>(
     siteId,
     `${selectProduct(costBasis)} WHERE p.id = ? LIMIT 1`,
-    [locationId, priceStructureId ?? 0, productId],
+    [...PARAMS(locationId, priceStructureId), productId],
   )
   if (!row) return null
 

@@ -353,16 +353,44 @@ export async function attachChild(
       throw new VariantError('There is already a variant with that combination.')
     }
 
+    /*
+     * A POSITION, assigned at the end of the group.
+     *
+     * Without this every child kept `variant_sort` at its default 0, and both
+     * pickers — the storefront's and the till's — fell through to their
+     * alphabetical tiebreak. That sorts S, M, L, XL to L, M, S, XL, which is
+     * the exact nonsense this column exists to prevent (see 070). The bug was
+     * invisible for as long as nothing read the column: `setVariantOrder` was
+     * the only writer, so a group showed a sensible order only if somebody had
+     * been to the back office and dragged the sizes by hand.
+     *
+     * Attachment order is the right default because it is the order the
+     * shopkeeper typed them in, and a person adding sizes to a shirt types
+     * them small to large. Getting it wrong costs a drag; having no order at
+     * all cost every group in the file.
+     *
+     * MAX + 1 rather than a count: a group that has had a child detached has a
+     * gap, and counting would reuse a position that is still taken.
+     */
+    const last = await siteQueryOneTx(
+      tx,
+      `SELECT COALESCE(MAX(variant_sort), 0) AS top FROM products
+        WHERE parent_id = ? AND id <> ?`,
+      [parentId, childId],
+    )
+    const position = Number(last?.top ?? 0) + 1
+
     const inherit = INHERITED.map((c) => `${c} = ?`).join(', ')
     await tx.execute(
       `UPDATE products
           SET parent_id = ?, has_variants = 0,
-              axis_1_value = ?, axis_2_value = ?, ${inherit}
+              axis_1_value = ?, axis_2_value = ?, variant_sort = ?, ${inherit}
         WHERE id = ?`,
       [
         parentId,
         one,
         two,
+        position,
         ...INHERITED.map((c) => parent[c] ?? null),
         childId,
       ] as never,
