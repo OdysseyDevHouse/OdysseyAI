@@ -167,7 +167,68 @@ function degradedResult(): ModuleEntitlements {
 export const entitlementsForSite = cache(async (siteId: number): Promise<ModuleEntitlements> => {
   const today = todayIso()
 
+  /* ── ON A DESKTOP INSTALL THE LEASE IS THE PRIMARY ANSWER ─────────────────
+   *
+   * Not the fallback in the catch below — that one still exists, and still
+   * catches a machine whose lease has never been written. This is the ordinary
+   * path for a shop's own computer, and the reason is that the query below
+   * crosses the internet from a counter rather than a rack.
+   *
+   * Read per request it cost 3-4 control round trips per click, on a line the
+   * control database is not even reachable from: it is IP-whitelisted to the
+   * office. So the machine trades on what it was last told and refreshes on a
+   * timer instead — see /api/licence/refresh and electron/licenceRefresh.js.
+   *
+   * `leaseIsFresh` is the ONLY thing that decides; when it says no we fall
+   * through and ask properly, which also renews the lease via recordLease.
+   * That keeps `checked_at` honest: nothing here can renew it from local state.
+   */
+  if (keepsLease()) {
+    const fresh = await freshLeasedEntitlements(siteId)
+    if (fresh) return fresh
+  }
+
   try {
+    const result = await readEntitlementsFromControl(siteId, today)
+
+    /* A real answer, so record it. This is the ONLY thing that renews a lease,
+       and it is deliberately fire-and-forget: a shop must never be stopped by
+       a failure to write down something it already knows. */
+    void recordLease(siteId, result)
+
+    return result
+  } catch (err) {
+    /* ── THE CONTROL DATABASE IS UNREACHABLE ──────────────────────────────
+       On a cloud install this is a blip of seconds and the docblock above
+       applies: allow everything rather than let the back office eat half of
+       itself mid-task.
+       A local-backend desktop install is the other case. There this is the
+       ordinary state of a machine with no internet, it lasts as long as the
+       line is down, and failing open forever is not degradation — it is an
+       unlicensed product that works perfectly. If that machine holds a lease,
+       it trades on what it was last told, until the lease runs out. */
+    const leased = await leasedEntitlements(siteId)
+    if (leased) return leased
+
+    // No lease: the original trade, unchanged, said out loud.
+    console.error('[modules] could not read entitlements; allowing everything', err)
+    return degradedResult()
+  }
+})
+
+/**
+ * The entitlement read itself, against the control database.
+ *
+ * Extracted so the timer's refresh and a page render share ONE implementation —
+ * two would be two sets of rules to keep in step, and the second would be the
+ * one nobody remembers to update. Throws on an unreachable database; both
+ * callers decide separately what that means for them.
+ */
+async function readEntitlementsFromControl(
+  siteId: number,
+  today: string = todayIso(),
+): Promise<ModuleEntitlements> {
+  {
     /* The date is bound as a parameter computed HERE, not CURDATE().
        Comparing against the database's clock while every other date in this app
        is the app server's produces a module that lapses an hour early — the
@@ -230,7 +291,7 @@ export const entitlementsForSite = cache(async (siteId: number): Promise<ModuleE
     // Every site has the base, including one whose row predates this feature.
     held.add(BASE_MODULE)
 
-    const result: ModuleEntitlements = {
+    return {
       held,
       endingOn,
       deviceCount: await billableDeviceCount(siteId),
@@ -238,31 +299,40 @@ export const entitlementsForSite = cache(async (siteId: number): Promise<ModuleE
       accountStatus,
       degraded: false,
     }
-
-    /* A real answer, so record it. This is the ONLY thing that renews a lease,
-       and it is deliberately fire-and-forget: a shop must never be stopped by
-       a failure to write down something it already knows. */
-    void recordLease(siteId, result)
-
-    return result
-  } catch (err) {
-    /* ── THE CONTROL DATABASE IS UNREACHABLE ──────────────────────────────
-       On a cloud install this is a blip of seconds and the docblock above
-       applies: allow everything rather than let the back office eat half of
-       itself mid-task.
-       A local-backend desktop install is the other case. There this is the
-       ordinary state of a machine with no internet, it lasts as long as the
-       line is down, and failing open forever is not degradation — it is an
-       unlicensed product that works perfectly. If that machine holds a lease,
-       it trades on what it was last told, until the lease runs out. */
-    const leased = await leasedEntitlements(siteId)
-    if (leased) return leased
-
-    // No lease: the original trade, unchanged, said out loud.
-    console.error('[modules] could not read entitlements; allowing everything', err)
-    return degradedResult()
   }
-})
+}
+
+/**
+ * Renew the lease by actually asking the control panel. The timer's entry point.
+ *
+ * ── WHY IT CANNOT JUST CALL entitlementsForSite ─────────────────────────────
+ *
+ * That function now answers from a fresh lease without asking anybody, which is
+ * the whole point of it — and would make a refresh that reads its own lease and
+ * renews nothing. `checked_at` would then advance from local state and the seven
+ * days would stop meaning anything.
+ *
+ * So this asks the control database directly and lets recordLease() write the
+ * result, which is the ONE path that moves the clock.
+ *
+ * `reached` is what actually happened, not what was wanted: false means the
+ * control database could not be read and the existing lease still stands. The
+ * caller reports it and does not treat it as an error — a machine with no line
+ * is the ordinary case this whole mechanism exists for.
+ */
+export async function refreshEntitlements(siteId: number): Promise<{ reached: boolean }> {
+  if (!keepsLease()) return { reached: false }
+  try {
+    const fromControl = await readEntitlementsFromControl(siteId)
+    /* Awaited, unlike the fire-and-forget call inside entitlementsForSite: there
+       is no request waiting on this, and a refresh that returns before the write
+       lands would report success for a lease that was never stored. */
+    await recordLease(siteId, fromControl)
+    return { reached: true }
+  } catch {
+    return { reached: false }
+  }
+}
 
 /**
  * Write the lease, if this machine keeps one.
@@ -290,6 +360,34 @@ async function recordLease(siteId: number, e: ModuleEntitlements): Promise<void>
        write costs a lease that expires earlier than it might have, which is
        the safe direction to be wrong in. */
   }
+}
+
+/**
+ * What the lease says, when it is recent enough to serve without asking.
+ *
+ * The ordinary path on a desktop install — see the note at the top of
+ * entitlementsForSite. Null means "go and ask", and the three reasons are: no
+ * lease at all, a lease older than REFRESH_HOURS, and a lease that is no longer
+ * `current` (which the lock screen handles rather than this).
+ *
+ * Separate from leasedEntitlements() below only by the freshness test. That one
+ * is reached when the control database could not answer AT ALL, where a stale
+ * lease is better than nothing; here a stale lease is precisely the thing we
+ * want to replace.
+ */
+async function freshLeasedEntitlements(siteId: number): Promise<ModuleEntitlements | null> {
+  try {
+    const { readLease } = await import('@/lib/licence/lease')
+    const { leaseIsFresh } = await import('@/lib/licence/leaseRules')
+    const lease = await readLease(siteId)
+    if (!lease || !leaseIsFresh(lease)) return null
+  } catch {
+    /* Unreadable for any reason — a site database mid-upgrade, no migration
+       178 — is not a failure worth surfacing. Fall through to the control
+       database, which is exactly what happened before this existed. */
+    return null
+  }
+  return leasedEntitlements(siteId)
 }
 
 /**

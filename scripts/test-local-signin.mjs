@@ -49,7 +49,13 @@ const auth = read('src/lib/auth.ts')
 /* The whole point: requireSiteUser must branch, and the local branch must NOT
    reach adoptControlUser — adopting on a site-scoped id invents a person. */
 check("requireSiteUser branches on scope", /session\.scope === 'site'/.test(auth))
-const localBranch = auth.slice(auth.indexOf("session.scope === 'site'"), auth.indexOf('} else {'))
+/* Anchored on the `if (` form, and on the '} else {' that FOLLOWS it.
+   `session.scope === 'site'` also appears earlier, in requireSite's own local
+   branch, so slicing from the first occurrence spanned two functions and read
+   requireSiteUser's control branch as though it were the local one — which made
+   this assertion fail against code that was perfectly correct. */
+const branchStart = auth.indexOf("if (session.scope === 'site') {")
+const localBranch = auth.slice(branchStart, auth.indexOf('} else {', branchStart))
 check(
   'the local branch looks the user up by their own id',
   /getUser\(site\.id, session\.userId\)/.test(localBranch),

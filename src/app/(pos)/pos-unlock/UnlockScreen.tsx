@@ -117,9 +117,29 @@ export default function UnlockScreen() {
 
   return (
     /* Column, so the card and the way-out below it stack. It was a row while the
-       card was the only child; a sibling added to that would have sat beside it. */
-    <div className="flex flex-1 flex-col items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
+       card was the only child; a sibling added to that would have sat beside it.
+
+       ── AND IT SCROLLS, WHICH THE TILL ITSELF MUST NOT ────────────────────
+
+       The layout above is `fixed inset-0 overflow-hidden` on purpose: a till that
+       scrolls mid-sale is a till whose keys move under a cashier's thumb. This
+       screen is the exception. It is not the till — it is the door — and on a
+       tablet held in portrait the card, the pad and the machine id are together
+       taller than the viewport.
+
+       `justify-center` alone was the bug: centred content that overflows spills
+       off BOTH ends with nothing able to reach it, so the id panel was painted
+       below the fold and no gesture could bring it up. `justify-start` with
+       `my-auto` on the content keeps the screen centred when it fits — which is
+       the desktop and landscape case, and the common one — and lets it scroll
+       from the top when it does not. */
+    <div className="flex flex-1 flex-col items-center justify-start overflow-y-auto p-6">
+      {/* `mt-auto` here and `mb-auto` on the last child are what centre the stack
+          when there is room to spare, and collapse to nothing when there is not —
+          the behaviour `justify-center` gives right up until it overflows. `shrink-0`
+          because a flex column crushes its children before it lets them overflow,
+          which on this screen reads as a squashed PIN pad rather than a scroll. */}
+      <Card className="mt-auto w-full max-w-sm shrink-0">
         <div className="flex flex-col items-center gap-5 px-6 py-8">
           <div className="text-center">
             {/* Round, tinted, warning-toned: this is a state to clear rather than a
@@ -186,6 +206,31 @@ export default function UnlockScreen() {
         </div>
       </Card>
 
+      {/* ── THIS MACHINE'S ID, WHEN NOBODY CAN CLAIM IT WITHOUT IT ────────────
+
+          The refusal above says "someone with back-office access must claim it
+          first" and used to stop there — leaving that person with nothing to
+          claim WITH. The id was already in state and simply never shown, so a
+          new till meant reading it out of localStorage over the phone.
+
+          Shown ONLY on an unclaimed machine. On a claimed till it is noise on a
+          screen a cashier sees every morning, and `sites` already distinguishes
+          the two: an empty array is the machine no shop knows.
+
+          Not a secret. `deviceId.ts` says so plainly — it is an identifier, not
+          a credential, and the server re-validates the terminal claim on every
+          sale — so printing it costs nothing that spoofing it would not already
+          have cost. */}
+      {device && sites !== null && sites.length === 0 && (
+        <div className="mt-4 w-full max-w-sm shrink-0 rounded-card border border-border bg-surface px-4 py-3">
+          <p className="text-[13px] font-semibold text-ink">This machine&apos;s id</p>
+          <p className="mt-1 break-all font-mono text-[13px] text-muted">{device}</p>
+          <p className="mt-2 text-[13px] text-muted">
+            Give this to whoever claims the till, under Setup → Terminals.
+          </p>
+        </div>
+      )}
+
       {/* ── THE WAY OUT, BELOW THE CARD RATHER THAN INSIDE IT ──────────────────
           Not a link to the login form: this is a till, and the person standing
           at it may well not have an account.
@@ -194,7 +239,9 @@ export default function UnlockScreen() {
           directly under the PIN pad and read as the next step after typing —
           which for a cashier it never is. Below and apart, it reads as the
           alternative it actually is, and the card is left with one job. */}
-      <div className="mt-4 flex w-full max-w-sm justify-center">
+      {/* `mb-auto` pairs with the card's `mt-auto` — together they centre the
+          stack while it fits and release it to scroll once it does not. */}
+      <div className="mb-auto mt-4 flex w-full max-w-sm shrink-0 justify-center">
         <Button variant="ghost" size="sm" onClick={() => router.push('/')}>
           Sign in to the back office instead
         </Button>

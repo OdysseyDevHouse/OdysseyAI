@@ -283,9 +283,10 @@ export async function saveCostingAction(input: { costBasis: string }): Promise<S
   const written = await writeSettings(ctx.siteId, [['cost_basis', input.costBasis]])
   if (!written.ok) return written
 
-  /* The same three the purchasing screen refreshes — the basis is read by the
-     receiving screen and baked into the till catalogue's margin figures. */
-  revalidatePath('/setup/purchasing')
+  /* The same three the purchasing settings refresh — the basis is read by the
+     receiving screen and baked into the till catalogue's margin figures. The
+     first is now /settings, where Purchasing & cost moved to. */
+  revalidatePath('/settings')
   revalidatePath('/purchasing/receive')
   revalidatePath('/products')
   return completed(ctx.siteId, 'costing')

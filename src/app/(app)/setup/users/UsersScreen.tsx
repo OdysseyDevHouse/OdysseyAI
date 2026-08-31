@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
+  ButtonLink,
   Callout,
   Card,
   DataTable,
@@ -166,10 +167,20 @@ export default function UsersScreen({
     <>
       <TableToolbar
         actions={
-          <Button variant="primary" onClick={() => setAdding(true)}>
-            <Icons.Plus size={16} />
-            Add user
-          </Button>
+          <>
+            {/* Roles & permissions is no longer a tile of its own in the setup
+                hub — it is reached from here, because "who may sign in" and
+                "what they may do" are one job and were two front doors to it.
+                Secondary, so Add user stays the screen's one primary. */}
+            <ButtonLink href="/setup/roles" variant="secondary">
+              <Icons.KeyRound size={16} />
+              Roles &amp; permissions
+            </ButtonLink>
+            <Button variant="primary" onClick={() => setAdding(true)}>
+              <Icons.Plus size={16} />
+              Add user
+            </Button>
+          </>
         }
       />
 

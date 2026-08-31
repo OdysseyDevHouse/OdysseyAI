@@ -1,4 +1,5 @@
-import type { SubpageHref } from './nav'
+import { SUBPAGE_LABELS, type SubpageHref } from './nav'
+import { SETTINGS_CATEGORIES, type SettingsTabKey } from '@/app/(app)/settings/catalogue'
 
 /**
  * The individual SETTINGS inside the setup screens, as one searchable list.
@@ -37,11 +38,29 @@ import type { SubpageHref } from './nav'
  * here just prints the same row twice under two headings.
  */
 
+/**
+ * A tab of /settings, as a link the palette can offer.
+ *
+ * The settings screen is ONE route whose tabs are panels rather than routes, so
+ * its settings have no `SubpageHref` of their own — a setting that moved there
+ * would otherwise become unindexable, which is the opposite of what this file
+ * is for. `?tab=` names the panel and the page opens on it.
+ *
+ * Typed against the catalogue's keys rather than `string`, so a tab that is
+ * renamed or removed breaks the entries pointing at it at COMPILE time, exactly
+ * as a removed SUBPAGE_LABELS key does for the routes.
+ */
+export type SettingsTabHref = `/settings?tab=${SettingsTabKey}`
+
 export type SettingEntry = {
   /** What the setting is called, in the words the screen uses. */
   label: string
-  /** The screen it lives on. Must be a real route — the test checks it. */
-  href: SubpageHref
+  /**
+   * Where it lives. Either a real route, or a tab of /settings for the settings
+   * that have moved onto that screen — both checked at compile time, and the
+   * routes checked again against disk by the test.
+   */
+  href: SubpageHref | SettingsTabHref
   /**
    * The `id` of the element to scroll to and flash, rendered by that screen via
    * <Card id> (see SETTING_ANCHOR in components/ui). Omitted where a screen is
@@ -63,12 +82,14 @@ export type SettingEntry = {
 
 export const SETTINGS: SettingEntry[] = [
   /* ── Till behaviour ─────────────────────────────────────────────────────
-     The panels on /setup/terminals. The screen is called "Tills" and reads as
-     a list of MACHINES, so nothing about its name suggests it also decides how
-     those machines behave — which is why every panel here is indexed. */
+     The panels on the Till tab of /settings. They used to live on
+     /setup/terminals, which reads as a list of MACHINES and gave no hint that
+     it also decided how those machines behave — which is why every one of them
+     is indexed here. The move to a tab named "Till" helps, but a tab name is
+     still not the words somebody types, so these entries stay. */
   {
     label: 'Automatically log out after being idle',
-    href: '/setup/terminals',
+    href: '/settings?tab=till',
     anchor: 'idle-logout',
     description:
       'How long a till sits idle before it hands itself back to the PIN pad. Never, or 15 seconds to 5 minutes.',
@@ -77,7 +98,7 @@ export const SETTINGS: SettingEntry[] = [
   },
   {
     label: 'Return to the PIN pad after every transaction',
-    href: '/setup/terminals',
+    href: '/settings?tab=till',
     anchor: 'idle-logout',
     description:
       'Whether the till asks for a PIN again after each sale, so the next one is rung by whoever is standing there.',
@@ -86,7 +107,7 @@ export const SETTINGS: SettingEntry[] = [
   },
   {
     label: 'Force clock in before selling',
-    href: '/setup/terminals',
+    href: '/settings?tab=till',
     anchor: 'force-clock-in',
     description: 'Whether a cashier must clock in for a shift before the till will let them sell.',
     keywords:
@@ -94,14 +115,14 @@ export const SETTINGS: SettingEntry[] = [
   },
   {
     label: 'Scanner sounds',
-    href: '/setup/terminals',
+    href: '/settings?tab=till',
     anchor: 'scan-sounds',
     description: 'The beep the till makes when an item scans, and when a scan fails.',
     keywords: 'beep sound audio noise scanner scan volume mute silent chime tone feedback',
   },
   {
     label: 'Account sales while offline',
-    href: '/setup/terminals',
+    href: '/settings?tab=till',
     anchor: 'offline-account-sales',
     description:
       'Whether the till may put a sale on a customer account when it cannot reach the server to check their credit.',
@@ -110,7 +131,7 @@ export const SETTINGS: SettingEntry[] = [
   },
   {
     label: 'Sign-in screen artwork',
-    href: '/setup/terminals',
+    href: '/settings?tab=till',
     anchor: 'sign-in-art',
     description: 'The backdrop the tills show before anybody signs in.',
     keywords:
@@ -136,18 +157,6 @@ export const SETTINGS: SettingEntry[] = [
   },
 
   /* ── Money and pricing ─────────────────────────────────────────────────── */
-  {
-    label: 'VAT rate',
-    href: '/setup/pricing',
-    /* Also SELECTS the tab. The VAT list is the second tab, so without this the
-       hit landed on Price types with nothing matching what was searched for and
-       nothing for the flash to find — an unselected tab renders no panel. The
-       screen reads this hash itself; see the effect in PricingClient. */
-    anchor: 'vat-rates',
-    description: 'The tax rates charged on a sale, and which one a product uses by default.',
-    keywords:
-      'vat tax rate percentage 15 zero rated exempt gst sales tax change rate charged',
-  },
   /* Filed under money because that is what somebody is thinking about, but it
      lives on the NUMBERING screen — cash rounding is a posting rule, sat beside
      the VAT lock, rather than a price rule. That gap between where it reads as
@@ -232,14 +241,14 @@ export const SETTINGS: SettingEntry[] = [
   },
   {
     label: 'Stock take variance approval',
-    href: '/setup/stock-takes',
+    href: '/settings?tab=stock-takes',
     description: 'How big a count difference may be before a manager has to sign it off.',
     keywords:
       'stock take count variance threshold approval sign off signoff tolerance blind count second signature manager shrinkage difference allowed',
   },
   {
     label: 'Expiry and batch tracking',
-    href: '/setup/stock-tracking',
+    href: '/settings?tab=stock-tracking',
     description: 'Which products are tracked by lot or expiry date, and when the till asks.',
     keywords:
       'lot batch expiry date traceability recall fefo shelf life best before serial numbers track capture prompt',
@@ -285,3 +294,24 @@ export function visibleSettings(reachable: ReadonlySet<string>): SettingEntry[] 
 export function settingHref(setting: SettingEntry): string {
   return setting.anchor ? `${setting.href}#${setting.anchor}` : setting.href
 }
+
+/**
+ * What to call the screen a setting lives on — "on Tills", "on Stock takes".
+ *
+ * Two kinds of href resolve differently. A route's name comes from
+ * `SUBPAGE_LABELS`, as it always has; a `/settings?tab=` link's comes from the
+ * settings catalogue, because those tabs are panels rather than routes and have
+ * no subpage label to read. Callers should not have to know which they hold —
+ * getting it wrong prints a raw URL in a search result, which is how the
+ * location half of the answer stops being useful.
+ */
+export function settingScreenLabel(setting: SettingEntry): string | null {
+  const tab = SETTINGS_TAB_LABELS[setting.href as SettingsTabHref]
+  if (tab) return tab
+  return (SUBPAGE_LABELS as Record<string, string>)[setting.href] ?? null
+}
+
+/** Every settings tab, keyed by the href that opens it. */
+const SETTINGS_TAB_LABELS: Record<string, string> = Object.fromEntries(
+  SETTINGS_CATEGORIES.map((c) => [`/settings?tab=${c.key}`, c.label]),
+)

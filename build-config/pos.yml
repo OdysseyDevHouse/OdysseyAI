@@ -1,4 +1,4 @@
-# OdysseyAI Point of Sale — the till, and nothing else.
+# Odyssey POS — the till, and nothing else.
 #
 # Boots straight to /pos and refuses to navigate off it. After the one admin
 # sign-in that tells it which site and device it is, every launch lands on the
@@ -8,7 +8,7 @@
 # Carries no database and no back office.
 extends: ./electron-builder.yml
 
-productName: OdysseyAI Point of Sale
+productName: Odyssey POS
 
 appId: za.co.pointofsale.odyssey.pos
 

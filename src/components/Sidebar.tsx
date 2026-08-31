@@ -169,6 +169,22 @@ export default function Sidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grantedKey, modulesKey, hiddenKey, isOwner, gettingStartedHidden])
 
+  /* The same two rules, as stable callbacks for the palette.
+     Memoised on the joined keys the menu above already uses, so the search
+     index is rebuilt when the person's capabilities or the shop's modules
+     actually change and not on every render. */
+  const settingsGranted = useMemo(() => {
+    const held = new Set(granted)
+    return (capability: string) => isOwner || held.has(capability)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grantedKey, isOwner])
+  const settingsHolds = useMemo(() => {
+    const bought = new Set(modules)
+    const switchedOff = new Set(hiddenAreas)
+    return (module: string) => bought.has(module) && !switchedOff.has(module)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modulesKey, hiddenKey])
+
   /**
    * ONE open section, not a set of them.
    *
@@ -313,7 +329,11 @@ export default function Sidebar({
       {/* Logo + collapse */}
       <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-4">
         {!collapsed && (
-          <Link href="/dashboard" className="flex min-w-0 items-center gap-2">
+          /* gap-3 (12px), not the kit's usual gap-2: the mark is a round globe,
+             so its bounding box touches the text only at the sphere's widest
+             point and an 8px gap reads tighter than 8px does beside a square
+             icon. The extra 4px buys back what the curve gives away. */
+          <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
             {/* The real mark, same as the till's open-tables gate — this used to
                 be a bordered <span> standing in for it. Decorative beside the
                 wordmark text, so no alt of its own. */}
@@ -333,12 +353,36 @@ export default function Sidebar({
                 alone in the rail rather than a title beside the artwork, and it
                 wants open tracking to read as a wordmark. See globals.css.
 
-                "AI" carries the brand blue and 700 against the name's 800: the
-                colour alone was already doing the separating, and leaving both
-                halves at the same weight made the blue look like an accident of
-                markup rather than the second word of the name. */}
-            <span className="wordmark-lockup truncate text-xl leading-none text-ink">
-              Odyssey <span className="font-bold text-brand">AI</span>
+                Two lines, matching the printed mark: the name, then "SOFTWARE"
+                on a subline tracked wide and flanked by rules. The rail names
+                the COMPANY. Caps have no descenders, so the pair stacks inside
+                the header's existing 64px rather than growing it. */}
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="wordmark-lockup truncate text-lg leading-none text-ink">
+                Odyssey
+              </span>
+              {/* The flanking rules are DRAWN, not typed. Em dashes either side
+                  would be read out as punctuation by a screen reader and would
+                  come along when the name is copied; these are 1px lines that
+                  inherit the subline's own colour.
+
+                  `text-brand` on the WRAPPER, not on the word: the rules are
+                  `bg-current`, so colouring the parent carries the letters and
+                  both rules together and there is one place to change it. This
+                  is the same --color-brand the primary buttons use, so the
+                  subline restyles with the rest of the app rather than being a
+                  second blue that has to be found and updated separately. */}
+              <span aria-hidden className="flex items-center gap-1 text-brand">
+                <span className="h-px w-2 shrink-0 bg-current" />
+                {/* -0.34em back: letter-spacing is applied AFTER the last
+                    letter too, so without this the right-hand rule sits a
+                    tracking-step further out than the left one and the pair
+                    looks unbalanced rather than symmetrical. */}
+                <span className="wordmark-sub -mr-[0.34em] truncate text-[9px] leading-none">
+                  Software
+                </span>
+                <span className="h-px w-2 shrink-0 bg-current" />
+              </span>
             </span>
           </Link>
         )}
@@ -397,6 +441,13 @@ export default function Sidebar({
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         sections={visible}
+        /* The /settings tabs cannot be derived from `sections`: that screen
+           hangs off the gear in the top bar and has no menu row, so the palette
+           needs the raw predicates to decide which of its tabs to index. Same
+           two rules the menu itself is built from above — an owner bypasses a
+           capability, nobody bypasses a module. */
+        granted={settingsGranted}
+        holds={settingsHolds}
       />
 
       {/* The far half of a settings result: scrolls to the panel the palette

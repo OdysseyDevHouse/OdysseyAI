@@ -4,8 +4,8 @@
 # build passes one of the configs in build-config/ with `--config`, and that
 # file `extends` this one.
 #
-#   npm run dist:backoffice   →  Odyssey Back Office
-#   npm run dist:pos          →  Odyssey Point of Sale
+#   npm run dist:backoffice   →  Odyssey Backoffice
+#   npm run dist:pos          →  Odyssey POS
 #   npm run dist:database     →  Odyssey Database Setup
 #   npm run dist              →  all three
 #

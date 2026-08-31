@@ -91,12 +91,12 @@ function NoBridge() {
   return (
     <Card>
       <CardHeader
-        title="Not running as OdysseyAI Database Setup"
+        title="Not running as Odyssey Database Setup"
         description="This screen installs a shop's database, and needs the desktop installer to do it."
       />
       <CardBody>
         <p className="text-muted text-sm">
-          You are seeing it in a browser. Run the OdysseyAI Database Setup installer on the machine
+          You are seeing it in a browser. Run the Odyssey Database Setup installer on the machine
           that will host the database.
         </p>
       </CardBody>
@@ -557,12 +557,12 @@ function DoneStep({ siteName, ownerName }: { siteName: string; ownerName: string
           </p>
           {ownerName ? (
             <p className="text-ink">
-              Install OdysseyAI Back Office on this machine and sign in as{' '}
+              Install Odyssey Back Office on this machine and sign in as{' '}
               <span className="text-ink font-medium">{ownerName}</span> with the PIN you just set.
             </p>
           ) : (
             <p className="text-ink">
-              This shop already had users. Install OdysseyAI Back Office on this machine and sign in
+              This shop already had users. Install Odyssey Back Office on this machine and sign in
               with an existing name and PIN.
             </p>
           )}

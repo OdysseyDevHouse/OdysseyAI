@@ -24,8 +24,10 @@ export default async function UsersPage() {
 
   return (
     <>
+      {/* Named for both halves, matching its tile: the roles screen is reached
+          from the toolbar here rather than from a tile of its own. */}
       <PageHeader
-        title="Users"
+        title="Users and permissions"
         subtitle="Who may sign in, at the till and in the back office"
       />
       <PageBody>

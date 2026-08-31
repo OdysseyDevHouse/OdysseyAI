@@ -66,6 +66,7 @@
     "test:sale-paper": "tsx scripts/test-sale-paper-route.ts",
     "test:navigation": "tsx scripts/test-navigation.ts",
     "test:setting-search": "tsx scripts/test-setting-search.ts",
+    "test:settings-tabs": "tsx scripts/test-settings-tabs.ts",
     "test:window-session": "tsx scripts/test-window-session.ts",
     "test:multi-store-device": "tsx --conditions=react-server --env-file=.env scripts/verify-multi-store-device.ts",
     "probe:page-score": "tsx scripts/probe-page-score.ts",

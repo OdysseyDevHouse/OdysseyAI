@@ -43,41 +43,98 @@ export type SetupHref =
   | (typeof SETUP_ELSEWHERE)[number]
 
 const DECLARED: DeclaredGroup<SetupHref>[] = [
+  /*
+   * FIRST, and deliberately: this is the group a new shop works through before
+   * it can trade at all — who we are, where we trade from, what we ring up on,
+   * and who may touch it. Everything below decides how the shop WORKS; this
+   * decides what the shop IS.
+   *
+   * The four tiles were scattered across "Users & access" and "Store & stock",
+   * which grouped by the shape of the setting rather than by the moment somebody
+   * needs it. An owner opening Setup on day one had to visit two groups to
+   * finish one job.
+   */
   {
-    label: 'Users & access',
-    description: 'Who may sign in, what they are allowed to do, and what they are paid.',
-    tone: 'sky',
-    icon: 'ShieldCheck',
+    label: 'My store',
+    description: 'Who you are, where you trade from, and who may sign in.',
+    tone: 'teal',
+    icon: 'Store',
     items: [
+      /* First in the group, and deliberately: it is the only tile here that
+         answers "who are we" rather than "how do we work", and it is the first
+         thing a new shop has to get right — every document it prints carries
+         these details. */
+      {
+        href: '/setup/store-info',
+        description: 'Your name, address and contact details — and the logo on your documents.',
+        keywords:
+          'store shop company name trading name address phone telephone email vat number registration number contact details letterhead logo my details business information branding',
+        icon: 'Store',
+        tone: 'teal',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/setup/linked-stores',
+        description: 'Branches that share products, customers or loyalty with this one.',
+        /* “online” and “storefront” deliberately absent: one shop for the group is
+           set up on the online store’s own Setup screen, and a hit here would send
+           somebody looking for it to the wrong page. */
+        keywords: 'multi store group branches sharing',
+        icon: 'Store',
+        tone: 'violet',
+        capability: 'setup.edit',
+        module: 'multi_branch',
+      },
+      {
+        href: '/setup/terminals',
+        description: 'Which register rang up a sale, and which machine is which.',
+        keywords: 'terminals registers pos devices',
+        icon: 'Terminal',
+        tone: 'sky',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/users',
-        description: 'Who may sign in, at the till and in the back office.',
-        keywords: 'staff logins pin passwords accounts sales rep',
+        description:
+          'Who may sign in, at the till and in the back office — and what each role may do.',
+        /* Both tiles' synonyms. Roles & permissions is no longer a tile of its
+           own — it is a button on the Users screen — so "permissions" and
+           "access control" have to land HERE or the search stops finding it. */
+        keywords:
+          'staff logins pin passwords accounts sales rep roles permissions security capabilities rights access control',
         icon: 'Users',
         tone: 'sky',
         capability: 'setup.users',
       },
-      {
-        href: '/setup/roles',
-        description: 'What each role may do — name them after the jobs people actually do.',
-        keywords: 'security capabilities rights access control',
-        icon: 'KeyRound',
-        tone: 'indigo',
-        capability: 'setup.users',
-      },
+      /* Roles & permissions is NOT a tile any more. The SCREEN is unchanged at
+         /setup/roles — only its front door moved, onto the Users screen beside
+         "Add user". "Who may sign in" and "what they may do" are one job, and
+         two tiles for it were two front doors that people had to choose
+         between before they knew which they wanted. */
+    ],
+  },
+  /*
+   * Renamed from "Users & access", which stopped describing it.
+   *
+   * Users, roles and the API key screen all left — the first two to "My store"
+   * above, the third to /settings. What remained was four tiles about what
+   * people COST: pay rules, leave entitlement, cost per employee and commission.
+   * That is a different question, asked by a different person on a different
+   * day, so the heading now says so.
+   */
+  {
+    label: 'Pay & commission',
+    description: 'What an hour is worth, what leave grants, and who earns on a sale.',
+    tone: 'sky',
+    icon: 'Coins',
+    items: [
       /* The audit trail is NOT here any more — it is in the reports catalogue,
          under Operations. It was the one tile in this hub that answered a
          question rather than deciding something, and "who changed this price"
          is asked at the reports screen. The route is unchanged; only where it
          is listed moved. See `/reports` and `AUDIT_HREF` in nav.ts. */
-      {
-        href: '/setup/api',
-        description: 'Keys that let outside programs read this store, and where events get pushed.',
-        keywords: 'integration rest developer tokens external webhooks deliveries',
-        icon: 'Terminal',
-        tone: 'violet',
-        capability: 'setup.api',
-      },
+      /* API & webhooks is NOT here any more — it moved to /settings under the
+         "System" tab, where the machine-facing configuration belongs. */
       /* Pay rules and cost sit with people rather than under Staff: both are
          configuration that decides what every figure on the staff screens comes
          to, and neither is opened in the course of a normal week. */
@@ -132,26 +189,52 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
     tone: 'emerald',
     icon: 'Coins',
     items: [
+      /*
+       * TWO TILES, ONE SCREEN.
+       *
+       * /setup/pricing is a tabbed screen — price types on one tab, VAT rates on
+       * the other — and it stays that way: they share a save, and setting up a
+       * wholesale tier while the rate it charges lives on another route is the
+       * arrangement that screen exists to avoid.
+       *
+       * But they are looked for separately. "Add a wholesale price" and "change
+       * the VAT rate" are different errands, asked by different people in
+       * different months, and one tile named for both was a tile named for
+       * neither. The second carries `anchor: 'vat-rates'`, which the screen
+       * already reads to open its VAT tab — see the hash effect in
+       * PricingClient. Both tiles need `label`, since the route's own name
+       * ("Price types & VAT") describes the whole screen rather than either half.
+       */
       {
         href: '/setup/pricing',
-        description: 'Retail, wholesale and the rates they charge — plus bulk repricing.',
-        keywords: 'tax rates price structures markup reprice vat',
+        label: 'Price types',
+        description: 'Retail, wholesale and the tiers a product can carry — plus bulk repricing.',
+        keywords: 'price structures tiers retail wholesale markup reprice repricing margin',
+        icon: 'Tag',
+        tone: 'emerald',
+        capability: 'setup.edit',
+      },
+      {
+        href: '/setup/pricing',
+        anchor: 'vat-rates',
+        label: 'VAT rates',
+        description: 'The tax rates charged on a sale, and which one a product uses by default.',
+        /* Carries the words somebody TYPES, not just the ones on the screen —
+           "15", "zero rated", "gst", "sales tax". They came from a settingSearch
+           entry for "VAT rate" that pointed at this same anchor; this tile
+           replaced it, and dropping its synonyms would have made the rate harder
+           to find than before the split. */
+        keywords:
+          'vat tax rate rates percentage 15 zero rated exempt gst sales tax sars change rate charged standard rate',
         icon: 'Percent',
         tone: 'emerald',
         capability: 'setup.edit',
       },
-      /* Beside Pricing because they are two halves of one sentence: that tile is
-         what a product SELLS for, this is what it is HELD at. Both feed the same
-         margin, which is why neither belongs under Store & stock with the
-         warehouses. */
-      {
-        href: '/setup/purchasing',
-        description: 'Average or last cost, and the checks that run when a delivery is posted.',
-        keywords: 'cost basis average last cost price landed grv receiving tolerance margin gp',
-        icon: 'Coins',
-        tone: 'emerald',
-        capability: 'setup.edit',
-      },
+      /* Purchasing & cost is NOT here any more — it moved to /settings, the
+         system-settings screen, under its "Purchasing and cost" tab. It used to
+         sit beside Pricing as the other half of one sentence (that tile is what
+         a product SELLS for, this was what it is HELD at); the two are now on
+         different screens, which is the cost of that move. */
       {
         href: '/setup/tender-types',
         description: 'How sales are paid for. Some stores have four, some have ten.',
@@ -176,26 +259,11 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'sky',
         capability: 'setup.edit',
       },
-      {
-        href: '/setup/cashup',
-        description: 'What a drawer is counted against, and how far out it may be before somebody explains it.',
-        keywords: 'cashup cash up drawer variance tolerance shortage over short till float shift blind count reconcile',
-        icon: 'Coins',
-        tone: 'emerald',
-        capability: 'setup.edit',
-      },
-      {
-        href: '/setup/tips',
-        description: 'Service charges by bill size, and whether they apply off the floor.',
-        keywords: 'tips gratuity service charge tiers waiter pool',
-        /* `Percent` from the hub's own icon union — `HandCoins` exists in the kit but not in
-           `HubIconName`, which is a deliberately short list so a hub tile cannot name a
-           glyph the hub cannot render. A service charge is a percentage, so this reads
-           correctly rather than being a substitute. */
-        icon: 'Percent',
-        tone: 'amber',
-        capability: 'setup.edit',
-      },
+      /* Cash-up is NOT here any more — it moved to /settings, under the
+         "Cash up" tab. */
+      /* Tips is NOT here any more — it moved to /settings, under the
+         "Hospitality" tab, which is where service charges and the rest of
+         table service now live. */
       {
         href: '/setup/laybys',
         description: 'What a customer agrees to when they put something aside.',
@@ -259,19 +327,9 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
     tone: 'teal',
     icon: 'Store',
     items: [
-      /* First in the group, and deliberately: it is the only tile here that
-         answers "who are we" rather than "how do we work", and it is the first
-         thing a new shop has to get right — every document it prints carries
-         these details. */
-      {
-        href: '/setup/store-info',
-        description: 'Your name, address and contact details — and the logo on your documents.',
-        keywords:
-          'store shop company name trading name address phone telephone email vat number registration number contact details letterhead logo my details business information branding',
-        icon: 'Store',
-        tone: 'teal',
-        capability: 'setup.edit',
-      },
+      /* My store information is NOT here any more — it leads the "My store"
+         group at the top, which is where a new shop starts. This group keeps
+         what the shop HOLDS rather than what it IS. */
       {
         href: '/setup/locations',
         description: 'The places stock is kept. Sales come from the main one.',
@@ -297,43 +355,19 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'teal',
         capability: 'setup.edit',
       },
-      /* Beside Reasons because they are two halves of one sentence: that tile is
-         the vocabulary a variance is explained IN, this one is when an
-         explanation becomes compulsory. */
-      {
-        href: '/setup/stock-takes',
-        description: 'How large a counted difference may be before somebody else has to sign it off.',
-        keywords:
-          'stock take count variance threshold approval sign off signoff shrinkage tolerance blind count second signature',
-        /* `Scale` from the hub's own icon union — weighing a difference, and
-           distinct from the SlidersHorizontal on the tile beside it so the two
-           read as two things when somebody is scanning the row. */
-        icon: 'Scale',
-        tone: 'teal',
-        capability: 'setup.edit',
-        module: 'inventory_advanced',
-      },
-      /* After the stock-take tile because it answers the next question in the
-         same sentence: that one is when a difference must be explained, this
-         one is how precisely the shop knows WHICH goods it is talking about. */
-      {
-        href: '/setup/stock-tracking',
-        description: 'Which lot a sale comes from, and how a scale label is read.',
-        keywords:
-          'lot batch expiry traceability recall fefo gs1 barcode databar scale plu weighed label capture',
-        icon: 'Boxes',
-        tone: 'teal',
-        capability: 'setup.edit',
-        module: 'inventory_advanced',
-      },
-      {
-        href: '/setup/terminals',
-        description: 'Which register rang up a sale, and which machine is which.',
-        keywords: 'terminals registers pos devices',
-        icon: 'Terminal',
-        tone: 'sky',
-        capability: 'setup.edit',
-      },
+      /* Stock take approvals and Stock tracking are NOT here any more — both
+         moved to /settings, under their own "Stock takes" and "Stock tracking"
+         tabs. They used to sit here beside Reasons, which is the vocabulary a
+         variance is explained IN; that tile stays, and the two halves of the
+         sentence are now on different screens.
+
+         NOTE: both tiles carried `module: 'inventory_advanced'`, which the
+         settings shell does not yet apply to its tabs. See the settings
+         catalogue. */
+      /* Tills is NOT here any more — it moved to the "My store" group at the
+         top, beside the shop's own details: what you ring up on is part of what
+         the shop IS. The two tiles below still refer to it as their neighbour
+         because they answer the same question it does — what a till SHOWS. */
       /* Beside Tills and Rotating menus, which is the company it keeps: all
          three decide what a till SHOWS rather than what it sells. It was a
          sidebar row under Sales on the argument that a quick key gets changed
@@ -368,27 +402,15 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'amber',
         capability: 'setup.edit',
       },
-      {
-        href: '/setup/reservations',
-        description: 'Whether the floor takes bookings, and the hours it takes them for.',
-        keywords: 'reservations bookings diary online booking form opening hours sittings covers restaurant',
-        icon: 'Clock',
-        tone: 'amber',
-        capability: 'setup.edit',
-      },
+      /* Reservations is NOT here any more — it moved to /settings under the
+         "Online bookings" tab, and was renamed with the move: every heading on
+         the screen already said bookings, and "reservation" separately names
+         the stock a job card claims. It used to sit beside Tables, which is the
+         floor a booking is matched against; that tile stays. */
 
-      {
-        href: '/setup/linked-stores',
-        description: 'Branches that share products, customers or loyalty with this one.',
-        /* “online” and “storefront” deliberately absent: one shop for the group is
-           set up on the online store’s own Setup screen, and a hit here would send
-           somebody looking for it to the wrong page. */
-        keywords: 'multi store group branches sharing',
-        icon: 'Store',
-        tone: 'violet',
-        capability: 'setup.edit',
-        module: 'multi_branch',
-      },
+      /* Linked stores is NOT here any more — it moved to the "My store" group
+         at the top, beside this shop's own details: which branches you trade
+         with is part of who you are, not of how the floor works. */
     ],
   },
   /*
@@ -437,14 +459,11 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'violet',
         capability: 'cashbook.edit',
       },
-      {
-        href: '/reports/schedules',
-        description: 'Reports that email themselves — to whom, and how often.',
-        keywords: 'scheduled email me automatic recurring report delivery',
-        icon: 'Mail',
-        tone: 'emerald',
-        capability: 'reports.schedule',
-      },
+      /* Scheduled reports is NOT here any more. The SCREEN is unchanged and
+         still lives at /reports/schedules — only this tile went, because it is
+         reached from the reports hub's own "Schedule a report" button beside
+         "Build a report". A scheduled report is something you make where the
+         reports are, not a setting you configure once. */
     ],
   },
   {
@@ -612,7 +631,34 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
   },
 ]
 
+/**
+ * The screens that exist only on a developer's machine.
+ *
+ * Site & databases prints server hostnames, database names and usernames; the
+ * Style Guide is the design system's own reference. Neither means anything to a
+ * shop, and both routes now `notFound()` outside a dev build — see `isDevBuild`
+ * in lib/auth.ts, which explains why NODE_ENV is the authority and why there is
+ * no flag to turn them back on.
+ *
+ * Filtered out of the catalogue rather than off the hub, because the catalogue
+ * is read by the global SEARCH as well: leaving them here would offer a shop
+ * two results that 404, which is worse than not finding them.
+ */
+export const DEV_ONLY_ROUTES: ReadonlySet<string> = new Set([
+  '/setup/databases',
+  '/setup/style-guide',
+])
+
 export const SETUP_GROUPS: HubGroup[] = resolveGroups(DECLARED)
+  .map((group) =>
+    process.env.NODE_ENV === 'production'
+      ? { ...group, items: group.items.filter((item) => !DEV_ONLY_ROUTES.has(item.href)) }
+      : group,
+  )
+  /* A group emptied by that filter would render as a heading over nothing. None
+     is today — both tiles share their groups — but a heading over an empty
+     group is exactly the broken-looking screen groupsFor already guards. */
+  .filter((group) => group.items.length > 0)
 
 /** The whole catalogue flat — for searching and counting. */
 export const SETUP_ITEMS = SETUP_GROUPS.flatMap((g) => g.items)

@@ -100,7 +100,7 @@ function isDatabaseSetup() {
  */
 function startPath() {
   if (isPos()) return '/pos'
-  /* OdysseyAI Database Setup is not a back office that happens to install a
+  /* Odyssey Database Setup is not a back office that happens to install a
      database — it is a wizard, and it is the ONLY thing that build does. It
      therefore opens on its own screen rather than the login form, which on this
      machine would ask for an account whose database does not exist yet. */

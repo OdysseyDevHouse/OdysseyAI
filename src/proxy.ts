@@ -219,6 +219,22 @@ const PUBLIC_PREFIXES = [
   // while the terminals charged the new ones. Two answers to what a thing costs
   // is the worst of the failure modes on this list.
   '/api/pricing/schedules/tick',
+  // The desktop shell's licence-lease renewal. It runs on a five-hour timer in
+  // electron/licenceRefresh.js and has no cookie — nobody is signed in when a
+  // machine is left on overnight, which is exactly when it needs to renew.
+  //
+  // Not protected by a cron secret like the ticks above, and deliberately so:
+  // this route exists only on a desktop install, where the secret would have to
+  // be baked into a build a customer can unpack. It refuses on two other
+  // grounds instead — APP_MODE must be 'desktop' and the request must arrive on
+  // loopback — and it carries no data either way. The worst a local caller can
+  // do is make the machine ask the control panel a question it was going to ask
+  // anyway.
+  //
+  // Behind the cookie gate it would 307 to the login page, the lease would
+  // never renew, and the shop would lock on the seventh day with a working
+  // internet connection and no explanation.
+  '/api/licence/refresh',
   // Recurring jobs' heartbeat. Same reasoning and the same protection as the
   // ticks above: JOB_SERIES_CRON_SECRET, compared in constant time, refusing
   // every request when it is not set.

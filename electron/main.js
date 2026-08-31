@@ -14,6 +14,7 @@ const dbSetupBridge = require('./dbSetupBridge')
 const { applyMigrations } = require('./siteMigrate')
 const log = require('./log')
 const updater = require('./updater')
+const licenceRefresh = require('./licenceRefresh')
 const { appRequire } = require('./appModules')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
@@ -36,6 +37,14 @@ let nextServer = null
 let appOrigin = null
 
 /**
+ * 'local' or 'cloud', as resolveEnv() decided at startup.
+ *
+ * Held because the licence refresh timer needs it AFTER the window has loaded,
+ * and prepareRuntime is the only thing that knows it.
+ */
+let runtimeMode = null
+
+/**
  * Is this URL the till?
  *
  * Matched on the app's OWN origin as well as the path, so that a link to
@@ -53,9 +62,9 @@ let appOrigin = null
  * technician reads before deciding they opened the wrong program.
  */
 function windowTitle() {
-  if (isPos()) return 'OdysseyAI Point of Sale'
-  if (isDatabaseSetup()) return 'OdysseyAI Database Setup'
-  return 'OdysseyAI Back Office'
+  if (isPos()) return 'Odyssey POS'
+  if (isDatabaseSetup()) return 'Odyssey Database Setup'
+  return 'Odyssey Backoffice'
 }
 
 function isTillUrl(url) {
@@ -106,7 +115,7 @@ function waitForServer(url, timeoutMs = 60000) {
  *
  * ── THE GAP THIS CLOSES ─────────────────────────────────────────────────────
  *
- * OdysseyAI Database Setup applies sql/site/*.sql when it adopts a machine, and
+ * Odyssey Database Setup applies sql/site/*.sql when it adopts a machine, and
  * until now that was the ONLY thing that ever did. So every migration written
  * after a shop was set up was stranded: the Back Office shipped with the files
  * in resources/sql, read none of them, and the shop stayed on the schema it had
@@ -179,7 +188,7 @@ async function prepareRuntime(onProgress) {
 
   /* ── AN ADOPTED INSTALL DOES NOT OWN THE SERVER ─────────────────────────────
    *
-   * OdysseyAI Database Setup registered MariaDB as a Windows service, running as
+   * Odyssey Database Setup registered MariaDB as a Windows service, running as
    * the machine and started at boot. This app connects to it and nothing more:
    * it must not try to start a server it did not install, and it must certainly
    * not initialise a data directory that already holds the shop's trading
@@ -418,7 +427,7 @@ async function createWindow() {
           minWidth: 1024,
           minHeight: 640,
           backgroundColor: '#0f1216',
-          title: 'OdysseyAI Point of Sale',
+          title: 'Odyssey POS',
           webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -468,7 +477,7 @@ async function createWindow() {
    * being silently swallowed: a waiter following a help link should get the
    * help page, just not inside the till.
    */
-  /* OdysseyAI Database Setup is guarded for the same reason and by the same
+  /* Odyssey Database Setup is guarded for the same reason and by the same
      shape of rule: it ships without a back office, so a link into one must not
      open a screen this machine has no business showing. */
   const guard = isPos() ? posNavigation : isDatabaseSetup() ? setupNavigation : null
@@ -507,13 +516,15 @@ async function createWindow() {
       })
     }
 
-    await prepareRuntime((message) => {
-      /* Best-effort: a progress line that cannot be delivered must never be the
-         thing that stops the app from starting. */
-      mainWindow?.webContents
-        ?.executeJavaScript(`window.setStatus?.(${JSON.stringify(String(message))})`)
-        .catch(() => {})
-    })
+    runtimeMode = (
+      await prepareRuntime((message) => {
+        /* Best-effort: a progress line that cannot be delivered must never be the
+           thing that stops the app from starting. */
+        mainWindow?.webContents
+          ?.executeJavaScript(`window.setStatus?.(${JSON.stringify(String(message))})`)
+          .catch(() => {})
+      })
+    )?.mode
 
     url = DEV_URL || (await startNextServer())
     /* Fixed before anything can navigate. See the note on appOrigin. */
@@ -533,6 +544,14 @@ async function createWindow() {
      office on the root. See appRole.startPath for why neither of the first two
      goes to a sign-in page first. */
   await mainWindow.loadURL(`${url}${startPath()}`.replace(/\/$/, ''))
+
+  /* ── KEEP THE LICENCE LEASE FRESH ────────────────────────────────────────
+   *
+   * Started after the window is up, never before: this is the least urgent
+   * thing the app does, and it must not compete with the first page for a line
+   * that may already be slow. A cloud install returns immediately — it keeps no
+   * lease. See licenceRefresh.js. */
+  licenceRefresh.start(appOrigin, runtimeMode)
 }
 
 // Single instance only — two shells would fight over the same port.
@@ -547,6 +566,10 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(() => {
+    /* Which of the three builds this is. Named once here because the log line
+       below and the diagnostics beneath it both want the same answer. */
+    const role = isPos() ? 'pos' : isDatabaseSetup() ? 'database' : 'backoffice'
+
     /* ── BEFORE THE WINDOW, AND BEFORE THE SERVER ──────────────────────────
      *
      * A packaged Windows app has no console, so console.error — which is how
@@ -557,7 +580,7 @@ if (!app.requestSingleInstanceLock()) {
      * Started here rather than at the top of the file because it needs
      * app.getPath, which is only meaningful once the app is ready. */
     const file = log.start(app.getPath('userData'), {
-      role: isPos() ? 'pos' : isDatabaseSetup() ? 'database' : 'backoffice',
+      role,
       version: app.getVersion(),
       electron: process.versions.electron,
       platform: `${process.platform} ${process.arch}`,
@@ -615,6 +638,9 @@ if (!app.requestSingleInstanceLock()) {
   let shuttingDown = false
   app.on('before-quit', async (event) => {
     if (nextServer) nextServer.close()
+    /* Before the early return below: a cloud install never started one, and
+       stopping a timer that does not exist is free. */
+    licenceRefresh.stop()
 
     if (shuttingDown || runtimeConfig.backendMode() !== 'local') return
     event.preventDefault()

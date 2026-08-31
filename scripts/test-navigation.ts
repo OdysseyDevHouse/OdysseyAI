@@ -63,7 +63,7 @@ const { buildPageIndex, searchPages, scorePage } = nodeRequire(
 ) as typeof import('../src/lib/pageSearch')
 
 /* Every hub catalogue, to assert no menu row is also one of their TILES. */
-const { SETUP_GROUPS } = nodeRequire('../src/app/(app)/setup/catalogue') as typeof import('../src/app/(app)/setup/catalogue')
+const { SETUP_GROUPS, DEV_ONLY_ROUTES } = nodeRequire('../src/app/(app)/setup/catalogue') as typeof import('../src/app/(app)/setup/catalogue')
 const { ACCOUNTING_GROUPS } = nodeRequire('../src/app/(app)/accounting/catalogue') as typeof import('../src/app/(app)/accounting/catalogue')
 const { ONLINE_STORE_GROUPS } = nodeRequire('../src/app/(app)/online-store/catalogue') as typeof import('../src/app/(app)/online-store/catalogue')
 const { ONLINE_STORE_SETUP_GROUPS } = nodeRequire('../src/app/(app)/online-store/settings/catalogue') as typeof import('../src/app/(app)/online-store/settings/catalogue')
@@ -241,7 +241,10 @@ check('"terminal" finds Tills', top('terminal'), 'Tills')
    an alphabetical tie-break, which is not a rule worth defending. */
 check('"register" reaches Tills', hits('register').includes('Tills'), true)
 check('"permissions" finds Roles', top('permissions'), 'Roles & permissions')
-check('"gratuity" finds Tips', top('gratuity'), 'Tips')
+/* "gratuity" is a synonym on the Hospitality TAB of /settings, which is where
+   the tips setup screen moved to. Note the screen it finds is not /sales/tips,
+   the tips REPORT, which keeps its own label. */
+check('"gratuity" finds Hospitality', top('gratuity'), 'Hospitality')
 
 /* Ranking, not just filtering. An exact label beats a longer string that merely
    contains the term, and a prefix beats a mid-word hit — without which "suppl"
@@ -250,8 +253,12 @@ check('an exact label wins', top('tips'), 'Tips')
 check('a prefix beats a longer containing match', top('suppliers'), 'Suppliers')
 check('"customers" finds the list first', top('customers'), 'Customers')
 
-/* Every word must match something, so a space narrows rather than widens. */
-check('"setup tips" narrows to one screen', hits('setup tips'), ['Tips'])
+/* Every word must match something, so a space narrows rather than widens.
+   "reasons" alone reaches Reasons and Journals; adding the section drops the
+   one that is not under Setup. Better than the old "setup tips" pair, which
+   matched a single screen either way and so demonstrated nothing. */
+check('"reasons" alone finds more than one', hits('reasons').length > 1, true)
+check('"setup reasons" narrows to one screen', hits('setup reasons'), ['Reasons'])
 check('a miss finds nothing', hits('zzzzz'), [])
 check('an empty term finds nothing', hits('   '), [])
 
@@ -260,7 +267,16 @@ check('an empty term finds nothing', hits('   '), [])
    is the assertion that fails the day somebody adds a screen to SUBPAGE_LABELS
    and the search quietly does not find it. */
 const indexed = new Set(index.map((h) => h.href))
-const missing = Object.keys(SUBPAGE_LABELS).filter((href) => !indexed.has(href))
+const missing = Object.keys(SUBPAGE_LABELS)
+  /* Except the developer-only two — Site & databases and the Style Guide. Their
+     routes `notFound()` outside a dev build and their catalogue tiles are
+     filtered out there, so in a production build being ABSENT from the index is
+     correct: offering a shop a result that 404s is the failure. They cannot be
+     dropped from SUBPAGE_LABELS instead, because its keys are the SubpageHref
+     type. This suite normally runs in dev, where they ARE indexed and this
+     filter changes nothing. */
+  .filter((href) => !(DEV_ONLY_ROUTES.has(href) && process.env.NODE_ENV === 'production'))
+  .filter((href) => !indexed.has(href))
 check('every hub screen is in the index', missing, [])
 
 const missingItems = allNavItems().filter((href) => !indexed.has(href))
@@ -318,10 +334,21 @@ check('a description is searchable', top('rang up'), 'Tills')
  * every word that collides today is a legitimate synonym on both sides; the rule
  * is what needs defending, not one ranking that happens to demonstrate it.
  */
-const tips = index.find((h) => h.href === '/setup/tips')!
-const tills = index.find((h) => h.href === '/setup/terminals')!
-check('a synonym scores above prose', scorePage(tips, 'gratuity') > scorePage(tills, 'rang up'), true)
-check('and prose still scores at all', scorePage(tills, 'rang up') > 0, true)
+/* Looked up rather than asserted with `!`: the tips screen moved to a tab of
+   /settings, and the non-null assertion turned that into a crash inside
+   scorePage rather than a failure naming the missing row. */
+const hospitality = index.find((h) => h.href === '/settings?tab=hospitality')
+const tills = index.find((h) => h.href === '/setup/terminals')
+check('the settings tabs are indexed', Boolean(hospitality), true)
+check('the tills screen is indexed', Boolean(tills), true)
+if (hospitality && tills) {
+  check(
+    'a synonym scores above prose',
+    scorePage(hospitality, 'gratuity') > scorePage(tills, 'rang up'),
+    true,
+  )
+  check('and prose still scores at all', scorePage(tills, 'rang up') > 0, true)
+}
 
 /* Synonyms come from two places — nav.ts and the catalogues — and most screens
    have the same string in both. Joined without deduping, Tills carried
@@ -544,6 +571,13 @@ const UNLINKED: Record<string, string> = {
   '/security': 'reached from the user menu in the top bar',
   /* The full feed behind the bell, same top-bar-only posture as /security. */
   '/notifications': 'reached from the bell in the top bar',
+  /* System settings, reached from the gear in the top bar. Deliberately not a
+     sidebar row and not in SUBPAGE_LABELS: the sidebar's Setup row already
+     leads to /setup, and a second menu entry to the other settings screen is
+     the third-front-door problem nav.ts records solving. Its own tabs are
+     panels on one route rather than routes of their own, so there is nothing
+     under it for this check to find either. */
+  '/settings': 'reached from the gear in the top bar',
 }
 
 console.log('\nEvery page is reachable')

@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation'
-import { requireCapability, requireSession } from '@/lib/auth'
+import { notFound, redirect } from 'next/navigation'
+import { isDevBuild, requireCapability, requireSession } from '@/lib/auth'
 import { getSiteForUser, type ConnectionType } from '@/lib/sites'
 import { listSiteDatabases, probeSiteDatabase } from '@/lib/siteDb'
 import {
@@ -114,6 +114,11 @@ async function buildLocalBackendView(siteId: number): Promise<LocalBackendPanelP
 }
 
 export default async function SiteDatabasesPage() {
+  /* Developer machines only, and this is the one of the two dev screens where
+     it matters: server hostnames, database names and usernames are printed
+     here. notFound() rather than a redirect — in a production build this route
+     does not exist. See `isDevBuild`. */
+  if (!isDevBuild()) notFound()
   // Server hostnames, database names and usernames are on this page — worth a
   // stronger gate than "has a session".
   await requireCapability('setup.edit')

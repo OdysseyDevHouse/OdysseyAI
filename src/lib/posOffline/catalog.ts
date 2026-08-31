@@ -453,6 +453,52 @@ export async function searchOffline(
 }
 
 /**
+ * One department and everything filed beneath it.
+ *
+ * The mirror of `browseForTill`'s recursive CTE (tillSearch.ts). That function's
+ * comment warns that walking the tree in JS risks "a second definition of what
+ * 'beneath' means" — so this is written to be the SAME definition rather than a
+ * near one: every descendant, at any depth, including the department itself.
+ *
+ * Walking it here is not the second round trip that comment was weighing, because
+ * the till already holds the whole department list — `refreshCatalog` stores it,
+ * parent ids and all. The tree is a few dozen rows and the walk is microseconds;
+ * the alternative is asking a server for something already on the device.
+ *
+ * ⚠ A cycle would hang the till, and a department file is only as trustworthy as
+ * whatever wrote it. `seen` makes a bad row a wrong grid rather than a locked-up
+ * counter — the till must not be the thing that discovers the loop.
+ *
+ * Falls back to the department alone when the list has not synced yet. That is
+ * the pre-existing behaviour, and it is the honest one: showing what is filed
+ * directly in the department beats showing nothing.
+ */
+async function departmentSubtree(siteId: number, departmentId: number): Promise<number[]> {
+  const departments = await storedDepartments(siteId)
+  if (departments.length === 0) return [departmentId]
+
+  const childrenOf = new Map<number, number[]>()
+  for (const d of departments) {
+    if (d.parentId === null || d.parentId === undefined) continue
+    const kids = childrenOf.get(d.parentId)
+    if (kids) kids.push(d.id)
+    else childrenOf.set(d.parentId, [d.id])
+  }
+
+  const seen = new Set<number>([departmentId])
+  const queue = [departmentId]
+  while (queue.length > 0) {
+    const next = queue.pop()!
+    for (const child of childrenOf.get(next) ?? []) {
+      if (seen.has(child)) continue
+      seen.add(child)
+      queue.push(child)
+    }
+  }
+  return [...seen]
+}
+
+/**
  * Products filed in one department, for the tile grid.
  *
  * ── SORTED HERE, BECAUSE DEXIE CANNOT ────────────────────────────────────
@@ -477,7 +523,8 @@ export async function browseOffline(
   departmentId: number,
   limit = 200,
 ): Promise<TillProduct[]> {
-  const rows = await posDb(siteId).products.where('departmentId').equals(departmentId).toArray()
+  const scope = await departmentSubtree(siteId, departmentId)
+  const rows = await posDb(siteId).products.where('departmentId').anyOf(scope).toArray()
   /* Members of a variant group are held but not drawn — the group's own tile
      stands for them, and the picker behind it is where they appear. Filtered
      BEFORE the limit so a department of shirts is not cut to 200 rows that are

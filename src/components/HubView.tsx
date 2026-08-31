@@ -19,7 +19,7 @@ import type { HubGroup, HubItem } from '@/lib/hub'
 type ViewMode = 'grid' | 'list'
 
 /** The "everything" tab. Not a group label, so it cannot collide with one. */
-const ALL = 'OdysseyAI Back Officeall'
+const ALL = 'all'
 
 /**
  * A whole section on one screen.
@@ -229,6 +229,19 @@ function matches(item: HubItem, query: string) {
   )
 }
 
+/**
+ * Where a tile goes, and what makes it unique in a list.
+ *
+ * Almost always just the route. A tile carrying an `anchor` is the exception —
+ * a second door onto a screen that is genuinely two jobs, landing on the half
+ * that was asked for (see `anchor` in lib/hub.ts). The hash is also what keeps
+ * the React key distinct: two tiles sharing a route would otherwise share a
+ * key, and React would drop one of them.
+ */
+function tileHref(item: HubItem): string {
+  return item.anchor ? `${item.href}#${item.anchor}` : item.href
+}
+
 /* ── grid view ─────────────────────────────────────────────────────────── */
 
 /**
@@ -254,7 +267,7 @@ function GroupGrid({ group, heading = true }: { group: HubGroup; heading?: boole
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {group.items.map((item) => (
-          <ScreenTile key={item.href} item={item} />
+          <ScreenTile key={tileHref(item)} item={item} />
         ))}
       </div>
     </section>
@@ -265,7 +278,7 @@ function GroupGrid({ group, heading = true }: { group: HubGroup; heading?: boole
 function ScreenTile({ item }: { item: HubItem }) {
   return (
     <Link
-      href={item.href}
+      href={tileHref(item)}
       className="group flex items-start gap-3 rounded-card border border-border bg-surface px-4 py-3.5 outline-none transition-colors hover:border-border-strong hover:bg-surface-2"
     >
       <CategoryTile icon={glyph(item.icon, 18)} tone={item.tone} />
@@ -302,8 +315,8 @@ function GroupList({ group }: { group: HubGroup }) {
       <div className="flex flex-col divide-y divide-border">
         {group.items.map((item) => (
           <Link
-            key={item.href}
-            href={item.href}
+            key={tileHref(item)}
+            href={tileHref(item)}
             className="group flex items-center gap-3 px-4 py-2 outline-none transition-colors hover:bg-surface-2"
           >
             <CategoryTile icon={glyph(item.icon, 15)} tone={item.tone} size="sm" />

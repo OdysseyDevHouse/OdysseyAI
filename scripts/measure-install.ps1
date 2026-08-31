@@ -280,8 +280,11 @@ Say ''
 Say '-- Provisioning phases, from Odyssey''s own log --'
 $logs = @(
     "$env:APPDATA\odyssey-ai\odyssey.log",
-    # Both namings: builds before the OdysseyAI rename are still in the field,
-    # and a machine being measured may hold either.
+    # Every naming a build has shipped under. userData is now PINNED to the
+    # first two (see electron/userDataMigration.js), so a current build always
+    # writes there — but the OdysseyAI-named directories are still on machines
+    # that ran the builds between the rename and the pin, and a measurement of
+    # one of those has to find its log.
     "$env:APPDATA\Odyssey Back Office\odyssey.log",
     "$env:APPDATA\Odyssey Database Setup\odyssey.log",
     "$env:APPDATA\OdysseyAI Back Office\odyssey.log",

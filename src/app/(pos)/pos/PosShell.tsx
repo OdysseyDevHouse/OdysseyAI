@@ -81,7 +81,6 @@ import type { PriceStructure } from '@/lib/site/lookups'
 import type { BasketLine } from '@/lib/basket'
 import {
   searchProductsAction,
-  browseProductsAction,
   scanAction,
   lotsForProductAction,
   serialsForProductAction,
@@ -1735,9 +1734,31 @@ export default function PosShell({
   }, [state.query, priceStructureId, dispatch, till.online, siteId])
 
   /* ── Department browse ────────────────────────────────────────────────
-     Products directly in the open department. Fetched rather than shipped with
-     the page: a store with 20,000 products cannot send its whole catalogue on
-     every till load, and phase 4 replaces this with the offline catalogue. */
+     Products in the open department, READ FROM THIS DEVICE.
+
+     This used to call `browseProductsAction` whenever the till was online and
+     fall back to the local catalogue only when the network was gone. That is
+     backwards: the products are already here — `refreshCatalog` put them in
+     IndexedDB — so the round trip fetched what the device was holding.
+
+     Measured before the change, against a 288-product café site: the SQL is
+     3-10ms, but the round trip is ~154ms on ordinary shop wifi and ~338ms on
+     busy wifi, and `setBrowse({ loading: true })` blanked the grid first, so
+     every tap flashed a skeleton on its way to the tiles it already had. On a
+     counter tablet that reads as a slow till, and it is the same wait on every
+     department, all shift.
+
+     So the local read is now the ONLY read. Not "local first, then reconcile":
+     a background refetch that redrew the grid a moment later would move a tile
+     under a cashier's finger, which is worse than being briefly stale — and
+     staleness is already handled properly, by the catalogue sync, which is the
+     one thing that decides how current this device's products are.
+
+     ── WHAT THIS COSTS ──────────────────────────────────────────────────
+     A product added in the back office is not on the till until the next
+     catalogue sync. That was ALREADY true of a till that lost its network, of
+     every price on the grid, and of search; this makes browse agree with them
+     rather than being the one path that went to the server. */
   const openDepartment =
     state.catalog.kind === 'departments'
       ? state.catalog.path[state.catalog.path.length - 1]
@@ -1749,40 +1770,37 @@ export default function PosShell({
       return
     }
     let cancelled = false
-    setBrowse({ loading: true, products: [] })
-    /* departmentId, not a list: the action expands one id into its whole subtree
-       server-side, which is what makes drilling into "Groceries" show everything
-       beneath it rather than only what is filed directly there.
-
-       ⚠ The offline fallback CANNOT do that expansion — Dexie indexes a product's
-       own department and knows nothing of the tree — so drilling offline shows what
-       is filed directly in the department that was opened. A visible difference, and
-       the honest one: inventing a subtree walk here would be a second definition of
-       "what is in this department" that could disagree with the server's. */
-    const lookup = till.online
-      ? browseProductsAction({
-          departmentId: openDepartment,
-          priceStructureId,
-          limit: 200,
-          terminalId: terminal?.id ?? null,
-          /* Groups, not their members — the till draws one tile per garment
-             and asks for the size at the tap. `browseOffline` filters the
-             same way against its own cache, so the grid does not rearrange
-             itself the moment the network drops. */
-          includeVariantParents: true,
-        }).catch(() => browseOffline(siteId, openDepartment))
-      : browseOffline(siteId, openDepartment)
-    lookup
+    /* The grid is NOT blanked first. An IndexedDB read resolves in about a
+       millisecond, so clearing it would paint a skeleton nobody can read and
+       then replace it in the same breath — a flicker on every tap. `loading`
+       stays false for the same reason: there is no wait to describe. If the
+       read is somehow slow the previous department's tiles stay up a moment
+       longer, which is the calmer failure. */
+    browseOffline(siteId, openDepartment)
       .then((products) => {
         if (!cancelled) setBrowse({ loading: false, products })
       })
       .catch(() => {
+        /* A catalogue that will not open is not a browse problem — the till has
+           bigger trouble and says so elsewhere. An empty grid here is honest:
+           it shows nothing rather than the last department's products under the
+           new department's heading. */
         if (!cancelled) setBrowse({ loading: false, products: [] })
       })
     return () => {
       cancelled = true
     }
-  }, [openDepartment, priceStructureId, till.online, siteId])
+    /* `till.online` and `priceStructureId` are gone from the deps.
+
+       Online-ness no longer changes where the products come from, so keeping it
+       would re-read the same rows every time the network flickered — and each
+       re-read is a new array, which is a re-render of the grid.
+
+       The price structure is not a browse input either. `priceFor` takes it as
+       its own argument and prices each tile as it draws — switching to trade
+       prices re-renders the grid without re-reading it — so listing it here
+       re-read the catalogue to answer a question the read does not ask. */
+  }, [openDepartment, siteId])
 
   /* ── The menu in force, and the grid it leaves ────────────────────────
      Recomputed on the `clock` tick above, so the changeover happens on this

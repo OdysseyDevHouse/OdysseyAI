@@ -18,6 +18,39 @@ import type { LicenceRefusal } from '@/lib/control/devices'
 export const LEASE_DAYS = 7
 
 /**
+ * How often a desktop install TRIES to renew. Five hours.
+ *
+ * ── TWO CLOCKS, AND CONFLATING THEM IS THE TRAP ─────────────────────────────
+ *
+ * This one says how often to reach for the control panel. LEASE_DAYS says how
+ * long a stale answer stays valid when that fails. They are independent on
+ * purpose: five hours against seven days is ~33 chances to reconnect before a
+ * machine locks, so a shop on a poor line never notices, while a shop that
+ * unplugs the network to avoid paying still locks on schedule.
+ *
+ * Lowering this does not weaken the lock and raising it does not strengthen it.
+ * Only LEASE_DAYS decides that.
+ */
+export const REFRESH_HOURS = 5
+
+/**
+ * Is this lease recent enough to answer from, without asking the control panel?
+ *
+ * Deliberately NOT `leaseState(...) === 'current'`. That question is "may this
+ * machine trade", which stays true for seven days and is what the lock screen
+ * asks. This is the narrower "is what we hold still worth serving", which stops
+ * being true after five hours — at which point we ask properly, and asking is
+ * the only thing that moves `checked_at`.
+ */
+export function leaseIsFresh(lease: Lease, now: Date = new Date()): boolean {
+  const age = now.getTime() - lease.checkedAt.getTime()
+  /* A negative age is a clock that moved backwards — a machine whose time was
+     corrected, or a lease written by one with a wrong clock. Treated as stale
+     rather than fresh: the safe direction is to go and ask. */
+  return age >= 0 && age < REFRESH_HOURS * 3_600_000
+}
+
+/**
  * How long an offline unlock buys. Longer than a check, because it is a real
  * interruption rather than a routine renewal.
  *

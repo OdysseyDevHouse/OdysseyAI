@@ -6,12 +6,13 @@ import {
   type NavSection,
   type SubpageHref,
 } from './nav'
-import { SETUP_GROUPS } from '@/app/(app)/setup/catalogue'
+import { SETUP_GROUPS, DEV_ONLY_ROUTES } from '@/app/(app)/setup/catalogue'
+import { settingsTabsFor } from '@/app/(app)/settings/catalogue'
 import { ACCOUNTING_GROUPS } from '@/app/(app)/accounting/catalogue'
 import { ONLINE_STORE_GROUPS } from '@/app/(app)/online-store/catalogue'
 import { ONLINE_STORE_SETUP_GROUPS } from '@/app/(app)/online-store/settings/catalogue'
 import { JOBS_SETUP_GROUPS } from '@/app/(app)/jobs/setup/catalogue'
-import { visibleSettings, settingHref } from './settingSearch'
+import { visibleSettings, settingHref, settingScreenLabel } from './settingSearch'
 import type { HubIconName } from './hub'
 import type { LucideIcon } from 'lucide-react'
 /* The shop's own configuration, which is what every one of these rows is —
@@ -102,11 +103,39 @@ const CATALOGUE: Record<string, { description: string; icon: HubIconName; keywor
       ...JOBS_SETUP_GROUPS,
     ]
       .flatMap((group) => group.items)
+      /* ANCHORED tiles are excluded here and indexed separately below.
+         This map is keyed by route, so a second tile onto the same screen would
+         silently overwrite the first — Price types & VAT lost its own
+         description to the VAT half the moment that tile was added. The
+         unanchored tile is the one that describes the SCREEN; the anchored one
+         is a destination in its own right and gets its own row. */
+      .filter((item) => !item.anchor)
       .map((item) => [
         item.href,
         { description: item.description, icon: item.icon, keywords: item.keywords },
       ]),
   )
+
+/**
+ * The anchored hub tiles — a second door onto a screen that is two jobs.
+ *
+ * Indexed as destinations of their own rather than folded into the screen's row,
+ * because that is exactly what they are: "VAT rates" is what somebody searches
+ * for, and landing them on a screen called "Price types & VAT" with the wrong
+ * tab open is the failure the anchor exists to fix.
+ *
+ * Flattened at module load from the same catalogues, so a tile added with an
+ * `anchor` is searchable without a second list to remember.
+ */
+const ANCHORED_TILES = [
+  ...SETUP_GROUPS,
+  ...ACCOUNTING_GROUPS,
+  ...ONLINE_STORE_GROUPS,
+  ...ONLINE_STORE_SETUP_GROUPS,
+  ...JOBS_SETUP_GROUPS,
+]
+  .flatMap((group) => group.items)
+  .filter((item) => item.anchor)
 
 /* The reports hub is a list of report TEMPLATES, not a screen catalogue — its
    one dedicated page carries its line here so the search can still explain it. */
@@ -170,6 +199,28 @@ CATALOGUE['/setup/audit'] = {
   keywords: 'audit log history who changed sign in login security trail',
 }
 
+/* Scheduled reports, for exactly the reason above and by exactly the same
+   route: its tile left the setup catalogue — it is reached from the reports
+   hub's own "Schedule a report" button now — and with the tile went the only
+   line describing it. The SCREEN is unchanged at /reports/schedules. */
+CATALOGUE['/reports/schedules'] = {
+  description: 'Reports that email themselves — to whom, and how often.',
+  icon: 'Mail',
+  keywords: 'scheduled email me automatic recurring report delivery',
+}
+
+/* Roles & permissions, same story again: its tile left the setup catalogue —
+   it is a button on the Users screen now, since "who may sign in" and "what
+   they may do" are one job — and the tile was the only thing describing it.
+   The SCREEN is unchanged at /setup/roles, and it must stay findable by name:
+   "permissions" is exactly what somebody types when a cashier cannot do
+   something. */
+CATALOGUE['/setup/roles'] = {
+  description: 'What each role may do — name them after the jobs people actually do.',
+  icon: 'KeyRound',
+  keywords: 'security capabilities rights access control permissions roles',
+}
+
 /**
  * The searchable index for ONE user, built from the sections they can see.
  *
@@ -177,7 +228,22 @@ CATALOGUE['/setup/audit'] = {
  * the sidebar has resolved capabilities once, and a second resolution here is a
  * second thing that can disagree about what somebody may see.
  */
-export function buildPageIndex(visible: NavSection[]): PageHit[] {
+export function buildPageIndex(
+  visible: NavSection[],
+  /**
+   * Whether this person holds a capability, and whether the shop holds a module.
+   *
+   * Only the /settings TABS need them: every other hit is derived from `visible`,
+   * which the caller has already filtered. The tabs cannot be, because /settings
+   * has no menu row to filter — see where they are pushed below.
+   *
+   * Permissive by default, the same posture `groupsFor` takes, so the four
+   * existing callers (the palette, two test suites and a probe) keep indexing
+   * everything rather than silently losing five screens.
+   */
+  granted: (capability: string) => boolean = () => true,
+  holds: (module: string) => boolean = () => true,
+): PageHit[] {
   const hits: PageHit[] = []
   /* Which hubs this user reached, so their sub-pages are only indexed when the
      hub itself is visible — the hub's capability is the weakest of its tiles, so
@@ -232,6 +298,15 @@ export function buildPageIndex(visible: NavSection[]): PageHit[] {
     const owner = hubFor(path)
     const hub = owner ? hubs.get(owner) : null
     if (!hub) continue
+    /* Screens that exist only on a developer's machine. Their catalogue tiles
+       are filtered out of SETUP_GROUPS in a production build and the routes
+       themselves `notFound()` there, so indexing them would offer a shop two
+       results that 404.
+
+       Checked here rather than by filtering SUBPAGE_LABELS, which cannot be
+       filtered: its keys ARE the SubpageHref type, and the breadcrumb, the
+       catalogues and this loop all depend on them existing. */
+    if (DEV_ONLY_ROUTES.has(path) && process.env.NODE_ENV === 'production') continue
 
     /* A screen can sit below another named screen — /accounting/assets and
        /accounting/assets/depreciation are both listed — and the deeper one reads
@@ -272,6 +347,57 @@ export function buildPageIndex(visible: NavSection[]): PageHit[] {
     })
   }
 
+  /* The ANCHORED hub tiles — the second door onto a two-job screen.
+     Gated on the screen itself already being in `hits`, which is this user's own
+     resolved list, so the VAT half is never offered to somebody who cannot open
+     the pricing screen. */
+  {
+    const reached = new Set(hits.map((hit) => hit.href))
+    for (const tile of ANCHORED_TILES) {
+      if (!reached.has(tile.href)) continue
+      const owner = hubFor(tile.href)
+      hits.push({
+        href: `${tile.href}#${tile.anchor}`,
+        label: tile.label ?? tile.href,
+        group: owner ? (hubs.get(owner)?.label ?? 'Setup') : 'Setup',
+        description: tile.description,
+        icon: hubs.get(owner ?? '')?.icon ?? SettingsIcon,
+        iconName: tile.icon,
+        keywords: [...new Set((tile.keywords ?? '').split(/\s+/).filter(Boolean))].join(' '),
+        built: true,
+      })
+    }
+  }
+
+  /* The TABS of /settings.
+     They are panels on one route rather than routes of their own, so nothing
+     above reaches them: SUBPAGE_LABELS has no key to iterate and the menu has no
+     row. Without this the five screens that moved there — Purchasing & cost,
+     Hospitality, Cash up, Stock takes, Stock tracking — vanished from the global
+     search entirely, which is exactly the failure this file exists to prevent.
+
+     Indexed as SCREENS rather than settings, because that is what each one was
+     the day before it moved, and somebody typing "gratuity" is looking for the
+     screen rather than for a switch on it.
+
+     Not gated on the menu, because /settings deliberately has no menu row — it
+     hangs off the gear in the top bar. `setup.view` is what the page itself
+     checks, so that is the gate here too; the module filter is applied for the
+     same reason the shell applies it. */
+  if (granted('setup.view')) {
+    for (const tab of settingsTabsFor(granted, holds)) {
+      hits.push({
+        href: `/settings?tab=${tab.key}`,
+        label: tab.label,
+        group: 'System settings',
+        description: tab.description,
+        icon: SettingsIcon,
+        keywords: [...new Set(tab.keywords.split(/\s+/).filter(Boolean))].join(' '),
+        built: true,
+      })
+    }
+  }
+
   /* The individual SETTINGS inside those screens.
      Added last so a screen still outranks a setting on an equal score — asking
      for "printing" should offer the Printing screen above the one switch on it.
@@ -289,7 +415,7 @@ export function buildPageIndex(visible: NavSection[]): PageHit[] {
       /* What it decides, then where it is. The location matters more here than
          it does for a screen — "Tills" is the surprising half of the answer for
          somebody who has spent ten minutes not finding auto logout. */
-      description: `${setting.description} — on ${SUBPAGE_LABELS[setting.href] ?? setting.href}`,
+      description: `${setting.description} — on ${settingScreenLabel(setting) ?? setting.href}`,
       icon: SettingsIcon,
       /* Deduped by word, exactly as the screens above are. A setting's synonyms
          are written as PHRASES somebody might type — "auto logout", "auto lock",

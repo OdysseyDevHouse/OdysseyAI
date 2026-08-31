@@ -774,21 +774,23 @@ export type Crumb = { label: string; href?: string }
  * with no name. A `Record<string, string>` would widen the keys and silently accept a typo.
  */
 export const SUBPAGE_LABELS = {
-  '/setup/users': 'Users',
+  '/setup/users': 'Users and permissions',
   '/setup/audit': 'Audit trail',
-  '/setup/api': 'API & webhooks',
+  /* '/setup/api' was here. It moved to /settings → "System". */
   '/setup/roles': 'Roles & permissions',
   '/setup/linked-stores': 'Linked stores',
   '/setup/locations': 'Stock locations',
   '/setup/reasons': 'Reasons',
-  '/setup/stock-takes': 'Stock take approvals',
-  '/setup/stock-tracking': 'Stock tracking',
+  /* '/setup/stock-takes' was here. It moved to /settings → "Stock takes". */
+  /* '/setup/stock-tracking' was here. It moved to /settings → "Stock tracking". */
   '/setup/pricing': 'Price types & VAT',
   '/setup/customer-groups': 'Customer groups',
-  '/setup/purchasing': 'Purchasing & cost',
+  /* '/setup/purchasing' was here. It moved to /settings → "Purchasing and
+     cost"; the tabs of that screen are panels on one route, so there is no
+     subpage label to replace it with. */
   '/setup/tender-types': 'Tender types',
-  '/setup/cashup': 'Cash-up',
-  '/setup/tips': 'Tips',
+  /* '/setup/cashup' was here. It moved to /settings → "Cash up". */
+  /* '/setup/tips' was here. It moved to /settings → "Hospitality". */
   // "Tills", not "Terminals" — it is what the screen's own heading says, and
   // what somebody in a shop calls the thing. The keyword search still has
   // "terminals" on the tile, so looking for either finds it.
@@ -809,7 +811,7 @@ export const SUBPAGE_LABELS = {
   '/setup/quick-keys': 'Quick keys',
   '/setup/pos-menus': 'Rotating menus',
   '/setup/tables': 'Tables',
-  '/setup/reservations': 'Reservations',
+  /* '/setup/reservations' was here. It moved to /settings → "Online bookings". */
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
      boards that show them, and somebody looking for either should find it. */
   '/jobs/setup': 'Job card setup',
@@ -1057,9 +1059,11 @@ export function hubFor(pathname: string): string | null {
  * authored strings per screen is exactly the drift this file warns about above.
  */
 export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
-  '/setup/users': 'staff logins pin passwords accounts sales rep',
+  /* Both halves' words: Roles & permissions is reached from this screen now
+     rather than from a tile of its own, so "permissions" has to land here too. */
+  '/setup/users':
+    'staff logins pin passwords accounts sales rep roles permissions security access control',
   '/setup/audit': 'audit log history who changed sign in login security trail',
-  '/setup/api': 'api keys integration webhooks rest developer tokens external',
   '/setup/roles': 'security capabilities rights access control permissions',
   '/setup/linked-stores': 'multi store group branches sharing',
   '/setup/locations': 'warehouse storeroom bins branches',
@@ -1067,15 +1071,10 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
      one screen that now holds them. */
   '/setup/reasons':
     'write off shrinkage damage breakage wastage adjustment void cancel refund return credit note faulty codes exception',
-  '/setup/stock-takes':
-    'stock take count variance threshold approval sign off signoff shrinkage tolerance blind count second signature manager',
-  '/setup/stock-tracking':
-    'lot batch expiry traceability recall fefo earliest expiry gs1 barcode databar scale plu weighed label capture prompt clerk',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
   '/setup/customer-groups':
     'customer groups categories wholesale retail staff trade terms price structure defaults segment',
   '/setup/tender-types': 'cash card eft payment methods vouchers',
-  '/setup/tips': 'tips gratuity service charge tiers waiter pool',
   '/setup/terminals': 'terminals registers pos devices',
   '/setup/billing': 'plan subscription modules upgrade downgrade invoice licence price cost add-on account debit order',
   /* Heavy on the words somebody types when the menu is in their way rather than
@@ -1090,7 +1089,6 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/pos-menus':
     'rotating menus breakfast lunch dinner day part daypart time of day service hours schedule till pos grid',
   '/setup/tables': 'restaurant hospitality floor sections covers waiter bills',
-  '/setup/reservations': 'bookings diary online booking form opening hours sittings covers restaurant',
   '/setup/reconciliation': 'drift integrity check invariants audit',
   '/setup/opening-balances': 'import migration debtors creditors go live',
   '/setup/import': 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments stock take',

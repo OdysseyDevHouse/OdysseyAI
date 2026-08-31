@@ -61,6 +61,26 @@ export const HYBRID: SitePurpose = 'hybrid'
  * a till that cannot open a table.
  */
 export const tabsAreLocal = cache(async (siteId: number): Promise<boolean> => {
+  /* ── ON A DESKTOP INSTALL, ASK THE LOCAL MIRROR ──────────────────────────
+   *
+   * Not an optimisation so much as a correction. leasePurpose() calls this on
+   * every lease read, so reading the lease — the thing that exists so an
+   * offline machine need not reach the control panel — was itself reaching the
+   * control panel. Measured at two cp2_sites queries per page load, on a
+   * machine whose whole point is that it can work with the line down.
+   *
+   * site_profile mirrors connection_type for exactly this, and the answer is
+   * static per machine: Setup provisioned it for one shop, and a site moved
+   * between hybrid and local is a scheduled act that moves data with it.
+   *
+   * Same failure direction as the catch below — an unreadable mirror falls
+   * through to the control database rather than guessing. */
+  const { keepsProfile, readSiteProfile } = await import('./siteProfile')
+  if (keepsProfile()) {
+    const mirrored = await readSiteProfile(siteId).catch(() => null)
+    if (mirrored) return mirrored.site.connectionType === 'hybrid'
+  }
+
   try {
     const row = await queryOne<{ connection_type: string }>(
       'SELECT connection_type FROM cp2_sites WHERE id = ? LIMIT 1',

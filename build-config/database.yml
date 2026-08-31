@@ -1,4 +1,4 @@
-# OdysseyAI Database Setup — MariaDB, and the provisioning that configures it.
+# Odyssey Database Setup — MariaDB, and the provisioning that configures it.
 #
 # Run once, by a technician, on the ONE machine that hosts the shop's database:
 # the in-store box on a hybrid site, or the back-office machine on a local one.
@@ -21,7 +21,7 @@
 # binaries with their own release cadence.
 extends: ./electron-builder.yml
 
-productName: OdysseyAI Database Setup
+productName: Odyssey Database Setup
 
 appId: za.co.pointofsale.odyssey.database
 

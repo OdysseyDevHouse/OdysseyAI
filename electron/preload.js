@@ -57,7 +57,7 @@ contextBridge.exposeInMainWorld('odyssey', {
    */
   role: appRole(),
   /**
-   * OdysseyAI Database Setup's own channels, and the first IPC in this app.
+   * Odyssey Database Setup's own channels, and the first IPC in this app.
    *
    * ── A NAMED SURFACE, NOT A GENERIC ONE ────────────────────────────────────
    *

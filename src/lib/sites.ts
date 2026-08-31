@@ -286,6 +286,31 @@ export function isStoreDetailsUnavailable(err: unknown): err is StoreDetailsUnav
 }
 
 export async function getSite(siteId: number): Promise<Site | null> {
+  /* ── ON A DESKTOP INSTALL THE MIRROR IS THE PRIMARY ANSWER ───────────────
+   *
+   * requireSite() calls this on every authenticated page and it is not
+   * memoised, so read from the control database it was a round trip per click
+   * — over a line that database is IP-whitelisted away from.
+   *
+   * What it answers is "which shop is this machine", and on a machine Setup
+   * provisioned for one shop that is static configuration. The one field that
+   * can change underneath a session is connection_type, and a desktop back
+   * office cannot open a cloud site at all: opensHere() refuses it at the site
+   * picker, at selectSiteAction and in the (app) layout, all before a page
+   * renders. So a migration is caught at the next sign-in or refresh rather
+   * than mid-request — a scheduled act that involves moving the data, not a
+   * surprise.
+   *
+   * Freshness is deliberately NOT checked. Unlike the licence lease, nothing
+   * here gates trading, so a stale shop name is a cosmetic wrong and a round
+   * trip per click is not worth avoiding it. writeSiteProfile() below refreshes
+   * the mirror whenever the control database is read for any other reason.
+   */
+  if (keepsProfile()) {
+    const mirrored = await readSiteProfile(siteId)
+    if (mirrored) return mirrored.site
+  }
+
   let row: SiteRow | null
   try {
     row = await queryOne<SiteRow>(

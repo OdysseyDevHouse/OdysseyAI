@@ -4,7 +4,7 @@
 //
 // The original local backend started mariadbd as a child of the Back Office.
 // That is coherent while ONE app owns the database, and it fails the moment two
-// do: OdysseyAI Database Setup installs the server, the Back Office runs the shop,
+// do: Odyssey Database Setup installs the server, the Back Office runs the shop,
 // and a database that is a child of one of them stops existing when somebody
 // closes a window.
 //
@@ -35,7 +35,7 @@
 // ── WHAT THIS NEEDS THAT NOTHING ELSE HERE DOES ─────────────────────────────
 //
 // Administrator rights. Registering a service is a machine-level act and
-// Windows will not let a normal user do it. OdysseyAI Database Setup asks for
+// Windows will not let a normal user do it. Odyssey Database Setup asks for
 // elevation when it launches — it is an installer, and installers may — while
 // the Back Office never does and never needs to, because it only connects.
 const fs = require('node:fs')
@@ -129,7 +129,7 @@ async function isElevated() {
 /**
  * Put the server binaries where the machine can reach them.
  *
- * Copied rather than referenced in place: OdysseyAI Database Setup can be
+ * Copied rather than referenced in place: Odyssey Database Setup can be
  * uninstalled — it is a one-shot tool — and a service pointing into the folder
  * of an uninstalled application is a database that disappears on a tidy-up.
  */
@@ -160,7 +160,7 @@ async function installBinaries(sourceDir, onProgress) {
  */
 function writeConfig({ port, lan = false }) {
   const bind = lan ? '0.0.0.0' : '127.0.0.1'
-  const ini = `# Written by OdysseyAI Database Setup. Edited by hand at your own risk:
+  const ini = `# Written by Odyssey Database Setup. Edited by hand at your own risk:
 # Setup rewrites this file when it is re-run.
 [mysqld]
 datadir=${dataDir().replace(/\\/g, '/')}

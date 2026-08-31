@@ -21,7 +21,7 @@ import SetupWizard from './SetupWizard'
  * route costs nothing before that loads, and so the page's shape — one narrow
  * column, centred — is decided somewhere a step cannot accidentally change it.
  */
-export const metadata = { title: 'OdysseyAI Database Setup' }
+export const metadata = { title: 'Odyssey Database Setup' }
 
 export default function DatabaseSetupPage() {
   return (

@@ -228,7 +228,7 @@ function mergeGrouped(
   numericKeys: Set<string>,
 ): Record<string, unknown>[] {
   const keyOf = (row: Record<string, unknown>) =>
-    spec.groupFields.map((f) => String(row[f] ?? '')).join('OdysseyAI Back Office')
+    spec.groupFields.map((f) => String(row[f] ?? '')).join(' ')
 
   const merged = new Map<string, Record<string, unknown>>()
 

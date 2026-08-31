@@ -323,7 +323,7 @@ function DepartmentLevel({
   /*
    * A branch shows its SUB-DEPARTMENTS ONLY; a leaf shows products.
    *
-   * browseProductsAction expands a department into its whole subtree, so showing
+   * `browseOffline` expands a department into its whole subtree, so showing
    * both here would put the sub-department tiles above every product beneath them
    * — the same item reachable two ways on one screen, which reads as duplication
    * and makes the tile grid enormous on a top-level department. Drilling to a leaf

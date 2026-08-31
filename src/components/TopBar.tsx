@@ -140,11 +140,15 @@ export default function TopBar({
         {/* The help centre moved here from a card at the foot of the sidebar,
             which cost 90px of permanent chrome in a menu being quietened. */}
         <IconButton label="Help" icon={CircleHelp} href="/help.html" />
-        {/* Straight to the hub, not a menu of shortcuts. The sidebar already
+        {/* Straight to a hub, not a menu of shortcuts. The sidebar already
             has a Setup row, so a dropdown here would be a THIRD front door to
             the same screens — the problem src/lib/nav.ts records solving when
-            the menu stopped naming all fourteen. */}
-        <IconButton label="Settings" icon={Settings} href="/setup" internal />
+            the menu stopped naming all fourteen.
+
+            The gear now opens /settings, the new system-settings screen, while
+            the sidebar's Setup row still reaches /setup. Both are live on
+            purpose: the two shapes are being compared before either goes. */}
+        <IconButton label="Settings" icon={Settings} href="/settings" internal />
         <NotificationBell initialCount={unreadNotifications} />
 
         <div ref={menuRef} className="relative">

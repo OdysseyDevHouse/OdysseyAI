@@ -34,7 +34,7 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { SETTINGS, settingHref } from '../src/lib/settingSearch'
+import { SETTINGS, settingHref, settingScreenLabel } from '../src/lib/settingSearch'
 import { SUBPAGE_LABELS } from '../src/lib/nav'
 import { buildPageIndex, searchPages } from '../src/lib/pageSearch'
 import { NAV } from '../src/lib/nav'
@@ -67,27 +67,54 @@ function warn(what: string, ok: boolean, detail = '') {
 
 /* ── 1. every route is a screen that exists ───────────────────────────────── */
 
+/**
+ * A setting lives on one of two kinds of destination, and each is checked
+ * against its own list.
+ *
+ * A ROUTE must be a key of `SUBPAGE_LABELS`, as it always has been. A
+ * `/settings?tab=` link must name a tab the settings catalogue declares — those
+ * tabs are panels on one route rather than routes of their own, so they have no
+ * subpage label and the old check reported every one of them as missing.
+ *
+ * `settingScreenLabel` resolves both, so asking it is the same question the
+ * palette asks when it prints "— on Stock takes" beside a hit: a setting whose
+ * destination cannot be NAMED is one whose location the search cannot explain.
+ */
 for (const setting of SETTINGS) {
   check(
-    `route exists: ${setting.href}`,
-    setting.href in SUBPAGE_LABELS,
-    'not a key of SUBPAGE_LABELS — renamed or moved?',
+    `destination exists: ${setting.href}`,
+    settingScreenLabel(setting) !== null,
+    'names neither a SUBPAGE_LABELS route nor a settings tab — renamed or moved?',
   )
 }
 
 /* ── 2. every anchor is an id some screen actually renders ────────────────── */
 
 /**
- * The source of a route's screen, as one string.
+ * The directory holding a destination's screen.
  *
- * A route maps to a directory, and the panel carrying the anchor is usually a
- * SIBLING component rather than page.tsx itself — SignOutPanel.tsx holds
- * `id="idle-logout"`, not the page that renders it. So the whole directory is
- * read and searched, which is what a person would do to answer the same
- * question.
+ * A route maps to its own folder under app/(app). A `/settings?tab=` link does
+ * not: the settings tabs are panels on one route, each living in
+ * `settings/panels/<key>/`, so the tab key rather than the path is what names
+ * the folder. Without this every anchor on a moved setting would be checked
+ * against an empty string and silently pass.
+ */
+function dirFor(href: string): string {
+  const tab = href.match(/^\/settings\?tab=(.+)$/)?.[1]
+  if (tab) return join(ROOT, 'src', 'app', '(app)', 'settings', 'panels', tab)
+  return join(ROOT, 'src', 'app', '(app)', href.replace(/^\//, ''))
+}
+
+/**
+ * The source of a destination's screen, as one string.
+ *
+ * The panel carrying the anchor is usually a SIBLING component rather than
+ * page.tsx itself — SignOutPanel.tsx holds `id="idle-logout"`, not the page
+ * that renders it. So the whole directory is read and searched, which is what a
+ * person would do to answer the same question.
  */
 function sourceFor(href: string): string {
-  const dir = join(ROOT, 'src', 'app', '(app)', href.replace(/^\//, ''))
+  const dir = dirFor(href)
   if (!existsSync(dir)) return ''
 
   let combined = ''
@@ -112,7 +139,7 @@ function sourceFor(href: string): string {
  * setting nobody could miss.
  */
 function panelSourceFor(href: string): string {
-  const dir = join(ROOT, 'src', 'app', '(app)', href.replace(/^\//, ''))
+  const dir = dirFor(href)
   if (!existsSync(dir)) return ''
 
   let combined = ''
@@ -204,7 +231,7 @@ for (const setting of SETTINGS) {
  * it here just prints the same row twice under two headings.
  */
 for (const setting of SETTINGS) {
-  const screen = SUBPAGE_LABELS[setting.href]
+  const screen = settingScreenLabel(setting)
   if (!screen) continue
 
   const normalise = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -247,7 +274,12 @@ const WANTED: [string, string][] = [
   ['sign out', IDLE],
   /* A few neighbours, so this is a test of the INDEX and not of one lucky row. */
   ['cash drawer', 'Cash drawer kick'],
-  ['vat rate', 'VAT rate'],
+  /* "VAT rates" — the hub TILE, not the settingSearch row that used to answer
+     this. Price types & VAT was split into two tiles, and the VAT half points at
+     the same #vat-rates anchor the setting entry did, so the entry became a
+     duplicate row at the same URL and was removed. Its typed synonyms — "gst",
+     "zero rated", "15" — moved onto the tile. */
+  ['vat rate', 'VAT rates'],
   /* Reported: "rounding" returned this row pointing at Price types & VAT, which
      is where it READS as belonging and not where it is built. The link 200s and
      the screen renders, so nothing above catches it — only the destination is

@@ -1,4 +1,4 @@
-// What OdysseyAI Database Setup leaves behind for OdysseyAI Back Office to find.
+// What Odyssey Database Setup leaves behind for Odyssey Backoffice to find.
 //
 // ── WHY THIS FILE EXISTS AT ALL ─────────────────────────────────────────────
 //
@@ -52,13 +52,23 @@ function configPath() {
  * control panel — which is the whole point, because a local site must open on a
  * morning when the line is down.
  */
-function write({ siteId, siteCode, host, port, databaseName, username, password }) {
+function write({
+  siteId,
+  siteCode,
+  host,
+  port,
+  databaseName,
+  username,
+  password,
+  apiKey,
+  apiKeyId,
+}) {
   fs.mkdirSync(machineDir(), { recursive: true })
   const body = {
     /* A note to whoever finds this file, rather than a comment in code they
        will never read. */
     _note:
-      'Written by OdysseyAI Database Setup so OdysseyAI Back Office on this machine can reach the ' +
+      'Written by Odyssey Database Setup so Odyssey Backoffice on this machine can reach the ' +
       'shop database. Not encrypted: it has to be readable by a different Windows account than ' +
       'the one that wrote it.',
     siteId,
@@ -68,6 +78,22 @@ function write({ siteId, siteCode, host, port, databaseName, username, password 
     databaseName,
     username,
     password,
+    /* ── THE KEY THIS MACHINE SIGNS UNATTENDED CALLS WITH ──────────────────
+     *
+     * Left out of the destructure when it was added, so the wizard passed it,
+     * this dropped it, and adoptMachineConfig() read `shared.apiKey` and always
+     * found undefined. Every adopted machine therefore ran with no signing key
+     * and fell back to the direct control connection — which fails open, which
+     * is why nothing reported it.
+     *
+     * Null rather than absent when there is none: `read()` treats '' and null
+     * as a partial write for the fields it requires, and being explicit here
+     * keeps this one visibly optional rather than looking like a truncated
+     * file. A portal that predates the key issues none, and every caller is
+     * written to work without one.
+     */
+    apiKey: apiKey || null,
+    apiKeyId: apiKeyId || null,
     writtenAt: new Date().toISOString(),
   }
   fs.writeFileSync(configPath(), `${JSON.stringify(body, null, 2)}\n`, 'utf8')
@@ -98,7 +124,7 @@ function read() {
   }
 }
 
-/** Has OdysseyAI Database Setup run on this machine? */
+/** Has Odyssey Database Setup run on this machine? */
 function exists() {
   return read() !== null
 }

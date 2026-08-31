@@ -1,14 +1,14 @@
-# OdysseyAI Back Office — the full app.
+# Odyssey Backoffice — the full app.
 #
 # What the shop's office machine runs: stock, ordering, purchasing, accounting,
 # the lot. It is also the build that can open the till in a second window, which
 # is why the window-open handler in main.js still matters here.
 #
 # Carries NO database. A machine that also hosts the shop's MariaDB gets it from
-# OdysseyAI Database Setup, installed separately — see electron-builder.yml.
+# Odyssey Database Setup, installed separately — see electron-builder.yml.
 extends: ./electron-builder.yml
 
-productName: OdysseyAI Back Office
+productName: Odyssey Backoffice
 
 # A distinct id per artifact so Windows treats them as three products: one
 # machine can legitimately run Back Office and Point of Sale side by side, and a

@@ -140,10 +140,14 @@ withEnv('pos', () => {
 
 import { readFileSync, existsSync } from 'node:fs'
 
+/* The product names carry no "AI": they are what Windows shows in the title
+   bar, the Start menu and the install directory, and the brand there is
+   Odyssey. `productName` also decides the folder NSIS installs into, so
+   changing one of these renames a directory on every machine that upgrades. */
 const CONFIGS = [
-  ['backoffice', 'OdysseyAI Back Office'],
-  ['pos', 'OdysseyAI Point of Sale'],
-  ['database', 'OdysseyAI Database Setup'],
+  ['backoffice', 'Odyssey Backoffice'],
+  ['pos', 'Odyssey POS'],
+  ['database', 'Odyssey Database Setup'],
 ]
 
 for (const [role, productName] of CONFIGS) {

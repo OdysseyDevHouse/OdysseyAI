@@ -122,7 +122,11 @@ export const STEPS: readonly OnboardingStep[] = [
     short: 'Costing',
     blurb: 'Whether a unit of stock is valued at its average cost or its last cost.',
     why: 'This decides what every sale reports as profit. Switching it later leaves you with two periods of margin figures that cannot be compared.',
-    href: '/setup/purchasing',
+    /* Moved out of /setup with the screen itself, to /settings → "Purchasing
+       and cost". This is the "change this later under …" reference rather than
+       a wizard destination, so the shell's own route is the right target: it
+       names the tab in the rail, which is how somebody finds it again. */
+    href: '/settings',
     cheapToChangeLater: false,
   },
   {

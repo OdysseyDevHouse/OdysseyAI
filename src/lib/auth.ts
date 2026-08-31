@@ -56,6 +56,32 @@ function multipleSessionsAllowed(): boolean {
   return process.env.NODE_ENV !== 'production' && process.env.ALLOW_MULTIPLE_SESSIONS === '1'
 }
 
+/**
+ * Is this a developer's own machine, running `next dev`?
+ *
+ * For the two screens that exist to serve whoever is BUILDING the product
+ * rather than running a shop — Setup → Site & databases, which prints
+ * connection details and probes servers, and the Style Guide, which is the
+ * design system's own reference. Neither means anything to a shop, and the
+ * first shows infrastructure nobody outside this team should read.
+ *
+ * ── WHY NODE_ENV AND NOT A FLAG ─────────────────────────────────────────────
+ *
+ * Same reasoning as `multipleSessionsAllowed` above, and deliberately WITHOUT
+ * its opt-in half: there is no environment variable that can turn these back
+ * on, because a stray one left in a deployed .env would expose the database
+ * screen on the live product and nothing would look broken. Next sets
+ * NODE_ENV=production for `next build`/`next start` and cannot be talked out of
+ * it, so every compiled target — cloud, web, hybrid, desktop — is closed.
+ *
+ * The consequence to know: these two screens are unreachable in a production
+ * build even for an owner. That is the intent. If one is ever needed on a
+ * deployed site, it wants a real capability rather than a loosening here.
+ */
+export function isDevBuild(): boolean {
+  return process.env.NODE_ENV !== 'production'
+}
+
 type UserRow = RowDataPacket & {
   id: number
   email: string
@@ -345,9 +371,22 @@ async function finishSignIn(user: UserRow, normalisedEmail: string): Promise<Sig
      NOT wrapped in a try/catch, unlike the sign-in log above. A swallowed
      failure here would leave the user signed in with no registry row, which
      reads as "not enrolled" and silently exempts them from enforcement. Better
-     to refuse the sign-in and have somebody notice. */
-  const sid = randomUUID()
-  await claimSession(user.id, sid, await signInMeta())
+     to refuse the sign-in and have somebody notice.
+
+     ── EXCEPT ON A DESKTOP INSTALL, WHICH DOES NOT ENROL ──────────────────
+     The registry stops a company buying one seat and sharing it across ten
+     desks. A desktop install cannot do that: its licence is bound to the
+     MACHINE — cp2_devices.serial_number, mirrored onto the lease as
+     device_serial — so a second copy needs a second licensed machine, not a
+     second sign-in. Enrolling anyway costs a control round trip on every
+     guarded request, over a line the control database is not reachable from.
+
+     Omitting `sid` is the existing mechanism for this, not a new branch: a
+     token without one is never evicted (session.ts), and both the till's PIN
+     unlock and localSignIn already rely on it for the same reason. */
+  const enrols = process.env.APP_MODE !== 'desktop'
+  const sid = enrols ? randomUUID() : undefined
+  if (sid) await claimSession(user.id, sid, await signInMeta())
 
   const token = await createSessionToken({
     userId: user.id,

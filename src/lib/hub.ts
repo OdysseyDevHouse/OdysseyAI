@@ -110,10 +110,37 @@ export type DeclaredItem<Href extends SubpageHref = SubpageHref> = {
    * configuring pay rules for a section it cannot see.
    */
   menuArea?: string
+  /**
+   * A second tile onto the SAME screen, landing on a named part of it.
+   *
+   * For a screen that is genuinely two jobs behind one route. Price types & VAT
+   * is the case this exists for: two tabs that share a save and a page load, but
+   * which somebody arrives looking for separately — "set up wholesale pricing"
+   * and "change the VAT rate" are different errands, and one tile named for both
+   * is a tile named for neither.
+   *
+   * The anchor is appended to the href as a hash, and the screen decides what to
+   * do with it. `#vat-rates` opens the VAT tab; `SettingAnchor` in the layout
+   * flashes a matching element. A tile carrying one MUST also carry `label`,
+   * since two tiles on one route would otherwise share the route's name.
+   *
+   * Use sparingly. Two tiles onto one screen is a cost — it is two things to
+   * find for one thing to open — and it only pays where the two halves are
+   * looked for by different people on different days.
+   */
+  anchor?: string
+  /**
+   * Overrides the name from `SUBPAGE_LABELS`.
+   *
+   * Only for a tile carrying an `anchor`: the route's own label names the whole
+   * screen, and the two tiles onto it need names for their halves. Every other
+   * tile leaves this unset so that renaming a screen stays one edit in nav.ts.
+   */
+  label?: string
 }
 
 /** A screen as the hub renders it, with its name resolved. */
-export type HubItem = DeclaredItem & { label: string }
+export type HubItem = Omit<DeclaredItem, 'label'> & { label: string }
 
 export type DeclaredGroup<Href extends SubpageHref = SubpageHref> = {
   label: string
@@ -142,7 +169,10 @@ export function resolveGroups<Href extends SubpageHref>(
     ...group,
     items: group.items.map((item) => ({
       ...item,
-      label: (SUBPAGE_LABELS as Record<string, string>)[item.href] ?? item.href,
+      /* The tile's own label wins, and only an anchored tile sets one — see
+         `label` on DeclaredItem. Everything else reads the route's name, so a
+         rename stays one edit in nav.ts. */
+      label: item.label ?? (SUBPAGE_LABELS as Record<string, string>)[item.href] ?? item.href,
     })),
   }))
 }

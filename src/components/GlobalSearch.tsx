@@ -87,11 +87,22 @@ export default function GlobalSearch({
   open,
   onClose,
   sections,
+  granted = () => true,
+  holds = () => true,
 }: {
   open: boolean
   onClose: () => void
   /** The nav this user can see, already filtered by capability upstream. */
   sections: NavSection[]
+  /**
+   * Whether this person holds a capability, and the shop a module.
+   *
+   * Needed only for the /settings tabs, which have no menu row for `sections`
+   * to have filtered — see where they are indexed in pageSearch. Permissive by
+   * default so the palette still works if a caller omits them.
+   */
+  granted?: (capability: string) => boolean
+  holds?: (module: string) => boolean
 }) {
   const router = useRouter()
   const ref = useRef<HTMLDialogElement>(null)
@@ -104,7 +115,13 @@ export default function GlobalSearch({
   /** Which row Enter opens. An index into `rows` below. */
   const [cursor, setCursor] = useState(0)
 
-  const index = useMemo(() => buildPageIndex(sections), [sections])
+  /* `granted` and `holds` are memoised by the caller, so listing them here
+     rebuilds the index when the person's access actually changes rather than on
+     every render. */
+  const index = useMemo(
+    () => buildPageIndex(sections, granted, holds),
+    [sections, granted, holds],
+  )
   const pages = useMemo(() => searchPages(index, term), [index, term])
 
   /* ── open / close ──────────────────────────────────────────────────────── */

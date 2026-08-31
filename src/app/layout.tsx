@@ -4,7 +4,7 @@ import { bodyFont } from './bodyFont'
 import InlineScript from '@/components/InlineScript'
 
 export const metadata: Metadata = {
-  title: 'OdysseyAI Back Office',
+  title: 'Odyssey Back Office',
   description: 'Multi-store point of sale back office',
 }
 

@@ -79,7 +79,7 @@ export default async function CashupPage() {
            standing HERE, not in the setup hub. */
         action={
           can(capabilities, 'setup.edit') ? (
-            <ButtonLink href="/setup/cashup" variant="secondary">
+            <ButtonLink href="/settings?tab=cashup" variant="secondary">
               <Icons.Settings size={15} />
               Cash-up settings
             </ButtonLink>

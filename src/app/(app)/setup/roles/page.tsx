@@ -14,9 +14,14 @@ export default async function RolesPage() {
 
   return (
     <>
+      {/* `backHref` because this screen is reached from Users now rather than
+          from a hub tile of its own — without it the only way back is the
+          browser's own button. */}
       <PageHeader
         title="Roles & permissions"
         subtitle="What each role may do — name them after the jobs people actually do"
+        backHref="/setup/users"
+        backLabel="Back to users"
       />
 
       <PageBody>

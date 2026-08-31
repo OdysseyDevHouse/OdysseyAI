@@ -440,10 +440,14 @@ export default function ReportsHub({
               { value: 'list', label: 'List' },
             ]}
           />
+          {/* "Schedule a report", matching "Build a report" beside it: both name
+              the ACT rather than the noun, and this is now the only way in —
+              the tile that used to sit in the setup hub is gone, because a
+              scheduled report is a thing you make here, not a setting. */}
           {canSchedule && (
             <ButtonLink href="/reports/schedules" variant="ghost">
               <Icons.Clock size={16} />
-              Scheduled
+              Schedule a report
             </ButtonLink>
           )}
           {canUseAi && (
