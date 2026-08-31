@@ -125,7 +125,7 @@ export function ColumnPicker({
   order,
   label = 'Columns',
   align = 'right',
-  size = 'sm',
+  size = 'md',
 }: {
   columns: readonly ColumnOption[]
   /** The ids currently shown. Locked ids need not be in here. */
@@ -155,11 +155,10 @@ export function ColumnPicker({
   /**
    * Trigger height, matching Button/Menu.
    *
-   * `sm` (32px) is the default because this usually sits in a LIST toolbar,
-   * among the inline table actions that size is for. A report's toolbar is a row
-   * of full-height controls — a period Select, an Export menu — and a 32px
-   * button in that row reads as misaligned rather than as deliberately smaller,
-   * so those callers pass 'md'.
+   * `md` (40px) is the default and the height this button should normally take.
+   * It sits in a toolbar beside full-height controls — a period Select, an
+   * Export menu — and a shorter button in that row reads as misaligned rather
+   * than as deliberately smaller. A 32px Columns button is never wanted.
    */
   size?: ButtonSize
 }) {

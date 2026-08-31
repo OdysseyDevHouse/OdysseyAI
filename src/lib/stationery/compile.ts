@@ -93,7 +93,27 @@ export const BLOCK_STYLE = `
 .sd-block:has(> .sd-value:empty) { display: none; }
 .sd-line:empty { display: none; }
 .sd-table:has(tbody:empty) { display: none; }
-.sd-logo img { max-height: var(--sd-logo-h) !important; height: auto; width: auto; }`
+.sd-logo img { max-height: var(--sd-logo-h) !important; height: auto; width: auto; }
+
+/*
+ * The status stamp, coloured by what it says.
+ *
+ * Matched on the VALUE, which the renderer writes into data-status as well as
+ * into the text, because CSS cannot select on text content. The border inherits
+ * through \`border-current\`, so the box and the word can never disagree.
+ *
+ * Not simply green: this one token prints four different words and they do not
+ * mean the same kind of thing. PAID is good news, CANCELLED says the document
+ * is void, and PRO FORMA and REPRINT are neither — a green REPRINT would read
+ * as a reassurance nobody offered.
+ *
+ * Literal hex rather than the app's tokens: a printed page has no access to
+ * them, and these are the same values globals.css resolves to. Kept in step
+ * with the PDF renderer, which draws the identical colours.
+ */
+.sd-status { color: #16191d; }
+.sd-status[data-status="PAID"] { color: #0f7b37; }
+.sd-status[data-status="CANCELLED"] { color: #b42318; }`
 
 /**
  * A block whose whole content is one token and nothing else.
@@ -123,6 +143,29 @@ function esc(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+/**
+ * Turn the word VAT in a catalog label into the `{{tax}}` marker.
+ *
+ * ── WHY A MARKER AND NOT THE SHOP'S ACTUAL WORD ───────────────────────────
+ *
+ * Because this compiler runs at DESIGN time and its output is SAVED — the
+ * markup in `stationery_templates.body` is what every future document renders
+ * from. Baking "HST" in here would freeze the label into the saved design, so
+ * a shop that later corrected it would keep printing the old word until
+ * somebody re-saved every template. Worse, a design copied between two shops
+ * would carry the first one's tax name.
+ *
+ * The marker keeps the decision at PRINT time, where the shop's current answer
+ * is known — the same reasoning `{{qr:…}}` and `{{barcode:…}}` already follow,
+ * and it is resolved in the same pass. See renderTemplate.
+ *
+ * Applied AFTER `esc`, so the braces survive: escaping the marker would emit
+ * `&#123;&#123;tax&#125;&#125;` and print literally on the page.
+ */
+function taxMarked(escaped: string): string {
+  return escaped.replace(/\bVAT\b/g, '{{tax}}')
 }
 
 /* ── per-block compilers ─────────────────────────────────────────────────── */
@@ -252,7 +295,46 @@ function docTitle(b: DocBlock): string {
     ? `<h2 class="text-xl font-semibold tracking-wide text-ink">${esc(b.title)}</h2>`
     : ''
   const lines = tokens
-    .map((t) => `<p class="sd-line mt-0.5 text-sm text-ink-2">{${t}}</p>`)
+    .map((t) =>
+      /*
+       * ── THE STATUS BANNER IS A STAMP, NOT A DETAIL LINE ─────────────────
+       *
+       * Every token in this block used to print at the same small grey weight
+       * as the document date, and the banner is the one that says PAID,
+       * CANCELLED, PRO FORMA or REPRINT — the single most consequential word on
+       * the page. It sat as a fourth grey line under the date and was, in
+       * practice, invisible: a shop looked at a paid invoice and reported that
+       * nothing had printed at all.
+       *
+       * So it takes its own weight — bordered, spaced, upper-case and tracked —
+       * which is what a reader's eye is looking for when they scan the top
+       * right of an invoice for its status.
+       *
+       * It stays in this block rather than becoming one of its own, because a
+       * shop that has already placed a docTitle has already decided where the
+       * document identifies itself. A second block would need placing on every
+       * existing design, and would print nothing until somebody did.
+       *
+       * `sd-line` still drops it when the value is empty, so an ordinary
+       * unpaid invoice shows no box at all.
+       */
+      t === 'doc.statusBanner'
+        ? /*
+           * ── COLOURED BY WHAT IT SAYS, NOT PAINTED GREEN ──────────────────
+           *
+           * This one token prints four different words, and they do not mean
+           * the same kind of thing. PAID is good news; CANCELLED is a warning
+           * that the document is void; PRO FORMA and REPRINT are neither, and
+           * a green REPRINT would read as a reassurance nobody offered.
+           *
+           * `sd-status` carries the colour and is resolved by the print
+           * stylesheet from the value itself — see (print)/print.css. The
+           * border inherits it through `border-current`, so the box and the
+           * word never disagree.
+           */
+          `<p class="sd-line sd-status mt-2 inline-block border border-current px-2 py-0.5 text-sm font-semibold uppercase tracking-widest" data-status="{${t}}">{${t}}</p>`
+        : `<p class="sd-line mt-0.5 text-sm text-ink-2">{${t}}</p>`,
+    )
     .join('')
   return `${heading}${lines}`
 }
@@ -383,7 +465,7 @@ function totals(b: DocBlock, docKey: string): string {
       const def = doc ? findToken(doc, t) : null
       return (
         `<div class="sd-row flex justify-between gap-6">` +
-        `<dt class="text-muted">${esc(def?.label ?? t)}</dt>` +
+        `<dt class="text-muted">${taxMarked(esc(def?.label ?? t))}</dt>` +
         `<dd class="numeric text-ink">{${t}}</dd></div>`
       )
     })
@@ -443,7 +525,7 @@ function compileBlock(b: DocBlock, docKey: string): string {
     case 'totals':
       return totals(b, docKey)
     case 'vatSummary':
-      return titledValue(b.title ?? 'VAT SUMMARY', 'totals.vatSummary')
+      return titledValue(b.title ?? '{{tax}} SUMMARY', 'totals.vatSummary')
     case 'banking':
       return titledValue(b.title ?? 'BANKING DETAILS', 'banking')
     case 'notes':

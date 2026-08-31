@@ -63,6 +63,27 @@ export type RenderInput = {
    * fail-closed direction `pictures` takes.
    */
   qr?: QrContext
+  /**
+   * What this business calls its sales tax — VAT, HST, Tax.
+   *
+   * ── WHY THE LABEL TRAVELS WITH THE VALUES ─────────────────────────────────
+   *
+   * Two things on a document say the word, and only one of them is a token
+   * value. `totals.vat` resolves to a NUMBER, and the word beside it is the
+   * catalog's `label` — printed straight onto the page by both renderers (see
+   * the `totals` case in pdf.ts). The VAT-summary block's heading is a
+   * hardcoded default in the same place.
+   *
+   * Neither is reachable by changing an adapter, because neither is a value.
+   * They are the renderer's own furniture, and this is how the renderer is told
+   * what to call it.
+   *
+   * Absent falls back to 'VAT' at every use, so a caller that has not been
+   * taught to pass it prints exactly what it printed before — the same
+   * discipline `pictures` and `qr` follow, and the only acceptable failure for
+   * something that goes on an invoice.
+   */
+  taxLabel?: string
 }
 
 /** Where a picture block's <img> points. One place, so the route and the tag cannot drift. */
@@ -118,12 +139,30 @@ export function formatValue(value: unknown, format: TokenFormat): string {
   switch (format) {
     case 'money':
       return escapeHtml(formatMoney(value))
+    /*
+     * ── `exact` IS THE PRINT RULE, NOT A DEFERRAL ────────────────────────────
+     *
+     * Paper shows a quantity's decimals when it HAS them and nothing when it
+     * does not: 1 prints as "1", 1.5 prints as "1.5". A whole number padded to
+     * "1.000" on a slip is noise on the one document a customer reads standing
+     * at a counter, and the padding buys nothing there — a column of screen
+     * figures lines up because they all pad, and a slip line does not line up
+     * with anything.
+     *
+     * That is exactly what `exact` does at every setting, which is why the
+     * whole print path passes it: escpos/slips.ts, slipSpec.ts, slipHtml.ts,
+     * stationery/pdf.ts and the two slip components.
+     *
+     * COSTS never reach paper at all — no print path formats one, because a
+     * customer document does not carry what the business paid. So there is no
+     * cost-precision decision to make here.
+     */
     case 'qty':
-      return escapeHtml(formatQty(value))
+      return escapeHtml(formatQty(value, { exact: true }))
     case 'percent': {
       const n = typeof value === 'number' ? value : Number(value)
       if (!Number.isFinite(n) || n === 0) return ''
-      return escapeHtml(`${formatQty(n)}%`)
+      return escapeHtml(`${formatQty(n, { exact: true })}%`)
     }
     case 'multiline':
       // Escaped FIRST, then newlines become breaks: the text can never
@@ -227,7 +266,20 @@ export function renderTemplate(body: string, docKey: string, input: RenderInput)
    * A barcode that scans as the wrong thing is worse than one that is absent:
    * absent is noticed, wrong is acted on.
    */
-  const withBarcodes = body.replace(
+  /*
+   * ── THE TAX LABEL ───────────────────────────────────────────────────────
+   *
+   * `{{tax}}` is what the compiler emits wherever a catalog label said VAT, and
+   * it is resolved HERE for the reason the two markers below are: the compiler
+   * runs at design time and its output is SAVED, so a word baked in then would
+   * be frozen into the template — and a design copied to another shop would
+   * carry the first one's tax name with it.
+   *
+   * First, so a label reaching the barcode or QR passes below unchanged.
+   */
+  const withTax = body.replace(/\{\{tax\}\}/g, input.taxLabel ?? 'VAT')
+
+  const withBarcodes = withTax.replace(
     /<div class="sd-block sd-barcode"([^>]*)>\{\{barcode:([a-zA-Z]+):(\d+)\}\}/g,
     (whole, attrs: string, source: string, rawH: string) => {
       const strip = () => whole.replace(/\{\{barcode:[^}]*\}\}/, '')

@@ -2,8 +2,14 @@
 
 import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
-import { getSetting, setSetting, validateSetting } from '@/lib/site/settings'
+import { getSettings, setSetting, validateSetting } from '@/lib/site/settings'
 import { openShifts } from '@/lib/site/shifts'
+import {
+  switchCurrency,
+  setDenominationActive,
+  addDenomination,
+} from '@/lib/site/cashDenominations'
+import { currencyFor } from '@/lib/currencies'
 
 /**
  * How far a drawer may be out before somebody has to explain it.
@@ -24,6 +30,8 @@ import { openShifts } from '@/lib/site/shifts'
 
 export type CashupSettings = {
   varianceTolerance: string
+  /** '1' or '0' — whether the till demands an open shift before it will sell. */
+  requireShift: string
 }
 
 export type CashupSettingsResult =
@@ -32,6 +40,7 @@ export type CashupSettingsResult =
 
 export async function saveCashupSettingsAction(input: {
   varianceTolerance: string
+  requireShift: string
 }): Promise<CashupSettingsResult> {
   const ctx = await actorFor('setup.edit')
   if ('ok' in ctx) return ctx
@@ -45,6 +54,19 @@ export async function saveCashupSettingsAction(input: {
   )
   if (!result.ok) return result
 
+  /*
+   * Written second, and NOT rolled back if it fails.
+   *
+   * There is no transaction across two settings rows and inventing one here
+   * would be the wrong shape — these are two independent switches that happen
+   * to share a Save button. What matters is that a failure is REPORTED rather
+   * than swallowed, so the screen does not show a saved state for a value the
+   * database refused. The tolerance having landed first is harmless: it is the
+   * value the person typed, and they are told the other one did not take.
+   */
+  const shiftResult = await setSetting(ctx.siteId, 'pos_require_shift', input.requireShift)
+  if (!shiftResult.ok) return shiftResult
+
   revalidatePath('/setup/cashup')
   /* Every screen that reads the tolerance to decide whether an explanation is
      required. Without these, a till keeps demanding a reason against
@@ -52,9 +74,16 @@ export async function saveCashupSettingsAction(input: {
   revalidatePath('/sales/cashup', 'layout')
   revalidatePath('/pos')
 
+  const saved = await getSettings(ctx.siteId, [
+    'cashup_variance_tolerance',
+    'pos_require_shift',
+  ])
   return {
     ok: true,
-    settings: { varianceTolerance: await getSetting(ctx.siteId, 'cashup_variance_tolerance') },
+    settings: {
+      varianceTolerance: saved.cashup_variance_tolerance,
+      requireShift: saved.pos_require_shift,
+    },
   }
 }
 
@@ -101,4 +130,82 @@ export async function setCashupModeAction(
         ? 'Cash-ups now reconcile per person.'
         : 'Cash-ups now reconcile per till.',
   }
+}
+
+/**
+ * Switch the shop's currency, and replace the denominations with it.
+ *
+ * ── REFUSED WHILE A SHIFT IS OPEN, LIKE THE MODE ────────────────────────────
+ *
+ * Same guard as `setCashupModeAction`, and a stronger version of the same
+ * reason. A shift is reconciled against the grid it was counted into, so
+ * swapping rand rows for Canadian ones under an open drawer would leave a
+ * half-counted declaration pointing at denominations that no longer exist on
+ * the screen. Closing everything first makes the change unambiguous.
+ *
+ * Historical counts are never disturbed — `switchCurrency` retires a row that
+ * has been counted rather than deleting it. This guard is about the drawer
+ * somebody is holding RIGHT NOW.
+ */
+export async function switchCurrencyAction(
+  code: string,
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId } = ctx
+
+  const open = await openShifts(siteId)
+  if (open.length > 0) {
+    return {
+      ok: false,
+      error: `Cash up the ${open.length} open shift${open.length === 1 ? '' : 's'} before changing currency.`,
+    }
+  }
+
+  const spec = currencyFor(code)
+  if (!spec) return { ok: false, error: `${code} is not a currency this system knows.` }
+
+  const result = await switchCurrency(siteId, code)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/cashup')
+  revalidatePath('/sales/cashup', 'layout')
+  revalidatePath('/pos')
+  return {
+    ok: true,
+    message: `Drawers are now counted in ${spec.name.toLowerCase()}.`,
+  }
+}
+
+/** Turn one denomination on or off — the tick, not a delete. See 168. */
+export async function setDenominationActiveAction(
+  id: number,
+  active: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await setDenominationActive(ctx.siteId, id, active)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/cashup')
+  revalidatePath('/sales/cashup', 'layout')
+  return { ok: true }
+}
+
+/** Add a note or coin the shipped set does not carry. */
+export async function addDenominationAction(input: {
+  label: string
+  value: number
+  isNote: boolean
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await addDenomination(ctx.siteId, input)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/cashup')
+  revalidatePath('/sales/cashup', 'layout')
+  return { ok: true }
 }

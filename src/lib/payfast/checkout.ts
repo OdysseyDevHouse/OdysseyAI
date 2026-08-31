@@ -19,6 +19,8 @@ export const PAYFAST_PROCESS_URL = {
   sandbox: 'https://sandbox.payfast.co.za/eng/process',
 } as const
 
+export { PAYFAST_SANDBOX_CREDENTIALS } from './sandbox'
+
 export type CheckoutRequest = {
   merchantId: string
   merchantKey: string

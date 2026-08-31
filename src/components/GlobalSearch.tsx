@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/icons'
 import { MODAL_PANEL } from '@/components/ui/styles'
 import { buildPageIndex, groupHits, searchPages, type PageHit } from '@/lib/pageSearch'
+import { SETTING_ANCHOR_EVENT } from '@/components/SettingAnchor'
 import type { NavSection } from '@/lib/nav'
 import { TILL_HREF, TILL_TARGET } from '@/lib/openTill'
 import type { SearchHit, SearchSection } from '@/app/api/search/route'
@@ -233,6 +234,21 @@ export default function GlobalSearch({
       return
     }
     router.push(href)
+
+    /*
+     * A settings hit also ANNOUNCES its anchor, because the navigation above
+     * cannot be relied on to carry it.
+     *
+     * Choosing a setting on the screen you are already reading pushes the URL
+     * you already have, which does nothing: no navigation, no effect, no flash.
+     * The event covers that case, and SettingAnchor's own retry covers the
+     * other one — fired here the target usually does not exist yet, so it looks
+     * for the card for a second before giving up.
+     */
+    const anchor = href.includes('#') ? href.split('#')[1] : null
+    if (anchor) {
+      window.dispatchEvent(new CustomEvent(SETTING_ANCHOR_EVENT, { detail: anchor }))
+    }
   }
 
   const onKeyDown = (event: React.KeyboardEvent) => {

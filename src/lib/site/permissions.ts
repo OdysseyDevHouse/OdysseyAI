@@ -123,6 +123,11 @@ export const CAPABILITY_GROUPS = [
       { key: 'purchasing.edit', label: 'Create and edit purchases', hint: 'Raise orders and receive stock.' },
       { key: 'purchasing.approve', label: 'Approve large orders', hint: 'Issue orders over the approval threshold set in Setup → Purchasing.' },
       { key: 'purchasing.pay', label: 'Pay suppliers', hint: 'Allocate payments and run payment batches.' },
+      /* Separate from purchasing.edit because it SPENDS. Scanning a document
+         draws on the shop's AI credits, and a shop may reasonably want everyone
+         receiving stock while only a supervisor spends — the same split
+         reports.ai already makes against reports.build. */
+      { key: 'purchasing.ai', label: 'Scan a supplier document with AI', hint: 'Read a PDF invoice or delivery note into lines. Uses a paid AI call.' },
     ],
   },
   {

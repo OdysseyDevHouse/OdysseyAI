@@ -37,6 +37,20 @@ export type InvoiceSources = {
   site: {
     name: string
     vatNumber: string | null
+    /**
+     * What this business calls its sales tax — VAT, HST, Tax.
+     *
+     * ── WHY IT IS OPTIONAL, AND WHY THAT IS NOT LAZINESS ──────────────────
+     *
+     * Optional with a 'VAT' fallback, so a caller that has not been taught to
+     * pass it prints exactly what it printed before rather than a document
+     * headed with an empty word. This value goes on invoices that leave the
+     * building; degrading to the old behaviour is the only acceptable failure.
+     *
+     * Resolved by the print route through `taxIdentity`, not looked up here —
+     * see the NO QUERIES note above. This file maps; it does not fetch.
+     */
+    taxLabel?: string
     registrationNumber: string | null
     address1: string | null
     address2: string | null
@@ -62,6 +76,8 @@ export type InvoiceSources = {
   customerOrderNo?: string | null
   /** Whether this document has been on paper before. */
   isReprint?: boolean
+  /** Nothing is owed on it any more — stamps PAID. See statusBanner. */
+  paidInFull?: boolean
   /**
    * What the paper calls itself.
    *
@@ -91,7 +107,7 @@ const lines = (v: (string | null | undefined)[]) =>
  * columns only hold the sum. Rates with nothing on them are dropped: "VAT @ 0%
  * on R0.00" is a row that answers no question.
  */
-function vatSummary(doc: SalesDocument): string {
+function vatSummary(doc: SalesDocument, taxLabel: string): string {
   const byRate = new Map<number, { excl: number; vat: number }>()
   for (const l of doc.lines) {
     const at = byRate.get(l.vatRatePct) ?? { excl: 0, vat: 0 }
@@ -102,7 +118,7 @@ function vatSummary(doc: SalesDocument): string {
   return [...byRate.entries()]
     .filter(([, v]) => v.excl !== 0 || v.vat !== 0)
     .sort((a, b) => b[0] - a[0])
-    .map(([rate, v]) => `VAT @ ${rate}% on ${formatMoney(v.excl)}: ${formatMoney(v.vat)}`)
+    .map(([rate, v]) => `${taxLabel} @ ${rate}% on ${formatMoney(v.excl)}: ${formatMoney(v.vat)}`)
     .join('\n')
 }
 
@@ -117,9 +133,31 @@ function vatSummary(doc: SalesDocument): string {
  * be printed repeatedly while it is negotiated, and stamping the second copy of
  * one as a reprint would say something about the document that is not true.
  */
-function statusBanner(doc: SalesDocument, isReprint: boolean): string {
+function statusBanner(
+  doc: SalesDocument,
+  isReprint: boolean,
+  paidInFull?: boolean,
+): string {
   if (doc.status === 'cancelled') return 'CANCELLED'
   if (doc.docType === 'invoice' && doc.status !== 'finalised') return 'PRO FORMA'
+
+  /*
+   * PAID outranks REPRINT, and the order is the whole point.
+   *
+   * A paid invoice is nearly always ALSO a reprint — somebody prints it again
+   * precisely because the customer has now paid and wants a copy that says so.
+   * Ranked the other way round, the one status a reader actually needs would be
+   * hidden behind a note about how many times the page has been through a
+   * printer, on every single copy that mattered.
+   *
+   * CANCELLED still outranks both: a voided invoice that was paid is a refund
+   * waiting to happen, and "CANCELLED" is the thing to say about it.
+   *
+   * Undefined means the caller did not ask, which prints nothing — never
+   * "UNPAID". See `paidInFull` on InvoiceData.
+   */
+  if (paidInFull && doc.docType === 'invoice' && doc.status === 'finalised') return 'PAID'
+
   if (isReprint && doc.docType === 'invoice' && doc.status === 'finalised') return 'REPRINT'
   return ''
 }
@@ -140,7 +178,7 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
     'site.name': site.name,
     'site.vatNumber': site.vatNumber,
     'site.registrationNumber': site.registrationNumber,
-    'site.vatLine': site.vatNumber ? `VAT no. ${site.vatNumber}` : '',
+    'site.vatLine': site.vatNumber ? `${site.taxLabel ?? 'VAT'} no. ${site.vatNumber}` : '',
     'site.registrationLine': site.registrationNumber
       ? `Reg. no. ${site.registrationNumber}`
       : '',
@@ -171,7 +209,7 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
      * that had to choose between two would get it wrong for half the shops.
      */
     'doc.customerReference': src.customerOrderNo ?? doc.reference ?? '',
-    'doc.statusBanner': statusBanner(doc, src.isReprint ?? false),
+    'doc.statusBanner': statusBanner(doc, src.isReprint ?? false, src.paidInFull),
     // The route's own answer where it gave one; otherwise s20(4): only a VAT
     // vendor may call its document a tax invoice.
     'doc.heading': src.heading ?? (site.vatNumber ? 'TAX INVOICE' : 'INVOICE'),
@@ -192,7 +230,7 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
     'totals.vat': doc.vatTotal,
     'totals.roundingAdj': doc.roundingAdj !== 0 ? doc.roundingAdj : null,
     'totals.totalIncl': doc.totalIncl,
-    'totals.vatSummary': vatSummary(doc),
+    'totals.vatSummary': vatSummary(doc, site.taxLabel ?? 'VAT'),
   }
 
   const rows: TokenValues[] = doc.lines.map((line) => ({
@@ -207,5 +245,12 @@ export function invoiceTokens(src: InvoiceSources): RenderInput {
     'line.totalIncl': line.lineTotalIncl,
   }))
 
-  return { values, sections: { lines: rows }, capabilities: { isOwner: false, granted: new Set() } }
+  return {
+    values,
+    sections: { lines: rows },
+    capabilities: { isOwner: false, granted: new Set() },
+    /* The renderer's own furniture — the totals row labels and the summary
+       heading — is not a token value, so it is told separately. See RenderInput. */
+    taxLabel: site.taxLabel,
+  }
 }

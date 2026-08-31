@@ -1,5 +1,5 @@
 import 'server-only'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { getSetting, setSetting } from './settings'
 import { mainLocationId } from './stockLocations'
 import { reorderSuggestions, type ReorderSuggestion } from './reorderSuggestions'
@@ -76,7 +76,7 @@ export async function sendLowStockDigest(siteId: number): Promise<LowStockTickRe
     }
   }
 
-  if (!isConfigured()) return { sent: false, lines: 0, skipped: 'mail_unconfigured' }
+  if (!(await isConfiguredFor(siteId))) return { sent: false, lines: 0, skipped: 'mail_unconfigured' }
 
   const digest = await buildLowStockDigest(siteId)
 
@@ -117,7 +117,7 @@ export async function sendLowStockDigest(siteId: number): Promise<LowStockTickRe
   })
 
   try {
-    const outcome = await send({ to: email, subject: digest.subject, text: digest.text, html: digest.html })
+    const outcome = await sendAs(siteId, { to: email, subject: digest.subject, text: digest.text, html: digest.html })
     if (!outcome.ok) {
       return { sent: false, lines: digest.lines.length, skipped: null, error: outcome.error }
     }

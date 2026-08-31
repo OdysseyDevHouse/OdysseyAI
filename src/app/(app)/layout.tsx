@@ -11,6 +11,11 @@ import { ToastProvider } from '@/components/ui'
 import DesktopLicenceGate from './DesktopLicenceGate'
 import LeaseLockScreen from './LeaseLockScreen'
 import { lockState } from '@/lib/licence/lockState'
+import PrecisionProvider from '@/components/PrecisionProvider'
+import { getSettings } from '@/lib/site/settings'
+import { setDisplayPrecision } from '@/lib/decimals'
+import { hiddenAreas } from '@/lib/site/menuVisibility'
+import type { MenuArea } from '@/lib/menuAreas'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   /* Read once, on the server. `APP_MODE` is baked in by `build:desktop`, so this
@@ -28,6 +33,42 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // request rather than trusted from the token — so access revoked upstream or
   // a role changed on the permissions screen takes effect on the next load.
   const { site, user, capabilities, modules } = await requireSiteUser()
+
+  /*
+   * ── HOW MANY DECIMALS THIS SHOP SHOWS ───────────────────────────────────
+   *
+   * Set on the module before anything below renders, because `formatQty` and
+   * `formatCost` are called from server components deep in the tree and cannot
+   * each be handed a preference — see lib/decimals.ts for why it is a set
+   * value rather than a parameter at 248 call sites.
+   *
+   * PER REQUEST, and that is the load-bearing part: one Node process serves
+   * many shops, so a value read once at boot would be whichever site rendered
+   * first and every other shop would silently inherit it. A request is handled
+   * to completion before the next layout runs, so setting it here is safe.
+   *
+   * A failed read leaves the defaults in place, which are exactly what these
+   * functions printed before the setting existed. `PrecisionProvider` below
+   * carries the same two numbers into the client half of the tree.
+   *
+   * `getting_started_hidden` rides along on this read rather than taking one of
+   * its own: it is wanted on every page load, because the sidebar is drawn on
+   * all of them, and it comes out of the same settings row these two do.
+   */
+  const decimals = await getSettings(site.id, [
+    'qty_decimals',
+    'cost_decimals',
+    'getting_started_hidden',
+  ]).catch(() => null)
+  const precision = {
+    qty: Number(decimals?.qty_decimals ?? 2),
+    cost: Number(decimals?.cost_decimals ?? 2),
+  }
+  setDisplayPrecision(precision)
+
+  /* Defaults to SHOWN when the read failed. The row is how a new shop finds the
+     screen written for it, so a settings blip must not be what takes it away. */
+  const gettingStartedHidden = decimals?.getting_started_hidden === '1'
 
   /*
    * ── OUT OF LEASE: NOTHING ELSE RENDERS ──────────────────────────────────
@@ -88,6 +129,32 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const unread = await unreadCount(site.id, user.id, capabilities).catch(() => 0)
 
   /*
+   * ── WHAT THIS SHOP WANTS IN ITS MENU, NOT MERELY WHAT IT BOUGHT ──────────
+   *
+   * A third filter on top of capabilities and modules: a shop that holds Job
+   * Cards but never takes a booking can switch the section off under Setup →
+   * Menu & modules, and this is where that choice reaches the chrome. It only
+   * ever subtracts from `modules.held` — see lib/site/menuVisibility.ts for
+   * why hiding and owning are kept as two separate facts.
+   *
+   * Handed to BOTH shells below, because the phone and the browser draw
+   * different chrome from the same answer; computing it once here is what stops
+   * the two menus from disagreeing.
+   *
+   * Read ONCE and derived twice: both answers come from the same settings row,
+   * and this runs on every authenticated page load.
+   *
+   * The hide list goes down as well as the merged answer, because a section
+   * marked `menuArea` — Tickets, which travels with Job Cards, and Staff, which
+   * is nobody's module — has to tell "switched off" apart from "never bought",
+   * and the merged list cannot: both read as absent. Sets do not cross the
+   * server/client boundary, so both go as arrays.
+   */
+  const switchedOff = await hiddenAreas(site.id)
+  const hiddenAreaKeys = [...switchedOff]
+  const menuModules = [...modules.held].filter((key) => !switchedOff.has(key as MenuArea))
+
+  /*
    * ── THE PHONE GETS DIFFERENT CHROME, NOT DIFFERENT RULES ─────────────────
    *
    * Read AFTER every guard above, deliberately. The session check, the
@@ -107,16 +174,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <MobileTopBar
           granted={[...capabilities.granted]}
           isOwner={capabilities.isOwner}
-          modules={[...modules.held]}
+          modules={menuModules}
+          hiddenAreas={hiddenAreaKeys}
+          gettingStartedHidden={gettingStartedHidden}
           userName={user.name}
           siteName={site.displayName}
           unreadNotifications={unread}
         />
         {/* min-h-0 so the pane scrolls instead of the children being crushed —
             a flex column hands its children infinite height otherwise. */}
-        <main className="min-h-0 flex-1 overflow-y-auto bg-canvas">
+        {/* `relative` for the same reason as the desktop shell below — a static
+            scroll pane does not contain absolutely positioned descendants, and
+            they stretch the document into a second scrollbar. */}
+        <main className="relative min-h-0 flex-1 overflow-y-auto bg-canvas">
           <ToastProvider>
-            {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            <PrecisionProvider qty={precision.qty} cost={precision.cost}>
+              {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            </PrecisionProvider>
           </ToastProvider>
         </main>
       </div>
@@ -128,7 +202,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <Sidebar
         granted={[...capabilities.granted]}
         isOwner={capabilities.isOwner}
-        modules={[...modules.held]}
+        modules={menuModules}
+        hiddenAreas={hiddenAreaKeys}
+        gettingStartedHidden={gettingStartedHidden}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
@@ -145,7 +221,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           roleName={user.roleName}
           unreadNotifications={unread}
         />
-        <main className="flex-1 overflow-y-auto bg-canvas">
+        {/* `relative` is what makes `overflow-y-auto` above actually CONTAIN the
+            page. Without it this pane is `position: static`, so any absolutely
+            positioned descendant resolves against the VIEWPORT rather than this
+            box — it escapes the clip and stretches the document behind it. The
+            symptom is two scrollbars: the pane's own, plus a second on the
+            window scrolling tens of thousands of pixels of blank space. The
+            style guide showed it worst (27212px of nothing) because its preview
+            frames hold whole absolutely-positioned screens, but the leak was in
+            the shell and every long page could feed it. */}
+        <main className="relative flex-1 overflow-y-auto bg-canvas">
           {/* Toasts are the standard outcome message for any action, so the
               provider sits above every page rather than per-screen. */}
           <ToastProvider>
@@ -161,7 +246,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               claiming to be desktop would be claiming its way into a check, and
               one claiming to be a browser could otherwise skip it.
             */}
-            {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            <PrecisionProvider qty={precision.qty} cost={precision.cost}>
+              {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+            </PrecisionProvider>
           </ToastProvider>
         </main>
       </div>

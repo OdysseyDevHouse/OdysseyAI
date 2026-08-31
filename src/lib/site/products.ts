@@ -15,6 +15,7 @@ import {
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
 import { writePriceRows } from './reprice'
 import { resolveMasterCode } from './masterCodes'
+import { whyTaxRateRefused, vatRatePercent } from './taxIdentity'
 
 export type Product = {
   id: number
@@ -460,6 +461,18 @@ export type ProductListOptions = {
    * the children carry their parent's name on screen for context.
    */
   collapseVariants?: boolean
+  /**
+   * Extra WHERE fragments from the list screen's advanced filter, with their
+   * bound values.
+   *
+   * Pre-compiled by lib/site/listFilterSql.ts rather than described here,
+   * because the vocabulary is the report builder's catalog and this query has
+   * no business knowing it. The contract is narrow on purpose: the fragments
+   * are catalog-authored SQL against THIS query's `p` alias, and every user
+   * value is already a `?` in `extraParams`. Nothing else may be passed.
+   */
+  extraWhere?: readonly string[]
+  extraParams?: readonly unknown[]
   /** Defaults to 'description' — the order the catalogue has always been in. */
   sort?: ProductSort
   direction?: 'asc' | 'desc'
@@ -550,6 +563,15 @@ export async function listProducts(
   if (opts.updatedSince) {
     where.push('COALESCE(p.last_edit_date, p.created_at) >= ?')
     params.push(opts.updatedSince)
+  }
+
+  /* The advanced filter's conditions, ANDed onto everything above. Pushed LAST
+     and as a pair, because the placeholders in these fragments are positional:
+     the values must arrive in the same order the fragments do, and appending
+     them anywhere but together would silently shift every parameter after. */
+  if (opts.extraWhere?.length) {
+    where.push(...opts.extraWhere)
+    params.push(...(opts.extraParams ?? []))
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
@@ -936,6 +958,16 @@ export async function createProduct(
 
   const vat = await resolveVat(siteId, input)
 
+  /*
+   * An unregistered shop may not charge tax — checked AFTER resolveVat rather
+   * than against the input, because a create that names no rate takes the site
+   * DEFAULT, and on a shop that has never been registered that default is still
+   * the seeded 15% row. Guarding the input alone would let every product added
+   * without touching the tax field arrive on a rate the shop may not charge.
+   */
+  const refusal = await whyTaxRateRefused(siteId, await vatRatePercent(siteId, vat.selling))
+  if (refusal) return { ok: false, error: refusal }
+
   return siteTransaction(siteId, async (tx) => {
     const id = await insertProductTx(tx, { ...input, code }, vat, audit)
     return { ok: true as const, id }
@@ -1083,11 +1115,36 @@ export async function updateProduct(
   const wanted = toProductType(input.productType) === 'recipe' && input.isManufactured ? 1 : 0
   const existing = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
     siteId,
-    `SELECT p.is_manufactured, p.stock_on_hand, p.product_type,
+    `SELECT p.is_manufactured, p.stock_on_hand, p.product_type, p.selling_vat_rate_id,
             (SELECT COUNT(*) FROM stock_movements m WHERE m.product_id = p.id) AS movements
        FROM products p WHERE p.id = ?`,
     [id],
   )
+
+  /*
+   * ── THE TAX-RATE GUARD, AND WHY IT ONLY LOOKS AT A CHANGE ─────────────────
+   *
+   * An unregistered shop may not put a product on a rate that charges tax. But
+   * this action saves the WHOLE product, so a plain description edit posts the
+   * rate the product already has — and refusing that would make every product
+   * uneditable on a shop that had removed its VAT number, which is exactly the
+   * retrospective behaviour whyTaxRateRefused exists not to have.
+   *
+   * So the gate stands only where the id actually MOVES. A product left on the
+   * rate it was already on saves regardless.
+   */
+  const currentSellingVat =
+    existing?.selling_vat_rate_id === null || existing?.selling_vat_rate_id === undefined
+      ? null
+      : Number(existing.selling_vat_rate_id)
+  const wantedSellingVat = input.sellingVatRateId ?? null
+  if (wantedSellingVat !== currentSellingVat) {
+    const refusal = await whyTaxRateRefused(
+      siteId,
+      await vatRatePercent(siteId, wantedSellingVat),
+    )
+    if (refusal) return { ok: false, error: refusal }
+  }
   if (existing && Number(existing.is_manufactured ?? 0) !== wanted) {
     const hasHistory = Number(existing.movements ?? 0) > 0 || toNum(existing.stock_on_hand) !== 0
     if (hasHistory) {
@@ -1414,6 +1471,26 @@ export async function bulkUpdateProducts(
     return {
       updated: 0,
       skipped: unique.map((id) => ({ id, code: '', name: '', reason: invalid })),
+    }
+  }
+
+  /*
+   * An unregistered shop cannot put products on a tax rate — in bulk least of
+   * all, since this is the fastest way to do it to a whole catalogue at once.
+   *
+   * Checked here rather than inside `validateProductBulk`, which is synchronous
+   * and pure: answering this needs the shop's VAT number, which is a read. The
+   * rate is resolved from the id because the change carries an id and the rule
+   * is about the PERCENTAGE — a shop moving products onto a zero-rated row is
+   * doing something legitimate whether it is registered or not.
+   */
+  if (change.kind === 'sellingVat') {
+    const refusal = await whyTaxRateRefused(siteId, await vatRatePercent(siteId, change.vatRateId))
+    if (refusal) {
+      return {
+        updated: 0,
+        skipped: unique.map((id) => ({ id, code: '', name: '', reason: refusal })),
+      }
     }
   }
 
@@ -1813,4 +1890,148 @@ async function bulkDeleteProducts(
   }
 
   return { updated: deleted, skipped }
+}
+
+/* ── Quick edit ──────────────────────────────────────────────────────────── */
+
+/**
+ * The handful of fields the products list can change without opening a product.
+ *
+ * Every field is OPTIONAL and absent means "leave it alone" — which is the
+ * whole difference between this and `updateProduct`. That function takes a
+ * whole ProductInput and writes a whole product, so a form that renders six
+ * fields and posts them through it deletes the prices, recipe lines and
+ * supplier links it never rendered. A panel that edits six things has to write
+ * six things.
+ *
+ * `priceIncl` is the DEFAULT price structure's shelf price, because that is the
+ * one the list shows. A product priced on several structures keeps the rest
+ * exactly as they were, and the panel says so rather than pretending one box
+ * covers them.
+ */
+export type ProductQuickEdit = {
+  description?: string
+  code?: string
+  barcode?: string | null
+  departmentId?: number | null
+  /** Excluding tax, written to last_cost — average cost is derived, never typed. */
+  lastCost?: number
+  /** Including tax, against the default price structure. */
+  priceIncl?: number
+}
+
+/** What a quick edit may refuse, before anything is written. */
+function validateQuickEdit(patch: ProductQuickEdit): string | null {
+  if (patch.code !== undefined) {
+    if (!patch.code.trim()) return 'A product code is required.'
+    if (patch.code.trim().length > 48) return 'Product code must be 48 characters or fewer.'
+  }
+  if (patch.description !== undefined) {
+    if (!patch.description.trim()) return 'A description is required.'
+    if (patch.description.trim().length > 190)
+      return 'Description must be 190 characters or fewer.'
+  }
+  if (patch.barcode !== undefined && (patch.barcode ?? '').length > 48)
+    return 'Barcode must be 48 characters or fewer.'
+  if (patch.lastCost !== undefined && patch.lastCost < 0) return 'Cost cannot be negative.'
+  if (patch.priceIncl !== undefined && patch.priceIncl < 0)
+    return 'Selling price cannot be negative.'
+  return null
+}
+
+/**
+ * Writes only the fields the patch names.
+ *
+ * The price goes through `writePriceRows` like every other price write, so a
+ * shelf change made from the list lands on the price history (144) beside one
+ * made in the editor. Skipping that would make the list the one way to move a
+ * price without leaving a trace.
+ */
+export async function quickUpdateProduct(
+  siteId: number,
+  id: number,
+  patch: ProductQuickEdit,
+  audit?: { userName: string },
+): Promise<SaveResult> {
+  const invalid = validateQuickEdit(patch)
+  if (invalid) return { ok: false, error: invalid }
+
+  const existing = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    'SELECT id, has_variants FROM products WHERE id = ? LIMIT 1',
+    [id],
+  )
+  if (!existing) return { ok: false, error: 'That product no longer exists.' }
+
+  if (patch.code !== undefined) {
+    const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+      siteId,
+      'SELECT id FROM products WHERE code = ? AND id <> ? LIMIT 1',
+      [patch.code.trim(), id],
+    )
+    if (clash) return { ok: false, error: `Product code "${patch.code.trim()}" is already in use.` }
+  }
+
+  /* A variant PARENT holds no stock and is never bought or sold — its price and
+     cost columns are zeros meaning "not applicable", which is why the list
+     renders them as a dash. Letting a panel type a figure into one would put a
+     number nobody can act on behind a row nobody transacts against. */
+  const isParent = Number(existing.has_variants ?? 0) === 1
+  if (isParent && (patch.lastCost !== undefined || patch.priceIncl !== undefined))
+    return { ok: false, error: 'A variant group has no cost or price of its own.' }
+
+  const sets: string[] = []
+  const args: unknown[] = []
+  if (patch.description !== undefined) {
+    sets.push('description = ?')
+    args.push(patch.description.trim())
+  }
+  if (patch.code !== undefined) {
+    sets.push('code = ?')
+    args.push(patch.code.trim())
+  }
+  if (patch.barcode !== undefined) {
+    sets.push('barcode = ?')
+    args.push(patch.barcode?.trim() || null)
+  }
+  if (patch.departmentId !== undefined) {
+    sets.push('department_id = ?')
+    args.push(patch.departmentId)
+  }
+  if (patch.lastCost !== undefined) {
+    sets.push('last_cost = ?')
+    args.push(patch.lastCost)
+  }
+
+  return siteTransaction(siteId, async (tx) => {
+    if (sets.length > 0) {
+      sets.push('last_edit_date = NOW()')
+      await tx.execute(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`, [
+        ...args,
+        id,
+      ] as never)
+    }
+
+    if (patch.priceIncl !== undefined) {
+      /* The DEFAULT structure, resolved here rather than taken from the client:
+         which structure is default is the site's answer, and a panel that sent
+         an id could be made to move a price the user never saw. */
+      const [structures] = await tx.execute(
+        `SELECT id FROM price_structures
+          WHERE is_active = 1
+          ORDER BY is_default DESC, position ASC, id ASC
+          LIMIT 1`,
+      )
+      const structureId = Number((structures as RowDataPacket[])[0]?.id ?? 0)
+      if (structureId > 0) {
+        await writePriceRows(
+          tx,
+          [{ productId: id, priceStructureId: structureId, priceIncl: patch.priceIncl }],
+          { source: 'editor', userName: audit?.userName ?? '' },
+        )
+      }
+    }
+
+    return { ok: true as const, id }
+  })
 }

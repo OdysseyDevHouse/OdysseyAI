@@ -233,6 +233,28 @@ export class PosDatabase extends Dexie {
       drafts: 'key',
       kv: 'key',
     })
+
+    /*
+     * Version 6 — the variant scheme (070).
+     *
+     * `parentId` is indexed because the picker's only query is "the members of
+     * this group", run at the moment a cashier taps a tile with a customer
+     * waiting. Unindexed that is a full scan of a 40,000-row table on a till
+     * that may be a cheap Android box, every single tap.
+     *
+     * No `upgrade()`, matching version 4: old rows simply lack the field, and
+     * the catalog schema bump to 8 forces a full reload that repopulates every
+     * row anyway. `outbox` and `returns` untouched — the version-2 invariant
+     * stands and always will: a pending row is real money.
+     */
+    this.version(6).stores({
+      products: 'id, code, barcode, *barcodes, departmentId, parentId',
+      outbox: 'saleUid, status, takenAt',
+      parked: 'uid, parkedAt',
+      returns: 'returnUid, status, takenAt',
+      drafts: 'key',
+      kv: 'key',
+    })
   }
 }
 
@@ -351,4 +373,16 @@ export const KV = {
    * same instant on every till in the shop.
    */
   posMenus: 'posMenus',
+  /**
+   * What each variant group's axes are CALLED (070), keyed by parent id.
+   *
+   * Only the labels. The values ('M', 'Red') are columns on the product rows
+   * themselves and arrive with them; a caption belongs to the group as a
+   * whole, so holding it per child would repeat it on every row and let the
+   * copies disagree.
+   *
+   * In `kv` rather than a table for the same reason as the instruction
+   * library: two short rows per group, read whole every time the picker opens.
+   */
+  variantAxes: 'variantAxes',
 } as const

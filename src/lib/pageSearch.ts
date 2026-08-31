@@ -11,8 +11,13 @@ import { ACCOUNTING_GROUPS } from '@/app/(app)/accounting/catalogue'
 import { ONLINE_STORE_GROUPS } from '@/app/(app)/online-store/catalogue'
 import { ONLINE_STORE_SETUP_GROUPS } from '@/app/(app)/online-store/settings/catalogue'
 import { JOBS_SETUP_GROUPS } from '@/app/(app)/jobs/setup/catalogue'
+import { visibleSettings, settingHref } from './settingSearch'
 import type { HubIconName } from './hub'
 import type { LucideIcon } from 'lucide-react'
+/* The shop's own configuration, which is what every one of these rows is —
+   as opposed to SlidersHorizontal, which the kit reserves for per-device
+   display choices. */
+import { Settings as SettingsIcon } from '@/components/ui/icons'
 
 /**
  * Every screen in the app as one flat, searchable list.
@@ -59,6 +64,17 @@ export type PageHit = {
    * reason the sidebar does it: a link that 404s is worse than an obvious gap.
    */
   built: boolean
+  /**
+   * Set when this hit is a SETTING inside a screen rather than the screen
+   * itself — see lib/settingSearch.ts.
+   *
+   * Carried on the same shape rather than as a parallel result type so a setting
+   * inherits the ranking, the grouping and the keyboard walk that already exist.
+   * The palette reads it for two things: the anchor to flash on arrival, and the
+   * heading these rows are gathered under, since "Sign out after this long
+   * untouched" listed among screens reads as a screen with a very odd name.
+   */
+  setting?: { anchor?: string }
 }
 
 /**
@@ -253,6 +269,39 @@ export function buildPageIndex(visible: NavSection[]): PageHit[] {
         ),
       ].join(' '),
       built: true,
+    })
+  }
+
+  /* The individual SETTINGS inside those screens.
+     Added last so a screen still outranks a setting on an equal score — asking
+     for "printing" should offer the Printing screen above the one switch on it.
+     Gated on the routes already in `hits`, which is this user's own resolved
+     list, so a setting never advertises a screen they cannot open. */
+  const reachable = new Set(hits.map((hit) => hit.href))
+  for (const setting of visibleSettings(reachable)) {
+    hits.push({
+      href: settingHref(setting),
+      label: setting.label,
+      /* One heading for all of them. The screen a setting lives on is already
+         in `description` below, and grouping by screen instead would print a
+         heading per row for the screens that contribute a single setting. */
+      group: 'Settings',
+      /* What it decides, then where it is. The location matters more here than
+         it does for a screen — "Tills" is the surprising half of the answer for
+         somebody who has spent ten minutes not finding auto logout. */
+      description: `${setting.description} — on ${SUBPAGE_LABELS[setting.href] ?? setting.href}`,
+      icon: SettingsIcon,
+      /* Deduped by word, exactly as the screens above are. A setting's synonyms
+         are written as PHRASES somebody might type — "auto logout", "auto lock",
+         "log out", "lock screen" — so shared words are the normal case rather
+         than a mistake to be edited out one string at a time. Matching is by
+         substring and unaffected either way; this keeps the stored string
+         honest, which is what the nav test reads. */
+      keywords: [
+        ...new Set(setting.keywords.split(/\s+/).filter(Boolean)),
+      ].join(' '),
+      built: true,
+      setting: { anchor: setting.anchor },
     })
   }
 

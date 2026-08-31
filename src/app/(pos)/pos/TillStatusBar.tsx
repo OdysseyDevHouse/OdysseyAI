@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
-import { Icons } from '@/components/ui'
+import {
+  CHIP_BASE,
+  ClockChip as Clock,
+  Icons,
+  LOGOUT_CHIP,
+  OperatorChip,
+  StatusChip as Chip,
+} from '@/components/ui'
 
 /**
  * The strip across the top of the till.
@@ -437,12 +444,7 @@ export function TillStatusBar({
 
         {/* Initials in a tinted square, then the name — the same block the gate
             shows, so "who is signed in" looks identical wherever it is read. */}
-        <Chip>
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-brand-soft text-[11px] font-bold text-brand">
-            {initials(operatorName)}
-          </span>
-          <b className="font-semibold text-ink">{operatorName}</b>
-        </Chip>
+        <OperatorChip name={operatorName} />
 
         <Clock />
 
@@ -461,86 +463,12 @@ export function TillStatusBar({
   )
 }
 
-/**
- * One recipe, so a row of these cannot drift into different heights.
+
+/*
+ * The chips themselves now live in the kit — `components/ui/StatusChip`.
  *
- * `shadow-card` on every one: with no bar behind them, the chips ARE the header,
- * and each has to lift off the canvas on its own the way the three panes below do
- * — otherwise they read as flat labels printed on the background rather than as
- * the controls several of them actually are.
- *
- * Exported as a string rather than only as a component because half of these are
- * buttons with their own tint, and a component that took a colour prop would be a
- * second place for the height and radius to drift.
- *
- * 46px, NOT `h-touch` (56px). These are status first and controls second — a
- * cashier reads this row far more often than they tap it — so the header should
- * not spend a full till-key's height on chrome above the sale. It stays above
- * the 44px touch minimum, which is what keeps the four tappable ones (Tables,
- * the queue, Shift, Logout) honest at this size. Set here rather than on
- * --spacing-touch, which is also worn by the keypad, the quick keys and Pay.
+ * They moved when the invoicing counter grew the same strip. Two windows showing
+ * one row of facts side by side on a shop floor must not drift in height, radius
+ * or shadow, and a second copy here is exactly how that starts. Imported above
+ * under the names this file already used, so the markup below reads unchanged.
  */
-const CHIP_BASE =
-  'inline-flex h-[46px] shrink-0 items-center gap-2 rounded-control border px-3.5 text-sm font-medium shadow-card'
-
-function Chip({ children }: { children: React.ReactNode }) {
-  return <span className={`${CHIP_BASE} border-border bg-surface text-ink-2`}>{children}</span>
-}
-
-/* data-kit-ok: the way OFF the till has to sit in the chip row at chip height,
-   and a kit Button carries its own height and padding scale that would make it
-   the one control in the row standing a few pixels proud of the rest. */
-const LOGOUT_CHIP = `${CHIP_BASE} border-border bg-surface text-ink-2 hover:border-danger/40 hover:bg-danger-soft hover:text-danger-ink`
-
-/** "Tiaan Bryson Smith" → "TS". First and last initial, never the middle. */
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return '?'
-  const first = parts[0][0]
-  const last = parts.length > 1 ? parts[parts.length - 1][0] : ''
-  return (first + last).toUpperCase()
-}
-
-/**
- * The wall clock.
- *
- * Rendered empty on the server and filled after mount. A time formatted on the
- * server is the SERVER's time in the server's locale, which on a hosted app is
- * neither the shop's hour nor the shop's format — and rendering one only to
- * replace it a moment later is a hydration mismatch besides.
- */
-function Clock() {
-  const [now, setNow] = useState<Date | null>(null)
-
-  useEffect(() => {
-    setNow(new Date())
-    // Ticking every second would re-render the whole bar sixty times a minute for
-    // a display that shows minutes. Fifteen seconds keeps it honest enough.
-    const timer = setInterval(() => setNow(new Date()), 15_000)
-    return () => clearInterval(timer)
-  }, [])
-
-  return (
-    <Chip>
-      <Icons.Clock size={16} className="text-muted" />
-      {/* The DATE as well as the time. A till runs past midnight and a cashier
-          reading "00:14" has no way to tell which day's takings they are about to
-          cash up — which is the one question the clock on a till is for. */}
-      <span className="numeric">
-        {now ? (
-          <>
-            {now.toLocaleDateString(undefined, {
-              weekday: 'short',
-              day: 'numeric',
-              month: 'short',
-            })}
-            {' · '}
-            {now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-          </>
-        ) : (
-          '--:--'
-        )}
-      </span>
-    </Chip>
-  )
-}

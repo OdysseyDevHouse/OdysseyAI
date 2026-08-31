@@ -34,6 +34,7 @@ const tender = (
   tipOnOverTender: false,
   tipInDrawer: false,
   requiresReference: false,
+  asksCustomComments: false,
   referenceLabel: null,
   roundsToCashDenomination: false,
   minAmount: 0,

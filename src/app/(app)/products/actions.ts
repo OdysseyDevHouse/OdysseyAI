@@ -10,6 +10,7 @@ import {
   actorForModuleOrThrow,
 } from '@/lib/auth'
 import { toProductType } from '@/lib/productTypes'
+import { safeReturnTo } from '@/lib/returnTo'
 import { toVariableType, toPriceCalc } from '@/lib/productProperties'
 import { linkedStores } from '@/lib/storeGroups'
 import { setShareSettings } from '@/lib/site/shareSettings'
@@ -33,7 +34,9 @@ import {
   getProduct,
   propertyColumnMap,
   bulkUpdateProducts,
+  quickUpdateProduct,
   type ProductInput,
+  type ProductQuickEdit,
   type ProductBulkChange,
   type ProductBulkResult,
 } from '@/lib/site/products'
@@ -454,16 +457,24 @@ export async function saveProductAction(
    * nothing, which is worse than its absence.
    *
    * The COST is the exception, and it moves the other way — down the form and
-   * up the ladder. A case of 24 costs 24 singles, so repricing the single has
-   * to reprice every pack drawing on it; nothing on the Refer tab offers a
-   * cost box precisely because the factor already decides the answer. Without
-   * this the packs kept whatever they were seeded with — usually 0.00 — and
-   * reported a 100% margin on every sale.
+   * up every chain built on this product. A case of 24 costs 24 singles, so
+   * repricing the single has to reprice every pack drawing on it; nothing on
+   * the Refer tab offers a cost box precisely because the factor already
+   * decides the answer. Without this the packs kept whatever they were seeded
+   * with — usually 0.00 — and reported a 100% margin on every sale.
    *
-   * Runs for EVERY product, not just one typed 'refer': the base of a ladder
-   * is deliberately an ordinary product (see createReferRange), so a type
-   * check here would skip the one rung people actually reprice. A product with
-   * nothing above it costs one cheap query and writes nothing.
+   * RECIPES CLIMB THE SAME WALK. Type a new cost on tomatoes and every burger
+   * listing tomatoes is recosted, including burgers reached through another
+   * made item. A recipe's stored cost is a cache of compositionCost(), and a
+   * cache nothing invalidates is a wrong number that looks authoritative —
+   * before this it moved only when the burger itself was next saved, so the
+   * till charged one cost and every report showed another.
+   *
+   * Runs for EVERY product, not just one typed 'refer' or 'recipe': the thing
+   * being repriced is the INGREDIENT or the base of a ladder, which is
+   * deliberately an ordinary product (see createReferRange). A type check here
+   * would skip the one rung people actually reprice. A product with nothing
+   * above it costs one cheap query and writes nothing.
    */
   const { cascadeReferCosts } = await import('@/lib/site/referRange')
   await cascadeReferCosts(siteId, result.id).catch(() => 0)
@@ -538,7 +549,18 @@ export async function saveProductAction(
   }
 
   revalidatePath('/products')
-  redirect(`/products/${result.id}?saved=1`)
+
+  /* Saving keeps you ON the product — it is not necessarily the end of the
+     edit, and bouncing to the list after every field change would make a
+     two-part correction into two round trips.
+
+     What it must NOT do is lose the list that sent you here: the redirect
+     rebuilds the URL from scratch, so without carrying `from` the Back arrow
+     silently reverted to the bare catalogue on the first save. That is what
+     made a filtered worklist unusable. */
+  const back = safeReturnTo(form.get('returnTo'))
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+  redirect(`/products/${result.id}?saved=1${from}`)
 }
 
 export async function archiveProductAction(form: FormData): Promise<void> {
@@ -550,7 +572,9 @@ export async function archiveProductAction(form: FormData): Promise<void> {
   if (Number.isFinite(id) && id > 0) await setArchived(siteId, id, archived)
 
   revalidatePath('/products')
-  redirect(`/products/${id}`)
+  // Same as the save path: keep the list that sent us here. See above.
+  const back = safeReturnTo(form.get('returnTo'))
+  redirect(`/products/${id}${back ? `?from=${encodeURIComponent(back)}` : ''}`)
 }
 
 export async function deleteProductAction(form: FormData): Promise<void> {
@@ -564,17 +588,25 @@ export async function deleteProductAction(form: FormData): Promise<void> {
   const result = await deleteProduct(siteId, id)
   revalidatePath('/products')
 
+  /* The list this was opened from, kept across all three outcomes below. Two
+     of them stay on the product and need it for the Back arrow; the third
+     returns to the list itself, which is the one place the filtered worklist
+     genuinely has to survive — deleting one of ten is exactly the moment you
+     want the other nine still on screen. */
+  const back = safeReturnTo(form.get('returnTo'))
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+
   if (!result.ok) {
-    redirect(`/products/${id}?error=${encodeURIComponent(result.error)}`)
+    redirect(`/products/${id}?error=${encodeURIComponent(result.error)}${from}`)
   }
 
   // A product with sales history is archived rather than deleted. Say so:
   // silently doing something other than what was asked is worse than refusing.
   if (result.archived) {
-    redirect(`/products/${id}?archived=1&reason=${encodeURIComponent(result.reason)}`)
+    redirect(`/products/${id}?archived=1&reason=${encodeURIComponent(result.reason)}${from}`)
   }
 
-  redirect('/products?deleted=1')
+  redirect(back ? `${back}${back.includes('?') ? '&' : '?'}deleted=1` : '/products?deleted=1')
 }
 
 /**
@@ -742,4 +774,123 @@ export async function runProductReportAction(
       error: e instanceof Error ? e.message : 'This report could not be run.',
     }
   }
+}
+
+/* ── Quick edit ──────────────────────────────────────────────────────────── */
+
+/**
+ * The products list's slide-in panel: a few fields, changed without opening the
+ * product.
+ *
+ * Deliberately NOT `saveProductAction` with a smaller form. That action reads a
+ * whole ProductInput out of the FormData and hands it to `updateProduct`, which
+ * writes a whole product — so a six-field form posted through it would clear
+ * the prices, recipe lines and supplier links it never rendered. This one names
+ * the fields it changes and leaves everything else alone.
+ */
+export async function quickEditProductAction(
+  id: number,
+  /*
+   * The code is NOT accepted here, though quickUpdateProduct can write one.
+   *
+   * A product code is its identity — printed on labels, quoted on orders, sat
+   * in documents already issued — so changing one belongs on the full product
+   * where that weight is obvious, not in a panel opened to fix a price. The
+   * panel renders it read-only; this makes the endpoint agree, because a
+   * server action is a public entry point and a greyed box is not a boundary.
+   */
+  patch: Omit<ProductQuickEdit, 'code'>,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return { ok: false, error: ctx.error ?? 'You may not edit products.' }
+  const { siteId } = ctx
+
+  const existing = await getProduct(siteId, id)
+  if (!existing) return { ok: false, error: 'That product no longer exists.' }
+
+  /* The same ownership rule the full editor enforces: a product belongs to the
+     store whose catalogue created it, and only that store may change what it
+     IS. The panel is a courtesy; this is the boundary. */
+  const { editRefusal } = await import('@/lib/site/productOwnership')
+  const refusal = await editRefusal(siteId, existing.code)
+  if (refusal) return { ok: false, error: refusal }
+
+  const result = await quickUpdateProduct(siteId, id, patch, {
+    userName: ctx.actor.userName,
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  /*
+   * Everything built out of this product, when its COST moved.
+   *
+   * The same cascade saveProductAction runs, for the same reason and with the
+   * same "never fails the save" contract. It was missing here, and the gap was
+   * invisible in exactly the way that matters: this panel is the quickest way
+   * to reprice an ingredient, so it is the path somebody actually uses to put
+   * mince up from 118 to 180 — and every burger containing that mince kept the
+   * cost it had, while the recipe screen went on showing 118.
+   *
+   * Guarded on the patch naming a cost: a description or barcode edit changes
+   * nothing any recipe reads, and walking the tree for one would be work with
+   * no possible result.
+   */
+  if (patch.lastCost !== undefined) {
+    const { cascadeCompositionCosts } = await import('@/lib/site/productComposition')
+    await cascadeCompositionCosts(siteId, id).catch(() => 0)
+  }
+
+  /*
+   * ── KEEPING A LINKED GROUP IN STEP ───────────────────────────────────────
+   *
+   * Descriptive fields always travel to the other stores in a group — they are
+   * what makes it the same product everywhere — and cost and price travel when
+   * the group shares them. A quick edit that skipped this would leave one store
+   * showing the new description and every sibling showing the old one, with
+   * nothing on screen to say why.
+   *
+   * Fanned out from the product as it now STANDS, re-read after the write,
+   * rather than from the patch: the patch is a handful of fields, and
+   * FanoutValues wants the whole picture. Reading it back sends the saved
+   * truth instead of a reconstruction of it.
+   *
+   * Everything here concerns OTHER databases and must never turn a successful
+   * save into a failed one — the same rule saveProductAction follows.
+   */
+  const saved = await getProduct(siteId, id).catch(() => null)
+  const stores = await linkedStores(siteId).catch(() => [])
+  if (saved && stores.length > 1) {
+    const rates = await listVatRates(siteId).catch(() => [])
+    const rateOf = (rateId: number | null | undefined) =>
+      rateId == null ? undefined : rates.find((r) => r.id === rateId)?.rate
+    const structures = await listPriceStructures(siteId).catch(() => [])
+
+    await fanoutProduct(
+      siteId,
+      saved.code,
+      {
+        lastCost: saved.lastCost ?? 0,
+        prices: Object.fromEntries(saved.prices.map((p) => [p.priceStructureId, p.sellIncl])),
+        description: saved.description,
+        barcode: saved.barcode,
+        extraDescription: saved.extraDescription ?? null,
+        productType: saved.productType ?? 'normal',
+        purchaseVatPercent: rateOf(saved.purchaseVatRateId),
+        sellingVatPercent: rateOf(saved.sellingVatRateId),
+        /* By NAME, not id: department ids are per-database, so sending the id
+           would file the product under whatever happened to share that number
+           in the target store. */
+        departmentName: saved.departmentId
+          ? ((await listDepartments(siteId).catch(() => [])).find(
+              (d) => d.id === saved.departmentId,
+            )?.name ?? null)
+          : null,
+      },
+      structures.map((s) => ({ id: s.id, name: s.name })),
+      /* No availability map: this panel shows no store toggles, and an empty
+         map means every store keeps what it had. */
+    ).catch(() => [])
+  }
+
+  revalidatePath('/products')
+  return { ok: true }
 }

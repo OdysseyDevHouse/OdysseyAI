@@ -10,6 +10,8 @@ import { getNumericSetting } from '@/lib/site/settings'
 import { getTillCustomer } from '@/lib/site/tillCustomers'
 import InvoiceEditor from './InvoiceEditor'
 import { depositSummary } from '@/lib/site/deposits'
+import { outstandingForDocument, paymentsForDocument } from '@/lib/site/paidInvoices'
+import { InvoicePaymentPanel } from '@/app/(app)/sales/InvoicePaymentPanel'
 import { DepositPanel } from '@/app/(app)/sales/DepositPanel'
 import { listAttachments } from '@/lib/site/attachments'
 import { listSalesReasons } from '@/lib/site/salesReasons'
@@ -72,6 +74,24 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
     listSalesReasons(siteId, 'return'),
   ])
   if (!document) notFound()
+
+  /*
+   * Whether this invoice has been settled, and by what.
+   *
+   * AFTER the batch above rather than inside it: `outstandingForDocument` reads
+   * the document's own totals and tenders, so it cannot start until the document
+   * has arrived. The two run together once it has.
+   *
+   * Only for a finalised INVOICE — a draft owes nothing yet and a credit note is
+   * not paid — so a quote or an unposted sale does two fewer queries.
+   */
+  const wantsPayments = document.status === 'finalised' && document.docType === 'invoice'
+  const [outstanding, payments] = wantsPayments
+    ? await Promise.all([
+        outstandingForDocument(siteId, document),
+        paymentsForDocument(siteId, documentId),
+      ])
+    : [0, []]
 
   // Whoever is capturing is pre-selected on every new line — right nearly
   // every time, and otherwise they pick themselves out of a list on each one.
@@ -138,6 +158,19 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
         order screen uses.
       */}
       <div className="flex flex-col gap-5 px-6 pt-5 pb-10">
+        {/* Has it been paid? Above the deposits, because on a POSTED invoice it
+            is the more urgent question — a deposit is money taken before the
+            sale, this is whether the sale has been settled since.
+            Only on a finalised invoice: a draft is owed nothing yet, and a
+            credit note is not a thing anybody pays. */}
+        {document.status === 'finalised' && document.docType === 'invoice' && (
+          <InvoicePaymentPanel
+            totalIncl={document.totalIncl}
+            outstanding={outstanding}
+            payments={payments}
+          />
+        )}
+
         {/* Money already paid against this invoice. Below the grid: the lines
             are what somebody opened this screen to work on, and the deposit is
             what they check once they know what the invoice is worth. */}

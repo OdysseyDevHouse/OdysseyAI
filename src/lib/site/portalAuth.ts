@@ -3,7 +3,26 @@ import { createHash, randomBytes } from 'node:crypto'
 import type { RowDataPacket } from 'mysql2/promise'
 import { customerExecute, customerQuery, customerQueryOne } from './customerDb'
 import { getSetting } from './settings'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
+import { createPortalToken } from '../publicPortalToken'
+import { publicSiteName } from '../sites'
+import { logActivity } from './activityLog'
+
+/*
+ * Four replaces, copied rather than imported.
+ *
+ * invoiceEmail exports the same function, but importing it here would pull the
+ * PDF renderer, the payments gateway and the document builder into the
+ * SIGN-IN path — a module chain that has no business loading so somebody can
+ * ask for a link. The duplication is two lines; the coupling would not be.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 /**
  * Signing a customer in to the portal, with a link instead of a password.
@@ -45,42 +64,88 @@ const LINK_MINUTES = 30
 const MAX_LINKS_PER_HOUR = 5
 
 export type PortalSettings = {
+  /** The JOBS side: a customer following their own work. */
   isEnabled: boolean
   allowComments: boolean
   allowUploads: boolean
   allowQuoteAccept: boolean
   maxUploadsPerJob: number
+  /**
+   * The ACCOUNT side: profile, transactions, statement.
+   *
+   * Independent of `isEnabled` — see the setting's own note. A shop may run
+   * either, both or neither, and the guard below opens the door when EITHER is
+   * on rather than treating the jobs portal as the portal.
+   */
+  accountsEnabled: boolean
+  showTransactions: boolean
+  showStatement: boolean
+  allowPay: boolean
 }
 
-/** How the portal is configured. Fails CLOSED on any error. */
+const CLOSED: PortalSettings = {
+  isEnabled: false,
+  allowComments: false,
+  allowUploads: false,
+  allowQuoteAccept: false,
+  maxUploadsPerJob: 0,
+  accountsEnabled: false,
+  showTransactions: false,
+  showStatement: false,
+  allowPay: false,
+}
+
+/**
+ * How the portal is configured. Fails CLOSED on any error.
+ *
+ * The two halves are resolved SEPARATELY. An earlier shape returned `closed`
+ * whole the moment `portal_enabled` was off, which would have meant a shop
+ * offering statements and no job cards got nothing — the jobs switch silently
+ * governing a feature that has nothing to do with jobs.
+ */
 export async function portalSettings(siteId: number): Promise<PortalSettings> {
-  const closed: PortalSettings = {
-    isEnabled: false,
-    allowComments: false,
-    allowUploads: false,
-    allowQuoteAccept: false,
-    maxUploadsPerJob: 0,
-  }
   try {
-    const [enabled, comments, uploads, quotes, maxUploads] = await Promise.all([
-      getSetting(siteId, 'portal_enabled'),
-      getSetting(siteId, 'portal_allow_comments'),
-      getSetting(siteId, 'portal_allow_uploads'),
-      getSetting(siteId, 'portal_allow_quote_accept'),
-      getSetting(siteId, 'portal_max_uploads_per_job'),
-    ])
-    if (enabled !== '1') return closed
+    const [enabled, comments, uploads, quotes, maxUploads, accounts, transactions, statement, pay] =
+      await Promise.all([
+        getSetting(siteId, 'portal_enabled'),
+        getSetting(siteId, 'portal_allow_comments'),
+        getSetting(siteId, 'portal_allow_uploads'),
+        getSetting(siteId, 'portal_allow_quote_accept'),
+        getSetting(siteId, 'portal_max_uploads_per_job'),
+        getSetting(siteId, 'portal_accounts_enabled'),
+        getSetting(siteId, 'portal_show_transactions'),
+        getSetting(siteId, 'portal_show_statement'),
+        getSetting(siteId, 'portal_allow_pay'),
+      ])
+
+    const jobsOn = enabled === '1'
+    const accountsOn = accounts === '1'
+
     return {
-      isEnabled: true,
-      allowComments: comments === '1',
-      allowUploads: uploads === '1',
-      allowQuoteAccept: quotes === '1',
-      maxUploadsPerJob: Math.max(0, Math.min(100, Number(maxUploads) || 0)),
+      isEnabled: jobsOn,
+      allowComments: jobsOn && comments === '1',
+      allowUploads: jobsOn && uploads === '1',
+      allowQuoteAccept: jobsOn && quotes === '1',
+      maxUploadsPerJob: jobsOn ? Math.max(0, Math.min(100, Number(maxUploads) || 0)) : 0,
+      accountsEnabled: accountsOn,
+      showTransactions: accountsOn && transactions === '1',
+      showStatement: accountsOn && statement === '1',
+      allowPay: accountsOn && pay === '1',
     }
   } catch {
     // A site without 130 has no portal, which is the safe answer.
-    return closed
+    return CLOSED
   }
+}
+
+/**
+ * Whether the portal opens at all — either half being on is enough.
+ *
+ * The one question the door asks. Kept here rather than spelled out at each
+ * call site so a third section added later cannot be forgotten by one of them.
+ */
+export function portalIsOpen(settings: PortalSettings): boolean {
+  return settings.isEnabled || settings.accountsEnabled
 }
 
 function hashToken(token: string): string {
@@ -105,7 +170,7 @@ export async function requestLink(
   opts: { ip?: string | null; baseUrl?: string } = {},
 ): Promise<{ ok: boolean; error?: string }> {
   const settings = await portalSettings(siteId)
-  if (!settings.isEnabled) {
+  if (!portalIsOpen(settings)) {
     return { ok: false, error: 'This business does not offer an online account.' }
   }
 
@@ -155,17 +220,100 @@ export async function requestLink(
           [customerId, hashToken(token), LINK_MINUTES, opts.ip ?? null],
         )
 
-        if (isConfigured()) {
+        if (await isConfiguredFor(siteId)) {
           const base = opts.baseUrl ?? process.env.APP_URL ?? ''
-          await send({
+          /*
+           * ── THE SITE TOKEN HAS TO BE IN THE PATH ───────────────────────────
+           *
+           * This used to mail `/portal/enter/<token>`, and there has never been
+           * a route at that address: the handler is `/portal/[token]/enter/
+           * [link]`, because every page under the portal needs to know WHICH
+           * BUSINESS it belongs to before it can do anything — see
+           * publicPortalToken. Every sign-in email sent was a dead link, and it
+           * failed silently because the send is best-effort and nothing here
+           * reads the URL back.
+           *
+           * Minted rather than passed in: requestLink is called from a server
+           * action that has the site id and not the token, and deriving it here
+           * means the email and the route cannot disagree about the shape.
+           */
+          const siteToken = await createPortalToken(siteId)
+          const url = `${base}/portal/${siteToken}/enter/${token}`
+          // Tolerant AND non-null: an unnamed site drops the wording that uses
+          // it rather than mailing "Sign in to your account with null".
+          const siteName = (await publicSiteName(siteId).catch(() => '')) ?? ''
+          const who = String(customer.name ?? '').trim()
+
+          /*
+           * ── IT IS SHAPED LIKE THE INVOICE EMAIL, AND THAT IS THE FIX ──────
+           *
+           * This used to send text/plain whose entire body was a greeting-less
+           * sentence and a bare 200-character URL ending in 43 random
+           * characters. An invoice from the same server, to the same address,
+           * arrived; this did not — because that shape is a near-perfect match
+           * for a phishing template, and filters score it accordingly.
+           *
+           * So it now carries what every other message this system sends
+           * carries: a subject naming the business, a greeting to a named
+           * person, an HTML part with a real anchor, and a sign-off. The plain
+           * part is kept in step for clients that will not render HTML — a
+           * message with no text//alternative is itself a spam signal.
+           *
+           * The URL stays visible in the text part on purpose. A link a person
+           * can read and paste is one they can check before clicking, and it is
+           * the only thing that still works when the button does not render.
+           */
+          const from = siteName ? ` from ${siteName}` : ''
+          const result = await sendAs(siteId, {
             to: String(customer.email),
-            subject: 'Your sign-in link',
+            subject: siteName ? `Sign in to your account with ${siteName}` : 'Sign in to your account',
             text:
-              `Here is your link to sign in and see your jobs:\n\n` +
-              `${base}/portal/enter/${token}\n\n` +
-              `It works once and lasts ${LINK_MINUTES} minutes. ` +
-              `If you did not ask for it, you can ignore this email.`,
-          }).catch(() => undefined)
+              `Good day${who ? ` ${who}` : ''},\n\n` +
+              `Here is your link to sign in and see your account${from}:\n\n` +
+              `${url}\n\n` +
+              `It works once and lasts ${LINK_MINUTES} minutes.\n\n` +
+              `If you did not ask for it, you can ignore this email.\n\n` +
+              (siteName ? `Kind regards,\n${siteName}` : ''),
+            html: `<div style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#16191d;line-height:1.5">
+  <p>Good day${who ? ` ${escapeHtml(who)}` : ''},</p>
+  <p>Here is your link to sign in and see your account${from ? ` from ${escapeHtml(siteName)}` : ''}.</p>
+  <p style="margin:20px 0"><a href="${escapeHtml(url)}" style="background:#16191d;color:#ffffff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Sign in to your account</a></p>
+  <p style="color:#667085;font-size:13px">It works once and lasts ${LINK_MINUTES} minutes. If you did not ask for it, you can ignore this email.</p>
+  ${siteName ? `<p>Kind regards,<br>${escapeHtml(siteName)}</p>` : ''}
+</div>`,
+          })
+
+          /*
+           * ── A FAILED SEND IS RECORDED, NEVER RETURNED ─────────────────────
+           *
+           * sendAs answers with {ok:false, error} rather than throwing, and
+           * this call used to discard the result entirely — so a genuine
+           * failure left no trace anywhere, and the shop had no way to tell
+           * "we sent it, check your spam" from "it never left the building".
+           *
+           * The CUSTOMER is still told nothing: the anti-enumeration rule at
+           * the top of this file is not negotiable, and the caller's answer is
+           * unchanged. This writes to the activity log, which only staff read.
+           *
+           * Logged against the customer, so it surfaces on the timeline of the
+           * person who did not get their link — which is where somebody
+           * investigating "they say it never arrived" will actually look.
+           */
+          if (!result.ok) {
+            await logActivity(
+              siteId,
+              { userId: 0, userName: 'Customer portal' },
+              {
+                entity: 'customer',
+                entityId: customerId,
+                action: 'portal_link_failed',
+                // The address and the reason. No token — an activity log is
+                // read by more people than the mailbox is, and a sign-in link
+                // in one would be a credential sitting in a report.
+                detail: `Sign-in link to ${String(customer.email)} could not be sent — ${result.error}`,
+              },
+            ).catch(() => undefined)
+          }
         }
       }
     }

@@ -1,5 +1,5 @@
 import 'server-only'
-import { send as sendMail, isConfigured as mailConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { escapeHtml } from '../orderEmailTemplate'
 import { formatCell, exportCell } from '../reportBuilder/format'
 import { resolveReport } from '../reportBuilder/resolve'
@@ -67,7 +67,7 @@ async function execute(
   schedule: ReportSchedule,
   dueAt: Date,
 ): Promise<SendOutcome> {
-  if (!mailConfigured()) {
+  if (!(await isConfiguredFor(siteId))) {
     return { status: 'skipped', reason: 'Email is not set up on this site.' }
   }
 
@@ -161,7 +161,7 @@ async function execute(
   const delivered: string[] = []
   const failures: string[] = []
   for (const to of recipients) {
-    const sent = await sendMail({ to, subject, text, html, attachments })
+    const sent = await sendAs(siteId, { to, subject, text, html, attachments })
     if (sent.ok) delivered.push(to)
     else failures.push(`${to}: ${sent.error}`)
   }

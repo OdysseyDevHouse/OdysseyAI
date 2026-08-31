@@ -20,7 +20,7 @@ import {
   type BadgeTone,
   type ComboboxOption,
 } from '@/components/ui'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty } from '@/lib/decimals'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { MatchKind, ScannedHeader, ScannedLine } from '@/lib/import/documentScan'
 import { rememberSupplierCodeAction, scanDocumentAction } from './documentScanActions'
@@ -454,7 +454,7 @@ function ScanRow({
         {line.unitCostExcl === null ? (
           <span className="text-muted">—</span>
         ) : (
-          formatMoney(line.unitCostExcl)
+          formatCost(line.unitCostExcl)
         )}
       </td>
     </tr>

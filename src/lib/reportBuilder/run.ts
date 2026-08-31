@@ -615,7 +615,19 @@ function dateColumnExpr(source: CatalogSource): string {
   return `t.\`${source.dateColumn}\``
 }
 
-function filterClause(expr: string, f: SpecFilter): { sql: string; params: unknown[] } | null {
+/**
+ * One filter, as a parameterised SQL fragment.
+ *
+ * Exported because the advanced filter on the list screens compiles the SAME
+ * conditions against the SAME catalog, and a second implementation of "what
+ * does `notContains` mean about NULLs" is how the two would quietly disagree.
+ * `expr` is catalog-authored SQL; `f.value` is user text and only ever leaves
+ * here as a bound parameter.
+ */
+export function filterClause(
+  expr: string,
+  f: SpecFilter,
+): { sql: string; params: unknown[] } | null {
   const need = valueCount(f.op)
   const value = f.value ?? ''
   const value2 = f.value2 ?? ''

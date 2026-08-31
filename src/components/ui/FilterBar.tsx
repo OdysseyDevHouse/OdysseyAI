@@ -17,19 +17,36 @@ import { Close, Filter } from './icons'
 export function FilterBar({
   children,
   clearHref,
+  inToolbar = false,
   className = '',
 }: {
   /** <FilterChip>s. Falsy children are fine — an unset filter renders nothing. */
   children: ReactNode
   /** Href that clears every filter. Omit to leave out the "Clear all" link. */
   clearHref?: string
+  /**
+   * The strip is the second row of a TableToolbar rather than a band of its
+   * own on the page.
+   *
+   * The page gutter belongs to the free-standing case; inside a toolbar the
+   * surrounding element already owns the horizontal padding, so repeating it
+   * indents the chips past the controls they sit under. Only the gap above
+   * them is this component's to set. A flag rather than callers passing
+   * `-mx-6` to cancel the default: a screen that got the negative margin
+   * slightly wrong drew chips hanging off the edge of the card.
+   */
+  inToolbar?: boolean
   className?: string
 }) {
   const chips = Children.toArray(children).filter(Boolean)
   if (chips.length === 0) return null
 
   return (
-    <div className={`flex flex-wrap items-center gap-2 px-6 pb-3 ${className}`}>
+    <div
+      className={`flex flex-wrap items-center gap-2 ${
+        inToolbar ? 'pt-3' : 'px-6 pb-3'
+      } ${className}`}
+    >
       <Filter size={14} className="text-faint" aria-hidden />
       {chips}
       {clearHref && chips.length > 1 && (

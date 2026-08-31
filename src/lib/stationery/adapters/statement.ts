@@ -4,6 +4,7 @@ import {
   STATEMENT_CLOSINGS,
   STATEMENT_DUE_LABELS,
   STATEMENT_HEADINGS,
+  isPaymentAdvice,
   type StatementVariant,
 } from '../../statements/variant'
 import { AGING_BUCKETS } from '../../agingBuckets'
@@ -51,16 +52,19 @@ export function statementTokens(
     sitePhone?: string | null
     siteEmail?: string | null
     siteRegistrationNumber?: string | null
+    /** What this business calls its tax. Absent falls back to VAT. */
+    taxLabel?: string
   } = {},
 ): RenderInput {
   const { site, account } = data
 
-  const isRemittance = variant === 'remittance'
+  // A remittance or a receipt: one payment, so no ladder and no credit limit.
+  const isRemittance = isPaymentAdvice(variant)
 
   const values: TokenValues = {
     'site.name': site.name,
     'site.vatNumber': site.vatNumber,
-    'site.vatLine': site.vatNumber ? `VAT no. ${site.vatNumber}` : '',
+    'site.vatLine': site.vatNumber ? `${extra.taxLabel ?? 'VAT'} no. ${site.vatNumber}` : '',
     'site.registrationNumber': extra.siteRegistrationNumber ?? null,
     'site.registrationLine': extra.siteRegistrationNumber
       ? `Reg. no. ${extra.siteRegistrationNumber}`
@@ -120,7 +124,22 @@ export function statementTokens(
 
     'totals.opening': data.openingBalance,
     'totals.closing': data.closingBalance,
-    'totals.dueNow': data.dueNow,
+    /*
+     * ── THE FIGURE THE HEADLINE NAMES, WHICHEVER DOCUMENT THIS IS ──────────
+     *
+     * The shipped template pairs the caption {totals.dueLabel} with the figure
+     * {totals.dueNow}, so the two MUST answer for the same document. Bound
+     * straight to `dueNow` they did not: a payment advice sets dueNow to zero
+     * — nothing is overdue on money that has already moved — so a receipt
+     * printed "Amount received R0.00" beside a line showing the full payment,
+     * and a remittance had the same fault waiting in it.
+     *
+     * On a payment advice the figure the label names is the amount of the
+     * payment, which is the closing balance. Fixed HERE rather than in the
+     * template, because a site that has drawn its own statement design would
+     * otherwise carry the bug forward for ever.
+     */
+    'totals.dueNow': isRemittance ? Math.abs(data.closingBalance) : data.dueNow,
     'totals.dueLabel': STATEMENT_DUE_LABELS[variant],
     'totals.settlementDiscount':
       data.settlementDiscount && data.settlementDiscount > 0 ? data.settlementDiscount : null,
@@ -175,6 +194,7 @@ export function statementTokens(
     values,
     sections: { lines, aging },
     capabilities: { isOwner: false, granted: new Set() },
+    taxLabel: extra.taxLabel,
   }
 }
 

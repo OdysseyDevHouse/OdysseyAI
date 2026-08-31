@@ -147,8 +147,15 @@ export function SalePane({
    * counterhand looking for a tender pad that will never open.
    */
   const tendered = !returning && docType === 'invoice'
-  const finishLabel = returning ? 'Refund' : tendered ? 'Pay' : 'Save'
-  const finishTone = returning ? 'warning' : tendered ? 'success' : 'primary'
+  /*
+   * A basket of empties pays money OUT, which is the same act as a return even
+   * though the till is not in return mode — so it takes the same word and the
+   * same amber. Read off the total rather than a mode, because there is no mode
+   * to read: the cashier just rang up bottles. See `returnablePrice`.
+   */
+  const paysOut = tendered && totals.doc.totalIncl < 0
+  const finishLabel = returning || paysOut ? 'Refund' : tendered ? 'Pay' : 'Save'
+  const finishTone = returning || paysOut ? 'warning' : tendered ? 'success' : 'primary'
 
   /*
    * ── WHAT A DEPOSIT DOES TO THIS PANE ──────────────────────────────────────
@@ -174,7 +181,25 @@ export function SalePane({
   const depositCredit =
     Math.round(Math.min(Math.max(depositHeld, 0), Math.max(totals.doc.totalIncl, 0)) * 100) / 100
   const hasDeposit = depositCredit > 0
-  const balanceDue = Math.round(Math.max(0, totals.doc.totalIncl - depositCredit) * 100) / 100
+  /*
+   * ── THE CLAMP GUARDS THE DEPOSIT, NOT THE SIGN OF THE TOTAL ───────────────
+   *
+   * `Math.max(0, …)` wrapped this whole subtraction and hid a real figure. A
+   * basket of returnables owes the CUSTOMER money — empties handed in over the
+   * counter — and it rendered 0.00 on the key, so the cashier pressed a button
+   * saying nothing was owed and money came out of the drawer anyway.
+   *
+   * `depositCredit` is already capped at the total above, so that subtraction
+   * cannot go negative by itself. A negative here therefore means one thing
+   * only: the basket nets below zero, which is a bottle return and a real
+   * outcome rather than an error. It shows as a minus, and the button says
+   * Refund.
+   *
+   * The clamp stays where it belongs — on the deposit, where a customer holding
+   * more deposit than the bill is owed nothing further and the excess goes back
+   * as its own refund event rather than as change out of this drawer.
+   */
+  const balanceDue = Math.round((totals.doc.totalIncl - depositCredit) * 100) / 100
 
   const now = useMinuteClock()
 

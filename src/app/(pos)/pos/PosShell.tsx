@@ -25,6 +25,8 @@ import {
   storedPosMenus,
   storedInstructions,
   storedSettings,
+  variantChildren,
+  storedVariantAxes,
 } from '@/lib/posOffline/catalog'
 import {
   activeMenu,
@@ -39,6 +41,9 @@ import {
   listParkedOffline,
 } from '@/lib/posOffline/parkOffline'
 import { cancelOfflineSale } from '@/lib/posOffline/cancelOffline'
+import { endOfflineSession } from '@/lib/posOffline/signInOffline'
+import { scanOk, scanFailed } from '@/lib/posOffline/scanSound'
+import SaleCommentsModal, { type SaleCommentField } from './SaleCommentsModal'
 import { stockShortfalls, stockWarning } from '@/lib/stockWarning'
 import { type PosMode } from '@/lib/posMode'
 import { salePaperRoute } from '@/lib/salePaper'
@@ -80,6 +85,8 @@ import {
   scanAction,
   lotsForProductAction,
   serialsForProductAction,
+  variantChildrenAction,
+  variantAxesAction,
   finaliseSaleAction,
   createCreditNoteAction,
   saveSaleAction,
@@ -97,6 +104,7 @@ import {
   productForTillAction,
   type OpenTab,
   type VoidEventPayload,
+  saveSaleCommentsAction,
 } from './actions'
 import { NewTableModal, type NewTableDetails } from './NewTableModal'
 import { tillSignOutAction } from './pinActions'
@@ -217,8 +225,10 @@ import type { Capability } from '@/lib/site/permissions'
 import type { OfflineSale } from '@/lib/posOffline/types'
 import { WeighModal } from './WeighModal'
 import { LotModal } from './LotModal'
+import { VariantModal } from './VariantModal'
 import { SerialModal } from './SerialModal'
 import type { TillLot } from '@/lib/site/batches'
+import type { VariantAxis } from '@/lib/site/productVariants'
 import { lotCaptureFor, type LotCapture } from '@/lib/gs1'
 import { GiftCardModal, GiftCardBalanceModal } from './GiftCardModal'
 import { lookupGiftCardAction } from './giftCardActions'
@@ -275,6 +285,7 @@ export default function PosShell({
   siteId,
   siteName,
   siteVatNumber = null,
+  siteTaxLabel = 'VAT',
   operatorName,
   operatorUserId,
   terminals,
@@ -288,6 +299,10 @@ export default function PosShell({
   cashRounding,
   depositMinPct,
   depositAllowWalkin,
+  returnToLogin,
+  idleLogoutSeconds,
+  scanSounds,
+  saleCommentFields,
   canOverrideDiscount,
   canOverridePrice,
   canVoid,
@@ -318,6 +333,8 @@ export default function PosShell({
   siteName: string
   /** For the till-printed slip's header — a tax invoice names the vendor. */
   siteVatNumber?: string | null
+  /** What this shop calls its tax, for the offline slip. See taxIdentity.ts. */
+  siteTaxLabel?: string
   operatorName: string
   operatorUserId: number
   terminals: Terminal[]
@@ -360,6 +377,31 @@ export default function PosShell({
   depositMinPct: number
   /** Whether a deposit may be taken with no customer named. */
   depositAllowWalkin: boolean
+  /**
+   * Whether the till returns to the PIN pad after every transaction — finalised
+   * and saved alike. See `pos_return_to_login` in settings.ts.
+   */
+  returnToLogin: boolean
+  /**
+   * Seconds of inactivity before the till signs the operator out; 0 is never.
+   * See `pos_idle_logout_seconds` — a basket with lines in it suspends it.
+   */
+  idleLogoutSeconds: number
+  /**
+   * Whether ringing something up makes a noise — `pos_scan_sounds`.
+   *
+   * Read through `soundOn` below rather than directly, which is where the
+   * retail-and-hospitality-only rule is applied: a trade counter is a desk in a
+   * showroom, and the mis-scan this catches does not happen there.
+   */
+  scanSounds: boolean
+  /**
+   * The questions this shop asks on a sale, and which the pad may prompt for.
+   *
+   * Empty on a shop that has defined none, which is what makes the gate below
+   * cost nothing on the overwhelming majority of tills.
+   */
+  saleCommentFields: SaleCommentField[]
   canOverrideDiscount: boolean
   canOverridePrice: boolean
   /**
@@ -485,6 +527,16 @@ export default function PosShell({
   undoLimit: number
 }) {
   const [state, dispatch] = useSaleState()
+
+  /**
+   * Does this till beep?
+   *
+   * The shop's setting AND the screen it is running, because the rule is
+   * "retail and hospitality, not invoicing" — see `pos_scan_sounds`. Resolved
+   * once here rather than tested at each call site: there are two of those and
+   * they must not be able to disagree about which tills are silent.
+   */
+  const soundOn = scanSounds && !invoicing
 
   /**
    * The price type this sale is being rung at, chosen at the till.
@@ -783,6 +835,10 @@ export default function PosShell({
        the server answers `required: false` when the shop has the rule off, so
        a site that never turns it on behaves exactly as before. */
     clock: { required: boolean; clockedIn: boolean; operatorName: string }
+    /* Whether an open shift is demanded at all. Answered by the same read as
+       `clock`, so the gate below never has to weigh two half-arrived facts.
+       See `pos_require_shift` in settings.ts. */
+    shiftRequired: boolean
   } | null>(null)
 
   const [pending, startTransition] = useTransition()
@@ -794,6 +850,28 @@ export default function PosShell({
   })
   const [confirmClear, setConfirmClear] = useState(false)
   const [tendering, setTendering] = useState(false)
+  /**
+   * A payment waiting on the sale's custom comments.
+   *
+   * Holds the ARGUMENTS `finalise` was called with, so answering the questions
+   * re-enters it unchanged rather than reconstructing a payment from state that
+   * may have moved. Null when nothing is waiting, which is every sale on a shop
+   * that has not set any of this up.
+   */
+  const [askingComments, setAskingComments] = useState<null | {
+    paid: { tenderTypeId: number; amount: number; reference?: string | null }[]
+    voucherCodes: string[]
+    tipInfo: { declared: Record<number, number>; serviceChargeWaived: boolean }
+  }>(null)
+  /**
+   * Answers captured for the payment in flight, read once by the finalise that
+   * follows and cleared by it.
+   *
+   * A ref rather than state because `finalise` reads it in the same tick it is
+   * set — a state write would not be visible until the next render, and the
+   * sale would post with no comments attached.
+   */
+  const pendingComments = useRef<{ fieldId: number; value: string }[] | null>(null)
   const [pickingCustomer, setPickingCustomer] = useState(false)
   const [showingSaved, setShowingSaved] = useState(false)
   const [showingOutbox, setShowingOutbox] = useState(false)
@@ -904,6 +982,26 @@ export default function PosShell({
   const [serialsLoading, setSerialsLoading] = useState(false)
 
   /**
+   * A variant group waiting for somebody to say WHICH one (070).
+   *
+   * Carries the qty for the same reason `lotting` does: the modal does not
+   * change it, so a "3" typed before the tile was tapped has to survive the
+   * round trip or three shirts silently become one.
+   *
+   * Unlike the lots and serials beside it there is no `loading` flag and no
+   * empty-list fallback. The members are ordinary cached products, so offline
+   * they are read straight out of Dexie with no round trip at all — and a group
+   * with no members never reaches here, because `browseForTill` will not draw a
+   * tile for one (see LIVE_GROUP_ONLY).
+   */
+  const [picking, setPicking] = useState<{
+    parent: TillProduct
+    qty: number
+    children: TillProduct[]
+    axes: VariantAxis[]
+  } | null>(null)
+
+  /**
    * The product being asked about, if any. Null closes the dialog.
    *
    * Same shape as `editing` above, and for the same reason: one nullable piece
@@ -978,6 +1076,7 @@ export default function PosShell({
       slipRef.current = receiptDataFromBasket({
         siteName,
         vatNumber: siteVatNumber,
+        taxLabel: siteTaxLabel,
         documentNumber,
         // LOCAL date, matching how the sale is stamped.
         documentDate: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`,
@@ -1666,6 +1765,11 @@ export default function PosShell({
           priceStructureId,
           limit: 200,
           terminalId: terminal?.id ?? null,
+          /* Groups, not their members — the till draws one tile per garment
+             and asks for the size at the tap. `browseOffline` filters the
+             same way against its own cache, so the grid does not rearrange
+             itself the moment the network drops. */
+          includeVariantParents: true,
         }).catch(() => browseOffline(siteId, openDepartment))
       : browseOffline(siteId, openDepartment)
     lookup
@@ -1791,6 +1895,28 @@ export default function PosShell({
 
   function add(product: TillProduct, qty = 1) {
     /*
+     * A variant GROUP is not a thing that can be sold — it is a question (070).
+     *
+     * FIRST, ahead of even the offline guard, because every check below asks
+     * something about the item being sold and a group is not one: it holds no
+     * stock, has no price of its own, and `recordMovement` refuses it outright.
+     * A parent that got past here would fail at the tender pad with the card
+     * already out, which is the failure this whole chain exists to prevent.
+     *
+     * The modal calls add() again with the CHILD, so everything below still
+     * runs — a variant that is also a batch item gets its lot prompt next, for
+     * free, rather than needing this branch to know about lots.
+     *
+     * Here rather than at the tile for the reason the four checks below are
+     * here: every add path converges on add(), and the one a narrower check
+     * would miss is the scanner.
+     */
+    if (product.hasVariants) {
+      openVariantPicker(product, qty)
+      return
+    }
+
+    /*
      * Some products cannot be sold with the server gone, and it is kinder to refuse
      * at the tile than at the tender pad with a queue waiting. A serial-tracked item
      * needs the serial table to pick a unit and to mark it sold in the same
@@ -1903,7 +2029,58 @@ export default function PosShell({
       return
     }
 
+    /* The success beep, at the one moment a line actually lands.
+       Every early return above opens a modal INSTEAD of adding — a weight, a
+       serial, a lot, an instruction — and beeping there would tell a cashier
+       who is looking elsewhere that an item went in when it has not. */
+    if (soundOn) scanOk()
     dispatch({ type: 'ADD', product, qty, resolvedIncl: priceFor(product) })
+  }
+
+  /**
+   * Open the size/colour picker for a group (070).
+   *
+   * Read ONLINE where possible and from Dexie otherwise, the same order every
+   * other till read follows. The offline path is not a degraded fallback here:
+   * members are ordinary cached products and the axis labels ride the catalog
+   * feed, so a till that has been off the network all day opens the same picker
+   * with the same captions.
+   *
+   * Opened only once the members are in hand, rather than opening empty and
+   * filling in. A picker that appears with no buttons and then grows them is
+   * one a cashier taps through at the wrong moment — and this read is local or
+   * one round trip, not something worth a spinner.
+   */
+  function openVariantPicker(parent: TillProduct, qty: number) {
+    startTransition(async () => {
+      const [children, axes] = till.online
+        ? await Promise.all([
+            variantChildrenAction(parent.id, priceStructureId, terminal?.id ?? null).catch(() =>
+              variantChildren(siteId, parent.id),
+            ),
+            variantAxesAction(parent.id).catch(async () =>
+              (await storedVariantAxes(siteId))[parent.id] ?? [],
+            ),
+          ])
+        : await Promise.all([
+            variantChildren(siteId, parent.id),
+            storedVariantAxes(siteId).then((all) => all[parent.id] ?? []),
+          ])
+
+      /*
+       * A group with nothing sellable in it.
+       *
+       * `browseForTill` will not draw a tile for one, so reaching this means
+       * the shop emptied the group since this till last synced. Saying so is
+       * the only honest answer — an empty picker would look like a broken
+       * till, and adding the parent is exactly what must never happen.
+       */
+      if (children.length === 0) {
+        toast.error(`${parent.description} has no sizes on this till right now.`)
+        return
+      }
+      setPicking({ parent, qty, children, axes })
+    })
   }
 
   /**
@@ -1927,6 +2104,11 @@ export default function PosShell({
         add(product, product.scannedQty ?? 1)
         return
       }
+      /* Nothing matched. THE noise this feature is really for: a cashier
+         working a trolley is watching the goods, not the screen, so the search
+         panel below is feedback they never see — and the item goes into the bag
+         unscanned. Fired before the dispatch so it leads the re-render. */
+      if (soundOn) scanFailed()
       dispatch({ type: 'SHOW_SEARCH', term: code })
       if (results.length === 0 && !searching) {
         toast.info(`No barcode matched "${code}" — searching instead.`)
@@ -2110,6 +2292,36 @@ export default function PosShell({
     return plan.ok ? round(plan.tips.reduce((sum, t) => sum + t.amount, 0), 2) : 0
   }
 
+  /**
+   * Attach the pad's answers to the document that has just posted.
+   *
+   * ── NOT AWAITED, AND THAT IS THE DESIGN ─────────────────────────────────
+   *
+   * The money is already taken and the receipt is already going up. Holding
+   * either on a comment write would make a slow database the customer's
+   * problem, and refusing a completed sale because a note failed to save would
+   * be worse than the missing note — which anybody can add from the document
+   * screen afterwards.
+   *
+   * So a failure is REPORTED and nothing is undone. Silence would be the wrong
+   * answer too: a shop that turned these on wants to know when one did not
+   * land, or it discovers the gap at an audit.
+   *
+   * Offline this is skipped entirely — there is no document id yet, and the
+   * queued sale carries no comments. Said plainly at the call site rather than
+   * failing quietly.
+   */
+  function saveComments(documentId: number, comments: { fieldId: number; value: string }[] | null) {
+    if (!comments || comments.length === 0 || !documentId) return
+    void saveSaleCommentsAction(documentId, comments)
+      .then((result) => {
+        if (!result.ok) toast.error(`The sale went through, but its details did not save: ${result.error}`)
+      })
+      .catch(() => {
+        toast.error('The sale went through, but its details did not save. Add them from the sale.')
+      })
+  }
+
   function finalise(
     paid: { tenderTypeId: number; amount: number; reference?: string | null }[],
     voucherCodes: string[] = [],
@@ -2125,6 +2337,37 @@ export default function PosShell({
       serviceChargeWaived: false,
     },
   ) {
+    /*
+     * ── DOES THIS PAYMENT OWE US SOME ANSWERS? ──────────────────────────────
+     *
+     * Asked here rather than at the pad because THIS is where the tenders are
+     * known — the pad can be reached and left several ways, and a check at each
+     * one is a check that will be missed by whichever path is added next. Every
+     * finalise comes through this function.
+     *
+     * Asked ONCE per payment: `pendingComments` is set by the dialog and read
+     * on the way back in, so re-entering does not re-prompt. Cleared here
+     * whatever happens, so a cancelled sale cannot leave answers behind for the
+     * next customer.
+     *
+     * Costs nothing where a shop has no sale fields — `saleCommentFields` is
+     * empty and the whole test short-circuits on its length.
+     */
+    const answered = pendingComments.current
+    pendingComments.current = null
+    if (
+      answered === null &&
+      saleCommentFields.length > 0 &&
+      paid.some((p) => tenders.find((t) => t.id === p.tenderTypeId)?.asksCustomComments)
+    ) {
+      setAskingComments({ paid, voucherCodes, tipInfo })
+      return
+    }
+    /* Held for the save that follows the post. `finalise` has several exits and
+       the document id only exists at the end of them, so the answers wait here
+       rather than being threaded through every branch. */
+    const commentsToSave = answered
+
     /*
      * A waived service charge is recorded BEFORE the sale posts, not after.
      *
@@ -2176,6 +2419,9 @@ export default function PosShell({
         setTendering(false)
         setEditing(null)
         setExchangeCredit(null)
+        // The comments go on the SALE half of the exchange, not the credit
+        // note: they are answers about the purchase being made.
+        saveComments(result.sale.documentId, commentsToSave)
         setReceipt({
           number: result.sale.documentNumber,
           change: round(result.sale.change + result.cashBack, 2),
@@ -2294,6 +2540,11 @@ export default function PosShell({
       setEditing(null)
       setConfirmClear(false)
       setPickingCustomer(false)
+      /* The comments, once there is a document to hang them on. AFTER the money
+         and not awaited: a sale that posts and then loses a note is fixable
+         from the document screen, and holding the receipt on a text box would
+         make it the customer's problem. See saveSaleCommentsAction. */
+      saveComments(result.documentId, commentsToSave)
       setReceipt({
         number: result.documentNumber,
         change: result.change,
@@ -2567,6 +2818,16 @@ export default function PosShell({
     }
     toast.success('Sale saved on this till.')
     dispatch({ type: 'CLEAR' })
+    /* The offline saved path, and it must sign out for the same reason the
+       online one does — a till that has lost its line is still a shared till.
+       Placed inside `parkLocally` rather than at its call sites so both reach
+       it: `park()` routes here when it starts offline AND when a transport
+       failure drops it here mid-save.
+
+       `signOutToPinPad` clears the LOCAL session before the server cookie for
+       exactly this path — see there. The pad it returns to signs the next
+       cashier in against the offline verifiers this device holds. */
+    endOfTransaction()
   }
 
   /**
@@ -2611,7 +2872,9 @@ export default function PosShell({
               state.customer?.name || state.customerName.trim() || tabCustomer.trim() || 'Walk-in',
             customerVatNo: state.customer?.vatNumber ?? null,
             customerPhone: state.customer?.phone ?? null,
-            reference: (tabLabel ?? '').trim() || null,
+            /* No `reference` — see park(). A deposit does not rename the
+               document, and stamping the tab's identity here would undo on the
+               deposit path exactly what park() stopped doing. */
             personCount: tabPeople,
             visitTypeId: tabVisitTypeId,
             terminalId: terminal?.id ?? null,
@@ -2649,12 +2912,39 @@ export default function PosShell({
     })
   }
 
-  function park(label?: string, details?: { people: number | null; visitTypeId: number | null }) {
+  function park(
+    label?: string,
+    details?: { people: number | null; visitTypeId: number | null; customerName?: string },
+  ) {
+    /* Passed through rather than read off `tabCustomer`, for the same reason
+       `label` is: nameTab calls this in the same tick as its own setState, so
+       the state still holds the PREVIOUS tab's customer when this runs. */
+    const nameFallback = details?.customerName?.trim() || ''
     if (!till.online) {
       startTransition(parkLocally)
       return
     }
-    const reference = (label ?? tabLabel ?? '').trim() || null
+    /*
+     * ── THE TAB'S NAME IS NOT ITS REFERENCE ────────────────────────────────
+     *
+     * This used to send the tab's identity — table number, or the customer's
+     * name when there was no table — as `reference`. On a named tab that wrote
+     * the SAME STRING into `reference` and `customer_name`, and on a numbered
+     * one it put the table number in a column meant for the customer's own
+     * paperwork. Either way `reference` was spent saying something the row
+     * already said.
+     *
+     * A saved sale is named by `customer_name` now, which is where the name was
+     * going all along and what every screen that lists one already falls back
+     * to: the floor tile (`table ?? label ?? customerName`) and Saved sales
+     * (which titles rows by the customer outright). Nothing displayed loses a
+     * word — the copy was redundant, not load-bearing.
+     *
+     * `reference` is therefore left alone here, free for what a reference is
+     * for: the customer's own order or job number, entered against the sale.
+     * The table number is not lost either — it lives on the TABLE the bill is
+     * seated at, which is the thing that actually knows about tables.
+     */
     const people = details ? details.people : tabPeople
     const visitTypeId = details ? details.visitTypeId : tabVisitTypeId
     startTransition(async () => {
@@ -2665,17 +2955,28 @@ export default function PosShell({
       try {
         saved = await saveSaleAction(state.documentId, {
           customerId: state.customer?.id ?? null,
+          /*
+           * WHAT THIS SAVED SALE IS CALLED.
+           *
+           * An attached debtor wins — that is a real customer record and a tab
+           * name typed at the counter must not overwrite it — then a name typed
+           * onto the basket, then the one typed into the naming dialog. 'Walk-in'
+           * last, so the column is never blank and never has to be read as one.
+           *
+           * This is the sale's NAME as well as its customer, now that the
+           * reference no longer carries a copy. See the note above.
+           */
           customerName:
             state.customer?.name ||
             state.customerName.trim() ||
             tabCustomer.trim() ||
+            nameFallback ||
             'Walk-in',
           customerVatNo: state.customer?.vatNumber ?? null,
           customerPhone: state.customer?.phone ?? null,
-          /* What the floor will CALL this bill. Without it the tab lists under
-             the customer's name, or "N/A" — findable, but not what the waiter
-             typed. */
-          reference,
+          /* No `reference`. It is the customer's own paperwork number, not this
+             till's name for the bill — see the note at the top of park(). Left
+             untouched so a reference already on the document survives a park. */
           personCount: people,
           visitTypeId,
           terminalId: terminal?.id ?? null,
@@ -2724,7 +3025,12 @@ export default function PosShell({
         toast.error(parked.error)
         return
       }
-      toast.success(reference ? `${reference} saved.` : 'Sale saved.')
+      /* Named by the tab's identity — the table number, or the customer — which
+         is what the waiter will look for on the floor. Not the reference: that
+         is the customer's number for the job and means nothing to the person
+         who just pressed Save. */
+      const savedAs = (label ?? tabLabel ?? '').trim() || nameFallback
+      toast.success(savedAs ? `${savedAs} saved.` : 'Sale saved.')
       /* The second of the three commit points. `saved.documentId` rather than
          `state.documentId`: a basket saved for the first time only acquired an
          id on the call above, and that is exactly the case with the most to
@@ -2765,6 +3071,11 @@ export default function PosShell({
         refreshTables()
       }
       router.refresh()
+      /* The saved half of `pos_return_to_login`. A parked basket ends a
+         transaction exactly as a paid one does — and if only the paid path
+         signed out, a cashier could hold the session open all day by saving
+         every sale, which is the hole the setting exists to close. */
+      endOfTransaction()
     })
   }
 
@@ -3339,6 +3650,30 @@ export default function PosShell({
      * swap, which posts cleanly with a zero tender and is a real thing shops do.
      */
     if (totals.doc.totalIncl < 0) {
+      /*
+       * ── EXCEPT A BOTTLE RETURN, WHICH PAYS OUT AT THE TENDER PAD ──────────
+       *
+       * A basket whose negative side is all returnables is a shop buying empties
+       * back, and it goes through the ordinary pad: the cashier picks Cash, the
+       * amount leaves the drawer, and `finaliseDocument` stores the tender
+       * negative so the till-up reconciles. Nothing here needs authorising —
+       * the deposit is the shelf price and no one may type another figure.
+       *
+       * The refusal below still stands for everything else. A slip paying out
+       * for ordinary goods has no reason code and no supervisor against it, and
+       * that is what a credit note carries.
+       *
+       * Only the negative lines are tested. A basket that also SELLS something
+       * is fine — a customer buying R100 of liquor against R30 of empties nets
+       * to R70 owed and never reaches this branch at all.
+       */
+      const paysOutForEmptiesOnly = state.lines.every((l) =>
+        l.qty * l.unitPriceIncl < 0 ? l.productType === 'returnable' : true,
+      )
+      if (paysOutForEmptiesOnly) {
+        setTendering(true)
+        return
+      }
       toast.info(
         'This slip pays money back. Take the returned goods on their own — use Credit sale for a receipted return, or the Return toggle without one.',
       )
@@ -3411,7 +3746,8 @@ export default function PosShell({
           customerName: state.customer?.name ?? null,
           customerVatNo: state.customer?.vatNumber ?? null,
           customerPhone: state.customer?.phone ?? null,
-          reference: (tabLabel ?? '').trim() || null,
+          /* No `reference` — see park(). An order is named by its customer,
+             which this path has already insisted on above. */
           terminalId: terminal?.id ?? null,
           terminalCode: terminal?.code ?? null,
           priceStructureId,
@@ -3505,6 +3841,13 @@ export default function PosShell({
           if (pushed?.ok) await autoSendToKitchen(documentId)
         })
       }
+      /* Closing a table IS saving it — the commit point the block above calls
+         the first of three — so it ends a transaction for the purposes of
+         `pos_return_to_login`, exactly as parking a counter basket does.
+
+         Outside the `if (documentId)` above: a table closed with nothing yet
+         written to the server still ends the waiter's turn at this till. */
+      endOfTransaction()
       return
     }
 
@@ -3516,7 +3859,17 @@ export default function PosShell({
     setClosePrompt(true)
   }
 
-  /** The dialog came back with a name. Open a tab on it, or park onto it. */
+  /**
+   * The dialog came back with a name. Open a tab on it, or park onto it.
+   *
+   * `label` is this tab's IDENTITY — the table number, or the customer's name
+   * when there is no table. It is what the header shows, what Split labels its
+   * picker with, and what tells Save and Close that this basket already knows
+   * what it is. That is why it still falls back to the name: an unnumbered tab
+   * with a blank identity would send the waiter back through this same dialog.
+   *
+   * It is NOT what gets stored as the document's reference — see park().
+   */
   function nameTab(details: NewTableDetails, closing: boolean) {
     const label = details.tableNumber || details.customerName
     setTabLabel(label)
@@ -3532,6 +3885,10 @@ export default function PosShell({
       park(label, {
         people: details.personCount || null,
         visitTypeId: details.visitTypeId,
+        /* The name the dialog just took, for the same same-tick reason `label`
+           is passed: `tabCustomer` still holds the previous tab's when this
+           runs, and this is the value that NAMES the saved sale. */
+        customerName: details.customerName,
       })
       return
     }
@@ -4524,6 +4881,7 @@ export default function PosShell({
           canCashup: result.canCashup,
           open: result.shift !== null,
           clock: result.clock,
+          shiftRequired: result.shiftRequired,
         })
       })
       .catch(() => {})
@@ -4538,9 +4896,20 @@ export default function PosShell({
    * outage into a closed shop — the exact failure the whole offline path exists
    * to prevent. Those sales queue with whatever shift KV.shift last held, which
    * is the one the till was already trading on.
+   *
+   * NOR IS A SHOP THAT DOES NOT USE SHIFTS. `shiftRequired` is the shop's own
+   * answer to whether a drawer is counted here at all — see `pos_require_shift`
+   * — and where it is false there is nothing for this gate to ask: the sale
+   * carries no shift, which `sales_documents.shift_id` has always permitted.
+   *
+   * It suppresses the GATE, not shifts. A site with the rule off may still open
+   * one from the till menu, and the moment it does `shiftStatus.open` goes true
+   * and every sale carries it again, exactly as it would anywhere else.
    */
   const closedGate =
-    till.online && shiftStatus !== null && !shiftStatus.open ? shiftStatus : null
+    till.online && shiftStatus !== null && shiftStatus.shiftRequired && !shiftStatus.open
+      ? shiftStatus
+      : null
 
   /**
    * Does the clock-on gate stand in front of the sale right now?
@@ -4554,11 +4923,25 @@ export default function PosShell({
    * entry is a server record, so a till that lost the line could not clear this
    * gate however long the cashier stood there. Turning a network outage into a
    * closed shop is the failure the offline path exists to prevent.
+   *
+   * ── WHY IT WAITS ON `closedGate` AND NOT ON `shiftStatus.open` ────────────
+   *
+   * Those were the same fact until `pos_require_shift` existed, and they are
+   * not any more. A shop that does not use shifts never has one open, so a
+   * condition testing `open` would hold this gate shut for ever there — the
+   * clock rule would read as configured, gate nobody, and the shop would find
+   * out when it ran payroll off hours that were never recorded.
+   *
+   * The thing this actually wants to say is "the shift gate is not standing in
+   * front of me", which is what `closedGate === null` means in both worlds. The
+   * ordering the docblock above describes is preserved exactly: where a shift
+   * IS required, `closedGate` stands until one is open, and this waits behind
+   * it as it always did.
    */
   const clockGate =
     till.online &&
     shiftStatus !== null &&
-    shiftStatus.open &&
+    closedGate === null &&
     shiftStatus.clock.required &&
     !shiftStatus.clock.clockedIn
       ? shiftStatus.clock
@@ -4598,11 +4981,149 @@ export default function PosShell({
           canCashup: result.canCashup,
           open: result.shift !== null,
           clock: result.clock,
+          shiftRequired: result.shiftRequired,
         })
       })
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminal?.id])
+
+  /**
+   * Hand the screen back to the PIN pad.
+   *
+   * The same two steps the gates' `onExit` handlers already take — clear the
+   * till cookie, then refresh so PosEntry falls back to `PosGate` now rather
+   * than on the next load. Extracted because three more callers want it: the
+   * two ends of `pos_return_to_login` and the idle timer.
+   *
+   * ── NOT AWAITED BY ITS CALLERS, AND WHY THAT IS SAFE HERE ─────────────────
+   *
+   * `onExit` on the table gate awaits a bill release before signing out,
+   * because a claim left behind outlives the session that owns it. Nothing
+   * calling THIS holds a claim: the return-to-login callers fire after a sale
+   * has committed and cleared, and the idle timer only runs on an empty basket.
+   * So there is nothing to hand back first.
+   */
+  const signOutToPinPad = useCallback(() => {
+    startTransition(async () => {
+      /*
+       * BOTH HALVES, AND THE LOCAL ONE FIRST.
+       *
+       * There are two records of who is standing at this till and PosEntry
+       * consults both: a cookie the server reads, and an `OfflineSession` in
+       * IndexedDB that lets a disconnected till sign somebody in at all. It
+       * shows the PIN pad only when NEITHER answers, so clearing one leaves the
+       * operator signed in by the other.
+       *
+       * The local one goes first because it is the one that cannot fail for a
+       * reason outside this machine. `tillSignOutAction` is a server action, so
+       * on a till with no line it throws — and if that ran first, an offline
+       * sign-out would abort before touching the session that is actually
+       * holding the operator in place. Caught for the same reason: offline is
+       * the case this ordering exists to serve, so the throw is expected there
+       * and must not stop the refresh below.
+       */
+      await endOfflineSession(siteId).catch(() => {})
+      await tillSignOutAction().catch(() => {})
+      router.refresh()
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, siteId])
+
+  /**
+   * The till has finished with a transaction — return to the PIN pad if the
+   * shop asked for that.
+   *
+   * Called from every commit point rather than from an effect watching the
+   * basket empty, and deliberately: a basket goes empty for reasons that are
+   * not a completed transaction — Clear, a void, recalling a saved sale over
+   * the top of one — and an effect could not tell those apart. The commit
+   * points can, because they are the places that know a sale actually landed.
+   *
+   * A no-op when the setting is off, which is the default, so every one of
+   * those call sites costs nothing on a till that never turns this on.
+   */
+  const endOfTransaction = useCallback(() => {
+    if (!returnToLogin) return
+    signOutToPinPad()
+  }, [returnToLogin, signOutToPinPad])
+
+  /**
+   * Sign the operator out after a stretch of inactivity — `pos_idle_logout_seconds`.
+   *
+   * ── WHY THE BASKET SUSPENDS IT ────────────────────────────────────────────
+   *
+   * A basket with lines in it is a customer at the counter. Signing out over
+   * one has two possible behaviours and both are worse than doing nothing:
+   * throw the lines away, which destroys work somebody is mid-way through, or
+   * park them, which files a sale under an operator who is about to stop being
+   * the operator. Neither beats leaving the screen up for a till that is
+   * plainly in use — and the state this setting actually exists for is a till
+   * abandoned BETWEEN customers, which is an empty one.
+   *
+   * The timer restarts when the basket empties, because `lines.length` is in
+   * the dependency list: clearing the last line is itself a re-arm.
+   *
+   * ── WHY THE LISTENERS ARE PASSIVE AND THE TIMER IS A DEADLINE ─────────────
+   *
+   * The obvious shape — clear and re-set a timeout on every event — runs on
+   * every keystroke of a scanned barcode and every pointer move. Instead the
+   * listeners only stamp a ref, and one interval asks whether the deadline has
+   * passed. That makes the cost of an event a single assignment, which matters
+   * on a machine that is also drawing a sale screen.
+   *
+   * `keydown` covers the scanner: a USB scanner is a keyboard, so a shop
+   * working through a long delivery never trips this even with nobody touching
+   * the screen.
+   *
+   * ── AND WHY IT DOES NOT RUN WHILE A GATE IS UP ────────────────────────────
+   *
+   * The gates ARE the signed-out state as far as the cashier is concerned, and
+   * a PIN pad that signs you out is a loop. `operatorName` is still set behind
+   * them, so nothing else would stop it.
+   */
+  const lastActivityRef = useRef(Date.now())
+  /* Read off `state` directly rather than through the `basketHasLines` below:
+     that one is declared further down the component, and hoisting it up here
+     to share it would move a `const` past readers this file already has. The
+     dependency is the length, so the effect re-arms when the basket empties. */
+  const idleBasketBusy = state.lines.length > 0
+  useEffect(() => {
+    if (idleLogoutSeconds <= 0) return
+    if (idleBasketBusy) return
+    if (closedGate || clockGate || gateUndecided) return
+
+    lastActivityRef.current = Date.now()
+    const note = () => {
+      lastActivityRef.current = Date.now()
+    }
+
+    /* Capture phase, so a handler that stops propagation — a modal trapping
+       keys, of which this screen has several — cannot make the till look idle
+       while somebody is plainly using it. Passive: none of these are cancelled. */
+    const options = { capture: true, passive: true } as const
+    window.addEventListener('pointerdown', note, options)
+    window.addEventListener('keydown', note, options)
+    window.addEventListener('wheel', note, options)
+    window.addEventListener('touchstart', note, options)
+
+    const deadlineMs = idleLogoutSeconds * 1000
+    /* Once a second regardless of the setting: the check is a subtraction, and
+       a coarser tick would make a 15-second timeout fire at up to 20. */
+    const interval = window.setInterval(() => {
+      if (Date.now() - lastActivityRef.current < deadlineMs) return
+      window.clearInterval(interval)
+      signOutToPinPad()
+    }, 1000)
+
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('pointerdown', note, options)
+      window.removeEventListener('keydown', note, options)
+      window.removeEventListener('wheel', note, options)
+      window.removeEventListener('touchstart', note, options)
+    }
+  }, [idleLogoutSeconds, idleBasketBusy, closedGate, clockGate, gateUndecided, signOutToPinPad])
 
   /**
    * Send-to-kitchen: fetch the delta, PRINT, then mark — in that order, so a
@@ -7052,6 +7573,25 @@ export default function PosShell({
         />
       )}
 
+      {picking && (
+        <VariantModal
+          parent={picking.parent}
+          childrenProducts={picking.children}
+          axes={picking.axes}
+          priceFor={priceFor}
+          onCancel={() => setPicking(null)}
+          onConfirm={(child) => {
+            const { qty } = picking
+            setPicking(null)
+            /* Back through add() with the CHILD, which is an ordinary product
+               — so it meets the offline guard, the weigh check, the lot prompt
+               and everything else exactly as it would had it been tapped
+               directly. Nothing here needs to know which of those apply. */
+            add(child, qty)
+          }}
+        />
+      )}
+
       {giftBalanceOpen && <GiftCardBalanceModal onClose={() => setGiftBalanceOpen(false)} />}
 
       {asking && (
@@ -7076,13 +7616,44 @@ export default function PosShell({
         />
       )}
 
+      {/* Between the pad and the post. Answering re-enters `finalise` with the
+          arguments it was called with, so nothing about the payment is rebuilt
+          from state that may have moved since. */}
+      <SaleCommentsModal
+        open={askingComments !== null}
+        fields={saleCommentFields}
+        pending={pending}
+        onCancel={() => setAskingComments(null)}
+        onConfirm={(values) => {
+          const held = askingComments
+          if (!held) return
+          setAskingComments(null)
+          /* A ref, because `finalise` reads it in this same tick — see the
+             declaration. Empty answers are dropped by the action. */
+          pendingComments.current = Object.entries(values).map(([fieldId, value]) => ({
+            fieldId: Number(fieldId),
+            value,
+          }))
+          finalise(held.paid, held.voucherCodes, held.tipInfo)
+        }}
+      />
+
       <ReceiptModal
         open={receipt !== null}
         documentNumber={receipt?.number ?? ''}
         change={receipt?.change ?? 0}
         tip={receipt?.tip}
         posted={(receipt?.documentId ?? 0) > 0}
-        onClose={() => setReceipt(null)}
+        /* The finalised half of `pos_return_to_login`, and it fires HERE rather
+           than where the sale committed. The receipt carries the document
+           number and the change owed — signing out the moment the money landed
+           would take both off the screen before the cashier had counted the
+           change into a customer's hand. Dismissing this dialog is the point at
+           which the transaction is genuinely finished with. */
+        onClose={() => {
+          setReceipt(null)
+          endOfTransaction()
+        }}
         canPrint={
           (receipt?.documentId ?? 0) > 0 ||
           /* A basket snapshot only becomes paper on a THERMAL till. The trade

@@ -35,6 +35,39 @@ type Row = Record<string, unknown>
 /** How deep nesting may go before we call it a cycle. */
 const MAX_DEPTH = 5
 
+/**
+ * The cost column this site prices an ingredient off.
+ *
+ * ── WHY THIS IS A SETTING AND NOT A CONSTANT ─────────────────────────────
+ *
+ * This file used to read `average_cost` unconditionally. That is right on a
+ * site costing at weighted average and wrong on one costing at last — and
+ * every OTHER surface that reads a cost already asks: tillSearch.ts,
+ * specials.ts and onlineOrders.ts all branch on `cost_basis`. A recipe costing
+ * off a different column than the till it is sold on is the two halves of the
+ * same question giving different answers.
+ *
+ * It also made a typed cost look broken. On a `last` site, typing 180 on the
+ * mince moves last_cost and leaves average_cost at what was actually paid;
+ * recipes went on reading the average, so the recipe screen showed the old
+ * figure and every burger kept its old cost. Nothing was wrong with the write
+ * — the reader was looking at the wrong column.
+ *
+ * ── WHY average_cost IS STILL NOT TYPEABLE ───────────────────────────────
+ *
+ * On an `average` site a typed cost STILL does not move a recipe, and that is
+ * correct rather than a gap: average_cost is a consequence of purchases, and
+ * updateProduct refuses to let a form overwrite it precisely so a typed number
+ * cannot falsify stock valuation. On such a site the honest way to move an
+ * ingredient's cost is to buy it at the new price, and the GRV cascade already
+ * carries that through to every recipe.
+ */
+async function costColumn(siteId: number): Promise<'last_cost' | 'average_cost'> {
+  const { getSetting } = await import('./settings')
+  const basis = await getSetting(siteId, 'cost_basis').catch(() => 'average')
+  return basis === 'last' ? 'last_cost' : 'average_cost'
+}
+
 export type RecipeLine = {
   id: number
   parentId: number
@@ -85,10 +118,14 @@ export type ResolvedComponent = {
 }
 
 export async function listRecipe(siteId: number, parentId: number): Promise<RecipeLine[]> {
+  // Interpolated, not bound: a column name cannot be a placeholder, and the
+  // value is one of two literals this file chose — never anything a caller sent.
+  const cost = await costColumn(siteId)
+
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT r.id, r.parent_id, r.component_id, r.qty, r.wastage_pct, r.position,
-            p.code, p.description, p.product_type, p.average_cost, p.stock_on_hand
+            p.code, p.description, p.product_type, p.${cost} AS unit_cost, p.stock_on_hand
        FROM product_recipes r
        JOIN products p ON p.id = r.component_id
       WHERE r.parent_id = ?
@@ -106,16 +143,18 @@ export async function listRecipe(siteId: number, parentId: number): Promise<Reci
     qty: toNum(r.qty),
     wastagePct: toNum(r.wastage_pct),
     position: Number(r.position),
-    unitCostExcl: toNum(r.average_cost),
+    unitCostExcl: toNum(r.unit_cost),
     stockOnHand: toNum(r.stock_on_hand),
   }))
 }
 
 export async function getRefer(siteId: number, productId: number): Promise<ReferLink | null> {
+  const cost = await costColumn(siteId)
+
   const row = await siteQueryOne<Row>(
     siteId,
     `SELECT f.product_id, f.target_id, f.factor, f.method,
-            p.code, p.description, p.product_type, p.average_cost, p.stock_on_hand
+            p.code, p.description, p.product_type, p.${cost} AS unit_cost, p.stock_on_hand
        FROM product_refers f
        JOIN products p ON p.id = f.target_id
       WHERE f.product_id = ?`,
@@ -133,7 +172,7 @@ export async function getRefer(siteId: number, productId: number): Promise<Refer
     // A site that has not run 103 yet returns undefined here, and the
     // behaviour it should keep is the one it already has.
     method: row.method === 'normal' ? 'normal' : 'subtract',
-    unitCostExcl: toNum(row.average_cost),
+    unitCostExcl: toNum(row.unit_cost),
     targetStockOnHand: toNum(row.stock_on_hand),
   }
 }
@@ -218,10 +257,13 @@ export async function resolveComponents(
     return { ok: true, components: merge(components) }
   }
 
-  // Everything else is its own component: one of it consumes one of it.
+  // Everything else is its own component: one of it consumes one of it. This
+  // is the LEAF — the only rung that reads a real purchased cost, so it is the
+  // one the site's basis actually decides.
+  const cost = await costColumn(siteId)
   const row = await siteQueryOne<Row>(
     siteId,
-    'SELECT id, code, description, average_cost FROM products WHERE id = ?',
+    `SELECT id, code, description, ${cost} AS unit_cost FROM products WHERE id = ?`,
     [productId],
   )
   if (!row) return { ok: false, error: 'That product no longer exists.' }
@@ -234,7 +276,7 @@ export async function resolveComponents(
         code: String(row.code),
         description: String(row.description),
         qtyPerUnit: 1,
-        unitCostExcl: toNum(row.average_cost),
+        unitCostExcl: toNum(row.unit_cost),
       },
     ],
   }
@@ -596,4 +638,135 @@ export async function usedInRecipes(
     code: String(r.code),
     description: String(r.description),
   }))
+}
+
+/* ── Cost cascade ───────────────────────────────────────────────────────── */
+
+/**
+ * Rewrites the derived cost of everything built out of a product whose own
+ * cost has just moved.
+ *
+ * Reprice tomatoes and every burger containing tomatoes costs more, including
+ * burgers reached through another made item. A GRV that lands a new tomato
+ * price, or somebody typing a cost on the ingredient's own form, both end here.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────
+ *
+ * A composed product's stored cost is a CACHE. The truth is
+ * compositionCost() — the same function the till charges a sale at — and the
+ * stored figure exists because reports, the price list and the product grid
+ * read a column rather than resolving a tree per row.
+ *
+ * A cache with nothing to invalidate it is just a wrong number that looks
+ * authoritative. Before this, the cost was written only when the composed
+ * product ITSELF was saved: repricing an ingredient moved the ingredient and
+ * left every burger reporting the margin it had last time somebody opened it.
+ * The till charged the right cost and every report disagreed with the till.
+ *
+ * ── WHY IT REPLACED cascadeReferCosts RATHER THAN JOINING IT ─────────────
+ *
+ * That function did exactly this for refer ladders and stopped at the recipe
+ * table. But the two link kinds INTERLEAVE: a six-pack of burgers is a refer
+ * onto a recipe, and a recipe can list a six-pack as an ingredient. Two walks
+ * that each know one table would each stop at the first rung of the other
+ * kind, so a cost would climb halfway up a mixed chain and halt — the worst
+ * outcome, because a partly-updated chain looks updated.
+ *
+ * One walk over the UNION of both tables has no such seam. cascadeReferCosts
+ * now delegates here and is kept only as its name.
+ *
+ * ── WHY IT WALKS EVERY DEPENDANT ─────────────────────────────────────────
+ *
+ * Breadth-first over all dependants, not one branch. A ladder with a 6-pack
+ * and a 10-pack on the same single, or an onion used by twenty burgers, must
+ * reach all of them; following one branch would leave the rest un-costed.
+ *
+ * Depth-capped rather than cycle-detected, matching resolveComponents. `seen`
+ * also stops a diamond — two burgers in one platter — being costed twice.
+ *
+ * ── NEVER FAILS ITS CALLER ───────────────────────────────────────────────
+ *
+ * A cost that could not be recomputed leaves the stored figure alone and the
+ * caller still succeeds. Refusing to receive stock because an unrelated recipe
+ * upstairs is missing an ingredient would make a broken setup impossible to
+ * edit your way out of — and the goods are on the shelf either way. Returns
+ * how many were rewritten so a caller can say so.
+ */
+export async function cascadeCompositionCosts(
+  siteId: number,
+  changedId: number,
+): Promise<number> {
+  /*
+   * Deeper than resolveComponents' MAX_DEPTH, and deliberately.
+   *
+   * That cap limits how far DOWN one product resolves; this limits how far UP
+   * a change climbs, and the two are different chains. A pallet -> case ->
+   * six-pack -> single ladder with a recipe at the bottom is already four
+   * rungs before any nesting.
+   */
+  const MAX = 8
+
+  let frontier = [changedId]
+  const seen = new Set<number>([changedId])
+  let written = 0
+
+  for (let depth = 0; depth < MAX && frontier.length; depth++) {
+    const placeholders = frontier.map(() => '?').join(',')
+
+    // Both link tables in one query. UNION rather than UNION ALL: a product
+    // that reaches the frontier twice — an ingredient listed by a recipe that
+    // a refer also points at — is one product to recost, not two.
+    const rows = await siteQuery<Row>(
+      siteId,
+      `SELECT p.id, p.product_type
+         FROM product_recipes r
+         JOIN products p ON p.id = r.parent_id
+        WHERE r.component_id IN (${placeholders})
+        UNION
+       SELECT p.id, p.product_type
+         FROM product_refers f
+         JOIN products p ON p.id = f.product_id
+        WHERE f.target_id IN (${placeholders})`,
+      [...frontier, ...frontier],
+    )
+
+    const next: number[] = []
+    for (const r of rows) {
+      const id = Number(r.id)
+      if (seen.has(id)) continue
+      seen.add(id)
+      next.push(id)
+
+      // Resolved from the product's OWN type rather than assumed from which
+      // table found it: a row built before the type was enforced would
+      // otherwise resolve as its own single component and write the
+      // ingredient's cost straight onto the made item.
+      const cost = await compositionCost(
+        siteId,
+        id,
+        String(r.product_type ?? 'normal') as ProductTypeId,
+      ).catch(() => null)
+
+      // Null is "could not resolve", and 0 is very nearly always the same
+      // thing — a recipe whose ingredients genuinely cost nothing has no cost
+      // to spread. Writing the zero would replace one wrong figure with
+      // another while destroying whatever was there.
+      if (cost === null || cost <= 0) continue
+
+      await siteExecute(
+        siteId,
+        'UPDATE products SET last_cost = ?, average_cost = ? WHERE id = ?',
+        [cost.toFixed(4), cost.toFixed(4), id],
+      )
+      written++
+    }
+
+    // The ones just rewritten are the next frontier: a burger whose cost moved
+    // may itself be an ingredient in a platter. Products skipped above are
+    // still walked THROUGH — an unresolvable rung must not sever the chain
+    // above it.
+    frontier = next
+  }
+
+  return written
 }

@@ -162,6 +162,16 @@ export type SupplierListOptions = {
    * updated_at is ON UPDATE CURRENT_TIMESTAMP, so every save moves it.
    */
   updatedSince?: Date
+  /**
+   * Extra WHERE fragments from the list screen's advanced filter, with their
+   * bound values.
+   *
+   * Pre-compiled by lib/site/listFilterSql.ts. The contract is narrow on
+   * purpose: the fragments are catalog-authored SQL against THIS query's `s`
+   * alias, and every user value is already a `?` in `extraParams`.
+   */
+  extraWhere?: readonly string[]
+  extraParams?: readonly unknown[]
   sort?: SupplierSort
   direction?: 'asc' | 'desc'
   limit?: number
@@ -195,6 +205,14 @@ function buildWhere(opts: SupplierListOptions): { sql: string; params: unknown[]
   if (opts.updatedSince) {
     where.push('s.updated_at >= ?')
     params.push(opts.updatedSince)
+  }
+
+  /* The advanced filter's conditions, ANDed onto everything above. Pushed LAST
+     and as a pair, because the placeholders in these fragments are positional:
+     the values must arrive in the same order the fragments do. */
+  if (opts.extraWhere?.length) {
+    where.push(...opts.extraWhere)
+    params.push(...(opts.extraParams ?? []))
   }
 
   return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', params }

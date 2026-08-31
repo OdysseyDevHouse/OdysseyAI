@@ -1,7 +1,7 @@
 'use client'
 
 import { DataTable, Icons, type Column } from '@/components/ui'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty } from '@/lib/decimals'
 import type { AdjustmentLine } from '@/lib/site/stockAdjustments'
 
 /**
@@ -93,7 +93,7 @@ export default function AdjustmentLinesTable({
       key: 'cost',
       header: 'Unit cost',
       numeric: true,
-      cell: (l) => formatMoney(l.unitCostExcl),
+      cell: (l) => formatCost(l.unitCostExcl),
       sortValue: (l) => l.unitCostExcl,
     },
     {

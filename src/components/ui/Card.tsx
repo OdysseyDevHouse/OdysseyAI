@@ -10,9 +10,27 @@ import type { ReactNode } from 'react'
  * A brand-toned heading marks itself and the card turns its own left border
  * into the rule — see the note in globals.css.
  */
-export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
+export function Card({
+  children,
+  className = '',
+  id,
+}: {
+  children: ReactNode
+  className?: string
+  /**
+   * Names this card so the global search can land ON it.
+   *
+   * A settings result opens `/setup/terminals#idle-logout`, and <SettingAnchor>
+   * in the layout scrolls to the element with that id and flashes it. Set it
+   * wherever `SETTINGS` in lib/settingSearch.ts names an anchor — the test in
+   * scripts/test-setting-search.ts fails if an anchor names a card that no
+   * screen renders.
+   */
+  id?: string
+}) {
   return (
     <div
+      id={id}
       data-card
       className={`rounded-card border border-border bg-surface shadow-card ${className}`}
     >

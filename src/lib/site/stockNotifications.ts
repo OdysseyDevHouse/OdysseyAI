@@ -1,7 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteExecute } from '../siteDb'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { absoluteUrl } from '../appUrl'
 import { createPublicStoreToken } from '../publicStoreToken'
 import { publicSiteName } from '../sites'
@@ -59,7 +59,7 @@ export type StockNotifyResult = { sent: number; failed: number }
 /** The sweep — rides the storefront housekeeping tick. */
 export async function sweepStockNotifications(siteId: number): Promise<StockNotifyResult> {
   const empty: StockNotifyResult = { sent: 0, failed: 0 }
-  if (!isConfigured()) return empty
+  if (!(await isConfiguredFor(siteId))) return empty
 
   const context = await storefrontContext(siteId)
   if (!context) return empty
@@ -102,7 +102,7 @@ export async function sweepStockNotifications(siteId: number): Promise<StockNoti
 
     const link = absoluteUrl(`/store/${storeToken}/p/${productId}`)
     try {
-      const outcome = await send({
+      const outcome = await sendAs(siteId, {
         to: String(row.email),
         subject: `${product.description} is back in stock`,
         text: `Good news — ${product.description} is back at ${storeName}.\n\n${link}\n\nYou asked to be told; this is the once-off note.`,

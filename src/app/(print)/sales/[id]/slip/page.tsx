@@ -1,8 +1,10 @@
 import { notFound } from 'next/navigation'
 import { qrContextFor } from '@/lib/site/qrLinks'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { getSetting } from '@/lib/site/settings'
+import { slipComments } from '@/lib/site/customFields'
 import { siteQuery, siteQueryOne } from '@/lib/siteDb'
 import { loyaltyQueryOne } from '@/lib/site/loyaltyDb'
 import { memberIdForCustomer } from '@/lib/site/loyalty'
@@ -47,13 +49,17 @@ export default async function SlipPage({
   const doc = await getDocument(site.id, id)
   if (!doc || doc.status !== 'finalised' || doc.docType !== 'invoice') notFound()
 
-  const [tenderRows, footerText, promotionNames] = await Promise.all([
+  const [tenderRows, footerText, comments, promotionNames] = await Promise.all([
     siteQuery<Record<string, unknown>>(
       site.id,
       'SELECT tender_name, amount, change_given, reference FROM sales_tenders WHERE document_id = ? ORDER BY id',
       [id],
     ),
     getSetting(site.id, 'receipt_footer_text').catch(() => ''),
+    /* The custom comments marked to print. Filtered and formatted by
+       slipComments, so this route and the two renderers cannot disagree about
+       which of them belong on paper. */
+    slipComments(site.id, id),
     /* The names behind the specials this sale's lines were discounted by, so
        the slip can say WHICH promotion took the money off rather than only how
        much. Only the ids actually on the document are asked for. */
@@ -107,7 +113,7 @@ export default async function SlipPage({
 
   const receipt = receiptDataFor(
     doc,
-    { name: site.displayName, vatNumber: site.vatNumber },
+    { name: site.displayName, vatNumber: site.vatNumber, taxLabel: await taxLabel(site.id) },
     tenders,
     {
       printedAt: new Date().toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' }),
@@ -115,6 +121,7 @@ export default async function SlipPage({
       loyalty,
       copyNumber: doc.printCount,
       footerText,
+      comments,
       specialNames: promotionNames,
       qrLinks: await qrContextFor(site.id),
     },

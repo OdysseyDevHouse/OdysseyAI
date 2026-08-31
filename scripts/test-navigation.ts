@@ -267,12 +267,29 @@ const missingItems = allNavItems().filter((href) => !indexed.has(href))
 check('every menu item is in the index', missingItems, [])
 
 /* One entry per destination. A duplicate renders the same screen twice in the
-   palette and makes the keyboard cursor land on it twice on the way past. */
+   palette and makes the keyboard cursor land on it twice on the way past.
+
+   SETTINGS are exempt, and only settings: a screen contributes one row of its
+   own plus one per setting it holds, all sharing its route — six rows for
+   /setup/terminals, which is the point of indexing settings at all. They are
+   still held to the rule among THEMSELVES below, so two entries for the same
+   setting remain a failure. */
+const screens = index.filter((h) => !h.setting)
 const indexSeen = new Set<string>()
-const indexDupes = index
+const indexDupes = screens
   .map((h) => h.href)
   .filter((href) => (indexSeen.has(href) ? true : (indexSeen.add(href), false)))
 check('no screen is indexed twice', [...new Set(indexDupes)], [])
+
+/* And no setting twice — the same rule, applied to the rows exempted above.
+   Keyed on the full href, which carries the anchor, so two settings on one
+   screen are distinct and a genuine duplicate still fails. */
+const settingSeen = new Set<string>()
+const settingDupes = index
+  .filter((h) => h.setting)
+  .map((h) => `${h.href}|${h.label}`)
+  .filter((key) => (settingSeen.has(key) ? true : (settingSeen.add(key), false)))
+check('no setting is indexed twice', [...new Set(settingDupes)], [])
 
 /* ── Descriptions ───────────────────────────────────────────────────────────
    The line under a result is what makes an unfamiliar screen choosable, so a

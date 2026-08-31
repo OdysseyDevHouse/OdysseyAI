@@ -270,30 +270,108 @@ async function main() {
   }
 
   /*
-   * A slip that pays money BACK is refused, with the way through.
+   * A slip that pays money BACK is refused — unless it is buying empties.
    *
-   * Not a limitation to be routed around later: this document has no refund
-   * tender, no return reason and no supervisor against it, all of which a payout
-   * needs. Left unrefused, `netPayable` clamps to zero and a cash tender is
-   * recorded as CHANGE — money out of the drawer on a slip that says the
-   * customer paid nothing. It balances, and it is wrong.
+   * The exception is narrow and the rule below is what keeps it that way. A
+   * payout for ORDINARY goods still has no refund tender, no return reason and
+   * no supervisor against it, all of which a credit note carries. Left
+   * unrefused, `netPayable` clamps to zero and a cash tender is recorded as
+   * CHANGE — money out of the drawer on a slip that says the customer paid
+   * nothing. It balances, and it is wrong.
+   *
+   * Deliberately NOT a returnable line: since bottle returns post, one here
+   * would take the payout path and fail on the tender instead, and the check
+   * would pass while proving nothing about the guard it is named for.
    */
   const payoutDraft = await saveDraft(SITE, actor, {
     docType: 'invoice',
     customerName: 'Walk-in',
     lines: [
       { productId: normalId, productCode: `TST${stamp}N`, description: 'Test normal', productType: 'normal', qty: 1, unitPriceIncl: 10, vatRatePct: vatRate, unitCostExcl: 8 },
-      { productId: returnableId, productCode: `TST${stamp}R`, description: 'Test returnable', productType: 'returnable', qty: -2, unitPriceIncl: 50, vatRatePct: vatRate, unitCostExcl: 2 },
+      { productId: normalId, productCode: `TST${stamp}N`, description: 'Test normal back', productType: 'normal', qty: -2, unitPriceIncl: 50, vatRatePct: vatRate, unitCostExcl: 8 },
     ],
   })
   if (payoutDraft.ok) {
     const payout = await finaliseDocument(SITE, actor, {
       documentId: payoutDraft.id,
-      tenders: [{ tenderTypeId: cash.id, amount: 0 }],
+      tenders: [{ tenderTypeId: cash.id, amount: 90 }],
     })
     ok('*** a slip that owes the CUSTOMER money is refused ***', !payout.ok, !payout.ok ? payout.error : 'it posted')
+    ok(
+      '  and it is refused as a PAYOUT, not as a bad tender',
+      !payout.ok && payout.error.includes('credit note'),
+      !payout.ok ? payout.error : '',
+    )
     await discardDocument(SITE, payoutDraft.id)
   }
+
+  /*
+   * ── BUYING EMPTIES BACK: THE BOTTLE STORE CASE ────────────────────────────
+   *
+   * A customer brings in six empties and takes cash for them. Both halves have
+   * to be right at once, and they are carried by different fields:
+   *
+   *   · the QUANTITY is positive, so `qty * stockDirectionFor('returnable')`
+   *     (+1) books the bottles ONTO the shelf, and
+   *   · the PRICE is negative, so the slip owes the customer money.
+   *
+   * A negative quantity would flip both and send the empties back out of the
+   * door — which is why the sign lives where it does. See `returnablePrice`.
+   */
+  const emptiesBefore = await stockOf(returnableId)
+  const emptiesDraft = await saveDraft(SITE, actor, {
+    docType: 'invoice',
+    customerName: 'Walk-in',
+    lines: [{ productId: returnableId, productCode: `TST${stamp}R`, description: 'Empties', productType: 'returnable', qty: 6, unitPriceIncl: -5, vatRatePct: vatRate, unitCostExcl: 2 }],
+  })
+  ok('*** a returnable line may be priced negative ***', emptiesDraft.ok, emptiesDraft.ok ? '' : emptiesDraft.error)
+  if (emptiesDraft.ok) {
+    const ed = (await getDocument(SITE, emptiesDraft.id))!
+    ok('  the slip owes the customer 30', Math.abs(ed.totalIncl + 30) < 0.005, String(ed.totalIncl))
+    ok(
+      '  and it still balances',
+      Math.round((ed.subtotalExcl + ed.vatTotal) * 100) === Math.round(ed.totalIncl * 100),
+      `${ed.subtotalExcl}+${ed.vatTotal} vs ${ed.totalIncl}`,
+    )
+
+    // The amount is entered POSITIVE — "thirty rand out of the drawer".
+    const shortPay = await finaliseDocument(SITE, actor, {
+      documentId: emptiesDraft.id,
+      tenders: [{ tenderTypeId: cash.id, amount: 20 }],
+    })
+    ok('  paying out the wrong amount is refused', !shortPay.ok, !shortPay.ok ? shortPay.error : 'it posted')
+
+    const paid = await finaliseDocument(SITE, actor, {
+      documentId: emptiesDraft.id,
+      tenders: [{ tenderTypeId: cash.id, amount: 30 }],
+    })
+    ok('*** the payout posts ***', paid.ok, paid.ok ? paid.documentNumber : paid.error)
+    if (paid.ok) {
+      ok(
+        '*** and the empties came IN, not out ***',
+        (await stockOf(returnableId)) === emptiesBefore + 6,
+        `${emptiesBefore} -> ${await stockOf(returnableId)}`,
+      )
+      const paidTenders = await siteQuery<any>(SITE, 'SELECT amount, change_given FROM sales_tenders WHERE document_id = ?', [emptiesDraft.id])
+      /* Negative, so a till-up is a plain SUM with no CASE on direction — the
+         same convention a credit note's refund rows follow. */
+      ok('  the tender is stored NEGATIVE', toNum(paidTenders[0]?.amount) === -30, JSON.stringify(paidTenders[0]))
+      /* The bug this caught: `planTips` read the money handed over as an
+         over-tender and recorded change against it, counting the same thirty
+         rand out of the drawer twice. */
+      ok('  and no change is recorded against it', toNum(paidTenders[0]?.change_given) === 0)
+    }
+  }
+
+  /* A negative price is a licence for ONE type. Anything else is a typo, or a
+     client composing something it should not, and stays refused. */
+  const badPrice = await saveDraft(SITE, actor, {
+    docType: 'invoice',
+    customerName: 'Walk-in',
+    lines: [{ productId: normalId, productCode: `TST${stamp}N`, description: 'Test normal', productType: 'normal', qty: 1, unitPriceIncl: -10, vatRatePct: vatRate, unitCostExcl: 8 }],
+  })
+  ok('*** a negative price on a NORMAL product is still refused ***', !badPrice.ok, !badPrice.ok ? badPrice.error : 'it saved')
+  if (badPrice.ok) await discardDocument(SITE, badPrice.id)
 
   /* A quote may still not carry one — it is a promise about a future sale, and
      cannot promise to take back what has not gone out. */

@@ -2,9 +2,11 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { customerExecute, customerQuery, customerQueryOne, customerTransaction } from './customerDb'
 import { round, toNum, formatMoney } from '../decimals'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { buildStatement, type StatementFormat } from '../statements/render'
 import { renderStatementPdf } from '../statements/pdf'
+import { payLinkUrl } from './payLinks'
+import { escapeHtml } from './invoiceEmail'
 import { logActivity, type Actor } from './activityLog'
 import { periodContaining, toStatementCycle } from '../statementCycles'
 
@@ -327,7 +329,7 @@ export async function processRun(
     [runId],
   )
 
-  if (!isConfigured()) {
+  if (!(await isConfiguredFor(siteId))) {
     await customerExecute(
       siteId,
       `UPDATE customer_statement_runs
@@ -389,12 +391,54 @@ async function sendOne(
     })
     if (!data) return fail('That account no longer exists.')
 
-    const pdf = await renderStatementPdf(data, 'statement', siteId)
+    /*
+     * The account's pay link, or null.
+     *
+     * ── ONE LINK, ON BOTH THE PAPER AND THE BUTTON ──────────────────────────
+     *
+     * The same durable slug goes in the email body and in the QR on the PDF, so
+     * a customer who prints the statement and one who taps the button reach the
+     * same page asking for the same balance.
+     *
+     * Never allowed to break a run. A statement with no pay link is still a
+     * statement, and a monthly batch failing halfway because a gateway lookup
+     * blinked would be a far worse outcome than a missing button — this is
+     * unattended work that nobody is watching.
+     *
+     * Only for a POSITIVE balance: an account in credit owes nothing, and a
+     * button asking it to pay would be asking for money it is owed.
+     */
+    const payUrl =
+      data.closingBalance > 0.005
+        ? await payLinkUrl(siteId, 'customer_account', item.customerId).catch(() => null)
+        : null
 
-    const result = await send({
+    const pdf = await renderStatementPdf(data, 'statement', siteId, payUrl)
+
+    const result = await sendAs(siteId, {
       to: item.email,
       subject: `Statement — ${data.account.code} — ${period.to}`,
-      text: plainBody(data.account.name, data.closingBalance, data.dueNow, siteName, data.account.code),
+      text: plainBody(
+        data.account.name,
+        data.closingBalance,
+        data.dueNow,
+        siteName,
+        data.account.code,
+        payUrl,
+      ),
+      // Only when there is something to click. See htmlBody.
+      ...(payUrl
+        ? {
+            html: htmlBody(
+              data.account.name,
+              data.closingBalance,
+              data.dueNow,
+              siteName,
+              data.account.code,
+              payUrl,
+            ),
+          }
+        : {}),
       attachments: [
         {
           filename: `statement-${data.account.code}-${period.to}.pdf`,
@@ -515,6 +559,7 @@ function plainBody(
   overdue: number,
   siteName: string,
   code: string,
+  payUrl?: string | null,
 ): string {
   const lines = [
     `Dear ${name},`,
@@ -528,6 +573,8 @@ function plainBody(
     lines.push('', `${formatMoney(overdue)} of this is past its due date and we would appreciate settlement.`)
   }
 
+  if (payUrl) lines.push('', 'Pay this account online:', payUrl)
+
   lines.push(
     '',
     `Please quote account ${code} with any payment.`,
@@ -538,6 +585,46 @@ function plainBody(
     siteName,
   )
   return lines.join('\n')
+}
+
+/**
+ * The same statement, with a button.
+ *
+ * ── WHY THIS PATH HAD NO HTML AT ALL ──────────────────────────────────────
+ *
+ * A statement run sent plain text and a PDF, which was complete until there was
+ * something to CLICK. A pay link in plain text is a bare URL somebody has to
+ * copy, and the whole point of the feature is that settling should take one tap
+ * from the phone the mail was opened on.
+ *
+ * So the HTML alternative exists only when there is a link to put in it — with
+ * no gateway the plain body is still the whole message, and sending markup for
+ * its own sake would be a worse email, not a better one.
+ *
+ * Inline styles and a table, because email clients support almost nothing else.
+ * Deliberately plain: a statement of fact with a button, not a mailshot.
+ */
+function htmlBody(
+  name: string,
+  balance: number,
+  overdue: number,
+  siteName: string,
+  code: string,
+  payUrl: string,
+): string {
+  return `<div style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#16191d;line-height:1.5">
+  <p>Dear ${escapeHtml(name)},</p>
+  <p>Please find your statement attached, showing a balance of <strong>${formatMoney(balance)}</strong>.</p>
+  ${
+    overdue > 0
+      ? `<p>${formatMoney(overdue)} of this is past its due date and we would appreciate settlement.</p>`
+      : ''
+  }
+  <p style="margin:20px 0"><a href="${escapeHtml(payUrl)}" style="background:#16191d;color:#ffffff;padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">Pay this account online</a></p>
+  <p style="color:#667085;font-size:13px">Please quote account ${escapeHtml(code)} with any payment.</p>
+  <p>If anything on the statement looks wrong, reply to this email and we will look into it.</p>
+  <p>Kind regards,<br>${escapeHtml(siteName)}</p>
+</div>`
 }
 
 /**

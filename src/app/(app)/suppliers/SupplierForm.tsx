@@ -36,7 +36,13 @@ export default function SupplierForm({
   categories,
   suggestedCode = null,
   rowActions,
+  returnTo = null,
 }: {
+  /**
+   * The list URL this supplier was opened from, already validated by the page.
+   * Null when it was reached directly.
+   */
+  returnTo?: string | null
   supplier: Supplier | null
   categories: string[]
   /**
@@ -77,6 +83,10 @@ export default function SupplierForm({
 
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-5 px-6 pt-4 pb-10">
         {supplier && <input type="hidden" name="id" value={supplier.id} />}
+        {/* The list this supplier was opened from, so saving returns to it
+            with its filters intact. The redirect happens in the server action,
+            which sees only what the FormData brings it. */}
+        {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
 
         {state.error && <Callout tone="danger" title={state.error} />}
 

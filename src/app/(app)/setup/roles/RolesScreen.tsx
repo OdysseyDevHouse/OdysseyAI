@@ -212,8 +212,12 @@ export default function RolesScreen({
         />
       </Card>
 
+      {/* Anchored here rather than on a group card: the search indexes "Manager
+          override", and the answer to that is the role picker plus the grid
+          under it, not any one permission group. Landing on the picker is
+          landing on the question "which role may do this". */}
       {selected && (
-        <TableToolbar>
+        <TableToolbar id="role-permissions">
           <span className="text-sm text-muted">Permissions for</span>
           <SegmentedControl
             aria-label="Role to edit"

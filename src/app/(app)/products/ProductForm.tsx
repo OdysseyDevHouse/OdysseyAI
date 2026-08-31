@@ -140,8 +140,16 @@ export default function ProductForm({
   autoCode = false,
   pictureFont = '',
   generalExtras = null,
+  returnTo = null,
 }: {
   product: Product | null
+  /**
+   * The list URL this product was opened from, already validated by the page.
+   *
+   * Null when it was reached directly — from a search, a link, a bookmark —
+   * in which case saving falls back to the product itself, exactly as before.
+   */
+  returnTo?: string | null
   /**
    * Panels that belong to the General tab but save on their own — variants and
    * the photo gallery.
@@ -342,6 +350,12 @@ export default function ProductForm({
     <div className={`flex ${EDIT_COLUMN} flex-col gap-4`}>
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-4">
         {product && <input type="hidden" name="id" value={product.id} />}
+
+        {/* The list this product was opened from, so saving returns to it with
+            its filters intact instead of dropping onto the bare catalogue.
+            Carried through the form because the redirect happens in the server
+            action, which sees only what the FormData brings it. */}
+        {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
 
         {/* Archiving moved to the header's Actions menu, but the save path still
             reads this field — without it every save would send nothing and

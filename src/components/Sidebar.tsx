@@ -7,8 +7,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { PanelLeft, Search, ChevronDown } from '@/components/ui/icons'
 import { Button } from '@/components/ui'
 import GlobalSearch from '@/components/GlobalSearch'
+import SettingAnchor from '@/components/SettingAnchor'
 import {
   NAV,
+  GETTING_STARTED_HREF,
   hubFor,
   navFor,
   type NavItem,
@@ -96,15 +98,35 @@ export default function Sidebar({
   granted,
   isOwner,
   modules,
+  hiddenAreas = [],
+  gettingStartedHidden = false,
 }: {
   granted: string[]
   isOwner: boolean
   /**
-   * The modules this SHOP has bought, as plain strings for the same reason
-   * `granted` is. Unlike capabilities, an owner does NOT bypass these: owning
-   * the shop does not mean having paid for Loyalty.
+   * The modules this shop has bought AND not switched off — what the menu should
+   * be built from. Plain strings for the same reason `granted` is. Unlike
+   * capabilities, an owner does NOT bypass these: owning the shop does not mean
+   * having paid for Loyalty.
    */
   modules: string[]
+  /**
+   * The modules deliberately switched off under Setup → Menu & modules, as
+   * opposed to never bought. Only a section marked `menuModule` needs the
+   * distinction — see the note on that field in lib/nav.ts.
+   */
+  hiddenAreas?: string[]
+  /**
+   * Whether this shop has pressed "Don't show this again" on Getting started.
+   *
+   * Its own prop rather than a `MenuArea`, because it is not one: those seven
+   * are parts of the product a shop either uses or does not, offered as
+   * switches on Setup → Menu & modules. This is a screen somebody FINISHES
+   * with, hidden from the screen itself and restored from the same place. Put
+   * in that list it would read as an eighth feature, and its switch would sit
+   * among them long after the shop had forgotten what it was.
+   */
+  gettingStartedHidden?: boolean
 }) {
   const pathname = usePathname()
   const [collapsed, setCollapsed] = useState(false)
@@ -122,20 +144,30 @@ export default function Sidebar({
      watches it. */
   const grantedKey = granted.join(',')
   const modulesKey = modules.join(',')
+  const hiddenKey = hiddenAreas.join(',')
   const visible = useMemo(() => {
     const held = new Set(granted)
     const bought = new Set(modules)
+    const switchedOff = new Set(hiddenAreas)
     /* The owner bypass applies to CAPABILITIES only. A capability is something
        an owner could grant themselves anyway, so short-circuiting it saves a
        round trip and changes nothing. A module is something they would have to
        BUY, and showing an owner a menu of features their shop does not have
        would be a link to a page that turns them away. */
-    return navFor(
+    const sections = navFor(
       (capability) => isOwner || held.has(capability),
       (module) => bought.has(module),
+      (module) => switchedOff.has(module),
     )
+    /* Filtered here rather than inside navFor: this is one dismissed SCREEN, not
+       a menu area, and navFor's three predicates are the vocabulary every other
+       caller shares. A fourth argument meaning "except this one row" would be a
+       special case in a function whose whole value is that it has none. */
+    return gettingStartedHidden
+      ? sections.filter((s) => s.href !== GETTING_STARTED_HREF)
+      : sections
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grantedKey, modulesKey, isOwner])
+  }, [grantedKey, modulesKey, hiddenKey, isOwner, gettingStartedHidden])
 
   /**
    * ONE open section, not a set of them.
@@ -366,6 +398,12 @@ export default function Sidebar({
         onClose={() => setSearchOpen(false)}
         sections={visible}
       />
+
+      {/* The far half of a settings result: scrolls to the panel the palette
+          sent somebody to and flashes it. Mounted here rather than in the
+          layout because the layout has two branches — desktop and web — and one
+          of them would eventually be edited without the other. */}
+      <SettingAnchor />
 
 
       {/* `overflow-y-auto` also clips horizontally, which would cut a flyout off

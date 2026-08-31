@@ -304,10 +304,27 @@ export function TenderPad({
   /* The exchange credit comes off like a voucher: after rounding, before the
      tender check — the same order the server nets the pair of documents. The
      deposit comes off beside it, for the same reason and in the same place. */
-  const payable = round(
-    Math.max(0, roundedTotal - voucherCredit - (credit?.amount ?? 0) - depositCredit),
-    2,
-  )
+  /*
+   * ── A PAYOUT KEEPS ITS SIGN THROUGH THE CLAMP ─────────────────────────────
+   *
+   * A basket of empties owes the CUSTOMER money, and `Math.max(0, …)` would
+   * flatten that to nothing owed — the pad would open showing 0.00, refuse
+   * whatever was keyed into it, and never settle. The clamp is there to stop a
+   * voucher or deposit over-crediting a sale into negative territory, which is a
+   * different thing from a slip that is negative to begin with.
+   *
+   * So the total decides. Negative and it is a bottle return: the figure passes
+   * through as the amount to hand over, and `payingOut` below turns the pad into
+   * one that counts money out. Positive and every existing sale behaves exactly
+   * as it did, clamp included.
+   */
+  const payingOut = totalIncl < 0
+  const payable = payingOut
+    ? round(roundedTotal - voucherCredit - (credit?.amount ?? 0) - depositCredit, 2)
+    : round(
+        Math.max(0, roundedTotal - voucherCredit - (credit?.amount ?? 0) - depositCredit),
+        2,
+      )
 
   /*
    * The RAW excess, computed here rather than taken from `check.change`.
@@ -323,10 +340,15 @@ export function TenderPad({
    * the tip, because the check ran first, errored, and left `change` at zero — so the plan
    * had nothing to claim.
    */
-  const rawExcess = round(
-    Math.max(0, taken.reduce((sum, t) => sum + t.amount, 0) - payable),
-    2,
-  )
+  /* Never an excess on a payout: nobody over-pays a bottle return, and the
+     amount is required to match exactly. Without this the whole sum handed over
+     reads as excess and the pad starts offering to tip it. */
+  const rawExcess = payingOut
+    ? 0
+    : round(
+        Math.max(0, taken.reduce((sum, t) => sum + t.amount, 0) - payable),
+        2,
+      )
 
   /*
    * ── TIPS ──────────────────────────────────────────────────────────────────
@@ -381,8 +403,19 @@ export function TenderPad({
     })
     /* The tip total is passed in, so an excess a tender legitimately keeps is not also
        reported as an unpayable change demand. */
-    return checkTenders(lines, payable, hasCustomer, plannedTipsFromExcess)
-  }, [taken, tenders, payable, hasCustomer, plannedTipsFromExcess])
+    /* On a payout the check is asked about the MAGNITUDE, for the same reason
+       `owed` is: the cashier counts out a positive amount against a positive
+       figure. Handing it the negative payable would report the whole sum as an
+       over-tender and demand change on money leaving the drawer. The server
+       validates a payout on its own terms — see `payoutIsAllReturnables` in
+       salesPosting — so this is the pad agreeing with it, not a second opinion. */
+    return checkTenders(
+      lines,
+      payingOut ? Math.abs(payable) : payable,
+      hasCustomer,
+      plannedTipsFromExcess,
+    )
+  }, [taken, tenders, payable, payingOut, hasCustomer, plannedTipsFromExcess])
 
   /** Everything handed over so far, across every split. R50 card + R30 card = R80. */
   const tendered = round(
@@ -390,7 +423,20 @@ export function TenderPad({
     2,
   )
 
-  const owed = round(payable - tendered, 2)
+  /*
+   * What is still to hand over.
+   *
+   * On a payout the cashier keys the amount going OUT as a positive — "30" means
+   * thirty rand across the counter, which is how they think and what the server
+   * expects (`finaliseDocument` signs it negative when it writes the row). So
+   * the pad counts down the MAGNITUDE: what the slip owes, less what has been
+   * counted out so far. Everything else on this screen — the keypad, the split
+   * rows, the settle test below — then works unchanged, because they all only
+   * ever ask "is `owed` down to zero yet".
+   */
+  const owed = payingOut
+    ? round(Math.abs(payable) - tendered, 2)
+    : round(payable - tendered, 2)
 
   const tipTotal = plan.ok ? round(plan.tips.reduce((s, t) => s + t.amount, 0), 2) : 0
   /* What the drawer actually hands back, AFTER tips. Showing `check.change` here would
@@ -732,8 +778,12 @@ export function TenderPad({
           />
           <StatTile
             density="compact"
-            label="Amount due"
-            value={formatMoney(payable)}
+            /* Named for the direction the money moves. "Amount due" over a
+               negative figure asks the cashier to work out who owes whom from a
+               minus sign, at the moment they are counting notes out of a
+               drawer. The magnitude is what they are handing over. */
+            label={payingOut ? 'To pay out' : 'Amount due'}
+            value={formatMoney(payingOut ? Math.abs(payable) : payable)}
             icon={<Icons.Receipt size={18} />}
             /* The bill as printed, whenever the pad is asking for something else
                — a voucher, a deposit, cash rounding. Without it the cashier has
@@ -1101,6 +1151,7 @@ export function TenderPad({
                   amount={amount}
                   loyalty={loyalty}
                   disabled={pending}
+                  payingOut={payingOut}
                   onPick={pick}
                 />
               )}
@@ -1397,6 +1448,7 @@ function TenderKeys({
   amount,
   loyalty,
   disabled,
+  payingOut = false,
   onPick,
 }: {
   tenders: TenderType[]
@@ -1408,9 +1460,19 @@ function TenderKeys({
   /** So a loyalty key can grey itself out when the balance is zero. */
   loyalty: TillStanding | null
   disabled: boolean
+  /** Money is going OUT of the drawer — a bottle return. See `payingOut`. */
+  payingOut?: boolean
   onPick: (tender: TenderType) => void
 }) {
-  const active = tenders.filter((t) => t.isActive)
+  /*
+   * Only methods that can actually pay out are offered on a payout.
+   *
+   * `allowsRefund` is the same flag the server checks — in `createCreditNote`
+   * and now in `finaliseDocument` — so a key that cannot give money back is not
+   * shown rather than being offered and then refused after the cashier has
+   * pressed it. A shop that has turned it off for cards means it.
+   */
+  const active = tenders.filter((t) => t.isActive && (!payingOut || t.allowsRefund))
 
   return (
     <div className="flex flex-col gap-2">
@@ -1419,11 +1481,15 @@ function TenderKeys({
           picking one does. It now also has to say what the key TAKES, which
           changes as the cashier types. */}
       <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+        {/* "Take" is wrong when the drawer is paying out — the cashier is
+            handing money over, not collecting it. */}
         {amount > 0
-          ? `Take ${formatMoney(amount)} on…`
+          ? `${payingOut ? 'Pay out' : 'Take'} ${formatMoney(amount)} on…`
           : owed > 0
-            ? `Take ${formatMoney(owed)} on…`
-            : 'Add another payment'}
+            ? `${payingOut ? 'Pay out' : 'Take'} ${formatMoney(owed)} on…`
+            : payingOut
+              ? 'Add another refund'
+              : 'Add another payment'}
       </p>
       {/* auto-rows-fr, so a key carrying a refusal sentence does not make its
           whole row taller than the one below it — the grid reads as a keypad

@@ -41,14 +41,21 @@ const DECLARED: DeclaredGroup<OnlineStoreSetupHref>[] = [
         tone: 'amber',
         capability: 'online.edit',
       },
-      {
-        href: '/online-store/payments',
-        description: 'How shoppers may pay, and the gateway that takes the money.',
-        keywords: 'payfast yoco ozow gateway card eft checkout',
-        icon: 'CreditCard',
-        tone: 'indigo',
-        capability: 'online.edit',
-      },
+      /* ── THE GATEWAY MOVED TO SETUP → PAYMENTS ─────────────────────────────
+       *
+       * No tile here any more, and not by oversight. OnlineStoreSetupHref
+       * narrows a tile to `/online-store/*` precisely so this hub cannot grow
+       * links out of itself, and that rule is worth more than the convenience
+       * of a cross-reference.
+       *
+       * It moved because the gateway is not a storefront feature: an emailed
+       * invoice's pay link, a statement QR and a lay-by instalment all need the
+       * same connected account, and a shop that never bought this module needs
+       * it just as much. Behind the module gate, such a shop could not reach the
+       * screen at all — so its pay links silently never appeared.
+       *
+       * `/online-store/setup` still SHOWS whether an account is connected, which
+       * is the fact a storefront actually cares about. */
     ],
   },
   {

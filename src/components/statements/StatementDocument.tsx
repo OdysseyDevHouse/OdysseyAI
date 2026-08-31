@@ -1,6 +1,12 @@
 import { formatMoney } from '@/lib/decimals'
 import { AGING_BUCKETS } from '@/lib/site/ledger'
 import type { StatementData } from '@/lib/statements/render'
+import {
+  STATEMENT_HEADINGS,
+  STATEMENT_DUE_LABELS,
+  isPaymentAdvice,
+  type StatementVariant,
+} from '@/lib/statements/variant'
 import { TABLE, TABLE_HEAD_ROW, TABLE_TH, TABLE_TD, TABLE_ROW, TABLE_NUMERIC } from '@/components/ui'
 
 /**
@@ -15,16 +21,23 @@ import { TABLE, TABLE_HEAD_ROW, TABLE_TH, TABLE_TD, TABLE_ROW, TABLE_NUMERIC } f
  * letterhead, the address blocks, the table skin and the footer, and differs in
  * the title, whether an ageing strip appears, and whether the summary says
  * "amount due" or "amount paid". That is a handful of conditionals, not a
- * second document.
+ * second document. A customer receipt is the fourth, on the same terms.
+ *
+ * The prop is `StatementVariant` rather than its own union of literals: the
+ * union here was a copy that silently stopped matching the moment a variant was
+ * added elsewhere, so a receipt could not be passed to the component that draws
+ * receipts.
  */
 export function StatementDocument({
   data,
   variant = 'statement',
 }: {
   data: StatementData
-  variant?: 'statement' | 'remittance' | 'supplier-statement'
+  variant?: StatementVariant
 }) {
-  const isRemittance = variant === 'remittance'
+  // A remittance or a receipt — one payment rather than an account. See
+  // isPaymentAdvice for why this is a named question.
+  const isRemittance = isPaymentAdvice(variant)
   // Our own view of a supplier account: same document, but we are the one who
   // owes, so it must not ask them to quote a code or open a query window.
   const isSupplier = variant === 'supplier-statement'
@@ -35,16 +48,12 @@ export function StatementDocument({
         <div>
           <h1 className="text-lg font-semibold text-ink">{data.site.name}</h1>
           {data.site.vatNumber && (
-            <p className="mt-0.5 text-xs text-muted">VAT no. {data.site.vatNumber}</p>
+            <p className="mt-0.5 text-xs text-muted">{data.site.taxLabel ?? 'VAT'} no. {data.site.vatNumber}</p>
           )}
         </div>
         <div className="text-right">
           <h2 className="text-xl font-semibold tracking-wide text-ink">
-            {isRemittance
-              ? 'REMITTANCE ADVICE'
-              : isSupplier
-                ? 'SUPPLIER ACCOUNT'
-                : 'STATEMENT'}
+            {STATEMENT_HEADINGS[variant]}
           </h2>
           <p className="mt-1 text-xs text-muted">
             {data.periodLabel}
@@ -65,7 +74,7 @@ export function StatementDocument({
             </p>
           ))}
           {data.account.vatNumber && (
-            <p className="mt-1 text-xs text-muted">VAT no. {data.account.vatNumber}</p>
+            <p className="mt-1 text-xs text-muted">{data.site.taxLabel ?? 'VAT'} no. {data.account.vatNumber}</p>
           )}
         </div>
 
@@ -198,9 +207,7 @@ export function StatementDocument({
             </div>
           )}
           <div className="flex items-center justify-between bg-surface-2 px-4 py-3">
-            <span className="font-medium text-ink">
-              {isRemittance ? 'Amount paid' : isSupplier ? 'Balance owed' : 'Amount due'}
-            </span>
+            <span className="font-medium text-ink">{STATEMENT_DUE_LABELS[variant]}</span>
             <span className="numeric text-lg font-semibold text-ink">
               {formatMoney(Math.abs(data.closingBalance))}
             </span>
@@ -209,8 +216,13 @@ export function StatementDocument({
       </section>
 
       <footer className="mt-8 border-t border-border pt-4 text-xs text-muted">
-        {isRemittance ? (
+        {variant === 'remittance' ? (
           <p>Payment has been made to the banking details we hold for you.</p>
+        ) : variant === 'receipt' ? (
+          <p>
+            Received against account <span className="text-ink-2">{data.account.code}</span>. Please
+            retain this receipt as proof of payment.
+          </p>
         ) : isSupplier ? (
           <p>
             Our account <span className="text-ink-2">{data.account.code}</span>. Our records as at{' '}

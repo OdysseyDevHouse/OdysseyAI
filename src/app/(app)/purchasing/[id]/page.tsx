@@ -11,7 +11,7 @@ import { getSupplier } from '@/lib/site/suppliers'
 import { isConfigured as isMailConfigured } from '@/lib/mail'
 import { listLocations } from '@/lib/site/stockLocations'
 import { today as localToday } from '@/lib/site/ledger'
-import { formatMoney, formatQty, round } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty, round } from '@/lib/decimals'
 import {
   PageHeader,
   PageBody,
@@ -290,7 +290,7 @@ export default async function PurchaseDocumentPage({
                         </td>
                       )}
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                        {formatMoney(line.unitCostExcl)}
+                        {formatCost(line.unitCostExcl)}
                       </td>
                       {doc.chargesExcl > 0 && (
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-ink`}>

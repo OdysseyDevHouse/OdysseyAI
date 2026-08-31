@@ -4,6 +4,8 @@ import { siteExecute, siteQuery, siteQueryOne } from '../siteDb'
 import { toNum } from '../decimals'
 import { DEFAULT_MAX_CANCELLATION_FEE_PCT } from '../laybyRules'
 import { PICTURE_FONTS } from '../generatedPicture'
+import { BASE_MODULE } from '../control/moduleCatalogue'
+import { isMenuArea } from '../menuAreas'
 
 /**
  * The site settings KV.
@@ -27,6 +29,164 @@ import { PICTURE_FONTS } from '../generatedPicture'
 /** Every setting the app reads, with its default. One list, so nothing is invented at a call site. */
 export const SETTING_DEFAULTS = {
   cost_basis: 'average',
+  /**
+   * What this country calls its sales tax: VAT, HST, GST, Tax.
+   *
+   * ── WHY IT IS CONFIGURABLE AT ALL ─────────────────────────────────────────
+   *
+   * The word was hard-coded in several hundred places, which is right for one
+   * country and wrong everywhere the product is sold. South Africa says VAT,
+   * Canada says HST, the United States says Tax — and a Canadian invoice
+   * headed "VAT" is not merely odd, it is a document naming a tax that does not
+   * exist in the jurisdiction it was issued in.
+   *
+   * ── WHY IT IS A SITE SETTING AND THE NUMBER IS NOT ────────────────────────
+   *
+   * The NUMBER is the shop's identity and lives in the control database, where
+   * support maintains it beside the registered name and address. The LABEL is a
+   * display preference with no meaning outside this database, and it has to be
+   * readable by a till with no connection — a slip that cannot print its own
+   * tax heading is not a slip. See lib/site/taxIdentity.ts, which reads both.
+   *
+   * ── LENGTH ────────────────────────────────────────────────────────────────
+   *
+   * Short by design. It goes in table headings, on 40-column thermal slips and
+   * in report column titles, all of which are laid out around a word of three
+   * or four characters. `validateSetting` caps it at 12 — enough for anything
+   * real, short enough that a sentence typed in here cannot break a slip.
+   */
+  tax_label: 'VAT',
+  /**
+   * The money this shop trades in — ISO 4217, and the symbol in front of a
+   * number.
+   *
+   * ── WHY BOTH, RATHER THAN DERIVING ONE ────────────────────────────────────
+   *
+   * The symbol is what a person reads on a slip; the code is what a machine
+   * reads. Deriving either from the other is guesswork in both directions: "$"
+   * is eight different currencies, and nothing about "ZAR" says the symbol goes
+   * in front. 190 made the same call for the storefront and it holds here.
+   *
+   * ── WHY NOT online_store_settings.currency_code ───────────────────────────
+   *
+   * Because a shop's trading currency is not a property of its online store. A
+   * site with the storefront module off still counts a drawer and still prints
+   * money on a slip, and reading this from there would make the cash-up screen
+   * depend on a module the shop may not own. The two are free to differ — a
+   * shop CAN sell online in one currency and bank in another.
+   *
+   * ── WHAT IT DOES NOT YET REACH ────────────────────────────────────────────
+   *
+   * `formatMoney` still defaults to 'R' at around a thousand call sites, and
+   * changing that is a separate piece of work with its own risk: it decides
+   * what a till prints on a slip and what an invoice says it is owed. What this
+   * DOES reach today is the cash-up denominations, which is the place the
+   * default is not merely wrong but unusable — a Canadian cashier cannot count
+   * a drawer into a grid of rand.
+   */
+  currency_code: 'ZAR',
+  currency_symbol: 'R',
+
+  /**
+   * How many decimals a QUANTITY is shown with.
+   *
+   * ── WHY THIS IS A SETTING ─────────────────────────────────────────────────
+   *
+   * `formatQty` has always shown up to three decimals and trimmed the trailing
+   * zeros, which suits a shop selling by weight and reads as clutter to one
+   * selling whole units — "1" and "1.000" are the same fact, and a stock take
+   * of two hundred lines is easier to check when none of them pretend to a
+   * precision the shop does not use.
+   *
+   * ── WHAT IT DOES NOT OVERRIDE ─────────────────────────────────────────────
+   *
+   * A WEIGHED line keeps its decimals whatever this says. 1.5kg displayed as
+   * "2" is not a tidier display, it is a wrong figure on a document somebody
+   * pays against — see `formatQty`, which takes an explicit escape hatch for
+   * exactly that. The setting decides how a COUNT is shown, never how a weight
+   * is.
+   *
+   * ── AND WHAT IT DOES NOT CHANGE ───────────────────────────────────────────
+   *
+   * Anything stored. Quantities are DECIMAL(12,3) and stay that way; this is a
+   * display rule, so a shop can lower it and raise it again without having lost
+   * anything in between.
+   */
+  qty_decimals: '2',
+  /**
+   * How many decimals a COST is shown with, and how many a cost box accepts.
+   *
+   * Two by default, and three or four for the shops that need them: a
+   * distributor buying at 0.0875 a unit loses real money to rounding at two,
+   * and seeing 0.09 in a margin calculation is how that goes unnoticed.
+   *
+   * DISPLAY ONLY, deliberately. Cost columns are DECIMAL(12,4) and keep every
+   * digit they were given — lowering this setting hides precision rather than
+   * destroying it, so a shop that lowers it by mistake has lost nothing and a
+   * shop that raises it gets its own figures back rather than zeros.
+   *
+   * The selling side is not governed by this. A price is money and money has
+   * two decimals; a third would be a price no customer can pay.
+   */
+  cost_decimals: '2',
+
+  /* ── The shop's own outgoing mail account ──────────────────────────────
+     Empty means "not configured", and every reader then falls back to the
+     PROCESS settings in the environment — see lib/mail.ts. That fallback is
+     what keeps a self-hosted install working with the .env it already has, and
+     what makes this adoptable one shop at a time.
+
+     On a cloud server the fallback is the problem these exist to fix: one
+     server hosts many businesses, and without their own account every one of
+     them sent from the same address. A customer's invoice arrived from us
+     rather than from them. */
+
+  /** The mail server's hostname. Empty falls back to SMTP_HOST. */
+  smtp_host: '',
+  /**
+   * 587 for STARTTLS, 465 for implicit TLS, 25 for an unauthenticated relay.
+   *
+   * A string like every other setting, and parsed at the edge — the KV has one
+   * column type and inventing a second reader for numbers would be one more
+   * thing to keep in step.
+   */
+  smtp_port: '587',
+  smtp_user: '',
+  /**
+   * The password.
+   *
+   * ── STORED AS IT IS TYPED, AND THE SCREEN SAYS SO ────────────────────────
+   *
+   * Not encrypted, matching `sms_client_secret` beside it. Encrypting it here
+   * would be theatre: the key would have to live on the same machine as the
+   * database, so anyone who can read this row can read the key — and a shop
+   * would be told its password was protected when the only thing standing in
+   * front of it is the same access control that guards the row.
+   *
+   * What IS done: it never travels to the browser. The setup screen receives a
+   * mask, an unchanged mask is not written back, and the value is read only by
+   * server code building a transport. See the Email setup screen.
+   */
+  smtp_pass: '',
+  /**
+   * Whether the connection is TLS from the first byte.
+   *
+   * Stored rather than inferred from the port. 465 is implicit TLS and 587
+   * negotiates STARTTLS, which is the usual arrangement and what an empty value
+   * still assumes — but providers exist that do neither, and a shop that can
+   * tick a box is better served than one whose connection hangs because the
+   * port was used to guess.
+   */
+  smtp_secure: '',
+  /**
+   * The From address a recipient sees.
+   *
+   * Required alongside the host for a site's own settings to count as complete:
+   * a message from an unset address is refused by most providers and silently
+   * binned by the rest. It is also frequently NOT the login — a shop
+   * authenticating as a mailbox user sends as accounts@theirshop.co.za.
+   */
+  mail_from: '',
   /**
    * Which way a forced price ending moves — 'up', 'down' or 'nearest'.
    *
@@ -301,9 +461,10 @@ export const SETTING_DEFAULTS = {
    * They are different questions and both are worth asking:
    *
    *   THE SHIFT is the DRAWER. In terminal mode it is opened once, by whoever
-   *   starts the day, and every cashier afterwards trades on it. That gate is
-   *   unconditional and stays that way — a sale rung up with no shift banks
-   *   into no reconciliation.
+   *   starts the day, and every cashier afterwards trades on it. That gate has
+   *   its own switch — `pos_require_shift`, on by default — and the two are
+   *   independent: a shop that does not count a drawer may still want to know
+   *   who is on duty, so this one is asked whether or not that one is set.
    *
    *   THIS is the PERSON. The till is open, the drawer is counted, and the
    *   question is whether the individual now standing at it is on duty. After
@@ -325,6 +486,134 @@ export const SETTING_DEFAULTS = {
    * capability exists to exempt. See `tillShiftStatusAction`.
    */
   pos_force_clock_in: '0',
+  /**
+   * Whether the till insists on an open shift before it will sell.
+   *
+   * ── WHY THIS IS A SETTING AND NOT SIMPLY THE BEHAVIOUR ────────────────────
+   *
+   * A shift is the RECONCILIATION UNIT — the drawer between two moments — and
+   * the till has always demanded one. That is right for a shop that counts a
+   * drawer: a sale rung up with no shift banks into no reconciliation, and the
+   * money is unaccounted for by construction.
+   *
+   * It is wrong for the shops that never count one. A single-owner counter, an
+   * office invoicing from the till, a stall settling everything by card — none
+   * of them open a drawer in the morning, and for those the gate is a screen
+   * standing between them and every sale, asking for a float that does not
+   * exist. Several sites do not use shifts and do not want the feature at all.
+   *
+   * ── WHY IT IS ON BY DEFAULT ───────────────────────────────────────────────
+   *
+   * Because the other default silently loses money. With this off, sales carry
+   * no shift, so they appear in no cash-up and in no variance — and a shop that
+   * did want its drawer counted would not discover the omission until the first
+   * time it tried to count one, by which point the day is gone. Every shop
+   * trading today expects the gate. A shop that does not want it turns it off
+   * deliberately, which is the direction whose mistake is recoverable.
+   *
+   * ── WHAT IT DOES NOT DO ───────────────────────────────────────────────────
+   *
+   * It does not disable shifts. A site with this off may still open one from
+   * the till menu or the back office, and the moment it does, sales carry it
+   * again — `sales_documents.shift_id` is nullable and always has been, so both
+   * kinds of sale coexist without a schema change and a shop can change its
+   * mind mid-life without stranding what it has already banked.
+   *
+   * Nor does it touch the clock gate. "Is the drawer open" is a fact about the
+   * till and "is this person on duty" is a fact about the person; a shop can
+   * want the second without the first, so `pos_force_clock_in` is asked
+   * independently of this and still stands when this is off.
+   */
+  pos_require_shift: '1',
+  /**
+   * Whether the till returns to the PIN pad after every transaction.
+   *
+   * ── WHAT IT IS FOR ────────────────────────────────────────────────────────
+   *
+   * A shared till, where the next sale is rung by whoever reaches it first. Off,
+   * the operator who signed in that morning owns every sale until somebody
+   * signs out — so a slip printed at four o'clock names a cashier who went home
+   * at noon, and a variance has nobody to ask about it. On, each sale is
+   * attributed to whoever actually put their PIN in for it.
+   *
+   * Legacy called this "Force Cashier Code During Sale", which named the
+   * mechanism rather than the point. The point is attribution.
+   *
+   * ── FINALISED AND SAVED, BOTH ─────────────────────────────────────────────
+   *
+   * A transaction ends when the basket leaves the screen, and it leaves both
+   * ways: paid for, or saved for later. Signing out on one and not the other
+   * would let a cashier keep the session alive indefinitely by parking every
+   * sale — which is exactly the hole the setting exists to close.
+   *
+   * ── OFF BY DEFAULT ────────────────────────────────────────────────────────
+   *
+   * It costs a PIN entry per sale, and at a single-operator counter that is
+   * pure friction for an attribution question nobody is asking — there is only
+   * ever one person it could have been. A shop that shares a till turns it on.
+   */
+  pos_return_to_login: '0',
+  /**
+   * Seconds of inactivity before the till signs the operator out. '0' is never.
+   *
+   * ── WHY SECONDS AND NOT A LIST ────────────────────────────────────────────
+   *
+   * The screen offers a list — 15s through 5 minutes, and Never — because those
+   * are the durations anybody actually wants. Storing the SECONDS rather than a
+   * list position means a shop that asks for 45 gets 45 by editing one row, and
+   * the till needs no table to interpret what it was given.
+   *
+   * ── WHAT COUNTS AS INACTIVITY ─────────────────────────────────────────────
+   *
+   * Any pointer, key or scanner input at the till. A scanner is a keyboard as
+   * far as the browser is concerned, so a shop scanning a long delivery never
+   * trips this even with no hand on the screen.
+   *
+   * ── AND WHAT A HALF-RUNG BASKET DOES TO IT ────────────────────────────────
+   *
+   * Suspends it. A basket with lines in it is a customer standing at the
+   * counter, and signing out over one either destroys work somebody is in the
+   * middle of or parks a sale under a name that is about to stop being the
+   * operator. Neither is better than leaving the screen up for a counter that
+   * is plainly in use. The timer resumes the moment the basket empties, which
+   * is the state this is actually for: a till abandoned between customers.
+   *
+   * ── OFF BY DEFAULT ────────────────────────────────────────────────────────
+   *
+   * It is a security feature for a shop that has an unattended-till problem,
+   * and a cost for every shop that does not — a cashier who turns to serve
+   * somebody comes back to a PIN pad. A shop that wants it asks for it.
+   */
+  pos_idle_logout_seconds: '0',
+  /**
+   * Whether the till makes a noise when something is rung up.
+   *
+   * ── WHAT IT IS ACTUALLY FOR ───────────────────────────────────────────────
+   *
+   * The FAILURE sound, mostly. A cashier working a trolley watches the customer
+   * and the goods, not the screen, and a barcode that did not match produces a
+   * search panel they never look at — so the item goes into the bag unscanned
+   * and the shop is short its price. A distinct noise is the only feedback that
+   * reaches somebody whose eyes are elsewhere.
+   *
+   * The success beep exists to make the failure one MEAN something. A sound that
+   * only ever fires on failure is a sound nobody has learnt, and the first time
+   * they hear it they will not know what it was.
+   *
+   * ── RETAIL AND HOSPITALITY ONLY ───────────────────────────────────────────
+   *
+   * Not invoicing. A trade counter rings items up while talking to a customer
+   * across a desk, at a pace where every line is looked at — the failure this
+   * catches does not happen there, and a beeping desk in a quiet showroom is an
+   * irritation with no upside. The till reads its own mode, so this setting is
+   * simply not consulted on that screen.
+   *
+   * ── OFF BY DEFAULT ────────────────────────────────────────────────────────
+   *
+   * A shop that has traded silently and is suddenly noisy will assume something
+   * is broken. Turning it on is a decision somebody makes.
+   */
+  pos_scan_sounds: '0',
   /**
    * Whether a till with no connection may still sell ON ACCOUNT.
    *
@@ -1014,6 +1303,83 @@ export const SETTING_DEFAULTS = {
   document_review_url: '',
 
   /**
+   * Pay links — a "pay now" button on what a customer is sent, and a QR square
+   * on what they are handed.
+   *
+   * ── ALL OFF, AND NOT BECAUSE OFF IS TIDIER ────────────────────────────────
+   *
+   * Switching one of these on changes what every customer of this business
+   * receives from it. That is a decision about how a company asks to be paid —
+   * the same class of thing as job_feedback_enabled above — and a default must
+   * not make it on the owner's behalf.
+   *
+   * There is also a concrete failure behind the caution. A shop whose gateway
+   * is still in SANDBOX has credentials that look configured and take play
+   * money, so a link switched on by default would put a working-looking button
+   * in front of real customers whose payments go nowhere. Every one of these is
+   * additionally gated on a live, decryptable gateway at render time, but the
+   * default is the belt.
+   *
+   * ── WHY FOUR KEYS AND NOT ONE ─────────────────────────────────────────────
+   *
+   * They are genuinely different decisions and get made by different people. A
+   * business will happily put a pay button on an emailed invoice while wanting
+   * nothing on a printed till slip, because the slip is handed to somebody who
+   * has already paid. Lay-bys are the opposite case — the whole point is that
+   * the customer comes back — and a shop may want that one alone.
+   *
+   * One switch would force all of it, and the first shop to want the invoice
+   * button without the slip QR would have to be told no.
+   */
+
+  /** The button on an emailed invoice, and the QR on its PDF. */
+  pay_link_on_invoices: '0',
+
+  /**
+   * The button on an emailed STATEMENT.
+   *
+   * Pays the account balance rather than one document — which is what a payment
+   * against a statement has always meant, and why it settles as an allocated
+   * receipt rather than against any single invoice.
+   */
+  pay_link_on_statements: '0',
+
+  /**
+   * The QR on a lay-by slip, so an instalment can be paid without coming in.
+   *
+   * The nearest thing to the "walk-in pays remotely" case that actually exists:
+   * a lay-by customer is frequently a `cash` account — a person on file who was
+   * never granted credit — and today the only way to pay one off is to stand at
+   * the counter with the card.
+   */
+  pay_link_on_laybys: '0',
+
+  /**
+   * The button on a quote or a sales order, which takes a DEPOSIT.
+   *
+   * ── IT DOES NOT CONVERT ANYTHING ──────────────────────────────────────────
+   *
+   * The tempting version of this feature is "customer pays the quote and it
+   * becomes an invoice by itself". It is deliberately not built, and this
+   * setting does not enable it.
+   *
+   * convertToInvoice raises a DRAFT and three warnings a person is meant to
+   * read — the quote expired, prices have moved, there is not enough stock.
+   * Converting on payment would take the money and only then discover the goods
+   * cannot be supplied. Quotes reserve nothing, so several open quotes for the
+   * last unit are all payable at once; that is the ordinary case, not a corner.
+   *
+   * A sales order arrives at the same answer differently: stock IS reserved and
+   * the decision IS made, but deliverOrder exists to invoice an order in parts,
+   * and a payment does not say which delivery it settles.
+   *
+   * So the money lands as a deposit against the document and applies when a
+   * person converts or delivers it. The customer commits with money — a better
+   * signal of acceptance than a click — and the judgement step survives.
+   */
+  pay_link_on_quotes: '0',
+
+  /**
    * Ask the customer to rate the work when a job closes.
    *
    * OFF, and for a stronger reason than the automations above: switching this on
@@ -1073,6 +1439,36 @@ export const SETTING_DEFAULTS = {
   portal_max_uploads_per_job: '10',
 
   /**
+   * The ACCOUNT side of the customer portal — profile, transactions, statement.
+   *
+   * Its own switch rather than a share of `portal_enabled`, because the two
+   * answer different questions. That one asks "may a customer follow their
+   * repair job"; this one asks "may a customer see what they owe us". A shop
+   * that runs no job cards at all still has debtors, and would otherwise have
+   * to turn on a JOBS setting to hand somebody a statement link.
+   *
+   * OFF, for the same reason the jobs portal is off: it puts a customer's
+   * financial history on the internet.
+   */
+  portal_accounts_enabled: '0',
+
+  /** The whole ledger, not just invoices — payments, credit notes, interest. */
+  portal_show_transactions: '1',
+
+  /** The statement, on screen and as a PDF on the site's own stationery. */
+  portal_show_statement: '1',
+
+  /**
+   * A customer may settle an open invoice from their own statement.
+   *
+   * ON where the others default off, deliberately: it is the one switch here a
+   * shop is paid for. It can do nothing until a gateway is configured, so
+   * "yes, the moment you can take money" is the honest default rather than an
+   * extra step somebody has to find later.
+   */
+  portal_allow_pay: '1',
+
+  /**
    * Typeface for generated till icons — the initial-on-a-gradient pictures
    * offered on the product screen when a product has no icon to upload.
    *
@@ -1083,6 +1479,97 @@ export const SETTING_DEFAULTS = {
    * the next.
    */
   generate_picture_font: '',
+
+  /**
+   * Parts of the product this shop has chosen to HIDE from its own menus.
+   *
+   * A comma-separated list of `MenuArea` values — see lib/menuAreas.ts. The name
+   * says "modules" because the key is PERSISTED and was written before the list
+   * widened past the price book; renaming it would orphan every row.
+   *
+   * Empty — the default — means
+   * nothing is hidden, so a shop that never opens the screen sees everything it
+   * holds. That is the only safe default: a feature you did not know you had is
+   * a feature you never got.
+   *
+   * ── THIS IS NOT AN ENTITLEMENT, AND THAT IS THE POINT ─────────────────────
+   *
+   * `control/modules.ts` answers "has this shop BOUGHT it". This answers "does
+   * this shop want to LOOK at it". They are stored apart because they fail in
+   * opposite directions: a module never bought must stay hidden whatever a site
+   * setting says, and a module that was bought must come back the moment
+   * somebody switches it on again. Folded into one set, un-hiding would be
+   * indistinguishable from provisioning — and this table is writable from a
+   * setup screen.
+   *
+   * So it only ever SUBTRACTS. `visibleModules()` intersects it with what is
+   * held: a stale key for a module the shop no longer has changes nothing, and a
+   * module added to the plan next month arrives visible.
+   *
+   * Kept out of the entitlements object for the same reason. The billing screen
+   * must keep showing what is paid for even while the menu hides it, or a shop
+   * hides Loyalty, forgets, and cannot find the thing it is being charged for.
+   */
+  hidden_modules: '',
+
+  /* ── THE FIRST-RUN WIZARD'S MEMORY ────────────────────────────────────────
+     Two keys, because "where did I get to" and "am I done with this" are
+     different questions and answering both from one value is how a resumable
+     flow gets stuck.
+
+     `onboarding_state` is 'pending' until somebody reaches the end, then
+     'done'. It is the ONLY thing the layout redirect reads. 'dismissed' is not
+     a third value on purpose — a person who skips the wizard has not answered
+     the questions, and the Setup hub should keep offering it. What skipping
+     changes is the REDIRECT, and that is what the next key is for.
+
+     Why the KV and not a column on the site row: a shop's answers live in its
+     own database, and this is a fact about that database rather than about the
+     account that opened it. A local install has no control-panel row to write
+     back to (see updateSiteDetails and whyLocked in store-info/actions.ts), so
+     a column there would be unreachable exactly where a fresh install needs it. */
+  onboarding_state: 'pending',
+  /**
+   * Which steps have been finished, comma-separated — 'store,tax,pricing'.
+   *
+   * A LIST rather than a step number, because the wizard lets a person skip
+   * ahead and come back: a number can only say "got to 4", which would mark
+   * three skipped steps as done and lose the one thing the resume banner is
+   * for. An unrecognised key here is ignored rather than an error, so removing
+   * a step in a later version cannot strand a shop mid-flow.
+   */
+  onboarding_done_steps: '',
+
+  /**
+   * "Do not show me the Getting started checklist again."
+   *
+   * ── WHY THIS IS NOT ONE OF THE TWO KEYS ABOVE ─────────────────────────────
+   *
+   * Those two belong to the first-run WIZARD — where somebody got to in it, and
+   * whether they reached the end. This one belongs to the Getting started
+   * CHECKLIST, which is a different screen answering a different question: the
+   * wizard asks a shop to make decisions, the checklist reports what the shop's
+   * data already shows. Folding them together would mean finishing the wizard
+   * silently hid the checklist, or dismissing the checklist marked the wizard
+   * done — and neither is what the person pressed.
+   *
+   * ── WHY A SETTING AND NOT A PER-USER PREFERENCE ───────────────────────────
+   *
+   * It is a fact about the SHOP, not about the person reading. A shop that is
+   * set up is set up for everybody, and a per-user flag would mean each new
+   * manager gets a checklist of work their colleagues finished last year. The
+   * cost is that one person dismisses it for the whole store — which is why the
+   * screen says so where it is dismissed, and why nothing is deleted: the row
+   * comes back the moment this is set to '0'.
+   *
+   * ── WHY DISMISSING DOES NOT MEAN DONE ─────────────────────────────────────
+   *
+   * Stored apart from any measure of progress, deliberately. A shop may dismiss
+   * this at 3 of 6 because it does not intend to do the rest, and reading the
+   * dismissal as completion would tell the dashboard a lie. Nothing else reads
+   * this key: it hides a menu row and a redirect, and changes no other fact.
+   */
+  getting_started_hidden: '0',
 } as const
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS
@@ -1170,6 +1657,41 @@ export function validateSetting(key: SettingKey, value: string): string | null {
         ? null
         : "Cost basis must be 'average' or 'last'."
 
+    case 'onboarding_state':
+      return value === 'pending' || value === 'done'
+        ? null
+        : "Onboarding state must be 'pending' or 'done'."
+
+    /* Shape only. WHICH keys are real is the wizard's business — see
+       lib/site/onboarding.ts, which filters unknown ones on the way out rather
+       than refusing them here. A step renamed in a later version would
+       otherwise make a shop's stored progress unwritable. */
+    case 'onboarding_done_steps':
+      return /^[a-z-]*(,[a-z-]+)*$/.test(value)
+        ? null
+        : 'Completed steps must be a comma-separated list of step keys.'
+
+    case 'tax_label': {
+      const label = value.trim()
+      /* Empty is refused rather than defaulted, because this arrives from a text
+         box: somebody who cleared the field meant to type something, and
+         silently restoring "VAT" would look like the save was ignored. Readers
+         still fall back to the default for a row that was never written. */
+      if (label === '') return 'Give the tax a name — VAT, HST, GST or Tax.'
+      /* Headings, thermal slips and report columns are all laid out around a
+         word of three or four characters. Twelve is generous for a real one and
+         short enough that no sentence fits. */
+      if (label.length > 12) return 'The tax name is too long — 12 characters at most.'
+      /* Letters, spaces and slashes only: "GST/HST" is a real label in Canada.
+         Digits and punctuation would mean somebody had typed the NUMBER in here
+         — a mistake worth catching, since it would then print as the heading on
+         every invoice. */
+      if (!/^[A-Za-z][A-Za-z /]*$/.test(label)) {
+        return 'The tax name should be a word like VAT, HST or Tax — not a number.'
+      }
+      return null
+    }
+
     /* The two receiving guards. Both had no case here until they became
        editable — an unvalidated key falls through to `default` and saves
        whatever it is given, which was harmless while the only writer was a
@@ -1253,6 +1775,28 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === '' || PICTURE_FONTS.some((f) => f.id === value)
         ? null
         : 'That is not one of the fonts the picture generator offers.'
+
+    /*
+     * Only real menu areas, and the base package is refused outright.
+     *
+     * A typo here does nothing visible — the readers drop any key they do not
+     * recognise — which is exactly why it is caught at the WRITE: a list that
+     * quietly ignores half of what it was given is worse than one that refuses
+     * it. `starter` is the package every un-gated screen lives in, so hiding it
+     * would empty the menu with no obvious way back.
+     *
+     * The key is still named `hidden_modules` because it is PERSISTED and rows
+     * already carry it; what it holds widened from modules to menu areas — see
+     * lib/menuAreas.ts.
+     */
+    case 'hidden_modules': {
+      if (value === '') return null
+      for (const key of value.split(',')) {
+        if (key === BASE_MODULE) return 'The base package cannot be hidden.'
+        if (!isMenuArea(key)) return `'${key}' is not a part of the menu.`
+      }
+      return null
+    }
 
     // Digits only, and never zero. This lands in a legal document number, so a
     // stray letter here would print on an invoice — and 'store 0' reads as
@@ -1356,9 +1900,50 @@ export function validateSetting(key: SettingKey, value: string): string | null {
        months later as a service charge on a takeaway. */
     case 'tips_tables_only':
     case 'pos_warn_out_of_stock':
+    case 'pos_require_shift':
+    case 'pos_return_to_login':
+    case 'pos_scan_sounds':
     case 'pos_offline_account_sales':
     case 'pos_auto_print_kitchen':
       return value === '1' || value === '0' ? null : 'That setting must be 1 or 0.'
+
+    case 'pos_idle_logout_seconds': {
+      const seconds = Number(value)
+      // Zero is meaningful: it is "never", and the only way to switch this off.
+      if (!Number.isInteger(seconds) || seconds < 0) {
+        return 'The inactivity time must be a whole number of seconds, or zero for never.'
+      }
+      /* A floor, because the failure below it is not a wrong setting but an
+         unusable till: at a few seconds the pad returns while the cashier is
+         still reaching for the next item, and the shop's answer is to turn the
+         feature off entirely rather than to raise it. Ten is under the shortest
+         option the screen offers and still long enough to be deliberate. */
+      if (seconds > 0 && seconds < 10) {
+        return 'An inactivity time under ten seconds would sign the cashier out mid-sale.'
+      }
+      // An hour of inactivity is indistinguishable from off, and saying so is
+      // better than storing a value that looks configured and never fires.
+      if (seconds > 3600) return 'Use Never rather than an inactivity time above an hour.'
+      return null
+    }
+
+    case 'qty_decimals': {
+      /* 0 to 3, matching the column: quantities are DECIMAL(12,3), so offering
+         a fourth would promise a digit the database cannot hold. */
+      const places = Number(value)
+      return Number.isInteger(places) && places >= 0 && places <= 3
+        ? null
+        : 'Quantity decimals must be 0, 1, 2 or 3.'
+    }
+
+    case 'cost_decimals': {
+      /* 2 to 4. Below two is not a cost anybody quotes, and above four is more
+         precision than the DECIMAL(12,4) columns carry. */
+      const places = Number(value)
+      return Number.isInteger(places) && places >= 2 && places <= 4
+        ? null
+        : 'Cost decimals must be 2, 3 or 4.'
+    }
 
     case 'cashup_mode':
       return value === 'terminal' || value === 'user'

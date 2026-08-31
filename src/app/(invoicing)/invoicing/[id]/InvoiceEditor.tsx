@@ -282,6 +282,9 @@ export default function InvoiceEditor({
   const [device, setDevice] = useState<string | null>(null)
   useEffect(() => setDevice(deviceId()), [])
 
+  /* The "name this sale" prompt. Only ever opened by Save (draft) on a
+     document with no customer — see save(). */
+  const [namingSale, setNamingSale] = useState(false)
   const [customerId, setCustomerId] = useState(document.customerId)
   const [customerName, setCustomerName] = useState(document.customerName ?? '')
   const [priceStructureId, setPriceStructureId] = useState(document.priceStructureId)
@@ -774,9 +777,18 @@ export default function InvoiceEditor({
 
   /* ── Saving ──────────────────────────────────────────────────────────── */
 
-  function payload(): InvoicePayload {
+  /**
+   * The document as the screen currently has it.
+   *
+   * `requireName` is passed only by the draft save. Print, Finalise and Issue
+   * quote all save through here too, and each of them either allocates a
+   * document number or is about to — so none of them may be blocked on a blank
+   * name. See the flag's own note in the action.
+   */
+  function payload(requireName = false): InvoicePayload {
     return {
       documentId: document.id,
+      requireName,
       deviceId: device,
       customerId,
       customerName: customerName.trim() || null,
@@ -806,14 +818,54 @@ export default function InvoiceEditor({
     }
   }
 
+  /**
+   * Save (draft).
+   *
+   * ── WHY THIS ASKS ─────────────────────────────────────────────────────
+   *
+   * A draft has no document number — the number is allocated at issue — so the
+   * only handle anyone has on it is what it is CALLED. Saved with nothing, it
+   * lands in the register as a row with a dash where its identity should be,
+   * and finding it again means opening documents until you recognise the lines.
+   *
+   * An ATTACHED CUSTOMER already answers the question, so this does not ask:
+   * their name is the sale's name, and making somebody retype it would be a
+   * dialog whose only correct answer is the one already on screen. The prompt
+   * is for the walk-in case, where nothing else has named the sale.
+   *
+   * The name is stored as `customer_name`, NOT as the reference. The reference
+   * is the customer's own number for the job — their PO, their job card — and
+   * it is theirs to use for whatever they use it for. Spending it on a name the
+   * shop invented would take the field away from what it is for.
+   */
   function save() {
+    if (!customerName.trim()) {
+      setNamingSale(true)
+      return
+    }
+    saveNamed(customerName)
+  }
+
+  /**
+   * The save itself, once there IS a name.
+   *
+   * Takes the name rather than reading it off state: the dialog calls this in
+   * the same tick as its own `setCustomerName`, so state still holds the old
+   * value — the same reason the till's `nameTab` passes its label through to
+   * `park()` instead of letting it re-read.
+   */
+  function saveNamed(name: string) {
+    const named = name.trim()
+    if (!named) return
+    setCustomerName(named)
+    setNamingSale(false)
     startTransition(async () => {
-      const result = await saveInvoiceAction(payload())
+      const result = await saveInvoiceAction({ ...payload(true), customerName: named })
       if (!result.ok) {
         toast.error(result.error)
         return
       }
-      toast.success('Invoice saved.')
+      toast.success(`${named} saved.`)
       router.refresh()
     })
   }
@@ -1722,6 +1774,14 @@ export default function InvoiceEditor({
           )}
         </Modal>
 
+        <NameSaleModal
+          open={namingSale}
+          noun={noun.toLowerCase()}
+          onClose={() => setNamingSale(false)}
+          onSave={saveNamed}
+          busy={pending}
+        />
+
         {/* The same dialog the back office and the register use. */}
         {receipt !== null && (
           <EmailInvoiceDialog
@@ -1738,5 +1798,99 @@ export default function InvoiceEditor({
         )}
       </PageBody>
     </>
+  )
+}
+
+/**
+ * "Name this sale" — the prompt Save (draft) raises on a document with no
+ * customer.
+ *
+ * ── WHY IT IS A DIALOG AND NOT A RED FIELD ────────────────────────────────
+ *
+ * The alternative was to mark the header field and refuse the save. That tells
+ * somebody they have done something wrong; this asks them a question, which is
+ * what is actually happening — the sale is fine, it just has no name yet. It
+ * also puts the cursor in the right box without them hunting for it.
+ *
+ * Nothing is captured but the name. A customer picker belongs to the header
+ * (attach a real account there and this dialog never opens), and a second way
+ * to attach one would be a second thing to keep in step.
+ */
+function NameSaleModal({
+  open,
+  noun,
+  busy = false,
+  onClose,
+  onSave,
+}: {
+  open: boolean
+  /** "invoice", "quote", "order" — so the dialog says what is being saved. */
+  noun: string
+  busy?: boolean
+  onClose: () => void
+  onSave: (name: string) => void
+}) {
+  const [name, setName] = useState('')
+
+  /* Fresh every time. A dialog that remembers the last name silently saves this
+     sale under the previous one's identity — and the two would be close enough
+     in a day's work that nobody would spot it. */
+  useEffect(() => {
+    if (!open) return
+    setName('')
+  }, [open])
+
+  const named = name.trim() !== ''
+
+  function submit() {
+    if (!named || busy) return
+    onSave(name)
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Name this sale"
+      description={`A draft ${noun} has no number yet, so the name is how you find it again.`}
+      size="sm"
+      /* Half-typed work: a stray tap on the backdrop must not lose the name
+         somebody is partway through entering. Same rule as the till's own
+         naming dialog. */
+      closeOnBackdrop={false}
+      footer={
+        <>
+          <Button variant="secondary" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={busy || !named} onClick={submit}>
+            <Icons.Save size={16} />
+            {busy ? 'Saving…' : 'Save draft'}
+          </Button>
+        </>
+      }
+    >
+      <Field
+        label="Sale name"
+        hint="A customer's name, a job, a phone number — whatever you will look for."
+      >
+        <Input
+          autoFocus
+          value={name}
+          maxLength={120}
+          placeholder="Who or what is this sale for?"
+          onChange={(e) => setName(e.target.value)}
+          /* Enter saves. This dialog has one field and one answer, and reaching
+             for the mouse to confirm a name you have just typed is a step with
+             no purpose. */
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              submit()
+            }
+          }}
+        />
+      </Field>
+    </Modal>
   )
 }

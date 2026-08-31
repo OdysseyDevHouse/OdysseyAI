@@ -87,14 +87,37 @@ const BULK_OPTIONS: BulkOptionGroup<OptionKey>[] = [
 export default function CustomerListClient({
   rows,
   total,
+  hasAny,
   search,
   filters,
+  editSuffix = '',
 }: {
   rows: Customer[]
   total: number
+  /**
+   * Whether the book holds ANY account, before any filter.
+   *
+   * The two empty states say opposite things — "create your first account"
+   * versus "nothing matches, widen the filter" — and `total` cannot tell them
+   * apart, because it is the count AFTER filtering. A filter matching nothing
+   * made it 0, so a shop with 25 accounts was told it had none and invited to
+   * create its first. The suppliers list takes the same prop for the same
+   * reason.
+   */
+  hasAny: boolean
   /** The active search term, echoed in the empty state. */
   search?: string
   filters: Filters
+  /**
+   * Query string appended to every link out to an account, carrying THIS
+   * list's URL so the trip back lands here rather than on the bare book.
+   *
+   * A filtered list is a worklist: narrow to twelve accounts, then work
+   * through them. Built on the server, because the URL helpers do not cross
+   * into a client component. Empty when nothing is filtered, so an ordinary
+   * list keeps its short, shareable links.
+   */
+  editSuffix?: string
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [showOptions, setShowOptions] = useState(false)
@@ -205,7 +228,7 @@ export default function CustomerListClient({
         getRowKey={(row) => row.id}
         selectedKeys={selected}
         onSelectionChange={setSelected}
-        onRowClick={(row) => router.push(`/customers/${row.id}`)}
+        onRowClick={(row) => router.push(`/customers/${row.id}${editSuffix}`)}
         actions={(row) => (
           <Menu
             iconOnly
@@ -214,7 +237,7 @@ export default function CustomerListClient({
             triggerLabel={`Actions for ${row.name}`}
             label={<Icons.MoreVertical size={16} />}
           >
-            <MenuItem href={`/customers/${row.id}`}>
+            <MenuItem href={`/customers/${row.id}${editSuffix}`}>
               <Icons.Eye size={15} />
               View account
             </MenuItem>
@@ -225,7 +248,7 @@ export default function CustomerListClient({
           </Menu>
         )}
         empty={
-          total === 0
+          !hasAny
             ? {
                 title: 'No customers yet',
                 hint: 'Create the first account to start selling on credit.',
@@ -237,10 +260,10 @@ export default function CustomerListClient({
                 ),
               }
             : {
-                title: 'No customers found',
+                title: 'No customers match this filter',
                 hint: search
                   ? `Nothing matches “${search}”. Try a different search or clear the filters.`
-                  : 'Try a different search or clear the filters.',
+                  : 'Clear a filter above to widen the list.',
               }
         }
       />

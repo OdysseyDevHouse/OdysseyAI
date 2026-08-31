@@ -19,7 +19,7 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
       <header className="border-b border-border pb-3 text-center">
         <h1 className="text-base font-semibold text-ink">{receipt.siteName}</h1>
         {receipt.vatNumber && !gift && (
-          <p className="mt-0.5 text-[11px] text-muted">VAT no. {receipt.vatNumber}</p>
+          <p className="mt-0.5 text-[11px] text-muted">{receipt.taxLabel ?? 'VAT'} no. {receipt.vatNumber}</p>
         )}
         <p className="mt-2 text-[12px] font-semibold tracking-wide text-ink">
           {gift ? 'GIFT RECEIPT' : 'TAX INVOICE'}
@@ -33,7 +33,7 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
         {receipt.customerName && (
           <p className="mt-1 text-[11px] text-ink-2">
             {receipt.customerName}
-            {receipt.customerVatNo && !gift ? ` · VAT ${receipt.customerVatNo}` : ''}
+            {receipt.customerVatNo && !gift ? ` · ${receipt.taxLabel ?? 'VAT'} ${receipt.customerVatNo}` : ''}
           </p>
         )}
         {receipt.copyNumber > 0 && !gift && (
@@ -51,7 +51,7 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
           <li key={i} className="py-0.5 text-[12px]">
             <div className="flex justify-between gap-2">
               <span className="min-w-0 flex-1 text-ink">
-                {formatQty(line.qty)} × {line.description}
+                {formatQty(line.qty, { exact: true })} × {line.description}
               </span>
               {!gift && (
                 <span className="numeric shrink-0 text-ink">{formatMoney(line.lineTotalIncl)}</span>
@@ -71,7 +71,7 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
                 <span className="min-w-0 flex-1">
                   {line.specialName ?? ''}
                   {line.discountIncl > 0
-                    ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct)}% off`
+                    ? `${line.specialName ? ' · ' : ''}${formatQty(line.discountPct, { exact: true })}% off`
                     : ''}
                 </span>
                 {line.discountIncl > 0 ? (
@@ -136,7 +136,7 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
             {receipt.vatByRate.map((rate) => (
               <div key={rate.ratePct} className="flex justify-between">
                 <dt className="text-muted">
-                  VAT @ {rate.ratePct}% on {formatMoney(rate.excl)}
+                  {receipt.taxLabel ?? 'VAT'} @ {rate.ratePct}% on {formatMoney(rate.excl)}
                 </dt>
                 <dd className="numeric text-ink">{formatMoney(rate.vat)}</dd>
               </div>
@@ -150,6 +150,21 @@ export function ReceiptSlip({ receipt }: { receipt: ReceiptData }) {
             </p>
           )}
         </>
+      )}
+
+      {/* The sale's custom comments, above the footer and matching the thermal
+          layout in escpos/slips.ts — the two must not disagree about what a
+          slip says. Never on a gift slip: that slip hides what the sale was
+          worth, and an answer captured at the pad is exactly what the giver did
+          not mean to send along. */}
+      {!gift && receipt.comments && receipt.comments.length > 0 && (
+        <div className="border-t border-border py-2 text-[11px] text-muted">
+          {receipt.comments.map((c) => (
+            <p key={c.label}>
+              {c.label}: <span className="text-ink">{c.value}</span>
+            </p>
+          ))}
+        </div>
       )}
 
       {receipt.footerText && (

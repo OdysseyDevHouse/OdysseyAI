@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery } from '@/lib/siteDb'
 import { supplierQuery } from '@/lib/site/customerDb'
+import { assertBalance, meterCall, isAiCreditsError } from '@/lib/aiCredits/meter'
 import { norm } from './lookups'
 
 /**
@@ -281,6 +282,8 @@ export async function scanPurchaseDocument(
   siteId: number,
   file: { name: string; base64: string },
   supplierId: number | null,
+  /** Who is spending. Recorded on the debit; null when nobody is at a screen. */
+  userId: number | null = null,
 ): Promise<ScanResult> {
   if (!/\.pdf$/i.test(file.name)) {
     return { ok: false, error: 'Only PDF files can be read. For a spreadsheet, use Import lines.' }
@@ -293,6 +296,17 @@ export async function scanPurchaseDocument(
       ok: false,
       error: 'That PDF is too large to read. Split it, or send the pages with the lines on them.',
     }
+  }
+
+  /* The wallet, BEFORE the call. Both cheap guards above run first on purpose:
+     a PDF we would refuse anyway should not spend a round trip to the control
+     panel to be told the shop could have afforded it. */
+  let ticket
+  try {
+    ticket = await assertBalance(siteId, 'doc_scan')
+  } catch (error) {
+    if (isAiCreditsError(error)) return { ok: false, error: error.userMessage }
+    throw error
   }
 
   let extracted: {
@@ -311,28 +325,32 @@ export async function scanPurchaseDocument(
 
   try {
     const anthropic = client()
-    const response = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      thinking: { type: 'adaptive' },
-      system: SYSTEM,
-      output_config: { format: { type: 'json_schema', schema: SCAN_SCHEMA } },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: file.base64 },
-            },
-            {
-              type: 'text',
-              text: 'Transcribe the goods lines and the header details from this supplier document.',
-            },
-          ],
-        },
-      ],
-    })
+    /* Metered: the debit is written from what the response actually reports
+       using, after it arrives. meterCall returns the response untouched. */
+    const response = await meterCall(ticket, userId, () =>
+      anthropic.messages.create({
+        model: MODEL,
+        max_tokens: 16000,
+        thinking: { type: 'adaptive' },
+        system: SYSTEM,
+        output_config: { format: { type: 'json_schema', schema: SCAN_SCHEMA } },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: file.base64 },
+              },
+              {
+                type: 'text',
+                text: 'Transcribe the goods lines and the header details from this supplier document.',
+              },
+            ],
+          },
+        ],
+      }),
+    )
 
     if (response.stop_reason === 'refusal') {
       return { ok: false, error: 'That document could not be read. Enter the lines by hand.' }

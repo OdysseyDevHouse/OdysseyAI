@@ -5,6 +5,7 @@ import { toStatementCycle } from '@/lib/statementCycles'
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { safeReturnTo } from '@/lib/returnTo'
 import { requireActor, actorForModule, actorForModuleOrThrow } from '@/lib/auth'
 import { setValues } from '@/lib/site/customFields'
 import type { CustomFieldEntity } from '@/lib/customFieldModel'
@@ -184,7 +185,15 @@ export async function saveCustomerAction(
   if (!result.ok) return { error: result.error }
 
   revalidatePath('/customers')
-  redirect(`/customers/${result.id}?saved=1`)
+
+  /* Saving keeps you ON the account — it is not necessarily the end of the
+     edit. What it must not do is lose the list that sent you here: the
+     redirect rebuilds the URL from scratch, so without carrying `from` the
+     Back arrow silently reverts to the whole book on the first save. */
+  const back = safeReturnTo(form.get('returnTo'))
+  redirect(
+    `/customers/${result.id}?saved=1${back ? `&from=${encodeURIComponent(back)}` : ''}`,
+  )
 }
 
 export async function deleteCustomerAction(form: FormData): Promise<void> {
@@ -193,15 +202,23 @@ export async function deleteCustomerAction(form: FormData): Promise<void> {
   const id = Number(form.get('id'))
   if (!Number.isFinite(id) || id <= 0) redirect('/customers')
 
+  const back = safeReturnTo(form.get('returnTo'))
+
   const result = await deleteCustomer(siteId, actor, id)
   if (!result.ok) {
     // Round-tripped through the URL because a fire-and-redirect action has no
     // form state to return into — the detail page renders it as a banner.
-    redirect(`/customers/${id}?error=${encodeURIComponent(result.error)}`)
+    redirect(
+      `/customers/${id}?error=${encodeURIComponent(result.error)}` +
+        (back ? `&from=${encodeURIComponent(back)}` : ''),
+    )
   }
 
   revalidatePath('/customers')
-  redirect('/customers?deleted=1')
+  /* Back to the LIST, since the account is gone — and to the filtered one:
+     deleting one of twelve is exactly when the other eleven should still be
+     on screen. */
+  redirect(back ? `${back}${back.includes('?') ? '&' : '?'}deleted=1` : '/customers?deleted=1')
 }
 
 /**

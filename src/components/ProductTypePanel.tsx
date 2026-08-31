@@ -1,14 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { Badge, Button, Drawer } from '@/components/ui'
+import { Button, Drawer } from '@/components/ui'
 import {
   Barcode,
   Boxes,
   Calculator,
   Factory,
   Gift,
-  Globe,
   Link2,
   Package,
   Reverse,
@@ -108,12 +107,6 @@ export default function ProductTypePanel({
         <div className="flex-1 basis-48">
           <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
             {current.name}
-            {current.onlineOnly && (
-              <Badge tone="brand">
-                <Globe size={11} />
-                Online only
-              </Badge>
-            )}
           </div>
           <p className="mt-0.5 text-xs text-muted">{current.summary}</p>
         </div>
@@ -192,12 +185,6 @@ export default function ProductTypePanel({
                         <span className="min-w-0 flex-1">
                           <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-ink">
                             {type.name}
-                            {type.onlineOnly && (
-                              <Badge tone="brand">
-                                <Globe size={11} />
-                                Online only
-                              </Badge>
-                            )}
                           </span>
                           <span className="mt-0.5 block text-xs text-muted">
                             {type.summary}

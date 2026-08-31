@@ -51,8 +51,6 @@ export type ProductTypeOption = {
   group: ProductTypeGroup
   /** Label for the type's own setup screen, where it has one. */
   setupLabel?: string
-  /** Shown as a badge — the type is only usable on the online store. */
-  onlineOnly?: boolean
 }
 
 export const PRODUCT_TYPES: ProductTypeOption[] = [
@@ -106,7 +104,6 @@ export const PRODUCT_TYPES: ProductTypeOption[] = [
     description:
       'An item identified by a unique serial number. Link individual serial numbers to track each unit through to sale.',
     setupLabel: 'Setup serial numbers',
-    onlineOnly: true,
   },
   {
     id: 'buyout',

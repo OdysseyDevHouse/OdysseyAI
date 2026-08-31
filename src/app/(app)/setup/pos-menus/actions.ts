@@ -27,7 +27,8 @@ import type { PosMenu } from '@/lib/posMenuEngine'
  * ── GUARDED ON setup.edit ──────────────────────────────────────────────────
  *
  * Deciding what the shop floor shows at nine in the morning is configuration,
- * like the quick keys and the menu designer beside it. Deliberately not
+ * like the quick keys and the menu designer — both of which the menu now
+ * reaches from Sales and Products, on this same capability. Deliberately not
  * `products.edit`: someone who may price a product has no business changing
  * what every till in the shop displays at breakfast.
  *

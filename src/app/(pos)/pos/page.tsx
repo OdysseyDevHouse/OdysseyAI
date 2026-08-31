@@ -3,10 +3,12 @@ import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { listTerminals } from '@/lib/site/terminals'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
+import { listFieldDefs } from '@/lib/site/customFields'
 import { listSalesReasons } from '@/lib/site/salesReasons'
 import { toDocType } from '@/lib/site/salesDocuments'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { getNumericSetting, getSetting, getSettings } from '@/lib/site/settings'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { can, capabilitiesForRole } from '@/lib/site/permissions'
 import { getUser } from '@/lib/site/users'
 import { getTillSession } from '@/lib/tillSession'
@@ -229,9 +231,57 @@ export default async function PosPage({
      defaults, so a store that has never opened the setup screen takes deposits
      from anybody for any amount — which is what a shop that has not thought
      about it expects to happen. */
-  const depositSettings = await getSettings(site.id, ['deposit_min_pct', 'deposit_allow_walkin'])
+  const depositSettings = await getSettings(site.id, [
+    'deposit_min_pct',
+    'deposit_allow_walkin',
+    /* The two sign-out rules, read alongside the deposit pair rather than in a
+       query of their own. Both are consulted at a moment no fetch can help: one
+       when a sale completes, the other on a timer that has to keep running with
+       the line down. Shipped with the page, like every other till rule. */
+    'pos_return_to_login',
+    'pos_idle_logout_seconds',
+    /* Whether a scan makes a noise. Shipped for the strongest version of the
+       reason the others are: the sound has to fire in the same tick as the
+       basket changes, and it has to keep working with the line down — a
+       mis-scan is likelier offline, not less. */
+    'pos_scan_sounds',
+  ])
   const depositMinPct = Number(depositSettings.deposit_min_pct ?? '0') || 0
   const depositAllowWalkin = String(depositSettings.deposit_allow_walkin ?? '1') !== '0'
+  const returnToLogin = String(depositSettings.pos_return_to_login ?? '0') === '1'
+  /* Clamped to a non-negative integer here rather than trusted: this drives a
+     setTimeout, and a NaN there would silently never fire — a security setting
+     that reads as on and does nothing. Zero is never, which is also the answer
+     a malformed value should give. */
+  const idleLogoutSeconds = Math.max(
+    0,
+    Math.trunc(Number(depositSettings.pos_idle_logout_seconds ?? '0')) || 0,
+  )
+  const scanSounds = String(depositSettings.pos_scan_sounds ?? '0') === '1'
+
+  /*
+   * The questions a sale may be asked at the pad.
+   *
+   * Shipped with the page rather than fetched when the pad opens, like every
+   * other till rule: the dialog stands between a cashier and a customer's
+   * money, and a round trip there is one somebody waits through. Active only —
+   * a retired field is one nobody may be asked any more.
+   *
+   * A shop with none gets an empty list, and the gate in PosShell then never
+   * fires however the tender flags happen to be set.
+   */
+  const saleCommentFields = (await listFieldDefs(site.id, 'sale').catch(() => []))
+    .filter((d) => d.isActive)
+    .map((d) => ({
+      fieldId: d.id,
+      code: d.code,
+      name: d.name,
+      hint: d.hint,
+      fieldType: d.fieldType,
+      options: d.options,
+      unit: d.unit,
+      isRequired: d.isRequired,
+    }))
 
   const keyProducts = keyProductIds.length
     ? await siteQuery<{ id: number; description: string }>(
@@ -255,6 +305,7 @@ export default async function PosPage({
       siteName={site.displayName}
       /* For the till-printed slip's header — a tax invoice names the vendor. */
       siteVatNumber={site.vatNumber}
+      siteTaxLabel={await taxLabel(site.id)}
       /* Null when the till cookie has lapsed. PosEntry then looks for an offline
          session before deciding to show the PIN gate. */
       serverOperator={
@@ -307,6 +358,10 @@ export default async function PosPage({
       cashRounding={cashRounding}
       depositMinPct={depositMinPct}
       depositAllowWalkin={depositAllowWalkin}
+      returnToLogin={returnToLogin}
+      idleLogoutSeconds={idleLogoutSeconds}
+      scanSounds={scanSounds}
+      saleCommentFields={saleCommentFields}
       specials={specials}
       pendingPrices={pendingPrices}
       posMenus={posMenus}

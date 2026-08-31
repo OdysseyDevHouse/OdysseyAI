@@ -115,6 +115,17 @@ const PUBLIC_PREFIXES = [
   //
   // The trailing slash matters, as it does for the routes above.
   '/api/billing/payfast/',
+  // The same, for a once-off AI-credits top-up rather than the monthly
+  // subscription. A separate route because it settles a different thing, and a
+  // separate entry here because a prefix is a promise: adding it under the line
+  // above would have made every future '/api/billing/…' route public too.
+  //
+  // Guarded identically — a signed token naming one billing account and one
+  // checkout, plus a valid PayFast signature, a PayFast source IP and PayFast's
+  // own confirmation before anything is written.
+  //
+  // The trailing slash matters, as it does for the routes above.
+  '/api/billing/topup/',
   // A technician's calendar subscription. Google, Outlook and Apple all fetch it
   // on a schedule with no browser and no cookie, so behind the gate they would
   // fetch the login page for ever and render an empty calendar with no error —
@@ -237,6 +248,21 @@ const PUBLIC_PREFIXES = [
   // payment intent together, the page shows only the invoice number, the payee
   // and the amount, and it can mark NOTHING paid — only the ITN callback does.
   '/pay/',
+  // The PRINTED pay code — the square on an invoice, statement or lay-by slip.
+  //
+  // Same reasoning as '/pay/' above and the same guarantees, but the link is
+  // durable rather than a 24-hour token: paper is scanned weeks later and
+  // several times over, so the code resolves to a revocable row instead.
+  //
+  // It is not unguarded. The code carries 70 bits of randomness, so it cannot
+  // be walked; it names one site and one payable thing; the page shows only
+  // what that thing is and what is owed on it TODAY — no line detail, no
+  // account history, no contact details; and it can mark NOTHING paid, because
+  // only the verified ITN does that.
+  //
+  // The trailing slash matters, as it does for every prefix here: a bare '/p'
+  // would make any future '/products…' or '/portal…' route public.
+  '/p/',
   // The mobile app's authentication. A phone arriving at first light has no
   // cookie by definition — these three routes are how it gets one, so a cookie
   // gate here is a locked door with the key inside it.

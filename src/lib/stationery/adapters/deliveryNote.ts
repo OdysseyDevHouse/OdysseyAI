@@ -42,6 +42,8 @@ export type DeliveryNoteSources = {
   site: {
     name: string
     vatNumber: string | null
+    /** What this business calls its tax. Optional; falls back to VAT. */
+    taxLabel?: string
     registrationNumber: string | null
     address1: string | null
     address2: string | null
@@ -78,7 +80,7 @@ export function deliveryNoteTokens(src: DeliveryNoteSources): RenderInput {
     'site.name': site.name,
     'site.vatNumber': site.vatNumber,
     'site.registrationNumber': site.registrationNumber,
-    'site.vatLine': site.vatNumber ? `VAT no. ${site.vatNumber}` : '',
+    'site.vatLine': site.vatNumber ? `${site.taxLabel ?? 'VAT'} no. ${site.vatNumber}` : '',
     'site.registrationLine': site.registrationNumber
       ? `Reg. no. ${site.registrationNumber}`
       : '',
@@ -152,5 +154,12 @@ export function deliveryNoteTokens(src: DeliveryNoteSources): RenderInput {
     }
   })
 
-  return { values, sections: { lines: rows }, capabilities: { isOwner: false, granted: new Set() } }
+  return {
+    values,
+    sections: { lines: rows },
+    capabilities: { isOwner: false, granted: new Set() },
+    /* The renderer's own furniture — the totals row labels and the summary
+       heading — is not a token value, so it is told separately. See RenderInput. */
+    taxLabel: site.taxLabel,
+  }
 }

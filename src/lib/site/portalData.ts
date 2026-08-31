@@ -595,10 +595,100 @@ export async function payLinkFor(
     const { createIntent } = await import('./payments')
     const { createCallbackToken } = await import('../callbackToken')
     const intent = await createIntent(siteId, {
-      targetId: documentId,
-      amountIncl: outstanding,
       // The purpose 038_payments.sql already anticipated for exactly this.
-      purpose: 'debtor_invoice',
+      target: { purpose: 'debtor_invoice', documentId },
+      amountIncl: outstanding,
+    })
+    const token = await createCallbackToken(siteId, intent.reference)
+    return { ok: true, url: `/pay/${token}` }
+  } catch {
+    return { ok: false, error: 'Paying online is not available at the moment.' }
+  }
+}
+
+
+/**
+ * A link to pay ANY amount onto the account itself.
+ *
+ * ── WHY THIS EXISTS BESIDE payLinkFor AND IS NOT A CASE OF IT ──────────────
+ *
+ * `payLinkFor` settles one document; this settles a BALANCE. They differ in the
+ * only way that matters to the money: the invoice case has an outstanding
+ * figure the system computed and the customer may only accept, and this case
+ * has a figure the CUSTOMER chose. A shared function taking an optional amount
+ * would put "how much" under the caller's control on the invoice path too,
+ * which is exactly the guard payLinkFor exists to hold.
+ *
+ * ── THE AMOUNT IS THE CUSTOMER'S, WITHIN LIMITS ────────────────────────────
+ *
+ * Paying MORE than is owed is the point — a top-up leaves the account in
+ * credit, which the ledger already models and `settleAccountPayment` already
+ * handles: autoAllocate settles what open items there are oldest-first and any
+ * remainder simply sits as an unallocated credit. That is what a deposit onto
+ * an account has always meant on a debtors ledger, so nothing new is needed
+ * downstream.
+ *
+ * What IS checked here is that the number is a real one. It is typed into a box
+ * on a public page, so it arrives as a claim: NaN, Infinity, a negative, a
+ * thousand decimal places, or a figure large enough to be a typo rather than an
+ * intention. Each of those becomes a refusal rather than a payment intent,
+ * because an intent is what the gateway callback is verified against — a bad
+ * one is money that cannot be reconciled, not an error somebody sees.
+ *
+ * ── A NEGATIVE IS REFUSED, NOT CLAMPED ────────────────────────────────────
+ *
+ * Clamping would take a customer who typed "-500" meaning a refund and charge
+ * their card 500. The ledger clamps payment signs of its own accord (a negative
+ * payment posts as another credit), so a negative reaching that far is a silent
+ * wrong answer rather than a failure. It stops here.
+ */
+
+/** The most a customer may put on their account in one go. */
+const MAX_ACCOUNT_PAYMENT = 1_000_000
+
+export async function accountPayLinkFor(
+  siteId: number,
+  customerId: number,
+  amountIncl: number,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  // Number, and a sane one. `Number.isFinite` rejects NaN and both infinities;
+  // the typed box can produce all three from ordinary input.
+  if (!Number.isFinite(amountIncl)) {
+    return { ok: false, error: 'Please enter an amount to pay.' }
+  }
+
+  const amount = Math.round(amountIncl * 100) / 100
+  if (amount <= 0) {
+    return { ok: false, error: 'Please enter an amount greater than zero.' }
+  }
+  if (amount > MAX_ACCOUNT_PAYMENT) {
+    return { ok: false, error: 'That amount is too large to pay online. Please contact us.' }
+  }
+
+  /*
+   * The customer still has to exist and still be somebody we may take money
+   * from. The session proves who they are; it does not prove the account was
+   * not archived in the meantime, and banking a payment onto a closed account
+   * leaves money on a record nobody looks at.
+   */
+  const customer = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id, status FROM customers WHERE id = ?`,
+    [customerId],
+  ).catch(() => null)
+  if (!customer) return { ok: false, error: 'We could not find your account.' }
+  if (String(customer.status ?? '') === 'closed') {
+    return { ok: false, error: 'This account is closed. Please contact us.' }
+  }
+
+  try {
+    const { createIntent } = await import('./payments')
+    const { createCallbackToken } = await import('../callbackToken')
+    const intent = await createIntent(siteId, {
+      // A statement's target is a CUSTOMER, not a document — a balance is not
+      // a thing with a number. See INTENT_TARGET in payments.ts.
+      target: { purpose: 'customer_account', customerId },
+      amountIncl: amount,
     })
     const token = await createCallbackToken(siteId, intent.reference)
     return { ok: true, url: `/pay/${token}` }
@@ -687,4 +777,115 @@ export async function portalUpload(
   } catch {
     return { ok: false, error: 'That could not be saved.' }
   }
+}
+
+/* ── The account side: profile, transactions, statement ──────────────────── */
+
+/**
+ * The customer's own details, as THEY may see them.
+ *
+ * ── A HAND-WRITTEN COLUMN LIST, NOT `getCustomer` ──────────────────────────
+ *
+ * getCustomer returns the whole row, and the whole row is not a document a
+ * customer may read. It carries the sales rep, the notes staff wrote about
+ * them, the standing discount, the interest rate and grace days, the price
+ * structure and the spend caps — commercial terms the business set, some of
+ * which are frankly uncomfortable reading, and none of which a shopper asked
+ * for. Passing that object to a page and picking fields in JSX would put every
+ * one of them in the HTML payload regardless of what was rendered.
+ *
+ * So the SELECT is the boundary, exactly as the module header says. What is not
+ * named here cannot reach a browser by being forgotten in a component.
+ *
+ * ── READ-ONLY, AND THAT IS THE POINT ───────────────────────────────────────
+ *
+ * There is no matching write. A customer correcting their own VAT number or
+ * address on a live debtors account changes what gets invoiced and where it
+ * gets delivered, without anybody at the shop knowing. They ring up instead,
+ * which is a worse UX and a much better control.
+ */
+export type PortalProfile = {
+  code: string
+  name: string
+  contactName: string | null
+  email: string | null
+  phone: string | null
+  vatNumber: string | null
+  addressLines: string[]
+  /** Days from invoice to due. Shown because it explains every due date. */
+  paymentTermsDays: number
+  /** What they owe right now. Positive means owing. */
+  balance: number
+}
+
+export async function portalProfile(
+  siteId: number,
+  customerId: number,
+): Promise<PortalProfile | null> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT code, name, contact_name, email, phone, vat_number,
+            address_line1, address_line2, city, postal_code,
+            payment_terms_days, balance
+       FROM customers
+      WHERE id = ?`,
+    [customerId],
+  )
+  if (!row) return null
+
+  return {
+    code: String(row.code ?? ''),
+    name: String(row.name ?? ''),
+    contactName: (row.contact_name as string | null) ?? null,
+    email: (row.email as string | null) ?? null,
+    phone: (row.phone as string | null) ?? null,
+    vatNumber: (row.vat_number as string | null) ?? null,
+    // Assembled here rather than in the page: the same four columns are laid
+    // out on the statement PDF too, and two places deciding what an address
+    // looks like is how they come to disagree.
+    addressLines: [row.address_line1, row.address_line2, row.city, row.postal_code]
+      .map((part) => String(part ?? '').trim())
+      .filter((part) => part.length > 0),
+    paymentTermsDays: Number(row.payment_terms_days ?? 0),
+    balance: Number(row.balance ?? 0),
+  }
+}
+
+/**
+ * Where a customer may deliver to. Their own, active ones only.
+ *
+ * Shown on the profile beside the account address because "which of my
+ * addresses do you have" is one of the questions this page exists to answer.
+ */
+export type PortalAddress = {
+  id: number
+  kind: string
+  label: string
+  lines: string[]
+  isDefault: boolean
+}
+
+export async function portalAddresses(
+  siteId: number,
+  customerId: number,
+): Promise<PortalAddress[]> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT id, kind, label, line1, line2, city, postal_code, province, is_default
+       FROM customer_addresses
+      WHERE customer_id = ? AND is_active = 1
+      ORDER BY kind, is_default DESC, sort_order, label`,
+    [customerId],
+  )
+  // `notes` is deliberately not selected: an address note is a message to the
+  // DRIVER — gate codes, "ring twice", "dog in the yard" — written by staff.
+  return rows.map((r) => ({
+    id: Number(r.id),
+    kind: String(r.kind),
+    label: String(r.label ?? ''),
+    lines: [r.line1, r.line2, r.city, r.province, r.postal_code]
+      .map((part) => String(part ?? '').trim())
+      .filter((part) => part.length > 0),
+    isDefault: !!r.is_default,
+  }))
 }

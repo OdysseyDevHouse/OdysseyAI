@@ -123,6 +123,42 @@ export type TillProduct = {
    */
   pickedSerialId?: number
   pickedSerial?: string
+
+  /* ── The variant scheme (070) ──────────────────────────────────────────── */
+
+  /**
+   * True when this row is a variant PARENT — a grouping tile, never a line.
+   *
+   * A parent holds no stock and `recordMovement` refuses it, so one reaching
+   * the basket would fail at the tender pad with the card already out. The
+   * till's guard is in `add()`: a parent opens the picker instead of adding.
+   *
+   * Only `browseForTill` can return one, and only when asked (see
+   * `includeVariantParents`). Search and scan never do: a scanned barcode is a
+   * physical item in somebody's hand, which a group by definition is not.
+   */
+  hasVariants: boolean
+  /** Set when this product is somebody's variant. Null on an ordinary product. */
+  parentId: number | null
+  /**
+   * What distinguishes this child from its siblings — 'M', 'Red'. Empty on
+   * everything that is not a variant.
+   *
+   * The VALUES only. Their labels ('Size', 'Colour') belong to the group as a
+   * whole and ride the catalog feed separately, keyed by parent id — held per
+   * child they would repeat on every row and could disagree.
+   */
+  axis1Value: string
+  axis2Value: string
+  /**
+   * Where this member sits in its group's picker. 0 on everything else.
+   *
+   * Its own column rather than reusing `posSortOrder`, which orders TILES in a
+   * department — a member has no tile. And the reason it exists at all is that
+   * sizes are not alphabetical: S, M, L, XL sorts to L, M, S, XL, which is
+   * nonsense on a shelf edge and worse in a picker (see 070).
+   */
+  variantSort: number
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -158,6 +194,11 @@ function mapProduct(r: Row): TillProduct {
        would draw a broken image on every product that once had an icon. */
     imageIcon: (r.image_icon as string | null) || null,
     posSortOrder: Number(r.pos_sort_order ?? 0),
+    hasVariants: Number(r.has_variants ?? 0) === 1,
+    parentId: r.parent_id === null || r.parent_id === undefined ? null : Number(r.parent_id),
+    axis1Value: String(r.axis_1_value ?? ''),
+    axis2Value: String(r.axis_2_value ?? ''),
+    variantSort: Number(r.variant_sort ?? 0),
   }
 }
 
@@ -172,22 +213,78 @@ function mapProduct(r: Row): TillProduct {
  *
  * ── PARAMETER ORDER MATTERS AND IS EASY TO GET WRONG ─────────────────────
  *
- * It takes TWO bound parameters, in this order:
+ * It takes FOUR bound parameters, in this order:
  *
- *   1. the stock location id, or null for "whichever is main"
- *   2. the price structure id
+ *   1. the stock location id — for a GROUP, summing its members' piles
+ *   2. the stock location id AGAIN — for an ordinary product's own pile
+ *   3. the price structure id — for a GROUP, finding its cheapest member
+ *   4. the price structure id AGAIN — the price join at the foot of the query
  *
- * The location one is first because its subquery appears above the price join
- * in the text, and mysql2 binds positionally. Every caller therefore starts its
- * params array with `locationId, priceStructureId` before adding its own — get
- * that pair the wrong way round and the query still runs, silently counting the
- * wrong room and pricing off structure 0.
+ * Null is allowed for the location and means "whichever is main".
+ *
+ * Ordered by where each appears in the TEXT, because mysql2 binds positionally
+ * and the variant CASE arms sit above the joins they mirror. Every caller
+ * therefore starts its params array with `PARAMS(locationId, priceStructureId)`
+ * before adding its own — use that helper rather than writing the four out, or
+ * the query still runs and silently counts the wrong room and prices off
+ * structure 0.
+ *
+ * The location and structure are each bound TWICE rather than once because a
+ * variant PARENT has neither a stock row nor a price row of its own: rule 4
+ * keeps its stock at 0 and it never gets a `product_prices` row. Both figures
+ * therefore have to be derived from its members, and a derivation cannot reuse
+ * the join that returned nothing.
  */
+/**
+ * A group is only a tile if something is actually IN it.
+ *
+ * `makeParent` creates a group with no children, and `detachChild` can empty
+ * one — so a shopkeeper mid-setup, or one who ungrouped a range, leaves a
+ * parent standing with nothing under it. Without this the till draws a tile
+ * that opens a picker with no options, which is a dead end a cashier cannot
+ * explain to the person at the counter.
+ *
+ * `visible_in_pos` is deliberately NOT checked on the child here: hiding one
+ * size from the till should thin the picker, not delete the whole group. The
+ * picker applies that flag itself. `is_archived` is checked, because an
+ * archived child is gone rather than hidden.
+ *
+ * Written once and shared by `browseForTill` and `tillProductCounts` — they
+ * must agree, and the way two copies of a clause drift is that one is edited.
+ */
+const LIVE_GROUP_ONLY = `AND (
+  p.has_variants = 0
+  OR EXISTS (SELECT 1 FROM products c
+              WHERE c.parent_id = p.id AND c.is_archived = 0)
+)`
+
+/**
+ * The four leading parameters `selectProduct` needs, in its own order.
+ *
+ * A helper rather than four literals at each of the six call sites: the pairs
+ * repeat, so writing them out is exactly the kind of thing that gets copied
+ * with one element wrong — and the failure is silent, since a query with the
+ * location and structure transposed still runs and simply answers about the
+ * wrong room at the wrong price.
+ */
+const PARAMS = (locationId: number | null, priceStructureId: number | null): unknown[] => [
+  locationId ?? null,
+  locationId ?? null,
+  priceStructureId ?? 0,
+  priceStructureId ?? 0,
+]
+
 function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
            p.ask_price_at_sale, p.allow_fractions, p.scale_item, p.variable_type,
            p.max_discount_pct, p.image_color, p.image_icon,
+           -- The variant scheme (070). Shipped on every row rather than only
+           -- where a group exists: the till's guard in add() reads
+           -- hasVariants on whatever it is handed, and a column that were
+           -- present on some reads and absent on others would make that guard
+           -- pass by accident on exactly the path that skipped it.
+           p.has_variants, p.parent_id, p.axis_1_value, p.axis_2_value, p.variant_sort,
            -- Where the shop dragged this tile (121). Shipped rather than left
            -- behind because the offline till sorts its own cached grid, and a
            -- column the server ordered by but never sent would give an online
@@ -210,15 +307,44 @@ function selectProduct(costBasis: string): string {
            --
            -- The COALESCE is on the PARAMETER rather than on two branches of
            -- SQL, so there is one query plan and one place the room is decided.
-           COALESCE((
+           --
+           -- A GROUP reports its MEMBERS' pile, in the same room. Rule 4 keeps
+           -- a parent's own column at 0, and showing that zero would print
+           -- "none on hand" on a tile for a shirt with 300 on the shelf — the
+           -- same call lib/site/products.ts makes for the back-office list, and
+           -- for the same reason. The CASE costs nothing on the ordinary row:
+           -- has_variants is 0 and the subquery is never run.
+           CASE WHEN p.has_variants = 1 THEN COALESCE((
+             SELECT SUM(cls.stock_on_hand)
+               FROM products c
+               JOIN product_location_stock cls ON cls.product_id = c.id
+              WHERE c.parent_id = p.id AND c.is_archived = 0
+                AND cls.location_id = COALESCE(
+                      ?, (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1))
+           ), 0) ELSE COALESCE((
              SELECT pls.stock_on_hand
                FROM product_location_stock pls
               WHERE pls.product_id = p.id
                 AND pls.location_id = COALESCE(
                       ?, (SELECT id FROM stock_locations WHERE is_main = 1 ORDER BY id LIMIT 1))
               LIMIT 1
-           ), 0)                                                      AS stock_on_hand,
-           COALESCE(pp.selling_price_incl, 0)                         AS price_incl,
+           ), 0) END                                                  AS stock_on_hand,
+           -- And a group shows what its CHEAPEST member costs, since it has no
+           -- price of its own — a tile reading R0.00 for a shirt is worse than
+           -- one reading "from R199". The picker states the exact price of
+           -- whichever size is chosen, so this figure only has to be the honest
+           -- lowest rather than the one that will be charged.
+           -- Binds the structure id AGAIN rather than reading it off pp: that
+           -- join is a LEFT JOIN and is NULL on a parent, which has no price
+           -- row of its own — so pp.price_structure_id would be NULL here and
+           -- match no child at all, putting every group back at R0.00.
+           CASE WHEN p.has_variants = 1 THEN COALESCE((
+             SELECT MIN(cpp.selling_price_incl)
+               FROM products c
+               JOIN product_prices cpp ON cpp.product_id = c.id
+                AND cpp.price_structure_id = ?
+              WHERE c.parent_id = p.id AND c.is_archived = 0
+           ), 0) ELSE COALESCE(pp.selling_price_incl, 0) END           AS price_incl,
            COALESCE(v.rate, 0)                                        AS vat_rate,
            ${costBasis === 'last' ? 'p.last_cost' : 'p.average_cost'} AS cost_excl,
            -- Spoken for: open sales orders PLUS open lay-bys. Correlated
@@ -291,7 +417,7 @@ export async function searchForTill(
              THEN 0 ELSE 1 END,
         p.description ASC
       LIMIT ${capped}`,
-    [locationId, priceStructureId ?? 0, needle, like, like, needle, needle, needle, needle],
+    [...PARAMS(locationId, priceStructureId), needle, like, like, needle, needle, needle, needle],
   )
 
   return rows.map(mapProduct)
@@ -336,6 +462,18 @@ export async function browseForTill(
     limit?: number
     /** The room this till sells from. Null counts the main location, as before. */
     locationId?: number | null
+    /**
+     * Show variant GROUPS instead of their members. Default FALSE.
+     *
+     * Opt-in rather than automatic because this function has three other
+     * callers — the invoice picker, trade entry, the offline catalog — and a
+     * parent is unsellable to all of them. Only the till's tile grid can do
+     * anything with a group, because only it has a picker to resolve one.
+     *
+     * The caller that turns this on takes on the obligation in `add()`: a
+     * product with `hasVariants` must open the picker, never become a line.
+     */
+    includeVariantParents?: boolean
   } = {},
 ): Promise<TillProduct[]> {
   const { cost_basis: costBasis } = await getSettings(siteId, ['cost_basis'])
@@ -358,8 +496,8 @@ export async function browseForTill(
        )`
     : ''
 
-  // Location first, then price structure — see selectProduct's docblock.
-  const params: unknown[] = [options.locationId ?? null, options.priceStructureId ?? 0]
+  // The four leading parameters, in selectProduct's own order — see its docblock.
+  const params: unknown[] = PARAMS(options.locationId ?? null, options.priceStructureId ?? null)
   if (options.departmentId) params.push(options.departmentId)
 
   /* Same matching rule as searchForTill: barcode exact, code and description
@@ -401,17 +539,35 @@ export async function browseForTill(
       ? ''
       : `CASE WHEN p.pos_sort_order = 0 THEN 1 ELSE 0 END, p.pos_sort_order ASC,`
 
+  /*
+   * Variant groups: the GROUP or its MEMBERS, never both.
+   *
+   * Off (the default) this is the clause every till read has always carried —
+   * parents excluded, children appearing as ordinary products. Every caller
+   * that is not the till's tile grid keeps exactly that.
+   *
+   * On, the two swap: the parent stands for its children and the children drop
+   * out. Showing both would put a shirt on the grid six times — five sizes and
+   * the group that contains them — which is the pile of competing tiles the
+   * whole feature exists to collapse.
+   *
+   * `visible_in_pos` still applies to the parent on its own, so hiding a group
+   * from the till hides the group. A child hidden individually stays hidden
+   * inside the picker, which reads the same flag.
+   *
+   * ⚠ Whatever this clause admits, `tillProductCounts` must count. It is a
+   * promise about what tapping the department tile will show.
+   */
+  const variantScope = options.includeVariantParents
+    ? `AND p.parent_id IS NULL ${LIVE_GROUP_ONLY}`
+    : 'AND p.has_variants = 0'
+
   const rows = await siteQuery<Row>(
     siteId,
     `${selectProduct(costBasis)}
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
-        -- A variant parent holds no stock and recordMovement refuses it, so it
-        -- must never reach a till line. Its variants are ordinary products and
-        -- appear here normally. Not folded into visible_in_pos: that flag is
-        -- the shopkeeper's to toggle, and switching it on must not be able to
-        -- make an unsellable row sellable.
-        AND p.has_variants = 0
+        ${variantScope}
         ${scope}
         ${filter}
       ORDER BY ${ranking} ${menuOrder} p.description ASC
@@ -474,7 +630,7 @@ export async function resolveScan(
                OR EXISTS (SELECT 1 FROM product_barcodes pb
                            WHERE pb.barcode IN (${placeholders}) AND pb.product_id = p.id))
         LIMIT 1`,
-      [locationId, priceStructureId ?? 0, ...candidates, ...candidates, ...candidates],
+      [...PARAMS(locationId, priceStructureId), ...candidates, ...candidates, ...candidates],
     )
     if (byGtin) {
       const product = mapProduct(byGtin)
@@ -502,7 +658,7 @@ export async function resolveScan(
         AND (p.barcode = ? OR p.code = ?
              OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
       LIMIT 1`,
-    [locationId, priceStructureId ?? 0, code, code, code],
+    [...PARAMS(locationId, priceStructureId), code, code, code],
   )
   if (exact) return mapProduct(exact)
 
@@ -522,7 +678,7 @@ export async function resolveScan(
         AND (p.code = ? OR p.barcode = ?
              OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.barcode = ? AND pb.product_id = p.id))
       LIMIT 1`,
-    [locationId, priceStructureId ?? 0, variable.plu, variable.plu, variable.plu],
+    [...PARAMS(locationId, priceStructureId), variable.plu, variable.plu, variable.plu],
   )
   if (!byPlu) return null
 
@@ -565,7 +721,7 @@ export async function getTillProduct(
   const row = await siteQueryOne<Row>(
     siteId,
     `${selectProduct(costBasis)} WHERE p.id = ? LIMIT 1`,
-    [locationId, priceStructureId ?? 0, productId],
+    [...PARAMS(locationId, priceStructureId), productId],
   )
   if (!row) return null
 
@@ -663,7 +819,12 @@ export async function tillProductCounts(siteId: number): Promise<Record<number, 
        FROM products p
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
-        AND p.has_variants = 0
+        -- The GROUP counts as one, its members not at all — matching
+        -- browseForTill under includeVariantParents, which is how the till
+        -- grid reads. Counting the children instead would promise five tiles
+        -- for a shirt and open on one.
+        AND p.parent_id IS NULL
+        ${LIVE_GROUP_ONLY}
         AND p.department_id IS NOT NULL
       GROUP BY p.department_id`,
   )

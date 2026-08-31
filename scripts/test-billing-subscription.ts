@@ -87,7 +87,7 @@ async function main() {
     // ── Cross-audience: the two token kinds cannot meet ──────────────────
     // A store token resolving on the billing route would settle a shopper's
     // basket against a platform subscription, and vice versa.
-    const billingToken = await createBillingCallbackToken(accountId, 'ref-1')
+    const billingToken = await createBillingCallbackToken(accountId)
     const storeToken = await createCallbackToken(1, 'ref-1')
 
     ok('a billing token reads back', (await readBillingCallbackToken(billingToken))?.accountId === accountId)

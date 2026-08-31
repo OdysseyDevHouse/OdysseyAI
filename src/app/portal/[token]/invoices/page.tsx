@@ -1,17 +1,22 @@
 import type { Metadata } from 'next'
-import { requireCustomer } from '../guard'
+import { requireSection } from '../guard'
 import { portalInvoices } from '@/lib/site/portalData'
-import { publicSiteName } from '@/lib/sites'
+import { letterheadFor } from '../letterhead'
 import PortalShell, { PortalNav } from '../PortalShell'
 import SignOutButton from '../SignOutButton'
-import PayButton from './PayButton'
-import { Badge, EmptyState, Icons } from '@/components/ui'
+import PayAccountButton from '../PayAccountButton'
+import InvoiceTable from './InvoiceTable'
+import { Card, Icons, Pagination, StatStrip, StatTile } from '@/components/ui'
+import { pageCountFor } from '@/lib/searchParams'
 import { formatMoney } from '@/lib/decimals'
 
 export const dynamic = 'force-dynamic'
 
+/** Matches the back office's list default, so both paginate the same way. */
+const PAGE_SIZE = 25
+
 export const metadata: Metadata = {
-  title: 'Your invoices',
+  title: 'Invoices',
   robots: { index: false, follow: false },
 }
 
@@ -24,80 +29,116 @@ export const metadata: Metadata = {
  * working out what to charge, and showing a customer a figure nobody has issued
  * to them starts an argument about a number that was never a bill.
  *
- * ── NO STATEMENT, NO BALANCE, NO AGEING ────────────────────────────────────
+ * ── DOCUMENTS, NOT THE LEDGER ──────────────────────────────────────────────
  *
- * Deliberately. A running balance brings in credit limits, interest, allocations
- * and unapplied credits — each of which needs its own decision about what a
- * customer may see and how it reads without a person to explain it. A list of
- * invoices with what is left on each is the honest, useful subset.
+ * A list of invoices and what is left on each. The ageing, the running balance
+ * and the credit notes live one tab across on the Statement, which is the view
+ * built to explain them — this one answers the narrower question "what have you
+ * billed me", and keeping it narrow is what makes it quick to scan.
  */
 export default async function PortalInvoicesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>
+  searchParams: Promise<{ page?: string }>
 }) {
   const { token } = await params
-  const ctx = await requireCustomer(token)
+  const { page: pageRaw } = await searchParams
+  const ctx = await requireSection(token, 'account')
 
-  const [invoices, name] = await Promise.all([
+  const [invoices, head] = await Promise.all([
     portalInvoices(ctx.siteId, ctx.customerId),
-    publicSiteName(ctx.siteId).catch(() => null),
+    letterheadFor(ctx.siteId),
   ])
 
   const owing = invoices.filter((i) => !i.isPaid)
   const owed = owing.reduce((sum, i) => sum + i.outstanding, 0)
 
+  const pageCount = pageCountFor(invoices.length, PAGE_SIZE)
+  const page = Math.min(Math.max(Number(pageRaw) || 1, 1), Math.max(pageCount, 1))
+  // The TILES count every invoice, not the page — a total that changed as you
+  // paged would be a different fact on every screen.
+  const rows = invoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
   return (
     <PortalShell
-      name={name ?? undefined}
-      nav={
-        <PortalNav token={token} active="invoices" onSignOut={<SignOutButton token={token} />} />
+      name={head.name ?? undefined}
+      hasLogo={head.hasLogo}
+      token={token}
+      onSignOut={<SignOutButton token={token} />}
+      nav={<PortalNav token={token} active="invoices" settings={ctx.settings} />}
+      title="Invoices"
+      subtitle="Everything the business has invoiced you for."
+      /*
+       * ── "PAY THEM ALL" SITS ABOVE THE PER-INVOICE BUTTONS ──────────────
+       *
+       * The list already offers "Pay it" on every open row, and on an account
+       * with several that is the wrong unit of work: each press is its own
+       * card payment and its own gateway fee for what the customer thinks of
+       * as one debt. This pays the balance in one go and lets the ledger
+       * allocate it oldest-first, which is what a payment against a statement
+       * has always meant.
+       *
+       * Only when something is owed. A page of settled invoices has nothing
+       * to pay, and the top-up framing belongs on the account page rather
+       * than at the head of a list of documents.
+       */
+      action={
+        ctx.settings.allowPay && owed > 0.005 ? (
+          <PayAccountButton token={token} balance={owed} label="Pay all" />
+        ) : null
       }
+      card={false}
     >
-      <h1 className="text-xl font-semibold text-ink">Your invoices</h1>
-
-      {invoices.length === 0 ? (
-        <div className="mt-6">
-          <EmptyState
-            icon={<Icons.FileText size={22} />}
-            title="No invoices yet"
-            hint="Anything the business invoices you for will appear here."
+      {invoices.length > 0 && (
+        <StatStrip columns={2}>
+          <StatTile
+            label="Outstanding"
+            value={formatMoney(owed)}
+            // The tone is on the figure that means ACT. When nothing is owing
+            // it is a plain number, not a green one — "no exception" is the
+            // absence of colour, not another colour.
+            tone={owed > 0.005 ? 'warning' : 'default'}
+            hint={
+              owing.length > 0
+                ? `Across ${owing.length} invoice${owing.length === 1 ? '' : 's'}`
+                : 'Every invoice is settled'
+            }
+            icon={<Icons.Coins size={16} />}
           />
-        </div>
-      ) : (
-        <>
-          {owing.length > 0 && (
-            <p className="mt-1 text-sm text-muted">
-              <span className="numeric text-ink">{formatMoney(owed)}</span> outstanding across{' '}
-              {owing.length} invoice{owing.length === 1 ? '' : 's'}.
-            </p>
-          )}
-
-          <ul className="mt-5 divide-y divide-border">
-            {invoices.map((inv) => (
-              <li key={inv.id} className="flex flex-wrap items-center gap-3 py-3">
-                <span className="min-w-0 flex-1">
-                  <span className="text-sm text-ink">
-                    {inv.documentNumber ?? `Invoice ${inv.id}`}
-                  </span>
-                  <span className="block text-xs text-muted">{inv.docDate}</span>
-                </span>
-                <span className="numeric text-sm text-ink">{formatMoney(inv.total)}</span>
-                {inv.isPaid ? (
-                  <Badge tone="success">Paid</Badge>
-                ) : (
-                  <>
-                    <Badge tone="warning">{formatMoney(inv.outstanding)} owing</Badge>
-                    {/* Hands off to the payment flow that already exists rather
-                        than building a second one. */}
-                    <PayButton token={token} documentId={inv.id} />
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        </>
+          <StatTile
+            label="Invoices"
+            value={String(invoices.length)}
+            hint="On your account"
+            icon={<Icons.FileText size={16} />}
+          />
+        </StatStrip>
       )}
+
+      <Card>
+        <InvoiceTable
+          rows={rows.map((inv) => ({
+            id: inv.id,
+            documentNumber: inv.documentNumber,
+            docDate: inv.docDate,
+            total: inv.total,
+            outstanding: inv.outstanding,
+            isPaid: inv.isPaid,
+          }))}
+          token={token}
+          allowPay={ctx.settings.allowPay}
+        />
+        <Pagination
+          page={page}
+          pageCount={pageCount}
+          total={invoices.length}
+          pageSize={PAGE_SIZE}
+          hrefFor={(next) =>
+            next === 1 ? `/portal/${token}/invoices` : `/portal/${token}/invoices?page=${next}`
+          }
+        />
+      </Card>
     </PortalShell>
   )
 }

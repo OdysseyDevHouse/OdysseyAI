@@ -33,6 +33,8 @@ export type BillData = {
   proForma: true
   siteName: string
   vatNumber: string | null
+  /** What this business calls its tax. Absent falls back to VAT. */
+  taxLabel?: string
   /** The tab's label — the table code, or whatever the waiter typed. */
   label: string
   covers: number | null
@@ -49,7 +51,7 @@ export type BillData = {
 
 export function billDataFor(
   doc: SalesDocument,
-  site: { name: string; vatNumber: string | null },
+  site: { name: string; vatNumber: string | null; taxLabel?: string },
   opts: { printedAt: string },
 ): BillData {
   const computed = doc.lines.map((l) => ({
@@ -67,6 +69,7 @@ export function billDataFor(
     proForma: true,
     siteName: site.name,
     vatNumber: site.vatNumber?.trim() || null,
+    taxLabel: site.taxLabel,
     label: doc.customerName?.trim() || 'Table',
     covers: doc.personCount,
     userName: doc.userName,

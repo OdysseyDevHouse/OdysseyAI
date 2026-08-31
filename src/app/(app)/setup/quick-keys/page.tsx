@@ -11,12 +11,29 @@ export const dynamic = 'force-dynamic'
 /**
  * Arranging the till's quick keys.
  *
- * ── WHY THIS LIVES IN SETUP AND NOT ON THE TILL ───────────────────────────
+ * ── WHY THIS IS NOT ON THE TILL ───────────────────────────────────────────
  *
- * It is configuration a manager does once, so it belongs beside tender types and
- * terminals — and it needs the back-office chrome the till deliberately does not have.
- * Putting a drag-and-drop designer on a full-screen touch till would also mean a cashier
- * could rearrange the bar mid-shift by holding a key half a second too long.
+ * It needs the back-office chrome the till deliberately does not have. Putting a
+ * drag-and-drop designer on a full-screen touch till would also mean a cashier could
+ * rearrange the bar mid-shift by holding a key half a second too long.
+ *
+ * ── WHY IT IS REACHED FROM SETUP ──────────────────────────────────────────
+ *
+ * It spent a while as a menu row under Sales, directly below Point of sale, on the
+ * argument that a quick key is changed BECAUSE of what happened at the till — a line
+ * rung up twenty times a day that sits three taps deep — and so belongs to the same
+ * visit as serving. The flaw was the capability: this screen needs `setup.edit`, and
+ * most of the people standing at a till do not have it, so the row was a permanent
+ * tease to exactly the audience the placement was arguing for.
+ *
+ * It is a setup hub tile again, in Store & stock beside Tills and Rotating menus —
+ * the other two screens that decide what a till SHOWS rather than what it sells, so
+ * one visit finds any of them. The trail reads "Setup › Quick keys", resolved by
+ * `hubFor` on the /setup prefix now that the menu no longer names it.
+ *
+ * The ROUTE has never moved, so no existing link breaks. The capability stays
+ * `setup.edit` for the reason it always was: arranging what every till shows is a
+ * manager's decision, whoever else may serve on one.
  *
  * ── THE NAMES ARE RESOLVED HERE ───────────────────────────────────────────
  *

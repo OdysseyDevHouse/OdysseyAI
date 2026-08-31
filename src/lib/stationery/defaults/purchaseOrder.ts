@@ -130,7 +130,7 @@ export const PURCHASE_ORDER_DEFAULT = `<style>
           <dd class="numeric text-ink">{totals.goodsExcl}</dd>
         </div>
         <div class="po-row flex justify-between gap-6">
-          <dt class="text-muted">VAT</dt>
+          <dt class="text-muted">{{tax}}</dt>
           <dd class="numeric text-ink">{totals.vat}</dd>
         </div>
       </dl>

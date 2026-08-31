@@ -1,6 +1,6 @@
 import 'server-only'
 import { formatMoney } from '../decimals'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import {
   escapeHtml,
   htmlToText,
@@ -237,10 +237,10 @@ export async function notifyStatusReached(
     // No address is not a failure — plenty of shoppers leave a phone number
     // instead. Reported separately so it is not counted as something broken.
     if (!email.to) return { sent: false, reason: 'no-address' }
-    if (!isConfigured()) return { sent: false, reason: 'not-configured' }
+    if (!(await isConfiguredFor(siteId))) return { sent: false, reason: 'not-configured' }
 
     const { to, subject, text, html } = email
-    const result = await send({ to, subject, text, html })
+    const result = await sendAs(siteId, { to, subject, text, html })
     return result.ok ? { sent: true, to } : { sent: false, reason: 'failed', error: result.error }
   } catch (error) {
     /*

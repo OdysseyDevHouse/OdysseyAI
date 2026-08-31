@@ -1,7 +1,7 @@
 'use client'
 
 import { DataTable, Icons, type Column } from '@/components/ui'
-import { formatMoney, formatQty } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty } from '@/lib/decimals'
 
 /**
  * What a build consumed.
@@ -54,7 +54,7 @@ export default function BuildLinesTable({ rows }: { rows: BuildLineRow[] }) {
       key: 'unitCost',
       header: 'Unit cost',
       numeric: true,
-      cell: (l) => formatMoney(l.unitCostExcl),
+      cell: (l) => formatCost(l.unitCostExcl),
       sortValue: (l) => l.unitCostExcl,
     },
     {

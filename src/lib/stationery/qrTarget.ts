@@ -139,15 +139,38 @@ export function resolveQrUrl(
   }
 }
 
-/** Why a target produced nothing, in the shop's words. For the designer only. */
-export function whyNoUrl(target: QrTarget, ctx: QrContext): string {
+/**
+ * Why a target produced nothing, in the shop's words. For the designer only.
+ *
+ * ── THE 'doc' CASE HAS TO SAY WHICH KIND OF NOTHING ───────────────────────
+ *
+ * A null documentUrl means one of two very different things, and telling a shop
+ * the wrong one costs them the feature.
+ *
+ *   In the DESIGNER it means "there is no real document here" — the preview runs
+ *   on sample data, so there is no invoice to be paid and no link to show. The
+ *   square will appear on the real thing. Saying "this document has no page a
+ *   customer can open" reads as a permanent refusal and talks somebody out of a
+ *   block that would have worked.
+ *
+ *   On a REAL document it means that document is genuinely not payable — a
+ *   credit note, a draft, a purchase order, a delivery note — or pay links are
+ *   switched off for its kind.
+ *
+ * `preview` is what separates them. It defaults to false so every existing
+ * caller keeps the honest, cautious wording.
+ */
+export function whyNoUrl(target: QrTarget, ctx: QrContext, preview = false): string {
   switch (target) {
     case 'custom':
       return 'Type a web address starting with https.'
     case 'doc':
-      return ctx.appUrl
-        ? 'This document has no page a customer can open.'
-        : 'No web address is set up for this system, so a document link cannot be made.'
+      if (!ctx.appUrl) {
+        return 'No web address is set up for this system, so a document link cannot be made.'
+      }
+      return preview
+        ? 'Nothing to show on a sample — this prints a “pay online” code on a real invoice, statement or quote, once pay links are switched on below.'
+        : 'This document has no page a customer can open. Credit notes, drafts and cancelled documents never get one.'
     case 'store':
       return 'You have no online store address yet — Setup → Online store.'
     case 'review':

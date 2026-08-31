@@ -1,4 +1,6 @@
 import type { AggFn, ColumnType, FilterOp } from './spec'
+import type { CatalogField, CatalogSource } from './catalog'
+import type { Capability } from '../site/permissions'
 
 /**
  * The catalog as the BROWSER sees it.
@@ -36,6 +38,53 @@ export type ClientSource = {
   note?: string
   defaultFilters: { field: string; op: 'eq' | 'ne'; value: string }[]
   fields: ClientField[]
+}
+
+/**
+ * Project a catalog source into the shape the browser gets.
+ *
+ * Lives here rather than beside the report builder because it is now used by
+ * two callers — the builder, and the advanced filter on the list screens — and
+ * a second copy is how the SQL-stripping guarantee gets quietly broken by
+ * someone adding a field to one and not the other.
+ *
+ * `allow` drops the fields this user may not read, so the picker cannot even
+ * offer a column they are not permitted to see. That is a courtesy to the UI,
+ * NOT the boundary: the server re-applies the same rule when it runs.
+ *
+ * Type-only imports of the catalog, so this module still pulls no server code
+ * into the browser bundle.
+ */
+export function toClientSource(
+  source: CatalogSource,
+  allow: (c: Capability) => boolean,
+): ClientSource {
+  return {
+    key: source.key,
+    label: source.label,
+    description: source.description,
+    category: source.category,
+    shape: source.shape,
+    note: source.note,
+    defaultFilters: source.defaultFilters ?? [],
+    // `expr` is deliberately NOT sent. The browser never needs it, and shipping
+    // the SQL for every field would put the whole schema in the page source for
+    // no benefit.
+    fields: source.fields
+      .filter((f: CatalogField) => !f.permission || allow(f.permission))
+      .map((f: CatalogField) => ({
+        key: f.key,
+        label: f.label,
+        type: f.type,
+        numeric: f.numeric ?? false,
+        starter: f.starter ?? false,
+        noTotal: f.noTotal ?? false,
+        hasRatio: !!f.ratio,
+        group: f.group ?? '',
+        hint: f.hint ?? '',
+        options: f.options ?? [],
+      })),
+  }
 }
 
 /* ── the same rules as the server, over the client shape ───────────────────── */

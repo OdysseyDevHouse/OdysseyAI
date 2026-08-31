@@ -49,6 +49,16 @@ export type GatewayConfig = {
 
 export type SaveResult = { ok: true } | { ok: false; error: string }
 
+/**
+ * How long a PayFast merchant key is.
+ *
+ * PayFast enforces this itself and says so plainly — "the merchant key must be
+ * 13 characters" — but only after the shopper has been handed to its checkout,
+ * which makes it a customer-facing error page rather than a setup one. Named
+ * rather than inlined so the check and the message cannot disagree.
+ */
+export const PAYFAST_KEY_LENGTH = 13
+
 /* ── The connected gateway ────────────────────────────────────────────────── */
 
 export async function getGateway(
@@ -62,8 +72,22 @@ export async function getGateway(
   )
   if (!row) return null
 
-  const merchantKey = tryDecryptSecret(String(row.merchant_key ?? '') || null)
-  const passphrase = tryDecryptSecret(String(row.passphrase ?? '') || null)
+  /*
+   * Stored-empty and failed-to-decrypt must stay DISTINGUISHABLE.
+   *
+   * `tryDecryptSecret(stored || null)` collapsed the two: an empty passphrase
+   * became null, which is the same value a wrong ENCRYPTION_KEY produces. The
+   * line below it then read that as unusable credentials — so a gateway with no
+   * passphrase, which is exactly what PayFast's sandbox wants, reported "the
+   * stored credentials cannot be read back" and refused to connect at all.
+   *
+   * Empty is decided here rather than passed to tryDecrypt, so that a null can
+   * only ever mean the one thing it is supposed to mean: decryption failed.
+   */
+  const storedKey = String(row.merchant_key ?? '')
+  const storedPass = String(row.passphrase ?? '')
+  const merchantKey = storedKey === '' ? '' : tryDecryptSecret(storedKey)
+  const passphrase = storedPass === '' ? '' : tryDecryptSecret(storedPass)
 
   return {
     id: Number(row.id),
@@ -73,9 +97,8 @@ export async function getGateway(
     merchantId: String(row.merchant_id ?? ''),
     merchantKey: merchantKey ?? '',
     passphrase: passphrase ?? '',
-    // An empty stored passphrase is legitimate (PayFast allows it), so a null
-    // from tryDecrypt only counts as failure when there was something to
-    // decrypt in the first place.
+    // An empty stored passphrase is legitimate (PayFast allows it, and its
+    // sandbox has none), so only a genuine decrypt failure counts here.
     credentialsUsable: merchantKey !== null && passphrase !== null,
     updatedBy: String(row.updated_by ?? ''),
   }
@@ -102,9 +125,19 @@ export type GatewayInput = {
   isActive: boolean
   isSandbox: boolean
   merchantId: string
-  /** Plaintext from the form. Encrypted before it touches the database. */
+  /**
+   * Plaintext from the form. Encrypted before it touches the database.
+   * Blank means "keep whatever is already stored" — see saveGateway.
+   */
   merchantKey: string
   passphrase: string
+  /**
+   * True when the caller is stating the passphrase outright rather than
+   * declining to retype it — so a blank one CLEARS the stored value instead of
+   * keeping it. PayFast's sandbox has no passphrase, and a stale live one left
+   * behind would be folded into the signature md5 and fail every test payment.
+   */
+  passphraseSet?: boolean
 }
 
 export async function saveGateway(
@@ -127,11 +160,67 @@ export async function saveGateway(
 
   if (input.isActive) {
     if (!merchantId) return { ok: false, error: 'Enter your merchant ID.' }
-    if (!merchantKey) return { ok: false, error: 'Enter your merchant key.' }
     if (!/^\d+$/.test(merchantId)) {
       return { ok: false, error: 'A PayFast merchant ID is all digits.' }
     }
+
+    /*
+     * A BLANK KEY IS ONLY AN ERROR WHEN THERE IS NOTHING STORED.
+     *
+     * The form is write-only and shows an empty box saying "leave blank to keep
+     * the current one", so refusing every blank contradicted the rule the UPDATE
+     * below implements — a shop could not switch its own gateway on without
+     * retyping a key it had already saved.
+     */
+    if (!merchantKey) {
+      const stored = await siteQueryOne<Row>(
+        siteId,
+        `SELECT merchant_key FROM payment_gateways WHERE provider = ? LIMIT 1`,
+        [provider],
+      )
+      if (!String(stored?.merchant_key ?? '')) {
+        return { ok: false, error: 'Enter your merchant key.' }
+      }
+    }
+
+    /*
+     * ── THE LENGTH IS CHECKED HERE, NOT DISCOVERED AT PAYFAST ───────────────
+     *
+     * A PayFast merchant key is exactly 13 characters. A wrong one is accepted
+     * by this form, stored, signed into a perfectly well-formed request — and
+     * then rejected by PayFast with "the merchant key must be 13 characters",
+     * on PayFast's own error page, in front of a customer who was trying to pay.
+     *
+     * The failure that prompted this was a shop typing its ACCOUNT PASSWORD
+     * into the field, which looks entirely plausible and is nothing like a key.
+     * There is no signature to verify against and no call we can make, so the
+     * length is the one honest check available — and it catches exactly that
+     * mistake at the moment it is made.
+     */
+    if (merchantKey && merchantKey.length !== PAYFAST_KEY_LENGTH) {
+      return {
+        ok: false,
+        error: `A PayFast merchant key is ${PAYFAST_KEY_LENGTH} characters — this one is ${merchantKey.length}. Copy it from your PayFast dashboard; it is not your account password.`,
+      }
+    }
   }
+
+  /*
+   * A BLANK SECRET MEANS "KEEP WHAT IS STORED", NOT "ERASE IT".
+   *
+   * The setup screen is write-only: it never reads a stored credential back, so
+   * it shows an empty box and says "leave blank to keep the current one". Taking
+   * that blank literally wrote '' over the real key, which silently DISCONNECTED
+   * the gateway — canTakePayments() requires a non-empty merchantKey — and the
+   * only visible symptom was payments quietly no longer being offered. Anyone
+   * changing an unrelated field, like flipping test mode, tripped it.
+   *
+   * `passphraseSet` distinguishes the two meanings the form now needs: blank
+   * because it was not retyped (keep), versus blank because the account really
+   * has none, which is the normal case for PayFast's sandbox (clear).
+   */
+  const keep = { merchantKey: 'merchant_key', passphrase: 'passphrase' }
+  const clearPassphrase = input.passphraseSet === true && input.passphrase.trim() === ''
 
   await siteExecute(
     siteId,
@@ -140,8 +229,10 @@ export async function saveGateway(
      VALUES (?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
        is_active = VALUES(is_active), is_sandbox = VALUES(is_sandbox),
-       merchant_id = VALUES(merchant_id), merchant_key = VALUES(merchant_key),
-       passphrase = VALUES(passphrase), updated_by = VALUES(updated_by)`,
+       merchant_id = VALUES(merchant_id),
+       merchant_key = IF(VALUES(merchant_key) = '', ${keep.merchantKey}, VALUES(merchant_key)),
+       passphrase = ${clearPassphrase ? "''" : `IF(VALUES(passphrase) = '', ${keep.passphrase}, VALUES(passphrase))`},
+       updated_by = VALUES(updated_by)`,
     [
       provider,
       input.isActive ? 1 : 0,
@@ -161,17 +252,87 @@ export async function saveGateway(
 /**
  * What is being paid for.
  *
- *   online_order   — a storefront order; target_id is an online order id
- *   debtor_invoice — an emailed invoice's pay-link; target_id is a
- *                    sales_documents id, and settling it posts a receipt to the
- *                    customer's account rather than invoicing an order
+ *   online_order     — a storefront order; target is an online_orders id
+ *   debtor_invoice   — an emailed invoice's pay-link; target is a
+ *                      sales_documents id, and settling it posts a receipt to
+ *                      the customer's account rather than invoicing an order
+ *   customer_account — a STATEMENT; target is a CUSTOMERS id, because a
+ *                      statement is a balance and not a document
+ *   layby            — an instalment; target is a laybys id
+ *   job_deposit      — a deposit on a job card; target is a job_cards id
+ *   document_deposit — a deposit against a quote or a sales order; target is a
+ *                      sales_documents id
  *
  * `purpose` plus target is what makes this table reusable, exactly as
  * 038_payments.sql anticipated: a new way to be paid is a new purpose and a
  * settlement handler, not a second gateway integration.
  */
-export const INTENT_PURPOSES = ['online_order', 'debtor_invoice'] as const
+export const INTENT_PURPOSES = [
+  'online_order',
+  'debtor_invoice',
+  'customer_account',
+  'layby',
+  'job_deposit',
+  'document_deposit',
+] as const
 export type IntentPurpose = (typeof INTENT_PURPOSES)[number]
+
+/**
+ * Which table a purpose's `target_id` points into.
+ *
+ * ── WHY THIS IS SPELLED OUT RATHER THAN KNOWN ────────────────────────────
+ *
+ * `target_id` is one untyped integer meaning four different things. With two
+ * purposes that was memorable; with six it is a bug waiting for a quiet
+ * afternoon, because every id in this system is a `number` and a swapped one
+ * COMPILES. It then reads a real row from the wrong table and settles somebody
+ * else's money — the failure is a wrong answer, not an error.
+ *
+ * No foreign key can catch it: the target table varies by row, which is the
+ * whole point of the design. So the guard has to be in the type system, and
+ * `intentTarget()` below is the only way to build one.
+ */
+export const INTENT_TARGET: Record<IntentPurpose, string> = {
+  online_order: 'online_orders',
+  debtor_invoice: 'sales_documents',
+  customer_account: 'customers',
+  layby: 'laybys',
+  job_deposit: 'job_cards',
+  document_deposit: 'sales_documents',
+}
+
+/**
+ * A purpose bound to the id that belongs with it.
+ *
+ * The union is what does the work: there is no way to write an `IntentTarget`
+ * whose purpose and id disagree, because each arm names its own id field. A
+ * caller reaching for `customerId` on a lay-by target does not compile, which
+ * is the whole reason the fields are not all called `targetId`.
+ */
+export type IntentTarget =
+  | { purpose: 'online_order'; orderId: number }
+  | { purpose: 'debtor_invoice'; documentId: number }
+  | { purpose: 'customer_account'; customerId: number }
+  | { purpose: 'layby'; laybyId: number }
+  | { purpose: 'job_deposit'; jobId: number }
+  | { purpose: 'document_deposit'; documentId: number }
+
+/** The integer that goes in `target_id`, chosen by the purpose itself. */
+export function targetIdOf(target: IntentTarget): number {
+  switch (target.purpose) {
+    case 'online_order':
+      return target.orderId
+    case 'debtor_invoice':
+    case 'document_deposit':
+      return target.documentId
+    case 'customer_account':
+      return target.customerId
+    case 'layby':
+      return target.laybyId
+    case 'job_deposit':
+      return target.jobId
+  }
+}
 
 export type PaymentIntent = {
   id: number
@@ -215,9 +376,16 @@ function newReference(): string {
   return `ODY-${randomBytes(18).toString('base64url')}`
 }
 
+/**
+ * Start a payment.
+ *
+ * Takes the TARGET UNION rather than a purpose and a loose integer, so the two
+ * cannot be minted out of step — see IntentTarget above for why that matters
+ * once there are six purposes and every id is a `number`.
+ */
 export async function createIntent(
   siteId: number,
-  input: { targetId: number; amountIncl: number; purpose?: IntentPurpose },
+  input: { target: IntentTarget; amountIncl: number },
 ): Promise<PaymentIntent> {
   const reference = newReference()
   const amount = round(input.amountIncl, 2)
@@ -226,7 +394,7 @@ export async function createIntent(
     siteId,
     `INSERT INTO payment_intents (reference, provider, purpose, target_id, amount_incl)
      VALUES (?, 'payfast', ?, ?, ?)`,
-    [reference, input.purpose ?? 'online_order', input.targetId, amount.toFixed(4)],
+    [reference, input.target.purpose, targetIdOf(input.target), amount.toFixed(4)],
   )
 
   const row = await siteQueryOne<Row>(

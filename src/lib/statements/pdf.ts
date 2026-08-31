@@ -1,4 +1,5 @@
 import 'server-only'
+import { taxLabel } from '../site/taxIdentity'
 import { qrContextFor } from '../site/qrLinks'
 import { pictureIds, pictureBytes } from '../site/stationeryImages'
 import PDFDocument from 'pdfkit'
@@ -51,6 +52,7 @@ const COLUMNS: Column[] = [
 // know what a statement is CALLED without importing this file's PDF stack.
 export type { StatementVariant } from './variant'
 import type { StatementVariant } from './variant'
+import { STATEMENT_HEADINGS, STATEMENT_DUE_LABELS, isPaymentAdvice } from './variant'
 
 /**
  * A statement, a supplier account or a remittance — from the site's own design
@@ -78,9 +80,22 @@ export async function renderStatementPdf(
   data: StatementData,
   variant: StatementVariant = 'statement',
   siteId?: number,
+  /**
+   * The account's pay link, for a QR block aimed at "this document".
+   *
+   * A statement's square pays the BALANCE, not any one invoice — which is what
+   * a payment against a statement has always meant on a debtors ledger, and why
+   * it settles as an allocated receipt. See paidLinks.ts.
+   *
+   * Passed in rather than derived: this renders a REMITTANCE advice too (see
+   * StatementVariant), and a remittance is the shop telling a supplier what it
+   * has paid. A pay button on one would be asking a supplier to settle the
+   * shop's own payment to them.
+   */
+  payUrl?: string | null,
 ): Promise<Buffer> {
   if (siteId !== undefined) {
-    const designed = await renderDesignedStatement(data, variant, siteId).catch(() => null)
+    const designed = await renderDesignedStatement(data, variant, siteId, payUrl).catch(() => null)
     if (designed) return designed
   }
 
@@ -112,6 +127,7 @@ async function renderDesignedStatement(
   data: StatementData,
   variant: StatementVariant,
   siteId: number,
+  payUrl?: string | null,
 ): Promise<Buffer | null> {
   const { activeTemplate } = await import('../site/stationeryTemplates')
   const custom = await activeTemplate(siteId, 'statement').catch(() => null)
@@ -176,6 +192,7 @@ async function renderDesignedStatement(
     sitePhone: letterhead?.phone ?? null,
     siteEmail: letterhead?.email ?? null,
     siteRegistrationNumber: letterhead?.registrationNumber ?? null,
+    taxLabel: await taxLabel(siteId),
   })
 
   /*
@@ -189,14 +206,27 @@ async function renderDesignedStatement(
   return renderSpecPdf(
     spec,
     'statement',
-    { ...input, pictures: await pictureIds(siteId), qr: await qrContextFor(siteId) },
+    {
+      ...input,
+      pictures: await pictureIds(siteId),
+      /*
+       * An ALLOWLIST, not "anything but a remittance" — which is what makes a
+       * new variant safe to add. Only a statement asks for money. A remittance
+       * would be asking a supplier to settle our own payment to them, and a
+       * receipt would be asking a customer to pay again for what they have
+       * just paid for.
+       */
+      qr: await qrContextFor(siteId, variant === 'statement' ? (payUrl ?? null) : null),
+    },
     logo?.bytes ?? null,
     usedPictures.length ? await pictureBytes(siteId, usedPictures) : undefined,
   )
 }
 
 function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVariant) {
-  const isRemittance = variant === 'remittance'
+  // "Describes one payment, not an account" — a remittance or a receipt. See
+  // isPaymentAdvice: every branch below wants that question, not the variant.
+  const isRemittance = isPaymentAdvice(variant)
   // Our record of a supplier account. Keeps the ageing and the totals box, but
   // must not address the reader as the debtor — see StatementDocument.
   const isSupplier = variant === 'supplier-statement'
@@ -211,7 +241,10 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
     .font('Helvetica-Bold')
     .fontSize(16)
     .fillColor(INK)
-    .text(isRemittance ? 'REMITTANCE ADVICE' : isSupplier ? 'SUPPLIER ACCOUNT' : 'STATEMENT', MARGIN, MARGIN, {
+    // From the shared table rather than spelled out here: this drew the wrong
+    // heading on a receipt the moment a fourth variant existed, because a
+    // two-way ternary can only ever name three documents.
+    .text(STATEMENT_HEADINGS[variant], MARGIN, MARGIN, {
       width: CONTENT_WIDTH,
       align: 'right',
     })
@@ -388,11 +421,7 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
     .font('Helvetica-Bold')
     .fontSize(10)
     .fillColor(INK)
-    .text(
-      isRemittance ? 'Amount paid' : isSupplier ? 'Balance owed' : 'Amount due',
-      boxX + 10,
-      boxY,
-    )
+    .text(STATEMENT_DUE_LABELS[variant], boxX + 10, boxY)
   doc.text(formatMoney(Math.abs(data.closingBalance)), boxX + 10, boxY, {
     width: boxWidth - 20,
     align: 'right',
@@ -403,11 +432,13 @@ function draw(doc: PDFKit.PDFDocument, data: StatementData, variant: StatementVa
   // ── Footer
   doc.font('Helvetica').fontSize(8).fillColor(MUTED)
   doc.text(
-    isRemittance
+    variant === 'remittance'
       ? 'Payment has been made to the banking details we hold for you.'
-      : isSupplier
-        ? `Our account ${data.account.code}. Our records as at ${data.period.to} — please advise of any difference against your own statement.`
-        : `Please quote your account code ${data.account.code} with any payment. Queries within 7 days of the statement date.`,
+      : variant === 'receipt'
+        ? `Received against account ${data.account.code}. Please retain this receipt as proof of payment.`
+        : isSupplier
+          ? `Our account ${data.account.code}. Our records as at ${data.period.to} — please advise of any difference against your own statement.`
+          : `Please quote your account code ${data.account.code} with any payment. Queries within 7 days of the statement date.`,
     MARGIN,
     y,
     { width: CONTENT_WIDTH },

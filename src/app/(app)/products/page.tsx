@@ -1,6 +1,9 @@
 import { Pencil, Plus } from '@/components/ui/icons'
 import { requireCapability } from '@/lib/auth'
-import { can } from '@/lib/site/permissions'
+import { can, type Capability } from '@/lib/site/permissions'
+import { compileListFilters, filterableFields } from '@/lib/site/listFilterSql'
+import { rememberedFilters } from '@/lib/site/listFilterMemory'
+import { decodeFilters, encodeFilters, FILTER_PARAM } from '@/lib/listFilters'
 import ProductListClient from './ProductListClient'
 import { listProducts, getProduct, type ProductSort } from '@/lib/site/products'
 import { PRODUCT_TYPES, type ProductTypeId } from '@/lib/productTypes'
@@ -9,10 +12,11 @@ import { getCostBasis, listBrands, listVatRates } from '@/lib/site/lookups'
 import { listGroups } from '@/lib/site/instructions'
 import { listLocations } from '@/lib/site/stockLocations'
 import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
-import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
+import { hrefBuilder, offsetFor, pageCountFor, pageFrom, withParams } from '@/lib/searchParams'
 import { listColumnsFor } from '@/lib/site/listColumns'
 import { PRODUCT_COLUMN_IDS, PRODUCT_DEFAULT_COLUMNS } from './columns'
 import ProductColumnsButton from './ProductColumnsButton'
+import ListFilterButton from '@/components/lists/ListFilterButton'
 import {
   PageHeader,
   PageBody,
@@ -20,10 +24,11 @@ import {
   ButtonLink,
   Card,
   SearchBar,
+  FilterBar,
   FilterChip,
+  summariseCondition,
   Pagination,
   TableToolbar,
-  LinkSegmentedControl,
   LinkSelect,
   Icons,
 } from '@/components/ui'
@@ -78,13 +83,59 @@ export default async function ProductsPage({
     dir?: string
     page?: string
     group?: string
+    /** The advanced filter's conditions. See FILTER_PARAM in lib/listFilters. */
+    f?: string
   }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId, capabilities } = await requireCapability('products.view')
+  const { siteId, capabilities, actor } = await requireCapability('products.view')
   const showCost = can(capabilities, 'products.cost')
   const params = await searchParams
   const { q, archived, low, department } = params
+
+  /* ── the advanced filter ────────────────────────────────────────────────
+   *
+   * Conditions live in the URL like every other filter on this screen, so a
+   * filtered list stays linkable and reloadable.
+   *
+   * The REMEMBERED set is what makes a worklist survive arriving here by a
+   * route that carries no query string — the sidebar, a bookmark, the browser's
+   * own history. It applies only when the URL says nothing about filters at
+   * all: `?f=` with an empty value is how "clear" is written, and rehydrating
+   * over that would make the filter impossible to turn off.
+   *
+   * `cleared` is therefore a real distinction and not a nicety — see the two
+   * different absences it separates. */
+  const cleared = params[FILTER_PARAM] !== undefined
+  const remembered = cleared
+    ? null
+    : await rememberedFilters(siteId, 'products', actor.userId)
+
+  const filterSource = cleared ? (params[FILTER_PARAM] ?? '') : (remembered ?? '')
+  const conditions = decodeFilters(filterSource)
+
+  /* What may be filtered on: the report catalog's products source, minus the
+     fields whose SQL needs a join this list does not have, minus whatever this
+     user may not read. Both narrowings matter — see listFilterSql.ts. */
+  const allow = (c: Capability) => can(capabilities, c)
+  const filterFields = filterableFields('products', allow).map((f) => ({
+    key: f.key,
+    label: f.label,
+    type: f.type,
+    numeric: f.numeric ?? false,
+    group: f.group ?? '',
+    hint: f.hint ?? '',
+    options: f.options ?? [],
+  }))
+
+  const compiled = compileListFilters(
+    'products',
+    conditions,
+    allow,
+    new Set(filterFields.map((f) => f.key)),
+    // listProducts has aliased the table `p` since long before this feature.
+    'p',
+  )
 
   /* Which variant group is open, if any. A group id that is not a parent falls
      back to the whole catalogue rather than showing an empty list — the URL is
@@ -131,12 +182,32 @@ export default async function ProductsPage({
     belowMinimum: low === '1',
     departmentIds: filterIds,
     productTypes: productType ? [productType] : undefined,
+    extraWhere: compiled.where,
+    extraParams: compiled.params,
     sort: sortKey,
     direction,
     parentId: openGroup ? openGroup.parentId : undefined,
     limit: PAGE_SIZE,
     offset: offsetFor(page, PAGE_SIZE),
   })
+
+  /* The same slice WITHOUT the advanced conditions, for the "10 of 3,214" in
+     the subtitle. Only asked for when there is a filter to compare against, so
+     an ordinary catalogue load still runs exactly the queries it always did —
+     and `limit: 1` because only the count is wanted, never the rows. */
+  const unfilteredTotal = conditions.length
+    ? (
+        await listProducts(siteId, {
+          search: q,
+          includeArchived: archived === '1',
+          belowMinimum: low === '1',
+          departmentIds: filterIds,
+          productTypes: productType ? [productType] : undefined,
+          parentId: openGroup ? openGroup.parentId : undefined,
+          limit: 1,
+        })
+      ).total
+    : total
 
   /* The parent names for whichever children are on screen — a search
      un-collapses groups, and "Large" alone does not say large what. Resolved
@@ -153,6 +224,19 @@ export default async function ProductsPage({
       .filter((p): p is NonNullable<typeof p> => !!p)
       .map((p) => [p.id, p.description]),
   )
+
+  /* This list's own address, carried out to every product it links to so the
+     trip back lands HERE — same filters, same sort, same page — instead of on
+     the bare catalogue. A filtered list is a worklist: someone narrows to ten
+     products and edits them one after another, and re-applying the filter
+     after every save is the thing that made that painful.
+
+     Only when something is actually applied. An unfiltered catalogue keeps the
+     short `/products/123` links it has always had, because there is nothing
+     about `/products` worth carrying and a redundant `?from=` on every row
+     makes a shared link look like a tracking URL. */
+  const listUrl = `/products${withParams(params, {})}`
+  const editSuffix = listUrl === '/products' ? '' : `?from=${encodeURIComponent(listUrl)}`
 
   const filterLabel = filterIds ? departmentPath(departments, departmentId) : null
 
@@ -171,6 +255,19 @@ export default async function ProductsPage({
      rarely a page of the new one, and landing on an empty list reads as "no
      matches" when there are plenty. */
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
+
+  /* Clears every chip at once.
+   *
+   * The advanced filter goes to an EMPTY `?f=`, not a dropped parameter: an
+   * absent one means "nobody has said", which is exactly when a remembered
+   * filter rehydrates — so removing the key would put the filter straight back
+   * on the next render and the link would appear to do nothing. The customers
+   * and suppliers lists clear the same way, for the same reason. */
+  const clearFiltersHref = filterHref({
+    department: null,
+    type: null,
+    [FILTER_PARAM]: '',
+  })
 
   /* Opening a group keeps the department filter and the slice — the question
      "which of these are below minimum" survives the click — but drops the
@@ -219,21 +316,6 @@ export default async function ProductsPage({
     instructionGroups: instructionGroups.map((g) => ({ id: g.id, name: g.name })),
     locations: locations.map((l) => ({ id: l.id, name: l.name, isMain: l.isMain })),
   }
-
-  /* The type picker. Eight kinds is too many for a segmented bar and they are
-     read by name rather than by position, so it is a select — the same
-     reasoning that makes the department filter one. The stored ids are dropped
-     in favour of the names the product form uses, minus the trailing
-     "product": the label above the control already says what is being
-     filtered. */
-  const typeOptions = [
-    { value: '', label: 'All types', href: filterHref({ type: null }) },
-    ...PRODUCT_TYPES.map((t) => ({
-      value: t.id,
-      label: t.name.replace(/ product$/i, ''),
-      href: filterHref({ type: t.id }),
-    })),
-  ]
 
   /* Sorting keeps its own page — unlike a filter, re-ordering does not change
      WHICH products match, so page 4 of the same result set is still a page of
@@ -296,9 +378,11 @@ export default async function ProductsPage({
     ? PRODUCT_TYPES.find((t) => t.id === productType)!.name.replace(/ product$/i, '')
     : null
 
-  /* Which slice the segmented control shows. The two flags are mutually
-     exclusive here: a segmented control is one choice, and "archived products
-     below minimum" was a combination nobody ever asked for. */
+  /* Which slice a URL is asking for. The toolbar no longer offers the choice,
+     but both flags still work when a link carries them — and this is what
+     tells the empty state to say "nothing fits the filters" rather than
+     "nothing on file". Kept mutually exclusive: "archived products below
+     minimum" was a combination nobody ever asked for. */
   const slice = archived === '1' ? 'archived' : low === '1' ? 'low' : 'all'
 
   /* Empty means one of three things — say which, and offer the way out. */
@@ -312,12 +396,23 @@ export default async function ProductsPage({
           </ButtonLink>
         ),
       }
-    : slice !== 'all' || filterLabel || typeLabel
+    : slice !== 'all' || filterLabel || typeLabel || conditions.length
       ? {
           title: 'No products match this filter',
-          hint: 'Nothing on file fits the current slice.',
+          /* Name the conditions rather than saying "the current slice". An
+             empty list under a REMEMBERED filter is the worst case this screen
+             has — nobody typed anything, so the hint is the only thing that
+             explains why the catalogue looks empty. */
+          hint: conditions.length
+            ? `Nothing matches ${conditions
+                .map((c) => summariseCondition(c, filterFields))
+                .join(', and ')}.`
+            : 'Nothing on file fits the current slice.',
           action: (
-            <ButtonLink variant="secondary" href="/products">
+            /* An EMPTY `?f=`, not a bare /products: absent means "nobody has
+               said", which is exactly when a remembered filter comes back. A
+               plain link here would leave the list stuck empty. */
+            <ButtonLink variant="secondary" href={`/products?${FILTER_PARAM}=`}>
               Clear filters
             </ButtonLink>
           ),
@@ -347,7 +442,14 @@ export default async function ProductsPage({
               (openGroup.axes.length
                 ? ` by ${openGroup.axes.map((a) => a.label).join(' · ')}`
                 : '')
-            : `${total} product${total === 1 ? '' : 's'}${archived === '1' ? ', including archived' : ''}`
+            : /* Under an advanced filter, say what is being HIDDEN as well as
+                 what is shown. "10 products" on a catalogue of 3,214 is the
+                 same sentence whether the filter was typed just now or
+                 remembered from before lunch — and only the second number
+                 tells the reader which of those they are looking at. */
+              `${total} product${total === 1 ? '' : 's'}` +
+              (conditions.length && unfilteredTotal > total ? ` of ${unfilteredTotal}` : '') +
+              (archived === '1' ? ', including archived' : '')
         }
         action={
           openGroup ? (
@@ -377,7 +479,13 @@ export default async function ProductsPage({
         }
       />
 
-      <PageBody>
+      {/* `flush` because this screen ENDS in a viewport-capped table. The table
+          is sized by useFitViewport to the room left below it, and that hook
+          counts PageBody's pb-10 as space to reserve — so on a page that does
+          not scroll, the 40px is not breathing room under the last card, it is
+          40px the table was refused and nothing else uses. The card's own
+          padding still keeps the last row off the window edge. */}
+      <PageBody flush>
         {/* Columns goes in the actions slot — right-aligned, beside the other
             things you do TO the list, rather than in a strip of its own
             between the toolbar and the table. */}
@@ -387,6 +495,53 @@ export default async function ProductsPage({
               storeColumns={storeColumns}
               canSetColumns={can(capabilities, 'setup.edit')}
             />
+          }
+          /* Applied filters get the second row. A "Where" chip spells its
+             condition out in a sentence — "Product type is Returnable
+             product" — which is far wider than any picker, and inline it
+             squeezed the search box and pushed the controls out of the
+             positions they hold on every other list. */
+          filters={
+            <FilterBar inToolbar clearHref={clearFiltersHref}>
+              {filterLabel && (
+                <FilterChip
+                  label="Department"
+                  value={filterLabel}
+                  clearHref={filterHref({ department: null })}
+                />
+              )}
+
+              {/* The toolbar no longer offers a type picker — the advanced
+                  filter asks the same question and asks it better, with "is
+                  not" and "is any of" alongside "is". But `?type=` still works
+                  when a link carries it, so the chip has to stay: a URL that
+                  narrows the catalogue with nothing on screen saying why is
+                  the exact failure this strip exists to prevent. Clearing it
+                  is now the only way back, which is reason enough to render
+                  it. */}
+              {typeLabel && (
+                <FilterChip label="Type" value={typeLabel} clearHref={filterHref({ type: null })} />
+              )}
+
+              {/* One chip per advanced condition, spelled out in words.
+
+                  This is what keeps a REMEMBERED filter honest: it applies
+                  without anyone having typed a URL, so the only thing standing
+                  between that and "the catalogue has lost three thousand
+                  products" is the screen saying, plainly and always, what it is
+                  currently showing. Each chip clears just itself; the count in
+                  the subtitle says the rest. */}
+              {conditions.map((condition, i) => (
+                <FilterChip
+                  key={`${condition.field}-${i}`}
+                  label="Where"
+                  value={summariseCondition(condition, filterFields)}
+                  clearHref={filterHref({
+                    [FILTER_PARAM]: encodeFilters(conditions.filter((_, j) => j !== i)),
+                  })}
+                />
+              ))}
+            </FilterBar>
           }
         >
           <div className="w-80 max-w-full">
@@ -402,41 +557,28 @@ export default async function ProductsPage({
             />
           </div>
 
-          <LinkSegmentedControl
-            aria-label="Filter products"
-            value={slice}
-            options={[
-              { value: 'all', label: 'Active', href: filterHref({ low: null, archived: null }) },
-              {
-                value: 'low',
-                label: 'At or below minimum',
-                href: filterHref({ low: '1', archived: null }),
-              },
-              {
-                value: 'archived',
-                label: 'Include archived',
-                href: filterHref({ archived: '1', low: null }),
-              },
-            ]}
-          />
+          {/* The Active / At-or-below-minimum / Include-archived control used to
+              sit here. Both flags still work when a URL carries them — the
+              query, the count line and the empty state all still read them —
+              so a saved link or a bookmark keeps doing what it did. What is
+              gone is the toolbar making the choice. Archived stays reachable
+              through the Filter button, which offers it as a yes/no field. */}
 
           {/* Options carry their own href, built here on the server: a function
               prop cannot cross into a client component, and this keeps the URL
               helpers out of the browser bundle. */}
+          {/* A FIXED width, narrower than the longest option it can hold. A
+              department path can be "Food > Bakery > Morning goods", and a
+              picker sized to fit that is a control whose width is decided by
+              the deepest branch in the tree — different in every shop, and
+              wider than the pickers beside it here. The chosen value truncates
+              instead; the open menu is what shows a long path in full. */}
           <LinkSelect
             aria-label="Filter by department"
             icon={<Icons.LayoutGrid size={16} />}
             value={filterIds ? String(departmentId) : ''}
             options={departmentOptions}
-            className="w-64"
-          />
-
-          <LinkSelect
-            aria-label="Filter by product type"
-            icon={<Icons.Tag size={16} />}
-            value={productType ?? ''}
-            options={typeOptions}
-            className="w-48"
+            className="w-44"
           />
 
           {/* Sort sits with the filters rather than in the actions slot: it is
@@ -457,17 +599,17 @@ export default async function ProductsPage({
             />
           )}
 
-          {filterLabel && (
-            <FilterChip
-              label="Department"
-              value={filterLabel}
-              clearHref={filterHref({ department: null })}
-            />
-          )}
+          {/* Everything the toolbar cannot express, behind one button. Sits
+              after the built-in pickers because it is the escape hatch from
+              them, not a peer — and most people never open it. */}
+          <ListFilterButton
+            listKey="products"
+            fields={filterFields}
+            value={conditions}
+            remembered={!!remembered}
+            builderHref="/reports/builder?source=products"
+          />
 
-          {typeLabel && (
-            <FilterChip label="Type" value={typeLabel} clearHref={filterHref({ type: null })} />
-          )}
         </TableToolbar>
 
         <Card>
@@ -478,6 +620,7 @@ export default async function ProductsPage({
             showCost={showCost}
             empty={empty}
             groupHrefs={groupHrefs}
+            editSuffix={editSuffix}
             parentNames={parentNames}
             dates={dates}
             storeColumns={storeColumns}

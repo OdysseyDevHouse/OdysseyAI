@@ -1,7 +1,9 @@
 import type { ColumnType } from './spec'
 import type { Capability } from '../site/permissions'
 import { LINE_KINDS } from '../jobStatusModel'
-import { ACCOUNT_TYPES } from '../accountTypes'
+import { ACCOUNT_TYPES, ACCOUNT_TYPE_OPTIONS } from '../accountTypes'
+import { PRODUCT_TYPES } from '../productTypes'
+import { CYCLE_LABELS, STATEMENT_CYCLES } from '../statementCycles'
 
 /**
  * The report builder's FIELD CATALOG — the whitelist of everything anyone is
@@ -374,13 +376,21 @@ function yesNo(key: string, label: string, expr: string, needs?: string[]): Cata
   }
 }
 
-/** An ENUM column, offered as a picker so nobody has to guess the spelling. */
+/**
+ * An ENUM column, offered as a picker so nobody has to guess the spelling.
+ *
+ * `labels` names the ones humanise() cannot get right on its own. It turns
+ * '14day' into "Every 14 days" rather than "14day" — a stored value that is
+ * not a sentence with the underscores taken out. Anything the map does not
+ * name still falls through to humanise, so the common case stays one line.
+ */
 function enumField(
   key: string,
   label: string,
   expr: string,
   values: string[],
   extra: Partial<CatalogField> = {},
+  labels: Record<string, string> = {},
 ): CatalogField {
   return {
     key,
@@ -388,7 +398,7 @@ function enumField(
     type: 'text',
     expr,
     group: FIELD_GROUPS.CLASSIFICATION,
-    options: values.map((v) => ({ value: v, label: humanise(v) })),
+    options: values.map((v) => ({ value: v, label: labels[v] ?? humanise(v) })),
     ...extra,
   }
 }
@@ -397,6 +407,55 @@ function enumField(
 function humanise(v: string): string {
   const s = v.replace(/_/g, ' ')
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/**
+ * The product types, as filter options.
+ *
+ * Read from PRODUCT_TYPES rather than listed again here, for the reason
+ * accountType already states: a picker whose options are a second copy of a
+ * closed set is how one silently stops matching the values in the column. The
+ * names are the ones the product form shows, so "Buy-out product" reads the
+ * same in a filter as it does on the record.
+ *
+ * A VARCHAR column rather than a database ENUM (001), which changes nothing
+ * here — the set is closed by the application either way, and what makes a
+ * dropdown right is that only these ten values can be in the column.
+ */
+const PRODUCT_TYPE_VALUES = PRODUCT_TYPES.map((t) => t.id)
+const PRODUCT_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+  PRODUCT_TYPES.map((t) => [t.id, t.name]),
+)
+
+/**
+ * The four account states a customer or supplier can be in.
+ *
+ * Written out rather than imported from CUSTOMER_STATUSES / SUPPLIER_STATUSES,
+ * which is the opposite of what accountType does above and is deliberate: both
+ * of those modules are `import 'server-only'`, and this catalog is projected to
+ * the browser by toClientSource. Importing them would pull mysql2 towards the
+ * client bundle to reuse four strings. The set is fixed by the ENUM in
+ * 012_customers.sql and 013_suppliers.sql, which is the real authority anyway.
+ */
+const PARTY_STATUSES = ['active', 'on_hold', 'inactive', 'closed']
+
+/**
+ * Account types under the names the customer form gives them.
+ *
+ * humanise() turned 'balance_fwd' into "Balance fwd" and 'lay_by' into "Lay
+ * by" — an abbreviation and a misspelling respectively, neither of which
+ * appears anywhere else in the product.
+ */
+const ACCOUNT_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+  ACCOUNT_TYPE_OPTIONS.map((t) => [t.id, t.name]),
+)
+
+/** Spelled as the customer and supplier lists spell them, so the two agree. */
+const PARTY_STATUS_LABELS: Record<string, string> = {
+  active: 'Active',
+  on_hold: 'On hold',
+  inactive: 'Inactive',
+  closed: 'Closed',
 }
 
 /**
@@ -560,14 +619,14 @@ const PRODUCT_LOOKUP_FIELDS: CatalogField[] = [
     needs: ['product', 'productBrand'],
     group: FIELD_GROUPS.PRODUCT,
   },
-  {
-    key: 'currentProductType',
-    label: 'Product type',
-    type: 'text',
-    expr: 'pm.product_type',
-    needs: ['product'],
-    group: FIELD_GROUPS.PRODUCT,
-  },
+  enumField(
+    'currentProductType',
+    'Product type',
+    'pm.product_type',
+    PRODUCT_TYPE_VALUES,
+    { needs: ['product'], group: FIELD_GROUPS.PRODUCT },
+    PRODUCT_TYPE_LABELS,
+  ),
   yesNo('currentArchived', 'Archived now', 'pm.is_archived', ['product']),
   {
     key: 'currentLastSold',
@@ -1355,13 +1414,7 @@ const SALE_LINES_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.CLASSIFICATION,
       hint: 'The department recorded on the line when it was sold. Use “Department now” for today’s filing.',
     },
-    {
-      key: 'productType',
-      label: 'Product type',
-      type: 'text',
-      expr: 't.product_type',
-      group: FIELD_GROUPS.CLASSIFICATION,
-    },
+    enumField('productType', 'Product type', 't.product_type', PRODUCT_TYPE_VALUES, {}, PRODUCT_TYPE_LABELS),
     {
       key: 'qty',
       label: 'Quantity',
@@ -1834,7 +1887,7 @@ const PRODUCTS_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.CLASSIFICATION,
     },
     { key: 'brand', label: 'Brand', type: 'text', expr: 'pbr.name', needs: ['brand'], group: FIELD_GROUPS.CLASSIFICATION },
-    { key: 'productType', label: 'Product type', type: 'text', expr: 't.product_type', group: FIELD_GROUPS.CLASSIFICATION },
+    enumField('productType', 'Product type', 't.product_type', PRODUCT_TYPE_VALUES, {}, PRODUCT_TYPE_LABELS),
     /*
      * Variants. Reported on the CHILD, which is the row that carries stock,
      * price and sales — so "sales by size" is a group-by on these two columns
@@ -2042,6 +2095,19 @@ const PRODUCTS_SOURCE: CatalogSource = {
         "ELSE 'Over a year' END)",
       group: FIELD_GROUPS.DATES,
       hint: 'How long since the product last sold (or, never sold, since it arrived).',
+      /* The expression above emits exactly these seven strings and nothing
+         else, so they are offered rather than typed. Two of them contain an
+         EN DASH — filtering this by hand meant guessing a character that is
+         not on the keyboard, and a hyphen typed instead matched nothing. */
+      options: [
+        'Never moved',
+        '0–30 days',
+        '31–60 days',
+        '61–90 days',
+        '91–180 days',
+        '181–365 days',
+        'Over a year',
+      ].map((v) => ({ value: v, label: v })),
     },
     /* ── Stock-control dates ────────────────────────────────────────────
      *
@@ -2260,7 +2326,7 @@ const CUSTOMERS_SOURCE: CatalogSource = {
   fields: [
     { key: 'code', label: 'Account code', type: 'text', expr: 't.code', starter: true, group: FIELD_GROUPS.IDENTITY },
     { key: 'name', label: 'Name', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
-    enumField('status', 'Status', 't.status', ['active', 'on_hold', 'inactive', 'closed'], { starter: true }),
+    enumField('status', 'Status', 't.status', PARTY_STATUSES, { starter: true }, PARTY_STATUS_LABELS),
     { key: 'group', label: 'Customer group', type: 'text', expr: 'g.name', needs: ['group'], group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'rep', label: 'Sales rep', type: 'text', expr: 't.rep_name', needs: [], group: FIELD_GROUPS.PEOPLE },
     { key: 'category', label: 'Category', type: 'text', expr: 't.category', group: FIELD_GROUPS.CLASSIFICATION },
@@ -2315,9 +2381,18 @@ const CUSTOMERS_SOURCE: CatalogSource = {
     },
     { key: 'dailyLimit', label: 'Daily limit', type: 'currency', expr: 't.daily_limit', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
     { key: 'monthlyLimit', label: 'Monthly limit', type: 'currency', expr: 't.monthly_limit', numeric: true, noTotal: true, group: FIELD_GROUPS.ACCOUNT },
-    enumField('statementCycle', 'Statement cycle', 't.statement_cycle', ['monthly', '14day', '7day'], {
-      group: FIELD_GROUPS.ACCOUNT,
-    }),
+    /* Values AND labels from statementCycles.ts — a pure module, so the filter
+       offers exactly what the customer form offers, worded the same. Without
+       the labels humanise() rendered '14day' as "14day", which is a value
+       showing through rather than a choice being offered. */
+    enumField(
+      'statementCycle',
+      'Statement cycle',
+      't.statement_cycle',
+      [...STATEMENT_CYCLES],
+      { group: FIELD_GROUPS.ACCOUNT },
+      CYCLE_LABELS,
+    ),
     {
       key: 'statementAnchorDay',
       label: 'Statement day',
@@ -2369,7 +2444,7 @@ const CUSTOMERS_SOURCE: CatalogSource = {
     /* Read from the shared constant rather than listed again here: a filter
        whose options are a second copy of an enum is how one silently stops
        matching the values in the column. */
-    enumField('accountType', 'Account type', 't.account_type', [...ACCOUNT_TYPES]),
+    enumField('accountType', 'Account type', 't.account_type', [...ACCOUNT_TYPES], {}, ACCOUNT_TYPE_LABELS),
     { key: 'createdAt', label: 'Account opened', type: 'datetime', expr: 't.created_at', group: FIELD_GROUPS.DATES },
   ],
 }
@@ -2494,7 +2569,7 @@ const SUPPLIERS_SOURCE: CatalogSource = {
   fields: [
     { key: 'code', label: 'Supplier code', type: 'text', expr: 't.code', starter: true, group: FIELD_GROUPS.IDENTITY },
     { key: 'name', label: 'Name', type: 'text', expr: 't.name', starter: true, group: FIELD_GROUPS.IDENTITY },
-    enumField('status', 'Status', 't.status', ['active', 'on_hold', 'inactive', 'closed'], { starter: true }),
+    enumField('status', 'Status', 't.status', PARTY_STATUSES, { starter: true }, PARTY_STATUS_LABELS),
     { key: 'category', label: 'Category', type: 'text', expr: 't.category', group: FIELD_GROUPS.CLASSIFICATION },
     { key: 'contactName', label: 'Contact', type: 'text', expr: 't.contact_name', group: FIELD_GROUPS.IDENTITY },
     { key: 'email', label: 'Email', type: 'text', expr: 't.email', group: FIELD_GROUPS.IDENTITY },
@@ -2703,7 +2778,7 @@ const PURCHASE_LINES_SOURCE: CatalogSource = {
       group: FIELD_GROUPS.MONEY,
       hint: 'What the item was to be sold at when it was received — blank where none was set.',
     },
-    { key: 'productType', label: 'Line type', type: 'text', expr: 't.product_type', group: FIELD_GROUPS.CLASSIFICATION },
+    enumField('productType', 'Line type', 't.product_type', PRODUCT_TYPE_VALUES, {}, PRODUCT_TYPE_LABELS),
     ...PRODUCT_LOOKUP_FIELDS,
     ...timeBuckets('document_date').map((f) => ({
       ...f,

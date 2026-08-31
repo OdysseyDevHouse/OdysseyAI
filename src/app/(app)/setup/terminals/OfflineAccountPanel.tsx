@@ -54,7 +54,7 @@ export default function OfflineAccountPanel({
   }
 
   return (
-    <Card>
+    <Card id="offline-account-sales">
       <CardHeader
         title="Account sales when the line is down"
         description="Whether a till with no connection may still put a sale on a customer's account."

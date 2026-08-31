@@ -89,7 +89,7 @@ export default function SignInArtPanel({
   }
 
   return (
-    <Card>
+    <Card id="sign-in-art">
       <CardHeader
         title="Till sign-in screen"
         description="The picture customers see beside the PIN pad, while nobody is signed in. Yours if you upload one, otherwise a stock picture for your kind of shop."

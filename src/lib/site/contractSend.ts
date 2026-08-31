@@ -2,7 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 import { formatMoney } from '../decimals'
-import { send, isConfigured } from '../mail'
+import { sendAs, isConfiguredFor } from '../mail'
 import { renderInvoicePdf } from '../invoices/pdf'
 import { buildInvoice, type IssuingSite } from '../invoices/build'
 import { getDocument } from './salesDocuments'
@@ -79,7 +79,7 @@ export async function emailContractInvoice(
     return { ok: true, to: String(row.emailed_to ?? '') }
   }
 
-  if (!isConfigured()) {
+  if (!(await isConfiguredFor(siteId))) {
     return await record(siteId, contractInvoiceId, 'skipped', null, 'Email is not set up on this system.')
   }
 
@@ -152,7 +152,7 @@ export async function emailContractInvoice(
   }
 
   const number = document.documentNumber ?? `#${documentId}`
-  const result = await send({
+  const result = await sendAs(siteId, {
     to,
     subject: `Invoice ${number} from ${site.displayName}`,
     text: plainBody(site.displayName, customer?.name ?? '', number, document, paymentUrl),

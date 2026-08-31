@@ -886,7 +886,23 @@ export function validateDocument(input: DocumentInput): string | null {
     const where = `Line ${index + 1}`
     if (!line.description?.trim()) return `${where}: a description is required.`
     if (!Number.isFinite(line.qty) || line.qty === 0) return `${where}: enter a quantity.`
-    if (!Number.isFinite(line.unitPriceIncl) || line.unitPriceIncl < 0) {
+    /*
+     * ── A RETURNABLE IS PRICED NEGATIVE, AND ONLY A RETURNABLE ─────────────
+     *
+     * Taking an empty back pays the customer for it, so the line has to
+     * subtract from the bill. The QUANTITY cannot carry that sign — stock moves
+     * by `qty * stockDirectionFor(type)` and a returnable's direction is +1, so
+     * a negative quantity would pay the customer and send the empty back out.
+     * The price carries it instead. See `returnablePrice` in lib/basket.
+     *
+     * Every other type keeps the original rule. A negative price is otherwise a
+     * typo or a client composing something it should not, and it stays refused
+     * — this is a licence for one product type, not a relaxation.
+     */
+    if (!Number.isFinite(line.unitPriceIncl)) {
+      return `${where}: the price cannot be negative.`
+    }
+    if (line.unitPriceIncl < 0 && line.productType !== 'returnable') {
       return `${where}: the price cannot be negative.`
     }
     if ((line.discountPct ?? 0) < 0 || (line.discountPct ?? 0) > 100) {
@@ -1050,6 +1066,29 @@ export async function saveDraft(
   const { lines, totals } = computeTotals(input.lines)
   const documentDate = input.documentDate ?? todayIso()
 
+  /*
+   * ── OMITTED MEANS "LEAVE IT", NOT "CLEAR IT" ──────────────────────────────
+   *
+   * For the UPDATE arm only; the INSERT below has nothing to preserve.
+   *
+   * `reference = ?` wrote the column flat, so a caller that simply did not
+   * mention it WIPED whatever was there. The till re-saves a parked bill on
+   * every change, so a customer's order number entered once was gone by the
+   * next save. MEASURED: re-saving the same document with the key absent read
+   * the column back as NULL.
+   *
+   * Decided HERE rather than with `COALESCE(?, reference)` in the SQL, which
+   * looks like it does this and does not: an explicit null and an absent key
+   * both arrive as SQL NULL, so COALESCE preserves BOTH — and the field can
+   * then never be emptied again. Also measured, by the test that caught it.
+   *
+   * So: absent leaves the column alone by dropping the assignment entirely;
+   * an explicit null or '' still clears it, because that is somebody emptying
+   * the box rather than not mentioning it.
+   */
+  const referenceClause = input.reference === undefined ? '' : 'reference = ?, '
+  const referenceParam = input.reference === undefined ? [] : [input.reference?.trim() || null]
+
   return siteTransaction(siteId, async (tx) => {
     let id = documentId
 
@@ -1059,7 +1098,7 @@ export async function saveDraft(
            doc_type = ?, document_date = ?, customer_id = ?, customer_name = ?,
            customer_vat_no = ?, customer_phone = ?, customer_address = ?,
            price_structure_id = ?, terminal_id = ?, terminal_code = ?,
-           reference = ?, notes = ?, person_count = ?, visit_type_id = ?,
+           ${referenceClause}notes = ?, person_count = ?, visit_type_id = ?,
            subtotal_excl = ?, vat_total = ?, discount_total = ?, total_incl = ?
          WHERE id = ?`,
         [
@@ -1073,7 +1112,7 @@ export async function saveDraft(
           input.priceStructureId ?? null,
           input.terminalId ?? null,
           input.terminalCode ?? null,
-          input.reference?.trim() || null,
+          ...referenceParam,
           input.notes?.trim() || null,
           input.personCount ?? null,
           input.visitTypeId ?? null,

@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { customerQueryOne } from './customerDb'
+import { customerQuery, customerQueryOne } from './customerDb'
 import { postTransaction } from './customerLedger'
 import { getDocument } from './salesDocuments'
 import type { Actor } from './activityLog'
@@ -139,6 +139,82 @@ export async function payableInvoice(
     totalIncl: document.totalIncl,
     outstanding,
   }
+}
+
+/**
+ * What has been paid against one invoice, and what is left.
+ *
+ * ── WHY THE INVOICE SCREEN COULD NOT ANSWER THIS ──────────────────────────
+ *
+ * It showed deposits and nothing else. A receipt lands on the CUSTOMER's
+ * account, so the only way to learn whether an invoice had been paid was to
+ * leave the invoice, open the account, and read the ledger — which meant an
+ * online payment could arrive and the invoice screen would look exactly as it
+ * did before.
+ *
+ * ── ALLOCATIONS, NOT PAYMENTS ─────────────────────────────────────────────
+ *
+ * Read through customer_allocations rather than by looking for payments whose
+ * source_doc_id is this invoice. The two are different questions and only one
+ * of them is the right one:
+ *
+ *   a payment made against the ACCOUNT (a statement payment, an EFT keyed by
+ *   hand) has no source_doc_id at all, and yet auto-allocation may have used it
+ *   to settle this very invoice;
+ *
+ *   a credit note or a journal can settle an invoice too, and neither is a
+ *   payment.
+ *
+ * The allocation row is the record of what actually settled what, which is the
+ * question somebody looking at an invoice is asking.
+ *
+ * A cash sale has no ledger entry at all, so this returns nothing for one — and
+ * `outstandingForDocument` below already answers that case from the tenders.
+ */
+export type InvoicePayment = {
+  id: number
+  docType: string
+  docNumber: string | null
+  docDate: string
+  reference: string | null
+  description: string | null
+  /** How much of THIS credit went to THIS invoice — not the credit's total. */
+  applied: number
+  source: string
+  allocatedAt: Date | null
+}
+
+export async function paymentsForDocument(
+  siteId: number,
+  documentId: number,
+): Promise<InvoicePayment[]> {
+  const rows = await customerQuery<Row>(
+    siteId,
+    `SELECT c.id, c.doc_type, c.doc_number, c.doc_date, c.reference, c.description,
+            c.source, a.amount AS applied, a.allocated_at
+       FROM customer_transactions d
+       JOIN customer_allocations a ON a.debit_txn_id = d.id
+       JOIN customer_transactions c ON c.id = a.credit_txn_id
+      WHERE d.source_doc_id = ?
+        -- Scoped to THIS store: document ids are per-database, so in a shared
+        -- ledger the id alone would match another branch's invoice.
+        AND (d.origin_site_id IS NULL OR d.origin_site_id = ?)
+        AND d.doc_type = 'invoice'
+      ORDER BY a.allocated_at DESC, a.id DESC`,
+    [documentId, siteId],
+  )
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    docType: String(r.doc_type),
+    docNumber: (r.doc_number as string | null) ?? null,
+    docDate: String(r.doc_date),
+    reference: (r.reference as string | null) ?? null,
+    description: (r.description as string | null) ?? null,
+    applied: Number(r.applied),
+    source: String(r.source ?? ''),
+    allocatedAt: (r.allocated_at as Date | null) ?? null,
+  }))
 }
 
 /**

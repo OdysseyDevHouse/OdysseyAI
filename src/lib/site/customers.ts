@@ -262,6 +262,16 @@ export type CustomerListOptions = {
    * updated_at is ON UPDATE CURRENT_TIMESTAMP, so every save moves it.
    */
   updatedSince?: Date
+  /**
+   * Extra WHERE fragments from the list screen's advanced filter, with their
+   * bound values.
+   *
+   * Pre-compiled by lib/site/listFilterSql.ts. The contract is narrow on
+   * purpose: the fragments are catalog-authored SQL against THIS query's `c`
+   * alias, and every user value is already a `?` in `extraParams`.
+   */
+  extraWhere?: readonly string[]
+  extraParams?: readonly unknown[]
   sort?: CustomerSort
   direction?: 'asc' | 'desc'
   limit?: number
@@ -328,6 +338,14 @@ function buildWhere(opts: CustomerListOptions): { sql: string; params: unknown[]
   // JS so the count and the page agree — filtering after LIMIT would report a
   // total that does not match the rows.
   if (opts.overLimitOnly) where.push('c.balance > c.credit_limit')
+
+  /* The advanced filter's conditions, ANDed onto everything above. Pushed LAST
+     and as a pair, because the placeholders in these fragments are positional:
+     the values must arrive in the same order the fragments do. */
+  if (opts.extraWhere?.length) {
+    where.push(...opts.extraWhere)
+    params.push(...(opts.extraParams ?? []))
+  }
 
   return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', params }
 }

@@ -1,0 +1,36 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- Which custom fields print on the customer's slip.
+--
+-- 242 let a shop ask questions when a sale is finalised. This decides which of
+-- the answers the CUSTOMER sees on the paper they walk out with.
+--
+-- ── WHY PER FIELD AND NOT ONE SWITCH FOR THE SET ─────────────────────────
+--
+-- Because the set is mixed by nature. A shop capturing Name, Surname, Age and
+-- Occupation on an account sale wants the name on the slip so the customer can
+-- check it was filed against them — and does not want their age printed on a
+-- docket that ends up in a bin. One switch would force the shop to choose
+-- between printing something private and printing nothing.
+--
+-- The same argument `is_public` already makes beside it, for the same table:
+-- that column decides what reaches the customer PORTAL, this one decides what
+-- reaches their paper, and a field can sensibly be one and not the other.
+--
+-- ── AND WHY IT DEFAULTS OFF ──────────────────────────────────────────────
+--
+-- Identical reasoning to is_public, which 127 stated plainly: "a field somebody
+-- adds without thinking about the portal must not appear on it." A slip is
+-- worse than a portal for this — it is handed over, it cannot be unprinted, and
+-- nobody reviews it first. A field only reaches paper because somebody said so.
+--
+-- ── SCOPED TO SALES IN PRACTICE, NOT BY THE SCHEMA ───────────────────────
+--
+-- Nothing here says 'sale'. A job or a customer field carrying this flag simply
+-- has nowhere to print — no slip renders those — so the column is harmless
+-- there rather than needing a constraint that would have to name an entity.
+-- 127's whole design is that the entity is a column and the mechanism does not
+-- branch on it; a CHECK here would be the first place that stopped being true.
+-- ─────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE custom_field_defs
+  ADD COLUMN IF NOT EXISTS prints_on_slip TINYINT(1) NOT NULL DEFAULT 0 AFTER is_public;

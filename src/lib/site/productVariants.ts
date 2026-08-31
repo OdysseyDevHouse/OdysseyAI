@@ -66,6 +66,46 @@ export type VariantGroup = {
 export class VariantError extends Error {}
 
 /**
+ * Every group's axis LABELS, for the till's offline catalog.
+ *
+ * The till already receives parents and children as ordinary product rows —
+ * `has_variants`, `parent_id` and the two axis VALUES ride `TillProduct`. What
+ * it cannot get from those rows is what the values are called: 'M' is on the
+ * child, 'Size' belongs to the group.
+ *
+ * Shipped as its own keyed map rather than folded onto each product for the
+ * reason the schema gives for keeping labels off `products` in the first place
+ * — repeated per child they could disagree, and the picker would have to pick
+ * a winner. One row per axis per group, so a shop with 200 groups sends 400
+ * short rows, which is noise next to the product feed.
+ *
+ * Whole every time, never a delta. Renaming an axis does not touch any product
+ * row, so a products-only delta would leave a till captioning its picker
+ * 'Size' forever after the shop renamed it 'Length' — the same trap
+ * `pricesChangedSince` exists to avoid, and cheap enough here to just resend.
+ */
+export async function allVariantAxes(
+  siteId: number,
+): Promise<Record<number, VariantAxis[]>> {
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT a.product_id, a.position, a.label
+       FROM product_variant_axes a
+       JOIN products p ON p.id = a.product_id
+      WHERE p.is_archived = 0
+      ORDER BY a.product_id, a.position`,
+  )
+  const out: Record<number, VariantAxis[]> = {}
+  for (const r of rows) {
+    const id = Number(r.product_id)
+    const axis = { position: Number(r.position) as 1 | 2, label: String(r.label) }
+    if (out[id]) out[id].push(axis)
+    else out[id] = [axis]
+  }
+  return out
+}
+
+/**
  * The columns a child inherits from its parent.
  *
  * These are the ones that must not disagree within a group. Department decides
@@ -313,16 +353,44 @@ export async function attachChild(
       throw new VariantError('There is already a variant with that combination.')
     }
 
+    /*
+     * A POSITION, assigned at the end of the group.
+     *
+     * Without this every child kept `variant_sort` at its default 0, and both
+     * pickers — the storefront's and the till's — fell through to their
+     * alphabetical tiebreak. That sorts S, M, L, XL to L, M, S, XL, which is
+     * the exact nonsense this column exists to prevent (see 070). The bug was
+     * invisible for as long as nothing read the column: `setVariantOrder` was
+     * the only writer, so a group showed a sensible order only if somebody had
+     * been to the back office and dragged the sizes by hand.
+     *
+     * Attachment order is the right default because it is the order the
+     * shopkeeper typed them in, and a person adding sizes to a shirt types
+     * them small to large. Getting it wrong costs a drag; having no order at
+     * all cost every group in the file.
+     *
+     * MAX + 1 rather than a count: a group that has had a child detached has a
+     * gap, and counting would reuse a position that is still taken.
+     */
+    const last = await siteQueryOneTx(
+      tx,
+      `SELECT COALESCE(MAX(variant_sort), 0) AS top FROM products
+        WHERE parent_id = ? AND id <> ?`,
+      [parentId, childId],
+    )
+    const position = Number(last?.top ?? 0) + 1
+
     const inherit = INHERITED.map((c) => `${c} = ?`).join(', ')
     await tx.execute(
       `UPDATE products
           SET parent_id = ?, has_variants = 0,
-              axis_1_value = ?, axis_2_value = ?, ${inherit}
+              axis_1_value = ?, axis_2_value = ?, variant_sort = ?, ${inherit}
         WHERE id = ?`,
       [
         parentId,
         one,
         two,
+        position,
         ...INHERITED.map((c) => parent[c] ?? null),
         childId,
       ] as never,

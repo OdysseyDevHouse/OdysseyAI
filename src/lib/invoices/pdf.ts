@@ -1,4 +1,5 @@
 import 'server-only'
+import { taxLabel } from '../site/taxIdentity'
 import { qrContextFor } from '../site/qrLinks'
 import { pictureIds, pictureBytes } from '../site/stationeryImages'
 import PDFDocument from 'pdfkit'
@@ -107,6 +108,24 @@ export type InvoiceData = {
   paymentUrl?: string | null
   /** Free text under the totals — "Contract CON000012, March 2027". */
   footNote?: string | null
+  /**
+   * Nothing is owed on this invoice any more.
+   *
+   * ── WHY THE CALLER DECIDES, AND NOT THIS FILE ────────────────────────────
+   *
+   * "Paid" is a question about the LEDGER, not about the document: an account
+   * invoice is settled by a receipt allocated against it, which lives in the
+   * customer database and is not part of the figures used to draw the page. A
+   * renderer that went looking would be a print path issuing its own queries,
+   * and would make every emailed invoice slower to satisfy a stamp.
+   *
+   * So the caller — which has already asked `outstandingForDocument` for its own
+   * reasons — says so. Undefined means "not known", which prints nothing rather
+   * than claiming unpaid: an invoice wrongly stamped PAID is a debt nobody
+   * chases, and one wrongly stamped UNPAID is an argument with a customer who
+   * has the receipt.
+   */
+  paidInFull?: boolean
   generatedAt: Date
 }
 
@@ -144,7 +163,20 @@ export async function renderInvoicePdf(
    * INVOICE, carried a negative total and explained nothing. The caller knows
    * which it is; this function cannot.
    */
-  kind?: { heading?: string; closing?: string },
+  kind?: {
+    heading?: string
+    closing?: string
+    /**
+     * The document's own pay link, for a QR block aimed at "this document".
+     *
+     * Passed in rather than derived here, because InvoiceData carries no
+     * document TYPE or status and this function cannot tell an invoice from a
+     * credit note — the same reason `heading` is a parameter. The caller knows
+     * which it is; see documentPayUrl in site/qrLinks.ts for which documents
+     * get one and why a credit note never does.
+     */
+    payUrl?: string | null
+  },
 ): Promise<Buffer> {
   if (siteId !== undefined) {
     const designed = await renderDesignedInvoice(data, siteId, kind).catch(() => null)
@@ -178,7 +210,7 @@ export async function renderInvoicePdf(
 async function renderDesignedInvoice(
   data: InvoiceData,
   siteId: number,
-  kind?: { heading?: string; closing?: string },
+  kind?: { heading?: string; closing?: string; payUrl?: string | null },
 ): Promise<Buffer | null> {
   const { activeTemplate } = await import('../site/stationeryTemplates')
   const custom = await activeTemplate(siteId, 'invoice').catch(() => null)
@@ -236,6 +268,7 @@ async function renderDesignedInvoice(
     }),
     // The token itself is never drawn as text; the bytes go in separately.
     logoHtml: null,
+    taxLabel: await taxLabel(siteId),
   })
 
   /*
@@ -249,7 +282,13 @@ async function renderDesignedInvoice(
   return renderSpecPdf(
     spec,
     'invoice',
-    { ...input, pictures: await pictureIds(siteId), qr: await qrContextFor(siteId) },
+    {
+      ...input,
+      pictures: await pictureIds(siteId),
+      // The pay link finally answers the "this document" QR target, which every
+      // caller has left null since it was written. See documentPayUrl.
+      qr: await qrContextFor(siteId, kind?.payUrl ?? null),
+    },
     logo?.bytes ?? null,
     usedPictures.length ? await pictureBytes(siteId, usedPictures) : undefined,
   )

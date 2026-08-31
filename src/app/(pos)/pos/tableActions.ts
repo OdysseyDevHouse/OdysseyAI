@@ -1,6 +1,7 @@
 'use server'
 
 import { actorFor, actorForOrThrow, requireSite, withTillOperator } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { billDataFor, type BillData } from '@/lib/billData'
 import {
   listTables,
@@ -297,7 +298,7 @@ export async function billDataAction(documentId: number): Promise<BillDataResult
     ok: true,
     bill: billDataFor(
       doc,
-      { name: site.displayName, vatNumber: site.vatNumber },
+      { name: site.displayName, vatNumber: site.vatNumber, taxLabel: await taxLabel(site.id) },
       {
         printedAt: new Date().toLocaleString('en-ZA', {
           dateStyle: 'short',

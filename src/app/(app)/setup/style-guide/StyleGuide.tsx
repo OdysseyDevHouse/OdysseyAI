@@ -34,7 +34,16 @@ import {
   InlineField,
   FileInput,
   FilterBar,
+  AdvancedFilter,
+  summariseCondition,
+  type FilterCondition,
+  type FilterField,
   FilterChip,
+  CHIP_BASE,
+  ClockChip,
+  LOGOUT_CHIP,
+  OperatorChip,
+  StatusChip,
   Icons,
   Input,
   MiniStat,
@@ -142,6 +151,7 @@ import { VoidReasonModal } from '@/app/(pos)/pos/VoidReasonModal'
 import type { VoidType } from '@/lib/site/posVoids'
 import { SplitPreview } from './SplitPreview'
 import { ReceiptReturnPreview } from './ReceiptReturnPreview'
+import { VariantPreview } from './VariantPreview'
 import { BillPreview } from './BillPreview'
 import { GatePreview, FloorPreview, OpenTillPreview, PosGatePreview } from './GatePreview'
 import { ModuleMenuPreview } from './ModuleMenuPreview'
@@ -216,6 +226,8 @@ export default function StyleGuidePage() {
         <LaneWeekSection />
         <ComboboxSection />
         <FilterBarSection />
+        <StatusChipSection />
+        <AdvancedFilterSection />
         <DateRangeSection />
         <CategoryTileSection />
         <TillTileSection />
@@ -224,6 +236,7 @@ export default function StyleGuidePage() {
         <InstructionsSection />
         <ReceiptSection />
         <ReceiptReturnSection />
+        <VariantPickerSection />
         <SplitBillSection />
         <BillSection />
         <TableGateSection />
@@ -275,7 +288,7 @@ function ButtonsSection() {
     { variant: 'ghost', note: 'Low-emphasis / toolbar', label: 'Cancel', icon: false },
     {
       variant: 'key',
-      note: 'A keypad key — neutral fill so ten of them read as a pad (the till’s PinPad)',
+      note: 'A keypad key — neutral fill so ten of them read as a pad. Every pad wears it: PinPad and NumPad both, at sizes pad / pad-lg / keypad-sm / keypad',
       label: '7',
       icon: false,
     },
@@ -770,8 +783,8 @@ function SelectableCardSection() {
           onChange={setChoice}
           badge={
             <Badge tone="brand">
-              <Icons.Globe size={11} />
-              Online only
+              <Icons.Barcode size={11} />
+              Tracked
             </Badge>
           }
           footer={
@@ -1363,6 +1376,18 @@ function IdentitySection() {
           </TextLinkButton>
           <span>opens where it stands — no navigation</span>
         </div>
+        {/* size="lg" — the same tile at page-heading scale, for the identity of
+            the ONE record a screen is about rather than a row in a list. The
+            customer portal heads its account page with it. */}
+        <div className="flex items-center gap-3 border-t border-border pt-3">
+          <RowTile label="Tiaan Smith" size="lg" />
+          <span>
+            <span className="block font-medium text-ink">size=&quot;lg&quot;</span>
+            <span className="block text-xs text-muted">
+              the record a whole screen is about, not a row in a list
+            </span>
+          </span>
+        </div>
       </CardBody>
     </Card>
   )
@@ -1788,9 +1813,9 @@ function ColumnPickerSection() {
           </span>
         </div>
 
-        {/* Both heights, side by side with a Menu — the pairing that matters,
-            since these two sit next to each other in a report toolbar and a
-            mismatch is only visible against something else. */}
+        {/* Shown beside a Menu — the pairing that matters, since these two sit
+            next to each other in a toolbar and a height mismatch is only
+            visible against something else. */}
         <div className="flex items-center gap-3 border-t border-border pt-4">
           <ColumnPicker
             columns={columns}
@@ -1798,19 +1823,11 @@ function ColumnPickerSection() {
             onChange={setVisible}
             align="left"
           />
-          <ColumnPicker
-            columns={columns}
-            visible={visible}
-            onChange={setVisible}
-            align="left"
-            size="md"
-          />
           <Menu label="Export" variant="ghost">
             <MenuItem>PDF</MenuItem>
           </Menu>
           <span className="text-sm text-muted">
-            Default <code>sm</code> (32px) for a list toolbar; <code>md</code> (40px) to sit level
-            with full-height controls, as the report toolbar does.
+            <code>md</code> (40px) — level with the full-height controls it shares a toolbar with.
           </span>
         </div>
       </CardBody>
@@ -2500,9 +2517,16 @@ function NumPadSection() {
         <Spec name='size="wide"' note="the same, at a scale a dialog can carry beside a field and a footer" />
         <Spec name="maxDecimals={0}" note="whole numbers; the point becomes a GAP, not a missing key" />
         <Spec name="numPadValue(v)" note='"" and "12." both mean the number to their left' />
-        <Spec name='layout="plaque"' note="brand-tinted, for a dialog whose only subject is the amount" />
+        <Spec name='layout="plaque"' note="the biggest figure, for a dialog whose only subject is the amount" />
+        <Spec
+          name="the deep plaque"
+          note="every layout sits on it — the same dark block the till's opening float wears, so the figure is in one place on one ground wherever a cashier meets it"
+        />
         <Spec name="suffix" note='the unit ON the figure — "%" — never a leading one; R goes first' />
-        <Spec name='tone="danger"' note="the entry is refused — over a line's discount ceiling" />
+        <Spec
+          name='tone="danger"'
+          note="the entry is refused — the SAME plaque, reddened; the figure must not move or resize to say no"
+        />
 
         {/* The two sizes SIDE BY SIDE, because the difference is the thing worth
             looking at and it is invisible in prose: `touch` keys are 56px tall
@@ -2512,8 +2536,13 @@ function NumPadSection() {
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
             Default — one control among controls
           </p>
-          <NumPadDisplay label="Quantity" value={small} />
-          <NumPad value={small} onChange={setSmall} />
+          {/* The pair in a gap-3 column, the way every dialog that uses them
+              lays them out — as bare siblings the keys butt against the
+              plaque's bottom edge, which is not a shape any real screen has. */}
+          <div className="flex flex-col gap-3">
+            <NumPadDisplay label="Quantity" value={small} />
+            <NumPad value={small} onChange={setSmall} />
+          </div>
         </div>
 
         <div className="w-full max-w-sm shrink-0">
@@ -2676,6 +2705,69 @@ function ComboboxSection() {
   )
 }
 
+/**
+ * The counter status chips.
+ *
+ * The row across the top of the till and the invoicing counter. Both windows
+ * build it from these, so the two cannot drift in height, radius or shadow —
+ * which matters because a shop sees them side by side.
+ */
+function StatusChipSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Status chips"
+        description="<StatusChip />, <OperatorChip /> and <ClockChip /> — the counter strip. All 46px so a row of them cannot look ragged; CHIP_BASE and LOGOUT_CHIP are exported for the tappable ones."
+      />
+      {/* The strip as the two counters actually wear it, in their order:
+          what is wrong first, then the queue, the drawer, the machine, the
+          person, the clock, and the way out last. */}
+      <div className="flex flex-wrap items-center gap-2.5 border-b border-border py-3">
+        <span className={`${CHIP_BASE} border-success/40 bg-success-soft text-success-ink`}>
+          <Icons.Check size={16} />
+          Sales synced
+        </span>
+        <button type="button" data-kit-ok className={`${CHIP_BASE} border-border bg-surface text-ink-2`}>
+          <Icons.Coins size={16} />
+          Shift 42
+        </button>
+        <StatusChip>
+          <Icons.Terminal size={16} className="text-muted" />
+          Counter
+        </StatusChip>
+        <OperatorChip name="Nomsa Dlamini" />
+        <ClockChip />
+        <button type="button" data-kit-ok className={LOGOUT_CHIP}>
+          <Icons.LogOut size={16} />
+          Logout
+        </button>
+      </div>
+
+      {/* The states each chip can take. */}
+      <div className="flex flex-wrap items-center gap-2.5 py-3">
+        <span className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}>
+          <Icons.Offline size={16} />
+          Offline
+        </span>
+        <span className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}>
+          <Icons.Coins size={16} />
+          No shift
+        </span>
+        <OperatorChip name="Nomsa Dlamini" />
+        <StatusChip>
+          <Icons.Terminal size={16} className="text-muted" />
+          TILL-01
+        </StatusChip>
+        <StatusChip>
+          <Icons.Coins size={16} className="text-muted" />
+          Shift 42
+        </StatusChip>
+        <ClockChip />
+      </div>
+    </Card>
+  )
+}
+
 function FilterBarSection() {
   return (
     <Card>
@@ -2691,6 +2783,95 @@ function FilterBarSection() {
           <FilterChip label="Balance" value="Over limit" clearHref="#" />
         </FilterBar>
       </div>
+    </Card>
+  )
+}
+
+/**
+ * The advanced filter, live.
+ *
+ * Wired to real state so the panel actually opens, adds conditions and applies
+ * them — a static screenshot of a closed button would prove nothing about the
+ * thing worth checking, which is what the panel looks like with four rows in
+ * it. The fields below mirror the shape the products list passes.
+ */
+function AdvancedFilterSection() {
+  const [conditions, setConditions] = useState<FilterCondition[]>([
+    { field: 'visibleInPos', op: 'eq', value: 'Yes' },
+  ])
+  const [remembered, setRemembered] = useState(false)
+
+  const fields: FilterField[] = [
+    {
+      key: 'visibleInPos',
+      label: 'Visible on the till',
+      type: 'text',
+      numeric: false,
+      group: 'Behaviour',
+      hint: 'Whether the product shows on the POS.',
+      options: [
+        { value: 'Yes', label: 'Yes' },
+        { value: 'No', label: 'No' },
+      ],
+    },
+    {
+      key: 'productType',
+      label: 'Product type',
+      type: 'text',
+      numeric: false,
+      group: 'Classification',
+      hint: '',
+      options: [
+        { value: 'normal', label: 'Normal' },
+        { value: 'service', label: 'Service' },
+        { value: 'serial', label: 'Serial' },
+      ],
+    },
+    {
+      key: 'stockOnHand',
+      label: 'Stock on hand',
+      type: 'number',
+      numeric: true,
+      group: 'Quantities',
+      hint: '',
+      options: [],
+    },
+    { key: 'code', label: 'Product code', type: 'text', numeric: false, group: 'Identity', hint: '', options: [] },
+  ]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Advanced filter"
+        description="<AdvancedFilter /> — everything a list's toolbar cannot express, behind one button. Conditions come from the report builder's catalog, so the fields and operators are the same ones a report offers. Applying is the caller's job: filter state belongs in the URL."
+      />
+      <Row>
+        <Spec name="<AdvancedFilter>" note="Products, customers and suppliers lists" />
+        <div className="flex flex-col gap-3">
+          <AdvancedFilter
+            fields={fields}
+            value={conditions}
+            remembered={remembered}
+            onApply={(next, remember) => {
+              setConditions(next)
+              setRemembered(remember)
+            }}
+          />
+          {/* What the list screen renders beside the button — the applied
+              conditions in words. Without these a remembered filter is
+              invisible, and a short list looks like a broken screen. */}
+          <FilterBar>
+            {conditions.map((c, i) => (
+              <FilterChip
+                key={i}
+                label="Where"
+                value={summariseCondition(c, fields)}
+                clearHref="#"
+              />
+            ))}
+          </FilterBar>
+        </div>
+      </Row>
     </Card>
   )
 }
@@ -3178,6 +3359,32 @@ function ReceiptReturnSection() {
           note="The two reads, injectable and defaulted to the real actions. The till passes neither; the preview beside this passes both, which is the only way to look at a screen that lives behind a clerk PIN."
         />
         <ReceiptReturnPreview />
+      </Row>
+    </Card>
+  )
+}
+
+function VariantPickerSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Which size"
+        description="<VariantModal /> — what a variant group's tile opens (070). A shirt in five sizes is ONE tile on the grid and this is where the size is chosen, rather than five tiles competing for the same square of glass. The group itself can never be sold: it holds no stock and recordMovement refuses it, so this modal hands back a different product from the one that opened it — the member — which then runs the whole of add() itself and picks up its own lot or serial prompt if it has one."
+      />
+      <Row>
+        <Spec
+          name="<VariantModal parent childrenProducts axes priceFor onConfirm>"
+          note="Buttons, not a dropdown: a till is a touch screen and the values are short. The footer carries the chosen member's code and price beside the button that commits it, because a long range scrolls and what is about to be rung up must not scroll away with it."
+        />
+        <Spec
+          name="Sold out still sells"
+          note="The same call LotModal makes about expired lots. The shop's count is a claim about the stockroom; the customer is holding the garment. A sold-out size is marked so it prompts a word with the customer, and sells."
+        />
+        <Spec
+          name="Impossible combinations are disabled, not hidden"
+          note="Open the two-axis preview: there is no XL in red. Hiding it would make the colour row change length as sizes are tapped, so a finger already moving lands on something else. Disabled, the shape of the range holds still."
+        />
+        <VariantPreview />
       </Row>
     </Card>
   )

@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
-import { holder } from '@/lib/control/modules'
+import { menuFilters } from '@/lib/site/menuVisibility'
 import { PageHeader, PageBody } from '@/components/ui'
 import HubView from '@/components/HubView'
 import { setupGroupsFor } from './catalogue'
@@ -35,11 +35,17 @@ export default async function SetupPage({
 }: {
   searchParams: Promise<{ q?: string }>
 }) {
-  const { capabilities, modules } = await requireSiteUser()
+  const { site, capabilities, modules } = await requireSiteUser()
   const allow = (c: string) => can(capabilities, c as Parameters<typeof can>[1])
 
+  /* Both filters from one read. `holds` covers tiles gated on a module;
+     `menuHidden` covers the base-package tiles that travel with an area — the
+     four staff ones. Menu & modules itself carries neither, so the way back is
+     never hidden. */
+  const { holds, menuHidden } = await menuFilters(site.id, modules)
+
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const groups = setupGroupsFor(allow, holder(modules))
+  const groups = setupGroupsFor(allow, holds, menuHidden)
   if (groups.length === 0) redirect('/not-allowed')
 
   const { q } = await searchParams

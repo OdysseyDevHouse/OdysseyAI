@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
-import { holder } from '@/lib/control/modules'
+import { menuHolder } from '@/lib/site/menuVisibility'
 import { PageHeader, PageBody } from '@/components/ui'
 import HubView from '@/components/HubView'
 import { accountingGroupsFor } from './catalogue'
@@ -29,11 +29,17 @@ export default async function AccountingPage({
 }: {
   searchParams: Promise<{ q?: string }>
 }) {
-  const { capabilities, modules } = await requireSiteUser()
+  const { site, capabilities, modules } = await requireSiteUser()
   const allow = (c: string) => can(capabilities, c as Parameters<typeof can>[1])
 
+  /* Held AND not switched off under Setup → Menu & modules. A shop whose
+     bookkeeper runs the ledger elsewhere hides Accounting and is left with the
+     cashbook, expenses and the VAT return — which are base-package tiles and
+     carry no module, so the hub keeps working rather than emptying. */
+  const holds = await menuHolder(site.id, modules)
+
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const groups = accountingGroupsFor(allow, holder(modules))
+  const groups = accountingGroupsFor(allow, holds)
   if (groups.length === 0) redirect('/not-allowed')
 
   const { q } = await searchParams

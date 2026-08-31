@@ -41,7 +41,14 @@ import {
  * and a list of six rows reordered twice a year does not justify the dependency
  * or the keyboard-accessibility work drag would need to be done properly.
  */
-export default function TenderTypesClient({ tenders }: { tenders: TenderType[] }) {
+export default function TenderTypesClient({
+  tenders,
+  saleFieldCount,
+}: {
+  tenders: TenderType[]
+  /** How many sale custom fields exist, so the toggle can say what it will ask. */
+  saleFieldCount: number
+}) {
   const [editing, setEditing] = useState<TenderType | null>(null)
   const [adding, setAdding] = useState(false)
   const [deleting, setDeleting] = useState<TenderType | null>(null)
@@ -143,6 +150,7 @@ export default function TenderTypesClient({ tenders }: { tenders: TenderType[] }
         tender={adding ? null : editing}
         open={adding || editing !== null}
         pending={pending}
+        saleFieldCount={saleFieldCount}
         onClose={() => {
           setAdding(false)
           setEditing(null)
@@ -186,12 +194,15 @@ function TenderModal({
   tender,
   open,
   pending,
+  saleFieldCount,
   onClose,
   onSave,
 }: {
   tender: TenderType | null
   open: boolean
   pending: boolean
+  /** How many sale custom fields exist — the toggle's hint names the number. */
+  saleFieldCount: number
   onClose: () => void
   onSave: (input: TenderInput) => void
 }) {
@@ -322,6 +333,19 @@ function TenderModal({
                 />
               </Field>
             )}
+            {/* Beside the reference for a reason: both make the till ask for
+                something before it will finalise, and a manager deciding one is
+                thinking about the other. */}
+            <Switch
+              checked={!!form.asksCustomComments}
+              onChange={(v) => set('asksCustomComments', v)}
+              label="Asks for the sale's custom comments"
+              hint={
+                saleFieldCount > 0
+                  ? `Prompts for your ${saleFieldCount} sale ${saleFieldCount === 1 ? 'field' : 'fields'} when a sale is finalised on this tender.`
+                  : 'Define the questions first under Setup › Custom fields › Sales — with none set up, this asks nothing.'
+              }
+            />
             <Switch
               checked={form.allowsSplit !== false}
               onChange={(v) => set('allowsSplit', v)}
@@ -434,6 +458,7 @@ function fromTender(t: TenderType): TenderInput {
     allowsSplit: t.allowsSplit,
     allowsRefund: t.allowsRefund,
     requiresReference: t.requiresReference,
+    asksCustomComments: t.asksCustomComments,
     referenceLabel: t.referenceLabel,
     roundsToCashDenomination: t.roundsToCashDenomination,
     minAmount: t.minAmount,

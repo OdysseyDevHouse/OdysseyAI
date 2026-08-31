@@ -155,10 +155,27 @@ export function verifyItnSignature(
   receivedSignature: string,
   passphrase?: string,
 ): boolean {
+  /*
+   * ── AN EMPTY FIELD IS INCLUDED HERE, UNLIKE THE CHECKOUT SIGNATURE ──────
+   *
+   * The two algorithms differ on this and nothing warns you. A checkout
+   * signature SKIPS empty values — we choose which fields to send, so an empty
+   * one is one we left out. An ITN signature does not: PayFast posts a fixed
+   * field set including every unused `custom_str1..5`, `custom_int1..5`,
+   * `name_first`, `name_last` and `email_address`, and signs the lot.
+   *
+   * Skipping them here produced a perfectly well-formed md5 that never matched,
+   * on every real callback, reported only as "signature mismatch" — so a
+   * completed payment was recorded as FAILED and the customer was told nothing
+   * had been charged when it had.
+   *
+   * VERIFIED against a real sandbox ITN: of four plausible variants, only
+   * "every field as sent, then the passphrase" reproduces PayFast's own digest.
+   * Do not reintroduce the skip to make this symmetrical with checkout.
+   */
   const parts: string[] = []
   for (const [key, value] of orderedEntries) {
     if (key === 'signature') continue
-    if (value === '') continue
     parts.push(`${key}=${phpUrlEncode(value.trim())}`)
   }
   if (passphrase) parts.push(`passphrase=${phpUrlEncode(passphrase.trim())}`)

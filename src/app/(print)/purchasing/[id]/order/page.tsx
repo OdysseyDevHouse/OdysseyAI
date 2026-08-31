@@ -3,6 +3,7 @@ import { qrContextFor } from '@/lib/site/qrLinks'
 import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireCapability, requireSite, requireActor } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getPurchaseDocument, purchaseAudit, recordOrderPrint } from '@/lib/site/purchaseDocuments'
 import { getSupplier } from '@/lib/site/suppliers'
 import { activeTemplate } from '@/lib/site/stationeryTemplates'
@@ -112,6 +113,7 @@ export default async function PurchaseOrderPrintPage({
     site: {
       name: site.displayName,
       vatNumber: site.vatNumber,
+      taxLabel: await taxLabel(site.id),
       registrationNumber: site.registrationNumber,
       address1: site.address1,
       address2: site.address2,

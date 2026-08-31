@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getLayby } from '@/lib/site/laybys'
 import { getSettings } from '@/lib/site/settings'
+import { payLinkUrl } from '@/lib/site/payLinks'
 import { LaybyAgreement } from '@/components/laybys/LaybyAgreement'
 import PrintButton from './PrintButton'
 
@@ -28,13 +30,31 @@ export default async function LaybyPrintPage({ params }: { params: Promise<{ id:
   ])
   if (!layby) notFound()
 
+  /*
+   * The "pay an instalment" square, or null.
+   *
+   * Only on an OPEN lay-by with something left to pay. A completed one has been
+   * collected and a cancelled one put back on the shelf — both keep their Print
+   * button so the customer can have a copy of what happened, and neither should
+   * carry a code that takes money for a debt that no longer exists.
+   *
+   * Never allowed to break the print: an agreement is a document the CPA
+   * requires the customer to have, and failing to produce it because a link
+   * could not be minted would be trading one duty for a convenience.
+   */
+  const payUrl =
+    layby.status === 'open' && layby.outstanding > 0.005
+      ? await payLinkUrl(site.id, 'layby', layby.id).catch(() => null)
+      : null
+
   return (
     <div className="px-6 py-6">
       <PrintButton laybyId={layby.id} />
       <LaybyAgreement
         layby={layby}
-        site={{ name: site.displayName, vatNumber: site.vatNumber }}
+        site={{ name: site.displayName, vatNumber: site.vatNumber, taxLabel: await taxLabel(site.id) }}
         terms={settings.layby_terms_text ?? ''}
+        payUrl={payUrl}
       />
     </div>
   )

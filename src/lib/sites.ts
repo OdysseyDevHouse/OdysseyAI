@@ -1,6 +1,6 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { query, queryOne } from './db'
+import { query, queryOne, execute } from './db'
 import { keepsProfile, readSiteProfile, writeSiteProfile } from './site/siteProfile'
 
 export type SiteRole = 'owner' | 'manager' | 'staff'
@@ -271,4 +271,126 @@ export async function activeSiteIds(): Promise<number[]> {
     `SELECT id FROM cp2_sites WHERE status = 'active' ORDER BY id`,
   )
   return rows.map((r) => Number(r.id))
+}
+
+/**
+ * The fields a shop may change about itself.
+ *
+ * Deliberately NOT the whole row. `connection_type`, `status`, `is_paid`,
+ * `site_code` and `site_type_id` are decisions made ABOUT a shop by the people
+ * who run the platform — a customer who could set their own `is_paid` or flip
+ * themselves to `local` would be editing their bill and their licence, not
+ * their letterhead. Those stay in the control panel, where they always were.
+ */
+export type SiteDetails = {
+  companyName: string
+  tradingName: string | null
+  registrationNumber: string | null
+  vatNumber: string | null
+  address1: string | null
+  address2: string | null
+  address3: string | null
+  postalCode: string | null
+  phone: string | null
+  email: string | null
+  contactName: string | null
+}
+
+/**
+ * What each editable field may hold, straight from the live column widths.
+ *
+ * Checked here rather than trusted to `maxLength` on the input: an over-long
+ * value silently TRUNCATES on the way into MySQL, so a VAT number typed one
+ * character too long would be saved wrong rather than refused — and it prints
+ * on every tax invoice after that. The numbers match `SHOW COLUMNS FROM
+ * cp2_sites`; a widened column is a one-line change here.
+ */
+export const SITE_DETAIL_LIMITS = {
+  companyName: 255,
+  tradingName: 255,
+  registrationNumber: 60,
+  vatNumber: 60,
+  address1: 255,
+  address2: 255,
+  address3: 255,
+  postalCode: 20,
+  phone: 50,
+  email: 255,
+  contactName: 150,
+} as const satisfies Record<keyof SiteDetails, number>
+
+/**
+ * Change what this shop says it is.
+ *
+ * ── WHY THIS REPO WRITES A TABLE THE v2 BACKEND OWNS ────────────────────────
+ *
+ * cp2_sites is the v2 backend's, and this app has only ever read it. That was
+ * fine while a shop's own address could only be corrected by support, and it
+ * stopped being fine the moment the shop was asked to keep it right: the
+ * details print on every invoice, statement and purchase order the business
+ * sends out, and "ring us and we will change it" is not a way to run a
+ * letterhead.
+ *
+ * So this writes the same columns v2 writes, rather than inventing a second
+ * place. A shop's address is one fact; two tables holding it is two answers,
+ * and the one that prints would be whichever the reader happened to pick. The
+ * identity half stays put — see SiteDetails above for what a shop may NOT set
+ * about itself.
+ *
+ * ── AND WHY ONLY A CLOUD SITE MAY CALL IT ───────────────────────────────────
+ *
+ * Not enforced here — the caller does it, because the caller is the one that
+ * can say why in a sentence the person reads. But the reason belongs with the
+ * write: on a local install the control database is across a line that is
+ * routinely down, so this either throws or, worse, succeeds against a shop that
+ * cannot then be told its own answer changed. The mirror flows one way, control
+ * panel → shop, and this keeps it that way.
+ *
+ * Returns false when no row moved — an archived site, or an id that is gone.
+ */
+export async function updateSiteDetails(
+  siteId: number,
+  details: SiteDetails,
+  updatedBy: number | null = null,
+): Promise<boolean> {
+  const result = await execute(
+    `UPDATE cp2_sites
+        SET company_name = ?, trading_name = ?, registration_number = ?, vat_number = ?,
+            address1 = ?, address2 = ?, address3 = ?, postal_code = ?,
+            phone = ?, email = ?, contact_name = ?,
+            updated_by = COALESCE(?, updated_by), updated_at = NOW()
+      WHERE id = ? AND status IN ('active','suspended')`,
+    [
+      details.companyName,
+      details.tradingName,
+      details.registrationNumber,
+      details.vatNumber,
+      details.address1,
+      details.address2,
+      details.address3,
+      details.postalCode,
+      details.phone,
+      details.email,
+      details.contactName,
+      updatedBy,
+      siteId,
+    ],
+  )
+
+  if (result.affectedRows === 0) return false
+
+  /*
+   * Re-read and re-mirror, rather than writing the mirror from `details`.
+   *
+   * getSite() writes the mirror off the back of a successful read, so this both
+   * confirms what actually landed and keeps ONE piece of code responsible for
+   * the copy. Writing the mirror from the input would record what we asked for
+   * — including any value the column truncated — as though the control panel
+   * had said it.
+   *
+   * Unawaited failure is fine: the row is changed either way, and a mirror one
+   * page load stale is what every other read already tolerates.
+   */
+  await getSite(siteId).catch(() => null)
+  return true
 }

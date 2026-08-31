@@ -10,16 +10,22 @@
  * until a form accepts something the action then rejects.
  */
 
-export type CustomFieldEntity = 'job' | 'customer' | 'equipment'
+export type CustomFieldEntity = 'job' | 'customer' | 'equipment' | 'sale'
 export type CustomFieldType = 'text' | 'number' | 'date' | 'yesno' | 'list'
 
-export const FIELD_ENTITIES: CustomFieldEntity[] = ['job', 'customer', 'equipment']
+export const FIELD_ENTITIES: CustomFieldEntity[] = ['job', 'customer', 'equipment', 'sale']
 
 /** What each entity is called on screen. Singular — it labels one record. */
 export const ENTITY_LABEL: Record<CustomFieldEntity, string> = {
   job: 'Job',
   customer: 'Customer',
   equipment: 'Equipment',
+  /**
+   * A SALE, which is the only entity here whose fields are not asked for on
+   * every record. They are captured at the till, and only when the tender
+   * being paid with asks for them — see tender_types.asks_custom_comments.
+   */
+  sale: 'Sale',
 }
 
 /** The plural, for the tab that lists a whole set. */
@@ -27,6 +33,7 @@ export const ENTITY_PLURAL: Record<CustomFieldEntity, string> = {
   job: 'Jobs',
   customer: 'Customers',
   equipment: 'Equipment',
+  sale: 'Sales',
 }
 
 export const FIELD_TYPES: CustomFieldType[] = ['text', 'number', 'date', 'yesno', 'list']
@@ -73,6 +80,15 @@ export type FieldDefInput = {
   unit: string | null
   isRequired: boolean
   isPublic: boolean
+  /**
+   * Whether this field's answer prints on the customer's slip.
+   *
+   * Separate from `isPublic`, which decides what reaches the customer PORTAL.
+   * A field can sensibly be one and not the other — a name is worth printing so
+   * the customer can check it was filed against them, an age is not something
+   * to put on a docket that ends up in a bin.
+   */
+  printsOnSlip: boolean
   isActive: boolean
 }
 

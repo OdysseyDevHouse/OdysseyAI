@@ -1,6 +1,7 @@
 import 'server-only'
 import Anthropic from '@anthropic-ai/sdk'
 import type { Capability } from './permissions'
+import { assertBalance, meterCall } from '../aiCredits/meter'
 import { fieldsFor, getSource, sourcesFor, type CatalogSource } from '../reportBuilder/catalog'
 import {
   inferPeriodKey,
@@ -277,6 +278,8 @@ export async function askForReport(
   question: string,
   can: (c: Capability) => boolean,
   today: string,
+  /** Who is spending, and from which store's wallet. */
+  meter: { siteId: number; userId: number | null },
 ): Promise<AskResult> {
   const trimmed = question.trim().slice(0, 500)
   if (!trimmed) throw new Error('Ask a question first.')
@@ -286,6 +289,15 @@ export async function askForReport(
     throw new Error('You do not have access to any data to report on.')
   }
 
+  /* ONE check covering BOTH calls below.
+   *
+   * The estimate for ask_report is sized for the pair (see pricing.ts), so a
+   * second check before the spec call would be redundant — and worse than
+   * redundant: it could refuse halfway, leaving the shop charged for a dataset
+   * pick that produced nothing it can use. Either the whole question runs or
+   * none of it does. */
+  const ticket = await assertBalance(meter.siteId, 'ask_report')
+
   const anthropic = client()
 
   // ── 1. which dataset ──────────────────────────────────────────────────────
@@ -293,19 +305,21 @@ export async function askForReport(
     .map((s) => `- ${s.key}: ${s.label} — ${s.description}`)
     .join('\n')
 
-  const sourcePick = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 2000,
-    thinking: { type: 'adaptive' },
-    system: SOURCE_SYSTEM,
-    output_config: { format: { type: 'json_schema', schema: sourceSchema(available) } },
-    messages: [
-      {
-        role: 'user',
-        content: `Datasets available:\n${sourceList}\n\nQuestion: ${trimmed}`,
-      },
-    ],
-  })
+  const sourcePick = await meterCall(ticket, meter.userId, () =>
+    anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 2000,
+      thinking: { type: 'adaptive' },
+      system: SOURCE_SYSTEM,
+      output_config: { format: { type: 'json_schema', schema: sourceSchema(available) } },
+      messages: [
+        {
+          role: 'user',
+          content: `Datasets available:\n${sourceList}\n\nQuestion: ${trimmed}`,
+        },
+      ],
+    }),
+  )
 
   if (sourcePick.stop_reason === 'refusal') {
     throw new Error('That question could not be processed. Try rephrasing it.')
@@ -330,18 +344,23 @@ export async function askForReport(
     })
     .join('\n')
 
-  const specPick = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 4000,
-    thinking: { type: 'adaptive' },
-    system: buildSpecSystem(source, today),
-    output_config: {
-      format: { type: 'json_schema', schema: specSchema(source, fieldKeys) },
-    },
-    messages: [
-      { role: 'user', content: `Fields available:\n${fieldList}\n\nQuestion: ${trimmed}` },
-    ],
-  })
+  /* Metered separately from the source pick above. Two calls, two debits — the
+     wallet is charged for what actually ran, so a question that gives up after
+     the first call costs the shop one call and not two. */
+  const specPick = await meterCall(ticket, meter.userId, () =>
+    anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 4000,
+      thinking: { type: 'adaptive' },
+      system: buildSpecSystem(source, today),
+      output_config: {
+        format: { type: 'json_schema', schema: specSchema(source, fieldKeys) },
+      },
+      messages: [
+        { role: 'user', content: `Fields available:\n${fieldList}\n\nQuestion: ${trimmed}` },
+      ],
+    }),
+  )
 
   if (specPick.stop_reason === 'refusal') {
     throw new Error('That question could not be processed. Try rephrasing it.')

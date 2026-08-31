@@ -56,6 +56,7 @@ export default function SupplierListClient({
   hasAny,
   searchTerm,
   filters,
+  editSuffix = '',
 }: {
   rows: Supplier[]
   total: number
@@ -64,6 +65,12 @@ export default function SupplierListClient({
   /** The active search, echoed back when it matches nothing. */
   searchTerm?: string
   filters: Filters
+  /**
+   * Query string appended to every link out to a supplier, carrying THIS
+   * list's URL so the trip back lands here rather than on the bare file.
+   * Built on the server; empty when nothing is filtered.
+   */
+  editSuffix?: string
 }) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [showOptions, setShowOptions] = useState(false)
@@ -151,7 +158,7 @@ export default function SupplierListClient({
         getRowKey={(row) => row.id}
         selectedKeys={selected}
         onSelectionChange={setSelected}
-        onRowClick={(row) => router.push(`/suppliers/${row.id}`)}
+        onRowClick={(row) => router.push(`/suppliers/${row.id}${editSuffix}`)}
         actions={(row) => (
           <Menu
             iconOnly
@@ -160,7 +167,7 @@ export default function SupplierListClient({
             triggerLabel={`Actions for ${row.name}`}
             label={<Icons.MoreVertical size={16} />}
           >
-            <MenuItem href={`/suppliers/${row.id}`}>
+            <MenuItem href={`/suppliers/${row.id}${editSuffix}`}>
               <Icons.Eye size={15} />
               View supplier
             </MenuItem>

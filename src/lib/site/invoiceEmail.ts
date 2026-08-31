@@ -2,7 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteExecute, siteQueryOne } from '../siteDb'
 import { formatMoney } from '../decimals'
-import { send, isConfigured } from '../mail'
+import { send, isConfigured, sendAs, isConfiguredFor } from '../mail'
 import { renderInvoicePdf } from '../invoices/pdf'
 import { buildInvoice, type IssuingSite } from '../invoices/build'
 import { getSite } from '../sites'
@@ -10,6 +10,7 @@ import { HEADING, CLOSING, printKindFor } from './salesDocumentKind'
 import { createCallbackToken } from '../callbackToken'
 import { appBaseUrl } from '../appUrl'
 import { createIntent, getGateway } from './payments'
+import { documentPayUrl } from './qrLinks'
 import { outstandingForDocument } from './paidInvoices'
 import { getDocument } from './salesDocuments'
 import { getCustomer } from './customers'
@@ -36,10 +37,32 @@ type Row = RowDataPacket & Record<string, unknown>
 export type EmailInvoiceResult = { ok: true; to: string } | { ok: false; error: string }
 
 /** Injectable transport, so the suite can prove the flow without an SMTP host. */
+/**
+ * How this module reaches a mail server.
+ *
+ * ── BOTH HALVES TAKE A siteId NOW ───────────────────────────────────────────
+ *
+ * They used to be the process-wide `send` and `isConfigured`, which meant every
+ * business on a shared server emailed its invoices from the same address — see
+ * lib/mail.ts. The site is threaded through so a document leaves from the shop
+ * that issued it.
+ *
+ * Still INJECTED rather than imported directly, for the reason it always was:
+ * the tests for this file must not open a socket. The defaults below are the
+ * real thing; a test passes a pair of fakes.
+ */
 export type MailDeps = {
-  send: typeof send
-  configured: () => boolean
+  send: (siteId: number, input: Parameters<typeof send>[0]) => ReturnType<typeof send>
+  configured: (siteId: number) => boolean | Promise<boolean>
 }
+
+/**
+ * The real transport, per site, with the process account as the fallback.
+ *
+ * Named rather than written inline at three call sites: they must not be able
+ * to drift into three ideas of what "send mail" means.
+ */
+const SITE_MAIL: MailDeps = { send: sendAs, configured: isConfiguredFor }
 
 export async function emailInvoiceDocument(
   siteId: number,
@@ -47,9 +70,9 @@ export async function emailInvoiceDocument(
   actor: Actor,
   documentId: number,
   opts: { to: string; message?: string | null; origin: string },
-  deps: MailDeps = { send, configured: isConfigured },
+  deps: MailDeps = SITE_MAIL,
 ): Promise<EmailInvoiceResult> {
-  if (!deps.configured()) return { ok: false, error: 'Email is not set up on this system.' }
+  if (!(await deps.configured(siteId))) return { ok: false, error: 'Email is not set up on this system.' }
 
   const to = opts.to.trim()
   if (!to) return { ok: false, error: 'Give an address to send it to.' }
@@ -81,7 +104,18 @@ export async function emailInvoiceDocument(
       ? await mintPaymentLink(siteId, documentId, outstanding, opts.origin).catch(() => null)
       : null
 
-  const data = await buildInvoice(siteId, site, documentId, { paymentUrl })
+  const data = await buildInvoice(siteId, site, documentId, {
+    paymentUrl,
+    /*
+     * Stamps PAID on the attachment when nothing is owed.
+     *
+     * `outstanding` is already in hand above — it decides whether to mint a pay
+     * link at all — so this costs no extra query. Only for an INVOICE: a credit
+     * note is not something anybody pays, and marking one PAID would say the
+     * refund had been made.
+     */
+    paidInFull: document.docType === 'invoice' ? outstanding <= 0.005 : undefined,
+  })
   if (!data) return { ok: false, error: 'The document could not be built.' }
 
   let pdf: Buffer
@@ -95,6 +129,19 @@ export async function emailInvoiceDocument(
     pdf = await renderInvoicePdf(data, siteId, {
       heading: HEADING[printKindFor(document)],
       closing: CLOSING[printKindFor(document)],
+      /*
+       * The DURABLE link on the attachment, not the 24-hour one in the body.
+       *
+       * The button in the email is minted per send and read today, so a short
+       * token is right there. The PDF is the thing that gets SAVED and PRINTED,
+       * and a square in it that stops working tomorrow is worse than no square:
+       * it is on paper, in a drawer, and cannot be corrected. So the attachment
+       * carries the revocable slug, which is what that form exists for.
+       *
+       * documentPayUrl returns null on a credit note, so this is also what
+       * keeps a refund from being emailed with a "pay now" square on it.
+       */
+      payUrl: await documentPayUrl(siteId, document).catch(() => null),
     })
   } catch (error) {
     return {
@@ -105,7 +152,7 @@ export async function emailInvoiceDocument(
 
   const number = document.documentNumber ?? `#${documentId}`
   const label = document.docType === 'credit_sale' ? 'Credit note' : 'Invoice'
-  const result = await deps.send({
+  const result = await deps.send(siteId, {
     to,
     subject: `${label} ${number} from ${site.displayName}`,
     text: invoicePlainBody(site.displayName, customer?.name ?? '', number, { ...document, outstanding }, paymentUrl, opts.message),
@@ -169,7 +216,7 @@ export async function autoEmailInvoice(
   actor: Actor,
   customerId: number,
   documentId: number,
-  deps: MailDeps = { send, configured: isConfigured },
+  deps: MailDeps = SITE_MAIL,
 ): Promise<AutoEmailOutcome> {
   const customer = await getCustomer(siteId, customerId)
   if (!customer?.autoEmailInvoices) return { sent: false, reason: 'not-enabled' }
@@ -180,7 +227,7 @@ export async function autoEmailInvoice(
   const to = customer.email?.trim()
   if (!to) return { sent: false, reason: 'no-address' }
 
-  if (!deps.configured()) return { sent: false, reason: 'not-configured' }
+  if (!(await deps.configured(siteId))) return { sent: false, reason: 'not-configured' }
 
   const site = await issuingSiteFor(siteId)
   if (!site) return { sent: false, reason: 'failed', error: 'No issuing site.' }
@@ -246,9 +293,8 @@ export async function mintPaymentLink(
   if (amountIncl <= 0) return null
 
   const intent = await createIntent(siteId, {
-    targetId: documentId,
+    target: { purpose: 'debtor_invoice', documentId },
     amountIncl,
-    purpose: 'debtor_invoice',
   })
   const token = await createCallbackToken(siteId, intent.reference)
 
@@ -486,9 +532,9 @@ export async function emailQuoteDocument(
   actor: Actor,
   documentId: number,
   opts: { to: string; message?: string | null },
-  deps: MailDeps = { send, configured: isConfigured },
+  deps: MailDeps = SITE_MAIL,
 ): Promise<EmailQuoteResult> {
-  if (!deps.configured()) return { ok: false, error: 'Email is not set up on this system.' }
+  if (!(await deps.configured(siteId))) return { ok: false, error: 'Email is not set up on this system.' }
 
   const to = opts.to.trim()
   if (!to) return { ok: false, error: 'Give an address to send it to.' }
@@ -532,6 +578,18 @@ export async function emailQuoteDocument(
     pdf = await renderInvoicePdf(data, siteId, {
       heading: HEADING[printKindFor(document)],
       closing: CLOSING[printKindFor(document)],
+      /*
+       * A quote's square takes a DEPOSIT — it does not settle anything, and it
+       * emphatically does not convert the quote.
+       *
+       * Paying is how a customer ACCEPTS an offer, and money is a better signal
+       * of that than a click. But convertToInvoice raises a draft plus three
+       * warnings a person is meant to read — the quote expired, prices moved,
+       * stock is short — and converting on payment would take the money and only
+       * then discover the goods cannot be supplied. documentPayUrl gives a
+       * `document_deposit` link for exactly that reason; see paidLinks.ts.
+       */
+      payUrl: await documentPayUrl(siteId, document).catch(() => null),
     })
   } catch (error) {
     return {
@@ -558,7 +616,7 @@ export async function emailQuoteDocument(
   const validUntil =
     validityRow?.valid_until == null ? null : String(validityRow.valid_until).slice(0, 10)
 
-  const result = await deps.send({
+  const result = await deps.send(siteId, {
     to,
     subject: `Quotation ${number} from ${site.displayName}`,
     text: quotePlainBody(

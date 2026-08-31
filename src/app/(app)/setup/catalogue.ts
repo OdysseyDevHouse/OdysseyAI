@@ -88,6 +88,9 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Percent',
         tone: 'amber',
         capability: 'staff.cost',
+        /* Goes with the Staff section. A shop that has switched that off should
+           not be left configuring pay rules for rows it cannot see. */
+        menuArea: 'staff',
       },
       /* Leave entitlement is configuration for the same reason pay rules are:
          it decides what every balance on the leave screen comes to, and it is
@@ -99,6 +102,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Clock',
         tone: 'sky',
         capability: 'staff.edit',
+        menuArea: 'staff',
       },
       {
         href: '/staff/cost',
@@ -107,6 +111,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Coins',
         tone: 'emerald',
         capability: 'staff.cost',
+        menuArea: 'staff',
       },
       /* The other half of what a person is paid, and until now reachable only
          from /commission by somebody who already knew it was there. */
@@ -117,6 +122,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         icon: 'Percent',
         tone: 'rose',
         capability: 'commission.edit',
+        menuArea: 'staff',
       },
     ],
   },
@@ -152,6 +158,22 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         keywords: 'cash card eft payment methods vouchers',
         icon: 'CreditCard',
         tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      /* Beside the tender types, because they answer the same question from two
+         ends: what a cashier may take at the counter, and what a customer may
+         pay from an email or a printed square. Moved here from the online store,
+         where the MODULE gate meant a shop without a storefront could not
+         connect a gateway — and therefore never got a pay link on an invoice. */
+      {
+        href: '/setup/payments',
+        description: 'The account that takes online payments — pay links on invoices and statements, and the storefront checkout.',
+        keywords:
+          'payfast gateway online payments pay link qr code invoice statement layby deposit card eft checkout merchant sandbox',
+        // Landmark — a bank. CreditCard is the tender-types tile directly above,
+        // and two identical glyphs side by side read as one repeated entry.
+        icon: 'Landmark',
+        tone: 'sky',
         capability: 'setup.edit',
       },
       {
@@ -237,6 +259,19 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
     tone: 'teal',
     icon: 'Store',
     items: [
+      /* First in the group, and deliberately: it is the only tile here that
+         answers "who are we" rather than "how do we work", and it is the first
+         thing a new shop has to get right — every document it prints carries
+         these details. */
+      {
+        href: '/setup/store-info',
+        description: 'Your name, address and contact details — and the logo on your documents.',
+        keywords:
+          'store shop company name trading name address phone telephone email vat number registration number contact details letterhead logo my details business information branding',
+        icon: 'Store',
+        tone: 'teal',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/locations',
         description: 'The places stock is kept. Sales come from the main one.',
@@ -299,24 +334,21 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'sky',
         capability: 'setup.edit',
       },
+      /* Beside Tills and Rotating menus, which is the company it keeps: all
+         three decide what a till SHOWS rather than what it sells. It was a
+         sidebar row under Sales on the argument that a quick key gets changed
+         because of what happened at the till — true, but the screen needs
+         `setup.edit`, which the people serving on a till mostly do not have.
+         Menu designer is still NOT here: it stays a row under Products, beside
+         the product file it arranges, so it remains out of SUBPAGE_LABELS and
+         `SetupHref` does not admit it. */
       {
         href: '/setup/quick-keys',
         description: 'The buttons on the till — the things this shop sells most.',
-        keywords: 'quick keys buttons tiles favourites shortcuts till pos grid',
+        keywords:
+          'quick keys buttons tiles favourites shortcuts till pos grid bar hot keys speed keys top sellers',
         icon: 'LayoutGrid',
         tone: 'violet',
-        capability: 'setup.edit',
-      },
-      {
-        href: '/setup/menu-designer',
-        description: 'The till’s browse menu — departments and products, in the order they appear.',
-        /* No "arrange" here, deliberately: every SUBSTRING of a keyword matches,
-           so it makes this screen a hit for "rang" — and "rang up" is how
-           somebody looks for the Tills screen. */
-        keywords:
-          'menu designer browse grid departments categories order sort drag tiles till pos catalogue',
-        icon: 'LayoutGrid',
-        tone: 'emerald',
         capability: 'setup.edit',
       },
       {
@@ -430,6 +462,20 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        /* Beside numbering: both shape how the app PRESENTS itself rather than
+           what it does, and neither changes a stored figure. */
+        href: '/setup/decimals',
+        description: 'How many decimals your quantities and costs are shown with.',
+        /* The last four came off a settingSearch entry that named this screen
+           and duplicated its label, printing the same row twice. Folded in here
+           rather than dropped with it. */
+        keywords:
+          'decimals decimal places precision rounding quantity qty cost digits display format weight accuracy fractions three four places',
+        icon: 'Hash',
+        tone: 'slate',
+        capability: 'setup.edit',
+      },
+      {
         /* Under System rather than under Jobs, because it is not a job feature:
            the same mechanism serves jobs, customers and equipment, and filing it
            beside the job workflow would be the first step towards it becoming
@@ -475,12 +521,58 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        /*
+         * Directly after billing, because the two are the same subject asked one
+         * step apart: what this shop PAYS for, and what it wants to LOOK at. A
+         * shop that has just read its plan is exactly the reader who wants to
+         * put half of it away.
+         *
+         * Deliberately carries NO `module`. Every other tile here can be filtered
+         * out of the hub; this one must never be, or a shop that hides a module
+         * loses the screen that would bring it back.
+         */
+        href: '/setup/modules',
+        description: 'Switch off the parts of the system this shop does not use, so they leave the menu.',
+        keywords:
+          'menu modules hide show sidebar navigation simplify remove sections turn off disable job cards loyalty online store accounting customers declutter tidy',
+        icon: 'LayoutGrid',
+        tone: 'indigo',
+        capability: 'setup.edit',
+      },
+      {
+        /* Beside SMS because they are the same question asked of a different
+           channel: how does this shop reach somebody. Email first — every
+           document the business sends leaves through it. */
+        href: '/setup/email',
+        description: 'The mail account your invoices, statements and orders are sent from.',
+        keywords:
+          'email smtp mail server outgoing send from address port password tls ssl gmail office 365 test message',
+        icon: 'Mail',
+        tone: 'sky',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/sms',
         description: 'How this shop reaches people on their phone, and the reminders that use it.',
         keywords: 'sms text message smsportal whatsapp meta reminders dunning notify phone mobile',
         icon: 'MessageSquare',
         tone: 'sky',
         capability: 'setup.edit',
+      },
+      {
+        /* After email and SMS because it is the same subject from the other
+           side: those are how the shop reaches a customer, this is how a
+           customer reaches their own account without ringing anybody. It also
+           NEEDS email configured to work at all — sign-in is a mailed link —
+           so it reads in the right order. */
+        href: '/setup/customer-portal',
+        description: 'Let customers sign in to see their own details, transactions and statement.',
+        keywords:
+          'customer portal account statement online self service my account link transactions history invoices pay online debtors login sign in',
+        icon: 'Users',
+        tone: 'violet',
+        capability: 'setup.edit',
+        module: 'customers',
       },
       {
         href: '/setup/alerts',
@@ -529,6 +621,8 @@ export const SETUP_ITEMS = SETUP_GROUPS.flatMap((g) => g.items)
 export function setupGroupsFor(
   granted: (capability: string) => boolean,
   holds: (module: string) => boolean = () => true,
+  /** Areas switched off under Setup → Menu & modules — the staff tiles use it. */
+  menuHidden: (area: string) => boolean = () => false,
 ): HubGroup[] {
-  return groupsFor(SETUP_GROUPS, granted, holds)
+  return groupsFor(SETUP_GROUPS, granted, holds, menuHidden)
 }

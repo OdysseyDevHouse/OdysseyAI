@@ -3,7 +3,19 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Button, CategoryTile, Icons, TouchRow, type CategoryTone } from '@/components/ui'
+import {
+  Button,
+  CHIP_BASE,
+  CategoryTile,
+  ClockChip,
+  Icons,
+  LOGOUT_CHIP,
+  OperatorChip,
+  StatusChip,
+  TouchRow,
+  type CategoryTone,
+} from '@/components/ui'
+import { tillShiftStatusAction } from '@/app/(pos)/pos/shiftActions'
 import { useOfflineShell, INVOICING_SHELL } from '@/lib/posOffline/useOfflineShell'
 import ShiftModal from '@/app/(pos)/pos/ShiftModal'
 import { counterSignOutAction } from './pinActions'
@@ -81,17 +93,16 @@ const SCREENS: {
  * that CANNOT survive that is a way for an operator to find themselves on a
  * dead page mid-document.
  *
- * The one way out is Back to the back office, and it says so plainly rather
- * than being an icon somebody has to guess at.
+ * The way out is not here either. "Back office" lives on the SIGN-IN screen,
+ * under the pad — leaving is something you do between customers, not something
+ * that should sit a tap away from Save with a document half typed.
  */
 export default function InvoicingChrome({
-  siteName,
   capabilities,
   operatorName,
   canCashup,
   children,
 }: {
-  siteName: string
   /** Reserved: per-screen gating lands here when the screens grow it. */
   capabilities: string[]
   /** Who is signed in at this counter — see the layout on why this is not the session. */
@@ -125,6 +136,36 @@ export default function InvoicingChrome({
    * because the whole point of this window is that somebody standing at it
    * knows whether their work is reaching the server.
    */
+  /*
+   * THE OPEN SHIFT, named on the strip the way the till names it.
+   *
+   * `null` terminal, deliberately — a trade counter claims no till, so on a
+   * shop cashing up per TERMINAL there is genuinely no shift here and the chip
+   * says so. On USER cash-up, which is the mode a counter wants, this is the
+   * operator's own shift. Same call the till's bar makes, so the two windows
+   * cannot disagree about whose drawer is open.
+   *
+   * Re-read when the modal closes (`shiftOpen`), which is the only thing in
+   * this window that can open or close one.
+   */
+  const [shiftLabel, setShiftLabel] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void tillShiftStatusAction(null)
+      .then((r) => {
+        if (cancelled || 'ok' in r) return
+        setShiftLabel(r.shift ? `Shift ${r.shift.id}` : null)
+      })
+      .catch(() => {
+        /* Offline, or refused. The chip falls back to "No shift" rather than
+           inventing one — an invented shift is worse than an absent answer on
+           the row somebody checks before cashing up. */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [shiftOpen])
+
   const [online, setOnline] = useState(true)
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -183,7 +224,11 @@ export default function InvoicingChrome({
       {/* THE BAR. `shrink-0` because the content below it scrolls — without it
           a long invoice squashes the chrome instead of overflowing, which is
           the flex-column trap this codebase has hit before. */}
-      <header className="flex shrink-0 items-center gap-2.5 border-b border-border px-4 py-3">
+      {/* `py-2.5`, down from `py-3`: the chips grew from h-control to the 46px
+          the till uses, and the bar has to stay a strip above the work rather
+          than becoming a band of its own. `flex-wrap` so a narrow counter screen
+          drops a chip to a second line instead of pushing Logout off the edge. */}
+      <header className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-border px-4 py-2.5">
         <button
           type="button"
           data-kit-ok
@@ -208,6 +253,19 @@ export default function InvoicingChrome({
           {screenName}
         </span>
 
+        {/*
+          ── THE SAME STRIP THE TILL WEARS ──────────────────────────────────
+
+          Built from the kit's chips (components/ui/StatusChip), which is where
+          they live precisely so these two windows cannot drift apart. A counter
+          clerk and a cashier work the same shop, often the same shift, and a row
+          of facts that reads one way at the till and another here is a row
+          nobody trusts.
+
+          The order matches the till's, left to right: what is WRONG first (the
+          connection), then the queue, then the shift, the machine, the person,
+          the clock, and the way out last.
+        */}
         <span className="ml-auto flex items-center gap-2.5">
           {/*
             THE CONNECTION, stated rather than left to be discovered.
@@ -221,14 +279,11 @@ export default function InvoicingChrome({
                            no service worker) — a deployment fact somebody has
                            to fix, and one worth knowing BEFORE the line drops
                            rather than at the counter with a customer waiting
-
-            The till's status bar makes the same distinction, and conflating
-            them once cost a run of this session's verifier.
           */}
           {!online && (
             <span
               data-kit-ok
-              className="flex h-control items-center gap-2 rounded-control border border-warning/40 bg-warning-soft px-3 text-[13px] font-medium text-warning-ink"
+              className={`${CHIP_BASE} border-warning/40 bg-warning-soft text-warning-ink`}
             >
               <Icons.Offline size={16} />
               Offline
@@ -238,35 +293,87 @@ export default function InvoicingChrome({
             <span
               data-kit-ok
               title={shell.reason}
-              className="flex h-control items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-muted"
+              className={`${CHIP_BASE} border-border bg-surface text-muted`}
             >
               <Icons.Offline size={16} />
               Online only
             </span>
           )}
-          {/*
-            WHO IS AT THE COUNTER, and the drawer they are answerable for.
 
-            The same two facts the till puts in its status bar, in the same
-            order: the person first, because every document typed here is
-            attributed to them, then the shift, because that is what they open
-            before trading and count at the end of it.
+          {/*
+            ── ARE THE DOCUMENTS THROUGH? ───────────────────────────────────
+
+            The till's queue chip answers "can I cash up yet", and the counter
+            needs the same answer before it closes its drawer.
+
+            But it is answered DIFFERENTLY here, and the difference is the whole
+            point. The till holds an outbox: sales taken offline sit in IndexedDB
+            until they flush, so it can count them. This window has no outbox —
+            invoicing writes straight to the server and refuses when it cannot
+            (see the gate's note on why there is no offline PIN here). So there
+            is never a backlog to report: either the line is up and every
+            document is through, or it is down and the chip above already says
+            so, which is the honest thing to show rather than a green tick that
+            means "nothing was queued" wearing the clothes of "everything sent".
           */}
+          <span
+            data-kit-ok
+            title={
+              online
+                ? 'Every document typed at this counter has reached the server. This window writes straight through — nothing is held back to send later.'
+                : 'The line is down. Nothing can be saved until it returns — this window does not queue documents.'
+            }
+            className={`${CHIP_BASE} ${
+              online
+                ? 'border-success/40 bg-success-soft text-success-ink'
+                : 'border-warning/40 bg-warning-soft text-warning-ink'
+            }`}
+          >
+            {online ? <Icons.Check size={16} /> : <Icons.Syncing size={16} />}
+            {online ? 'Sales synced' : 'Not syncing'}
+          </span>
+
+          {/* The drawer. Open = who is reconciling; closed = a nudge that the
+              counter's takings are banking into no shift. One tap opens the
+              same modal the till uses. */}
           <button
             type="button"
             data-kit-ok
             onClick={() => setShiftOpen(true)}
-            title="Shift and drawer"
-            className="flex h-control items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-ink-2 transition hover:border-brand/40 hover:bg-brand-soft hover:text-brand"
+            title={
+              shiftLabel
+                ? 'The drawer — payouts, pay-ins, and cash up.'
+                : 'No shift is open. Takings are banking into no reconciliation — open one with a float.'
+            }
+            className={`${CHIP_BASE} ${
+              shiftLabel
+                ? 'border-border bg-surface text-ink-2 hover:border-brand/40 hover:bg-brand-soft hover:text-brand'
+                : 'border-warning/40 bg-warning-soft text-warning-ink hover:bg-warning-soft/70'
+            }`}
           >
             <Icons.Coins size={16} />
-            <span className="hidden sm:inline">Shift</span>
+            {shiftLabel ?? 'No shift'}
           </button>
 
-          {/* Signing OUT of the counter, not out of the shop — the browser
-              session stays, so the next clerk needs a PIN rather than a full
-              login. Named with the person so it reads as "this is you, and
-              this is how you hand over". */}
+          {/* WHICH MACHINE. Not a till number — a trade counter claims none —
+              but the window it IS, so somebody reading a strip on a shop floor
+              can tell at a glance which of the two they are standing at. */}
+          <StatusChip>
+            <Icons.Terminal size={16} className="text-muted" />
+            Counter
+          </StatusChip>
+
+          {/* Who is signed in. Every document typed here is attributed to them,
+              which is why it is stated rather than left to be remembered. */}
+          <OperatorChip name={operatorName} />
+
+          <ClockChip />
+
+          {/* LOGOUT, and it says the word. Hands the screen back to the PIN pad
+              for the next person rather than dropping somebody into the back
+              office — the way OUT of the module lives under that pad now (see
+              InvoicingGate), which is a between-customers decision rather than
+              one that belongs beside Save. */}
           <button
             type="button"
             data-kit-ok
@@ -274,24 +381,11 @@ export default function InvoicingChrome({
               void counterSignOutAction().then(() => router.refresh())
             }}
             title="Hand over to the next person"
-            className="flex h-control items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-ink-2 transition hover:border-brand/40 hover:bg-brand-soft hover:text-brand"
+            className={LOGOUT_CHIP}
           >
             <Icons.LogOut size={16} />
-            <span className="hidden max-w-[12ch] truncate sm:inline">{operatorName}</span>
+            Logout
           </button>
-
-          <span className="hidden text-[13px] text-muted sm:inline">{siteName}</span>
-          {/* The one way out, named rather than drawn. An operator who opened
-              this window from the back office still has that window; this is
-              for the one who did not, or who has lost it behind this one. */}
-          <Link
-            href="/dashboard"
-            className="flex h-control items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-ink-2 transition hover:border-brand/40 hover:bg-brand-soft hover:text-brand"
-            data-kit-ok
-          >
-            <Icons.ArrowLeft size={16} />
-            Back office
-          </Link>
         </span>
       </header>
 

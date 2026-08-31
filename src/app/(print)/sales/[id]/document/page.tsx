@@ -1,8 +1,10 @@
 import './document-a4.css'
-import { qrContextFor } from '@/lib/site/qrLinks'
+import { qrContextFor, documentPayUrl } from '@/lib/site/qrLinks'
+import { outstandingForDocument } from '@/lib/site/paidInvoices'
 import { pictureIds } from '@/lib/site/stationeryImages'
 import { notFound } from 'next/navigation'
 import { requireSite, requireCapability } from '@/lib/auth'
+import { taxLabel } from '@/lib/site/taxIdentity'
 import { getDocument } from '@/lib/site/salesDocuments'
 import { getQuote } from '@/lib/site/quotes'
 import { getOrder } from '@/lib/site/salesOrders'
@@ -129,6 +131,21 @@ export default async function SalesDocumentPrintPage({
   })
 
   /*
+   * Has this invoice been settled? For the PAID stamp.
+   *
+   * Null rather than false on a miss, and null prints nothing — see
+   * `statusBanner`. An invoice wrongly stamped PAID is a debt nobody chases;
+   * one wrongly stamped as unpaid is an argument with a customer holding a
+   * receipt. Silence is the only safe failure.
+   */
+  const paidInFull =
+    kind === 'tax_invoice'
+      ? await outstandingForDocument(site.id, doc)
+          .then((owing) => owing <= 0.005)
+          .catch(() => null)
+      : null
+
+  /*
    * ── COMPOSED FROM A TEMPLATE, NOT FROM A COMPONENT ──────────────────────
    *
    * The same swap the purchase order made, and the reason is the same: a shop
@@ -168,6 +185,7 @@ export default async function SalesDocumentPrintPage({
     site: {
       name: site.displayName,
       vatNumber: site.vatNumber,
+      taxLabel: await taxLabel(site.id),
       registrationNumber: site.registrationNumber,
       address1: site.address1,
       address2: site.address2,
@@ -187,13 +205,27 @@ export default async function SalesDocumentPrintPage({
     deliveryDate,
     customerOrderNo,
     isReprint,
+    /*
+     * Whether it has actually been settled, for the PAID stamp.
+     *
+     * Only asked for a finalised invoice — a quote owes nothing and a draft is
+     * not a debt — so every other document on this route does one query fewer.
+     * A failure yields `undefined`, which prints no banner rather than claiming
+     * either state: this page must produce paper, and being wrong about whether
+     * a customer has paid is worse than saying nothing.
+     */
+    paidInFull: paidInFull ?? undefined,
   })
 
   const html = renderTemplate(template.body, 'invoice', {
     ...input,
     capabilities,
     pictures: await pictureIds(site.id),
-    qr: await qrContextFor(site.id),
+    // The pay link is what finally makes the designer's "this document" QR
+    // target resolve — it has been offered and printed nothing since it was
+    // written. Null on a credit note, a draft and a cancelled document, so a
+    // refund never carries a square asking to be paid. See documentPayUrl.
+    qr: await qrContextFor(site.id, await documentPayUrl(site.id, doc).catch(() => null)),
   })
 
   return (

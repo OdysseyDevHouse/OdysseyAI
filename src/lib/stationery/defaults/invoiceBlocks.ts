@@ -174,7 +174,7 @@ export const INVOICE_BLOCKS: DocumentSpec = {
       x: 0,
       y: 0,
       w: 55,
-      title: 'VAT SUMMARY',
+      title: '{{tax}} SUMMARY',
     },
 
     { id: 'inv-rule-2', kind: 'rule', band: 'footer', x: 0, y: 34, w: 100 },

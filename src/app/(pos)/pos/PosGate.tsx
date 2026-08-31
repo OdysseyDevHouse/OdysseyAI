@@ -204,10 +204,11 @@ export default function PosGate({
           The sign-in half.
 
           574px, which is the PIN pad's 510 plus its own padding. The pad has ONE
-          correct size — it is sized by the finger, not by the display — so every
-          pixel past what it needs belongs to the picture. On a very wide counter
-          screen an even split would leave the pad marooned in the middle of its
-          own half.
+          correct size — it is sized by the finger, not by the display — so this
+          number is fixed, and the showcase opposite states the SAME 574 so the
+          seam falls down the middle of the card. This half stays `shrink-0` and
+          the showcase is not: on a counter display too narrow for 1148px of card
+          the picture gives way, never the pad.
 
           `bg-surface` rather than the till shell's `bg-canvas`: this is the part
           a cashier touches, and it sits on white the way every other block of

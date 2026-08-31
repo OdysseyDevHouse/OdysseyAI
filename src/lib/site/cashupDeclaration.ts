@@ -59,12 +59,42 @@ export async function listDenominations(
   siteId: number,
   includeInactive = false,
 ): Promise<Denomination[]> {
+  /*
+   * ── ONLY THIS SHOP'S CURRENT CURRENCY ─────────────────────────────────────
+   *
+   * A shop that switches currency keeps its old rows where a count has already
+   * used them — they cannot be deleted without breaking the join that renders a
+   * past declaration (see switchCurrency in cashDenominations.ts). They are
+   * deactivated, so `is_active = 1` already hides them from a live count.
+   *
+   * The currency filter is what makes `includeInactive` safe. The setup screen
+   * passes it to show what a shop has turned off, and without this it would
+   * list every retired rand row beside the Canadian ones — a grid of two
+   * currencies, which is exactly the state the switch exists to prevent anyone
+   * seeing.
+   *
+   * Defaults to ZAR rather than failing, matching how every other setting read
+   * in this codebase degrades: a site that has not run 240 has no setting row
+   * and no column, and it must keep counting its drawer.
+   */
+  const currencyRows = await siteQuery<Row>(
+    siteId,
+    "SELECT setting_value AS currency_code FROM settings WHERE setting_key = 'currency_code' LIMIT 1",
+  ).catch(() => [] as Row[])
+  const code = String(currencyRows[0]?.currency_code ?? 'ZAR') || 'ZAR'
+
+  const where = [
+    'currency_code = ?',
+    ...(includeInactive ? [] : ['is_active = 1']),
+  ].join(' AND ')
+
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT id, label, value, is_note, position, is_active
        FROM cash_denominations
-      ${includeInactive ? '' : 'WHERE is_active = 1'}
+      WHERE ${where}
       ORDER BY position ASC, value DESC`,
+    [code.toUpperCase()],
   )
   return rows.map(mapDenomination)
 }

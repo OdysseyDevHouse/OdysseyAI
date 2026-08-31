@@ -212,7 +212,7 @@ function emitBlock(
       break
 
     case 'vatNumber':
-      if (data.vatNumber && !gift) job.line(`VAT no. ${data.vatNumber}`)
+      if (data.vatNumber && !gift) job.line(`${data.taxLabel ?? 'VAT'} no. ${data.vatNumber}`)
       break
 
     case 'title':
@@ -243,7 +243,7 @@ function emitBlock(
       if (data.customerName) {
         job.line(
           data.customerVatNo && !gift
-            ? `${data.customerName} · VAT ${data.customerVatNo}`
+            ? `${data.customerName} · ${data.taxLabel ?? 'VAT'} ${data.customerVatNo}`
             : data.customerName,
         )
       }
@@ -269,7 +269,7 @@ function emitBlock(
        */
       if (!block.align) setAlign(job, head, 'left')
       for (const line of data.lines) {
-        const label = `${formatQty(line.qty)} x ${line.description}`
+        const label = `${formatQty(line.qty, { exact: true })} x ${line.description}`
         if (gift) {
           for (const piece of wrapText(label, columns)) job.line(piece)
         } else {
@@ -283,7 +283,7 @@ function emitBlock(
              and a R0.00 line stops looking like a pricing error. */
           if (line.discountIncl > 0 || line.specialName) {
             const off = line.discountIncl > 0
-              ? `${line.specialName ? ' - ' : ''}${formatQty(line.discountPct)}% off`
+              ? `${line.specialName ? ' - ' : ''}${formatQty(line.discountPct, { exact: true })}% off`
               : ''
             job.line(
               twoCol(
@@ -337,7 +337,7 @@ function emitBlock(
       for (const rate of data.vatByRate) {
         job.line(
           twoCol(
-            `VAT @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`,
+            `${data.taxLabel ?? 'VAT'} @ ${rate.ratePct}% on ${formatMoney(rate.excl)}`,
             formatMoney(rate.vat),
             columns,
           ),

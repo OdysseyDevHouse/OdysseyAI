@@ -8,7 +8,7 @@ import {
   type DocBlock,
   type DocumentSpec,
 } from './blocks'
-import { findToken, getDocType, type TokenFormat } from './catalog'
+import { findToken, getDocType, labelWithTax, type TokenFormat } from './catalog'
 import { conditionHolds } from './conditions'
 import { qrMatrix } from './qr'
 import { resolveBarcodeText } from './barcodeSource'
@@ -63,6 +63,10 @@ const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2
 const INK = '#16191d'
 const MUTED = '#667085'
 const LINE = '#d0d5dd'
+/* The status stamp's two meanings — matched to globals.css --color-success-ink
+   and --color-danger, and to the same hex in compile.ts BLOCK_STYLE. */
+const SUCCESS = '#0f7b37'
+const DANGER = '#b42318'
 
 /**
  * What one percent of band height is worth, in points.
@@ -104,7 +108,7 @@ function valueOf(raw: unknown, format: TokenFormat): string {
     case 'money':
       return typeof raw === 'number' ? formatMoney(raw) : String(raw)
     case 'qty':
-      return typeof raw === 'number' ? formatQty(raw) : String(raw)
+      return typeof raw === 'number' ? formatQty(raw, { exact: true }) : String(raw)
     case 'percent':
       return typeof raw === 'number' ? `${Number(raw.toFixed(2))}%` : String(raw)
     case 'markup':
@@ -306,6 +310,64 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
       for (const [i, t] of (b.tokens ?? []).entries()) {
         const text = tokenValue(t, v, docKey)
         if (text === '') continue
+
+        /*
+         * ── THE STATUS BANNER IS A STAMP, NOT A DETAIL LINE ────────────────
+         *
+         * PAID, CANCELLED, PRO FORMA, REPRINT — the most consequential word on
+         * the page, and it used to draw at 9pt grey like the document date, as
+         * a fourth line under it. On paper that is invisible: a shop printed a
+         * settled invoice and reported that no status had printed at all.
+         *
+         * Drawn in a box here, matching the bordered treatment the HTML path
+         * gives it (see compile.ts docTitle), so the two engines produce the
+         * same document rather than one that stamps and one that whispers.
+         */
+        if (t === 'doc.statusBanner') {
+          const size = 10
+          /*
+           * Coloured by what it says, matching the HTML path exactly (see
+           * BLOCK_STYLE in compile.ts). Not simply green: PAID is good news,
+           * CANCELLED says the document is void, and PRO FORMA and REPRINT are
+           * neither — a green REPRINT would read as a reassurance nobody
+           * offered. The box takes the same colour as the word.
+           */
+          const stampColour =
+            text.toUpperCase() === 'PAID'
+              ? SUCCESS
+              : text.toUpperCase() === 'CANCELLED'
+                ? DANGER
+                : INK
+          doc.font('Helvetica-Bold').fontSize(size)
+          const textWidth = doc.widthOfString(text.toUpperCase(), { characterSpacing: 1 })
+          const padX = 5
+          const padY = 3
+          const boxW = textWidth + padX * 2
+          const boxH = size + padY * 2
+          // Boxed at the block's own alignment, so a right-aligned title block
+          // gets a right-aligned stamp rather than one adrift on the left.
+          const x =
+            align === 'right'
+              ? box.x + box.w - boxW
+              : align === 'center'
+                ? box.x + (box.w - boxW) / 2
+                : box.x
+          const y = doc.y + 4
+
+          doc.lineWidth(0.75).strokeColor(stampColour).rect(x, y, boxW, boxH).stroke()
+          doc
+            .fillColor(stampColour)
+            .text(text.toUpperCase(), x + padX, y + padY, {
+              width: textWidth,
+              characterSpacing: 1,
+              lineBreak: false,
+            })
+          // pdfkit leaves the cursor mid-box after a positioned draw, so put it
+          // below the stamp for whatever the design stacks next.
+          doc.y = y + boxH
+          continue
+        }
+
         doc
           .font(i === 0 ? 'Helvetica-Bold' : 'Helvetica')
           .fontSize(i === 0 ? 11 : 9)
@@ -379,7 +441,7 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
         if (text === '') continue
         const def = doc2 ? findToken(doc2, t) : null
         const y = doc.y
-        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(def?.label ?? t, box.x, y, {
+        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(labelWithTax(def?.label ?? t, input.taxLabel), box.x, y, {
           width: box.w * 0.55,
         })
         doc.font('Helvetica').fontSize(8.5).fillColor(INK).text(text, box.x + box.w * 0.55, y, {
@@ -399,7 +461,9 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
          * PICKER, where the page wants "Amount due" or "Balance owed" or
          * "Amount paid" depending on which of the three documents this is.
          */
-        const label = b.title ? resolveText(b.title, v, docKey) : (def?.label ?? 'Total')
+        const label = b.title
+          ? resolveText(b.title, v, docKey)
+          : labelWithTax(def?.label ?? 'Total', input.taxLabel)
         doc
           .font('Helvetica-Bold')
           .fontSize(10)
@@ -418,13 +482,19 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
     }
 
     case 'vatSummary':
-      return titled(ctx, b.title ?? 'VAT SUMMARY', tokenValue('totals.vatSummary', v, docKey), box, align)
+      return titled(
+        ctx,
+        blockTitle(b.title, '{{tax}} SUMMARY', input.taxLabel),
+        tokenValue('totals.vatSummary', v, docKey),
+        box,
+        align,
+      )
 
     case 'banking':
-      return titled(ctx, b.title ?? 'BANKING DETAILS', tokenValue('banking', v, docKey), box, align)
+      return titled(ctx, blockTitle(b.title, 'BANKING DETAILS', input.taxLabel), tokenValue('banking', v, docKey), box, align)
 
     case 'notes':
-      return titled(ctx, b.title ?? 'NOTES', tokenValue('doc.notes', v, docKey), box, align)
+      return titled(ctx, blockTitle(b.title, 'NOTES', input.taxLabel), tokenValue('doc.notes', v, docKey), box, align)
 
     case 'text': {
       const text = resolveText(b.text ?? '', v, docKey)
@@ -448,7 +518,7 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
        * A rule to sign on, with its label under it — where a signature line puts
        * it, because the space above the line is what gets written in.
        */
-      const label = b.title ?? 'Received by'
+      const label = blockTitle(b.title, 'Received by', input.taxLabel)
       rule(doc, box.y + 26, box.x, box.w)
       doc
         .font('Helvetica')
@@ -479,6 +549,32 @@ function drawBlock(ctx: Ctx, b: DocBlock, box: Box): number {
 }
 
 /** A caption over one value, which disappears entirely when the value is empty. */
+/**
+ * A block title with `{{tax}}` resolved to the shop's word for VAT.
+ *
+ * ── WHY A TITLE CARRIES A MARKER AT ALL ───────────────────────────────────
+ *
+ * The block compiler writes "{{tax}} SUMMARY" as the DEFAULT title, so a shop
+ * that calls its tax something else gets its own word without editing anything.
+ * The marker is resolved at print time rather than at design time, because a
+ * design copied to another shop must not carry the first one's tax name.
+ *
+ * ── THE BUG THIS CLOSES ───────────────────────────────────────────────────
+ *
+ * The HTML renderer resolves `{{tax}}` across the whole document (render.ts), so
+ * the designer preview and the on-screen document were always right. This PDF
+ * renderer resolved it only for CATALOG labels, never for a saved block title —
+ * and `b.title ?? default` means a stored title bypasses the default entirely.
+ *
+ * So an emailed invoice printed the literal text "{{TAX}} SUMMARY" while the
+ * designer showed "VAT SUMMARY", which is the worst shape for this kind of bug:
+ * the preview is not lying about the layout, only about one word, and the first
+ * person to see it is the customer.
+ */
+function blockTitle(title: string | undefined, fallback: string, taxLabel?: string): string {
+  return (title ?? fallback).replace(/\{\{tax\}\}/g, taxLabel ?? 'VAT')
+}
+
 function titled(
   ctx: Ctx,
   title: string,

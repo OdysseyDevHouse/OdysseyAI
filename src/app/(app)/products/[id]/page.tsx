@@ -34,6 +34,7 @@ import { listProductBarcodes } from '@/lib/site/productBarcodes'
 import { listPriceHistory } from '@/lib/site/priceHistory'
 import { productReportsFor } from '@/lib/reportBuilder/productReports'
 import ProductActions from './ProductActions'
+import { returnToOr } from '@/lib/returnTo'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,10 +43,18 @@ export default async function EditProductPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ saved?: string }>
+  searchParams: Promise<{ saved?: string; from?: string }>
 }) {
   const { id } = await params
-  const { saved } = await searchParams
+  const { saved, from } = await searchParams
+
+  /* Where leaving this product goes. The list that sent us here when it had
+     filters worth keeping, else the plain catalogue.
+
+     Validated rather than trusted: `from` arrives in a typeable URL and ends
+     up both in a link and in a redirect, so an absolute one would be an open
+     redirect off the back of our own domain. See lib/returnTo.ts. */
+  const backHref = returnToOr(from, '/products')
   const productId = Number(id)
   if (!Number.isFinite(productId) || productId <= 0) notFound()
 
@@ -209,7 +218,7 @@ export default async function EditProductPage({
       <PageHeader
         title="Edit product"
         subtitle={product.description}
-        backHref="/products"
+        backHref={backHref}
         action={
           <>
             {/* Submits the form below by id — it is a sibling of that form, not
@@ -222,6 +231,7 @@ export default async function EditProductPage({
             {ownership.canEdit && <SaveProductButton />}
             <ProductActions
               productId={product.id}
+              returnTo={backHref === '/products' ? null : backHref}
               isArchived={product.isArchived}
               name={product.description}
               canDelete={can(capabilities, 'products.delete')}
@@ -234,6 +244,9 @@ export default async function EditProductPage({
         {saved === '1' && <Callout tone="success" title="Product saved." />}
 
         <ProductForm
+          /* Only when it differs from the default — a bare '/products' is what
+             the action falls back to anyway, so carrying it is noise. */
+          returnTo={backHref === '/products' ? null : backHref}
           product={product}
           departments={departments}
           brands={brands}
@@ -301,7 +314,11 @@ export default async function EditProductPage({
             name: r.name,
             description: r.description,
           }))}
-          priceHistory={<PriceHistoryPanel rows={priceHistory} />}
+          /* Keyed because this element is created on the SERVER and handed to a
+             client component as a prop: it crosses the RSC boundary, is spliced
+             into that component's children as an array element, and React then
+             key-validates it like any other list child. */
+          priceHistory={<PriceHistoryPanel key="price-history" rows={priceHistory} />}
         />
       </PageBody>
     </>

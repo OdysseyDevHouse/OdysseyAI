@@ -7,7 +7,7 @@ import { verifyPublicStoreToken } from '@/lib/publicStoreToken'
 import { resolveStoreRouting, rememberedBranch, resolveStorefront } from '@/lib/storeRouting'
 import { createOrderTrackToken } from '@/lib/orderTrackToken'
 import { getCustomerSession } from '@/lib/customerSession'
-import { createCallbackToken } from '@/lib/callbackToken'
+import { callbackPath } from '@/lib/callbackToken'
 import { buildCheckoutForm } from '@/lib/payfast/checkout'
 import { createIntent, getGateway } from '@/lib/site/payments'
 import { markOrderPayment } from '@/lib/site/paidOrders'
@@ -455,13 +455,15 @@ export async function placeOrderAction(
   const amountDue = Math.round((result.total - result.voucherCredit) * 100) / 100
 
   const intent = await createIntent(siteId, {
-    targetId: result.orderId,
+    target: { purpose: 'online_order', orderId: result.orderId },
     amountIncl: amountDue,
   })
   await markOrderPayment(siteId, result.orderId, 'pending')
 
   const origin = await publicOrigin()
-  const callback = await createCallbackToken(siteId, intent.reference)
+  /* The SHORT path, not a JWT — a signed token puts the notify URL past
+     PayFast's 255-character limit and it then never posts. See callbackToken.ts. */
+  const callback = callbackPath(siteId, intent.reference)
 
   const form = buildCheckoutForm({
     merchantId: gateway.merchantId,

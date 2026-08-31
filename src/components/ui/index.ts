@@ -139,6 +139,7 @@ export {
   SettingRowsSkeleton,
 } from './Skeleton'
 export { TextLink, TextLinkButton } from './TextLink'
+export { CopyLink } from './CopyLink'
 export { FieldGroup } from './FieldGroup'
 
 export { DataTable, type Column, type SortState, type SortDirection } from './DataTable'
@@ -153,6 +154,27 @@ export {
 export { ColumnPicker, type ColumnOption } from './ColumnPicker'
 export { Pagination } from './Pagination'
 export { FilterBar, FilterChip } from './FilterBar'
+export {
+  CHIP_BASE,
+  ClockChip,
+  LOGOUT_CHIP,
+  OperatorChip,
+  StatusChip,
+  initials,
+} from './StatusChip'
+export { AdvancedFilter } from './AdvancedFilter'
+/* The pure half, from a PLAIN module rather than the 'use client' one: every
+   export of a "use client" file is a client reference the server may render but
+   never call, and the list screens call summarise() on the server to label
+   their filter chips. See the header of filterConditions.ts. */
+export {
+  summarise as summariseCondition,
+  opsFor as filterOpsFor,
+  valuesNeeded as filterValuesNeeded,
+  isConditionComplete,
+  type FilterField,
+  type FilterCondition,
+} from './filterConditions'
 export { BulkActionBar } from './BulkActionBar'
 export { BulkOptionsDialog, type BulkOption, type BulkOptionGroup } from './BulkOptionsDialog'
 

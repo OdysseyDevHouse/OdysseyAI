@@ -20,6 +20,28 @@ import type { Capability, CapabilitySet } from './permissions'
 export type NotificationEvent =
   | 'online_order_placed'
   | 'sale_voided'
+  /**
+   * A customer paid something online — a pay link on an invoice, a statement, a
+   * lay-by instalment or a deposit on a quote.
+   *
+   * ── WHY THIS IS THE ONE EVENT THE FEATURE NEEDED MOST ────────────────────
+   *
+   * Everything else about a pay link is discoverable: the receipt is on the
+   * account, the deposit is on the document. But nothing SURFACED it, so a
+   * customer could pay at eleven at night and the business would find out by
+   * happening to look. A shop that cannot tell whether it has been paid will not
+   * trust the feature, and will keep phoning to ask.
+   *
+   * ONE event for all five purposes rather than one each, on the same reasoning
+   * as `job_notice` below: which kind it was is the sender's business, and what
+   * the bell needs is a title, a line and somewhere to go. The title names the
+   * document, so the distinction is visible where it matters — on the row.
+   *
+   * Audience-wide rather than addressed to a person: nobody "owns" an incoming
+   * payment, and the person who raised the invoice is not necessarily the one
+   * who chases it.
+   */
+  | 'online_payment_received'
   | 'grv_received'
   | 'low_stock'
   /** A technician asked for a part that is not on the shelf (162). */

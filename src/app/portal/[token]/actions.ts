@@ -4,8 +4,14 @@ import { headers } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { verifyPortalToken } from '@/lib/publicPortalToken'
 import { getCustomerSession, clearCustomerCookie } from '@/lib/customerSession'
-import { requestLink, portalSettings } from '@/lib/site/portalAuth'
-import { portalComment, payLinkFor, ownsQuote, portalUpload } from '@/lib/site/portalData'
+import { requestLink, portalSettings, portalIsOpen } from '@/lib/site/portalAuth'
+import {
+  portalComment,
+  payLinkFor,
+  accountPayLinkFor,
+  ownsQuote,
+  portalUpload,
+} from '@/lib/site/portalData'
 import { acceptQuote } from '@/lib/site/jobQuotes'
 import { revalidatePath } from 'next/cache'
 
@@ -35,7 +41,7 @@ async function customerFor(
   const siteId = await verifyPortalToken(token)
   if (siteId === null) return null
   const settings = await portalSettings(siteId)
-  if (!settings.isEnabled) return null
+  if (!portalIsOpen(settings)) return null
   const session = await getCustomerSession(siteId)
   if (!session) return null
   return { siteId, customerId: session.customerId, name: session.name }
@@ -130,7 +136,51 @@ export async function payInvoiceAction(
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const me = await customerFor(token)
   if (!me) return { ok: false, error: 'Please sign in again.' }
+
+  /*
+   * The switch is checked HERE, not only where the button is drawn. A server
+   * action is a public endpoint: hiding the button stops it being pressed by
+   * accident, and this stops it being called on purpose by a shop that turned
+   * online payment off.
+   */
+  const settings = await portalSettings(me.siteId)
+  if (!settings.allowPay) {
+    return { ok: false, error: 'Please contact the business to settle this invoice.' }
+  }
+
   return payLinkFor(me.siteId, me.customerId, documentId)
+}
+
+/**
+ * A link to pay an amount of the customer's choosing onto their account.
+ *
+ * ── THE AMOUNT IS NEVER TRUSTED, AND NEVER RE-DERIVED EITHER ───────────────
+ *
+ * It arrives from a box on a public page, so accountPayLinkFor validates it —
+ * finite, positive, rounded, capped. What this must NOT do is quietly replace
+ * it with the balance: a customer who typed 500 against a 4 320 balance is
+ * making a part payment on purpose, and charging them the full amount instead
+ * would be taking money they did not agree to give.
+ *
+ * ── AND allowPay IS CHECKED HERE, NOT ONLY WHERE THE BUTTON IS DRAWN ───────
+ *
+ * A server action is a public endpoint. Hiding the button stops it being
+ * pressed by accident; this stops it being called on purpose against a shop
+ * that has online payment switched off.
+ */
+export async function payAccountAction(
+  token: string,
+  amountIncl: number,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const me = await customerFor(token)
+  if (!me) return { ok: false, error: 'Please sign in again.' }
+
+  const settings = await portalSettings(me.siteId)
+  if (!settings.allowPay) {
+    return { ok: false, error: 'Please contact the business to pay your account.' }
+  }
+
+  return accountPayLinkFor(me.siteId, me.customerId, amountIncl)
 }
 
 /**

@@ -12,7 +12,7 @@ import {
 import { buildRemittance } from '@/lib/statements/remittance'
 import { renderStatementPdf } from '@/lib/statements/pdf'
 import { listPaymentItems } from '@/lib/site/paymentRuns'
-import { send, isConfigured } from '@/lib/mail'
+import { sendAs, isConfiguredFor } from '@/lib/mail'
 import { formatMoney } from '@/lib/decimals'
 import { siteExecute } from '@/lib/siteDb'
 
@@ -77,8 +77,8 @@ export async function invoicesForSupplierAction(supplierId: number) {
 export async function sendRemittancesAction(runId: number): Promise<PaymentActionResult> {
   const site = await requireSite()
 
-  if (!isConfigured()) {
-    return { ok: false, error: 'Email is not set up — SMTP_HOST and MAIL_FROM are missing.' }
+  if (!(await isConfiguredFor(site.id))) {
+    return { ok: false, error: 'Email is not set up. Add your mail account under Setup › Email.' }
   }
 
   const items = await listPaymentItems(site.id, runId)
@@ -101,7 +101,7 @@ export async function sendRemittancesAction(runId: number): Promise<PaymentActio
       if (!data) throw new Error('The remittance could not be built.')
 
       const pdf = await renderStatementPdf(data, 'remittance', site.id)
-      const result = await send({
+      const result = await sendAs(site.id, {
         to: item.email,
         subject: `Remittance advice — ${formatMoney(item.amount)}`,
         text: [

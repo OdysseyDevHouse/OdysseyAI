@@ -7,7 +7,6 @@ import {
   Button,
   ButtonLink,
   Card,
-  CardHeader,
   Callout,
   CategoryTile,
   ChoiceTile,
@@ -18,7 +17,6 @@ import {
   Modal,
   NumberInput,
   Select,
-  ToolbarSearch,
   useToast,
 } from '@/components/ui'
 import {
@@ -57,14 +55,13 @@ import { saveReportAction } from './actions'
  * The spec is still the only state. Every panel edits it, the preview re-runs
  * from it, and saving stores exactly what is on screen — so what you see really
  * is what gets saved and scheduled.
+ *
+ * Note what this screen does NOT do: list the built-in reports. It used to,
+ * as a grid of ~80 tiles above the source picker, and that grid was the first
+ * thing anyone met here. Starting from a report that nearly works is still the
+ * best way in — it just belongs on the report, as its Customise button, which
+ * arrives back here via `?from=` with the spec already seeded.
  */
-export type BuilderTemplate = {
-  id: string
-  name: string
-  description: string
-  source: string
-  spec: CustomReportSpec
-}
 
 /** The pop-up editors the design toolbar offers. */
 type PanelKey = 'data' | 'columns' | 'filters' | 'sort'
@@ -73,12 +70,10 @@ export default function BuilderShell({
   sources,
   initialSpec,
   savedId,
-  templates = [],
 }: {
   sources: ClientSource[]
   initialSpec: CustomReportSpec | null
   savedId: number | null
-  templates?: BuilderTemplate[]
 }) {
   const router = useRouter()
   const toast = useToast()
@@ -101,17 +96,7 @@ export default function BuilderShell({
 
   if (!spec || !source) {
     return (
-      <SourcePicker
-        sources={sources}
-        templates={templates}
-        onPick={(key) => setSpec(emptySpec(key))}
-        // A fresh copy each time, so editing one never mutates the library —
-        // and the name is marked a copy, because saving it as "Sales by
-        // product" next to the built-in of that name helps nobody.
-        onPickTemplate={(t) =>
-          setSpec({ ...structuredClone(t.spec), name: `${t.name} (copy)` })
-        }
-      />
+      <SourcePicker sources={sources} onPick={(key) => setSpec(emptySpec(key))} />
     )
   }
 
@@ -594,17 +579,11 @@ function summaryLine(spec: CustomReportSpec, source: ClientSource): string {
  */
 function SourcePicker({
   sources,
-  templates,
   onPick,
-  onPickTemplate,
 }: {
   sources: ClientSource[]
-  templates: BuilderTemplate[]
   onPick: (key: string) => void
-  onPickTemplate: (template: BuilderTemplate) => void
 }) {
-  const [templateSearch, setTemplateSearch] = useState('')
-
   if (sources.length === 0) {
     return (
       <Card>
@@ -624,61 +603,31 @@ function SourcePicker({
     byCategory.set(s.category, list)
   }
 
-  const q = templateSearch.trim().toLowerCase()
-  const shownTemplates = q
-    ? templates.filter(
-        (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q),
-      )
-    : templates
-
   return (
     <div className="flex flex-col gap-5">
-      {/* ── start from something that nearly works ────────────────────────
-          Offered first, and deliberately: a blank builder is the hardest way
-          to make a report, and most people want "that one, but by week". */}
-      {templates.length > 0 && (
-        <Card>
-          <CardHeader
-            title="Start from a ready-made report"
-            description="Take one of the built-in reports and change whatever you like. The original is untouched."
-            action={
-              <ToolbarSearch
-                value={templateSearch}
-                onChange={setTemplateSearch}
-                placeholder="Find a report…"
-                className="w-56"
-                aria-label="Find a report to start from"
-              />
-            }
-          />
-          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-            {shownTemplates.map((t) => (
-              <ChoiceTile
-                key={t.id}
-                layout="inline"
-                title={t.name}
-                description={t.description}
-                icon={
-                  <CategoryTile
-                    icon={sourceIcon(t.source, 16)}
-                    tone={sourceTone(t.source)}
-                    size="sm"
-                  />
-                }
-                onClick={() => onPickTemplate(t)}
-              />
-            ))}
-            {shownTemplates.length === 0 && (
-              <p className="col-span-full py-2 text-sm text-muted">
-                No ready-made report matches “{templateSearch}”. Start from the raw data below.
-              </p>
-            )}
-          </div>
-        </Card>
-      )}
+      {/* ── the shortcut, told rather than shown ──────────────────────────
+          Every built-in used to be listed here as a tile — around eighty of
+          them, ungrouped, and the first thing you met on landing. It read as
+          a wall of reports rather than a way in. The shortcut is still real
+          and still the best way to start, so it is now one sentence: open the
+          report that is nearly right and press Customise. That arrives back
+          here with the spec already seeded. */}
+      <Callout
+        tone="brand"
+        icon={<Icons.Sparkles size={18} />}
+        title="Starting from a report that nearly works?"
+        action={
+          <ButtonLink href="/reports" variant="secondary" size="sm">
+            Browse reports
+          </ButtonLink>
+        }
+      >
+        Open any report and press <span className="font-medium text-ink">Customise</span> to bring
+        it in here with its columns and filters already set up. The original is untouched.
+      </Callout>
 
       <div className="flex flex-col gap-1">
-        <h2 className="text-[15px] font-semibold text-ink">Or start from the raw data</h2>
+        <h2 className="text-[15px] font-semibold text-ink">Start from the raw data</h2>
         <p className="text-sm text-muted">
           Everything the builder can read. Pick the one your question is about.
         </p>

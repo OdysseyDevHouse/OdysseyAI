@@ -1,5 +1,6 @@
 import 'server-only'
 import { round } from '../decimals'
+import { taxLabel } from '../site/taxIdentity'
 import { getCustomer } from '../site/customers'
 import { listLedger, agingFor, agingAsAt } from '../site/customerLedger'
 import {
@@ -53,7 +54,7 @@ export type StatementLine = {
 export type StatementData = {
   format: StatementFormat
   /** The business issuing it. */
-  site: { name: string; vatNumber: string | null }
+  site: { name: string; vatNumber: string | null; taxLabel?: string }
   account: {
     id: number
     code: string
@@ -218,7 +219,7 @@ export async function buildStatement(
 
   return {
     format,
-    site: { name: siteName, vatNumber: siteVatNumber },
+    site: { name: siteName, vatNumber: siteVatNumber, taxLabel: await taxLabel(siteId) },
     account: {
       id: customer.id,
       code: customer.code,
@@ -365,7 +366,7 @@ export async function buildSupplierStatement(
 
   return {
     format,
-    site: { name: siteName, vatNumber: siteVatNumber },
+    site: { name: siteName, vatNumber: siteVatNumber, taxLabel: await taxLabel(siteId) },
     account: {
       id: supplier.id,
       // Our account number with them, when we have one — that is the reference

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { actorForModule } from '@/lib/auth'
-import { send, isConfigured } from '@/lib/mail'
+import { sendAs, isConfiguredFor } from '@/lib/mail'
 import { getSmsProvider } from '@/lib/site/sms'
 import {
   buildRun,
@@ -75,8 +75,8 @@ export async function releaseRunAction(runId: number): Promise<ActionResult> {
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
 
-  if (!isConfigured()) {
-    return { ok: false, error: 'Email is not set up yet. Add SMTP details in Setup first.' }
+  if (!(await isConfiguredFor(siteId))) {
+    return { ok: false, error: 'Email is not set up yet. Add your mail account under Setup › Email.' }
   }
 
   // The SMS leg rides along when a provider is configured; absent, levels
@@ -86,7 +86,7 @@ export async function releaseRunAction(runId: number): Promise<ActionResult> {
   const result = await processRun(siteId, runId, actor, {
     companyName: await companyName(siteId),
     send: async (input) => {
-      const outcome = await send(input)
+      const outcome = await sendAs(siteId, input)
       return outcome.ok ? { ok: true } : { ok: false, error: outcome.error }
     },
     ...(smsProvider

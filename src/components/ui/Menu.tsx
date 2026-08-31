@@ -106,7 +106,14 @@ export function Menu({
              setOpen down to each item — unless the panel is a set of settings,
              which the user adjusts and then dismisses themselves. */
           onClick={keepOpen ? undefined : () => setOpen(false)}
-          className={`absolute z-20 mt-1.5 min-w-44 rounded-control border border-border bg-surface p-1 shadow-pop ${
+          /* A CEILING, and the menu scrolls past it.
+             A menu is usually a handful of actions, so this never showed —
+             but a picker built from a catalogue is not: the advanced filter
+             offers thirty-five fields, which drew a 1,582px panel running
+             far below the fold with its last items unreachable. Capped here
+             rather than at that call site, because any menu long enough to
+             leave the window has the same problem. */
+          className={`absolute z-20 mt-1.5 max-h-80 min-w-44 overflow-y-auto overscroll-contain rounded-control border border-border bg-surface p-1 shadow-pop ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >

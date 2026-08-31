@@ -275,6 +275,29 @@ function resolveEnv() {
    * so rather than failing quietly. */
   set('ODYSSEY_UPDATE_URL', resolveBuildDefaults().ODYSSEY_UPDATE_URL)
 
+  /* ── HOW THE NEXT SERVER REACHES THE CONTROL PANEL OVER HTTPS ─────────────
+   *
+   * electron/posApi.js has always read these from buildDefaults, because the
+   * main process needed them to provision a machine. lib/control/portalApi.ts
+   * reads the SAME three values — but from process.env, which nothing ever
+   * wrote them to.
+   *
+   * The consequence was silent and total: portalConfig() returned null in every
+   * packaged build, portalAvailable() was false, and every licence call fell
+   * through to the direct MySQL connection the portal exists to replace. The
+   * fallback is by design — a cloud install and a dev checkout have no portal
+   * and must not pretend otherwise — which is exactly why nothing complained.
+   *
+   * Outside the branches for the same reason as the update URL: this is how a
+   * machine talks to Odyssey, not a property of which database it happens to
+   * own. The per-site signing key is set in the adopted branch above, since
+   * only an adopted machine is issued one; without it portalConfig() still
+   * returns null and the fallback stands, unchanged. */
+  const portalDefaults = resolveBuildDefaults()
+  set('POS_API_URL', portalDefaults.POS_API_URL)
+  set('POS_API_CLIENT_ID', portalDefaults.POS_API_CLIENT_ID)
+  set('POS_API_CLIENT_SECRET', portalDefaults.POS_API_CLIENT_SECRET)
+
   /* ── THE ROLE, WHERE THE NEXT SERVER CAN SEE IT ───────────────────────────
    *
    * appRole() reads package.json, which only the MAIN process ever required.

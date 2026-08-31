@@ -1,5 +1,6 @@
 import { requireCapability, requireSite } from '@/lib/auth'
-import { getSetting } from '@/lib/site/settings'
+import { getSetting, getSettings } from '@/lib/site/settings'
+import { canTakePayments } from '@/lib/site/payments'
 import { PageHeader, PageBody } from '@/components/ui'
 import { listTemplates } from '@/lib/site/stationeryTemplates'
 import { DOC_TYPES, getDocType, tokensFor } from '@/lib/stationery/catalog'
@@ -31,12 +32,28 @@ export default async function StationerySetupPage() {
   const { siteId, capabilities } = await requireCapability('setup.stationery')
   const site = await requireSite()
 
-  const [templates, logoFile, images, reviewUrl] = await Promise.all([
-    listTemplates(siteId),
-    logoFileName(siteId),
-    listImages(siteId),
-    getSetting(siteId, 'document_review_url').catch(() => ''),
-  ])
+  const [templates, logoFile, images, reviewUrl, payLinkSettings, gatewayReady] =
+    await Promise.all([
+      listTemplates(siteId),
+      logoFileName(siteId),
+      listImages(siteId),
+      getSetting(siteId, 'document_review_url').catch(() => ''),
+      getSettings(siteId, [
+        'pay_link_on_invoices',
+        'pay_link_on_statements',
+        'pay_link_on_laybys',
+        'pay_link_on_quotes',
+      ]).catch(() => ({}) as Record<string, string>),
+      /*
+       * Whether a payment account is actually connected.
+       *
+       * Read here rather than inferred from the switches, because
+       * payLinksEnabled() needs BOTH — a shop that turns the switches on with no
+       * gateway sees nothing appear on any document, which looks exactly like a
+       * broken feature. The screen says so instead.
+       */
+      canTakePayments(siteId).catch(() => false),
+    ])
 
   /*
    * The shipped default travels with the page so "Start from the standard
@@ -78,6 +95,13 @@ export default async function StationerySetupPage() {
           siteName={site.displayName}
           logoFile={logoFile}
           reviewUrl={reviewUrl}
+          payLinks={{
+            invoices: payLinkSettings.pay_link_on_invoices === '1',
+            statements: payLinkSettings.pay_link_on_statements === '1',
+            laybys: payLinkSettings.pay_link_on_laybys === '1',
+            quotes: payLinkSettings.pay_link_on_quotes === '1',
+          }}
+          gatewayReady={gatewayReady}
           pictures={images.map((i) => ({
             id: i.id,
             label: imageLabel(i),

@@ -37,9 +37,11 @@ import {
  * ── GUARDED ON setup.edit, ONE CAPABILITY THROUGHOUT ───────────────────────
  *
  * Arranging the till's menu is configuration, like the quick keys and the
- * tender types beside it — the same person, the same screenful of settings.
- * Deliberately not `stock.view`: someone who may LOOK at the product file has
- * no business rearranging what the shop floor sees.
+ * tender types — a manager's decision, whatever section the menu reaches it
+ * from. Deliberately not `stock.view`: someone who may LOOK at the product
+ * file has no business rearranging what the shop floor sees. That the screen
+ * is now reached from Products rather than the setup hub does not widen it —
+ * the row is gated on this same capability.
  *
  * The guard is the real boundary. A server action is a public endpoint, so
  * hiding the screen changes what is easy, not what is possible.

@@ -25,7 +25,7 @@ import {
   TABLE_TD_INPUT,
   TABLE_TH,
 } from '@/components/ui'
-import { formatMoney, formatQty, round } from '@/lib/decimals'
+import { formatCost, formatMoney, formatQty, round } from '@/lib/decimals'
 import { createSupplierReturnAction, serialsForReturnAction } from '../../actions'
 
 /**
@@ -259,7 +259,7 @@ export default function ReturnScreen({
                             {formatQty(line.qtyReceived)}
                           </td>
                           <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                            {formatMoney(line.unitCostExcl)}
+                            {formatCost(line.unitCostExcl)}
                           </td>
                           <td className={`${TABLE_TD_INPUT} w-36 text-right`}>
                             {spent ? (

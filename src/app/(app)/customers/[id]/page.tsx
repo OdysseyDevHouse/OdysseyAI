@@ -1,10 +1,14 @@
 import { notFound } from 'next/navigation'
+import { returnToOr } from '@/lib/returnTo'
 import { requireModuleCapability } from '@/lib/auth'
 import { getCustomer } from '@/lib/site/customers'
 import { listCustomerGroups, listSalesReps, listCustomerCategories } from '@/lib/site/customerLookups'
 import { listActivity } from '@/lib/site/activityLog'
 import { getCustomerLogin } from '@/lib/site/customerAuth'
 import OnlineAccess from '../OnlineAccess'
+import AccountLink from '../AccountLink'
+import { createPortalToken } from '@/lib/publicPortalToken'
+import { portalSettings } from '@/lib/site/portalAuth'
 import { listContacts } from '@/lib/site/partyContacts'
 import { listDocuments } from '@/lib/site/partyDocuments'
 import { listComments } from '@/lib/site/partyComments'
@@ -180,12 +184,16 @@ export default async function CustomerPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ tab?: string; saved?: string; error?: string }>
+  searchParams: Promise<{ tab?: string; saved?: string; error?: string; from?: string }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId, capabilities } = await requireModuleCapability('customers', 'customers.view')
   const { id } = await params
-  const { tab, saved, error } = await searchParams
+  const { tab, saved, error, from } = await searchParams
+
+  /* Where leaving goes: the list that sent us here when it had filters worth
+     keeping, else the plain register. Validated — see lib/returnTo.ts. */
+  const backHref = returnToOr(from, '/customers')
 
   const customerId = Number(id)
   if (!Number.isFinite(customerId) || customerId <= 0) notFound()
@@ -210,6 +218,8 @@ export default async function CustomerPage({
     addresses,
     structures,
     customValues,
+    portalToken,
+    portal,
   ] = await Promise.all([
     getCustomer(siteId, customerId),
     listCustomerGroups(siteId),
@@ -230,6 +240,14 @@ export default async function CustomerPage({
     // Custom fields (§24). Tolerant of a site without 127, and the panel renders
     // nothing at all when no customer fields are defined.
     valuesFor(siteId, 'customer', customerId),
+    /*
+     * The portal link, for the Online tab. Deterministic, so what a shop put in
+     * an email footer keeps working; null when SESSION_SECRET is missing, which
+     * the panel states rather than rendering a broken URL.
+     */
+    createPortalToken(siteId).catch(() => null),
+    // Whether the account portal is switched on. Fails closed on its own.
+    portalSettings(siteId),
   ])
 
   // Loyalty is loaded separately and defensively: a site that has never run the
@@ -245,7 +263,7 @@ export default async function CustomerPage({
       <PageHeader
         title={customer.name}
         subtitle={customer.code}
-        backHref="/customers"
+        backHref={backHref}
         backLabel="Customers"
         action={
           ledger.length > 0 ? (
@@ -403,6 +421,7 @@ export default async function CustomerPage({
         ) : active === 'details' ? (
           <>
           <CustomerForm
+            returnTo={backHref === '/customers' ? null : backHref}
             customer={customer}
             groups={groups}
             reps={reps}
@@ -511,11 +530,22 @@ export default async function CustomerPage({
             />
           )
         ) : active === 'online' ? (
-          <OnlineAccess
-            customerId={customerId}
-            customerEmail={customer.email ?? ''}
-            login={onlineLogin}
-          />
+          /* Two doors, shown together because staff think of them together:
+             the link that lets a customer read their account, and the password
+             that lets them order on it. They are separate mechanisms — see
+             AccountLink — so they are separate cards. */
+          <div className="flex flex-col gap-4">
+            <AccountLink
+              url={portalToken ? `${process.env.APP_URL ?? ''}/portal/${portalToken}` : null}
+              enabled={portal.accountsEnabled}
+              customerEmail={customer.email ?? ''}
+            />
+            <OnlineAccess
+              customerId={customerId}
+              customerEmail={customer.email ?? ''}
+              login={onlineLogin}
+            />
+          </div>
         ) : active === 'activity' ? (
           <Card>
             <ActivityTable

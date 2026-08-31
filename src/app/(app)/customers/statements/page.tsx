@@ -1,7 +1,7 @@
 import { requireModuleCapability } from '@/lib/auth'
 import { listRuns } from '@/lib/site/statementRuns'
 import { statementCandidates } from '@/lib/statements/render'
-import { isConfigured } from '@/lib/mail'
+import { isConfiguredFor } from '@/lib/mail'
 import { Card, CardHeader, Callout } from '@/components/ui'
 import StatementRunClient from './StatementRunClient'
 import RecentRunsTable from './RecentRunsTable'
@@ -17,7 +17,7 @@ export default async function StatementsPage() {
     statementCandidates(siteId),
   ])
 
-  const mailReady = isConfigured()
+  const mailReady = await isConfiguredFor(siteId)
   const withEmail = candidates.filter((c) => c.email)
   const owing = candidates.filter((c) => c.balance !== 0)
 

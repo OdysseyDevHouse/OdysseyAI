@@ -14,7 +14,14 @@ import { requestLinkAction } from './actions'
  * anything more specific, or the form becomes a way to ask a business who its
  * customers are.
  */
-export default function SignInForm({ token }: { token: string }) {
+export default function SignInForm({
+  token,
+  /** What this shop offers, phrased for the blurb — see the page. */
+  offers = 'your account',
+}: {
+  token: string
+  offers?: string
+}) {
   const [email, setEmail] = useState('')
   const [pending, start] = useTransition()
   const [sent, setSent] = useState(false)
@@ -53,8 +60,8 @@ export default function SignInForm({ token }: { token: string }) {
     <div>
       <h1 className="text-xl font-semibold text-ink">Your account</h1>
       <p className="mt-2 text-sm text-muted">
-        See your jobs, quotes and invoices. Enter the email address the business has for you and
-        we will send you a link — there is no password to remember.
+        See {offers}. Enter the email address the business has for you and we will send you a
+        link — there is no password to remember.
       </p>
 
       <div className="mt-6 flex flex-col gap-4">

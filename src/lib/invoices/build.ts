@@ -40,6 +40,14 @@ export type BuildInvoiceOptions = {
   paymentUrl?: string | null
   /** Free text under the totals — "Contract CON000012 · March 2027". */
   footNote?: string | null
+  /**
+   * Nothing is owed on it any more — stamps PAID on the page.
+   *
+   * The CALLER decides, because "paid" is a ledger question and this builder
+   * reads a document. Undefined prints no banner rather than claiming unpaid —
+   * see `paidInFull` on InvoiceData.
+   */
+  paidInFull?: boolean
   /** Overrides the wall clock, so a test can assert on a stable footer. */
   generatedAt?: Date
 }
@@ -125,6 +133,7 @@ export async function buildInvoice(
     totalIncl: document.totalIncl,
     paymentUrl: opts.paymentUrl ?? null,
     footNote: opts.footNote ?? null,
+    paidInFull: opts.paidInFull,
     generatedAt: opts.generatedAt ?? new Date(),
   }
 }

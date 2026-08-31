@@ -18,7 +18,7 @@ export function BillSlip({ bill }: { bill: BillData }) {
     <article className="mx-auto w-full max-w-[26rem] bg-surface p-6 text-ink">
       <header className="border-b border-border pb-4 text-center">
         <h1 className="text-lg font-semibold text-ink">{bill.siteName}</h1>
-        {bill.vatNumber && <p className="mt-0.5 text-xs text-muted">VAT no. {bill.vatNumber}</p>}
+        {bill.vatNumber && <p className="mt-0.5 text-xs text-muted">{bill.taxLabel ?? 'VAT'} no. {bill.vatNumber}</p>}
         <p className="mt-3 text-sm font-semibold tracking-wide text-ink">{bill.label}</p>
         <p className="mt-0.5 text-xs text-muted">
           {[
@@ -57,7 +57,7 @@ export function BillSlip({ bill }: { bill: BillData }) {
                     </div>
                   ))}
                 </td>
-                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatQty(line.qty)}</td>
+                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{formatQty(line.qty, { exact: true })}</td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-ink`}>
                   {formatMoney(line.lineTotalIncl)}
                 </td>
@@ -75,12 +75,12 @@ export function BillSlip({ bill }: { bill: BillData }) {
           </div>
         )}
         <div className="flex justify-between">
-          <dt className="text-muted">Excl. VAT</dt>
+          <dt className="text-muted">Excl. {bill.taxLabel ?? 'VAT'}</dt>
           <dd className="numeric text-ink">{formatMoney(bill.subtotalExcl)}</dd>
         </div>
         {bill.vatByRate.map((rate) => (
           <div key={rate.ratePct} className="flex justify-between">
-            <dt className="text-muted">VAT @ {rate.ratePct}%</dt>
+            <dt className="text-muted">{bill.taxLabel ?? 'VAT'} @ {rate.ratePct}%</dt>
             <dd className="numeric text-ink">{formatMoney(rate.vat)}</dd>
           </div>
         ))}

@@ -28,13 +28,20 @@ import { formatMoney } from '@/lib/decimals'
  * wrong here: the audience is a customer waiting to be served, who can do
  * nothing about it and should not be shown our scaffolding.
  *
- * ── THE PANEL IS TOP-AND-BOTTOM, NOT CENTRED ─────────────────────────────
+ * ── THE PANEL HAS TWO LAYOUTS, AND THE BOARD DECIDES WHICH ───────────────
  *
- * Identity at the top — logo, greeting, date — and the offer at the foot, with
- * the photograph left to breathe between them. The two blocks are the two
- * things a person in the queue reads, and they are read in that order; stacking
- * them together in the middle made the panel a caption on a picture rather than
- * a composed half of a screen.
+ * WITH a specials card: identity at the top — logo, greeting, date — and the
+ * offer at the foot, with the photograph left to breathe between them. The two
+ * blocks are the two things a person in the queue reads, and they are read in
+ * that order; stacking them together in the middle made the panel a caption on
+ * a picture rather than a composed half of a screen.
+ *
+ * WITHOUT one — which is most shops, most of the time — that reasoning stops
+ * applying. There is no second block for the identity to be read before, so
+ * top-aligning it left a small logo and a heading tucked into one corner with
+ * five hundred pixels of empty photograph beneath them. So the identity centres
+ * in the pane and wears a bigger logo and a bigger greeting: the same block,
+ * given the room it is actually standing in.
  */
 export function PosSignInArt({
   backdropUrl,
@@ -78,6 +85,16 @@ export function PosSignInArt({
    */
   const headline = specials[0]
   const rest = specials.slice(1)
+
+  /*
+   * Is the identity block the ONLY thing in this pane?
+   *
+   * Derived from the headline rather than from `specials.length`, so it can
+   * never disagree with the card's own render condition below — the two are the
+   * same question asked once, and a pane that centred its greeting while a
+   * board was still painted at the foot would be the worst of both layouts.
+   */
+  const solo = !headline
 
   /* Two supporting rows at a time. The card sits in the bottom third of a 706px
      pane and a headline plus two rows is what fits there without the greeting
@@ -150,11 +167,18 @@ export function PosSignInArt({
      * radius here as well would have drawn a second, smaller corner inside the
      * first down the seam between the halves.
      *
-     * 400px at `lg` and 440 above it. The pad beside it has ONE correct size —
-     * it is sized by the finger, not by the display — so the panel takes what is
-     * left, and at exactly 1024px (a real counter display) the pair has to still
-     * fit between the screen's own padding. That is what the narrower step is
-     * for; a single 440 overflowed it by the width of a thumb.
+     * 574px — the SAME width as the pad beside it, so the seam falls down the
+     * middle of the card and neither half reads as the leftover space around the
+     * other. The pad's 574 is fixed (it is sized by the finger, not by the
+     * display), so matching it is the only way the two stay equal.
+     *
+     * But 574 + 574 is 1148, and at exactly 1024px (a real counter display) that
+     * does not fit between the screen's own padding. So this panel is NOT
+     * `shrink-0` the way the pad is: 574 is what it ASKS for, and on a display
+     * too narrow to grant it the PICTURE gives way rather than the pad — a
+     * photograph 150px narrower still reads, and a pad narrower than its own keys
+     * does not. Everything inside takes that squeeze without breaking: a scrim, an
+     * `object-cover` image, and text that wraps.
      *
      * ── max-h-full IS NOT OPTIONAL ────────────────────────────────────────────
      *
@@ -164,7 +188,7 @@ export function PosSignInArt({
      * the identity block is `min-h-0 flex-1` precisely so that it yields and the
      * specials card does not get clipped.
      */
-    <div className="relative isolate hidden h-[706px] max-h-full shrink-0 overflow-hidden bg-brand lg:flex lg:w-[400px] lg:flex-col xl:w-[440px]">
+    <div className="relative isolate hidden h-[706px] max-h-full min-w-0 overflow-hidden bg-brand lg:flex lg:w-[574px] lg:flex-col">
       {/* ── The backdrop ────────────────────────────────────────────────── */}
       {/* A gradient ALWAYS, with the photograph over it. Two reasons: a picture
           that is still loading shows brand colour rather than a white flash on
@@ -202,8 +226,20 @@ export function PosSignInArt({
       {/* `min-h-0 flex-1` so this yields rather than the card below it. Both are
           flex children; without it this block keeps its content height and the
           specials card is the one that gets clipped on a 768px-tall counter
-          screen — which is what happened before, cutting the last row in half. */}
-      <div className="relative z-[2] flex min-h-0 flex-1 flex-col p-8">
+          screen — which is what happened before, cutting the last row in half.
+
+          Centred on both axes when it is alone in the pane, top-left when a
+          board sits beneath it. Whole class strings on each branch rather than
+          a base string with conditional fragments appended: it is longer to
+          read but it is the pair of layouts written out, which is what somebody
+          changing one of them needs to see. */}
+      <div
+        className={
+          solo
+            ? 'relative z-[2] flex min-h-0 flex-1 flex-col items-center justify-center p-10 text-center'
+            : 'relative z-[2] flex min-h-0 flex-1 flex-col p-8'
+        }
+      >
         {logoUrl ? (
           /* On its own light disc, because a shop's logo is drawn for white
              paper and most have dark ink. Dropping it straight onto a
@@ -215,20 +251,48 @@ export function PosSignInArt({
              A cashier preferring dark mode must not turn a shop's dark logo
              invisible on the screen facing the queue.
 
-             ONE size now, and small. The mark used to be the whole panel and
-             carried the shop's identity alone; the greeting beneath it does
-             that in words now, so the logo only has to be recognised. */
-          <div className="logo-disc flex h-16 w-16 shrink-0 items-center justify-center rounded-full p-2.5 shadow-pop">
+             TWO sizes, and the board decides. Beside a specials card the mark
+             only has to be recognised — the greeting under it carries the
+             shop's identity in words, and a large disc there would crowd the
+             offer. Alone in the pane it is the largest thing on the customer's
+             half of the screen and should be readable from the back of the
+             queue, so it takes 160px: the panel is 400 wide at `lg`, and that
+             plus the 40px padding either side still leaves it clear of the
+             edges. */
+          <div
+            className={
+              solo
+                ? 'logo-disc flex h-40 w-40 shrink-0 items-center justify-center rounded-full p-6 shadow-pop'
+                : 'logo-disc flex h-16 w-16 shrink-0 items-center justify-center rounded-full p-2.5 shadow-pop'
+            }
+          >
             <img src={logoUrl} alt="" className="max-h-full max-w-full object-contain" />
           </div>
         ) : (
           /* No logo uploaded: our own wordmark, which is what the till showed
              before this panel existed. Never a "your logo here" placeholder —
              the customer side of a counter is not where we advertise our own
-             setup screens. */
-          <p className="wordmark shrink-0 text-xl text-white">
+             setup screens.
+
+             It grows with the disc for the same reason, but by less. A shop's
+             own logo standing alone is the point of the panel; ours standing
+             alone means the shop has not uploaded one yet, and blowing our
+             wordmark up to fill their screen is not the way to say that. */
+          <p
+            className={
+              solo
+                ? 'wordmark shrink-0 text-4xl text-white'
+                : 'wordmark shrink-0 text-xl text-white'
+            }
+          >
             ODYSSEY
-            <span className="wordmark-sub mt-1 block text-[10px] text-white/80">
+            <span
+              className={
+                solo
+                  ? 'wordmark-sub mt-1.5 block text-[15px] text-white/80'
+                  : 'wordmark-sub mt-1 block text-[10px] text-white/80'
+              }
+            >
               POINT OF SALE
             </span>
           </p>
@@ -237,14 +301,31 @@ export function PosSignInArt({
         {/* The greeting, at the size a heading wears on a screen read from
             across a room rather than at arm's length. `text-balance` so a long
             trading name breaks into even lines instead of leaving one word
-            stranded on the second. */}
-        <h2 className="mt-7 text-balance text-[30px] font-extrabold leading-[1.15] tracking-tight text-white">
+            stranded on the second — which matters more centred than left, where
+            a ragged last line is visible from both ends. */}
+        <h2
+          className={
+            solo
+              ? 'mt-8 text-balance text-[36px] font-extrabold leading-[1.15] tracking-tight text-white'
+              : 'mt-7 text-balance text-[30px] font-extrabold leading-[1.15] tracking-tight text-white'
+          }
+        >
           {siteName ? `Welcome back, ${siteName}.` : 'Welcome back.'}
         </h2>
 
         {/* The date. Rendered only once it has resolved on the client — see the
             state above — so the line never appears and then corrects itself. */}
-        {today && <p className="mt-3 text-[13px] font-semibold text-white/70">{today}</p>}
+        {today && (
+          <p
+            className={
+              solo
+                ? 'mt-4 text-[15px] font-semibold text-white/70'
+                : 'mt-3 text-[13px] font-semibold text-white/70'
+            }
+          >
+            {today}
+          </p>
+        )}
       </div>
 
       {/* ── Today's special ─────────────────────────────────────────────── */}

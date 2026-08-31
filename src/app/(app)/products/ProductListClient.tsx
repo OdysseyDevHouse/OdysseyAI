@@ -70,7 +70,7 @@ export default function ProductListClient({
   storeColumns: string[]
 } & Omit<
   Parameters<typeof ProductsTable>[0],
-  'selectedKeys' | 'onSelectionChange' | 'visibleColumns'
+  'selectedKeys' | 'onSelectionChange' | 'visibleColumns' | 'departments'
 >) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [stage, setStage] = useState<Stage>(null)
@@ -147,6 +147,10 @@ export default function ProductListClient({
       <ProductsTable
         {...tableProps}
         visibleColumns={visibleColumns}
+        /* The bulk forms' department list, reused: it is already {id, label}
+           carrying the same full paths, so threading a second copy down from
+           the page would be two sources for one answer. */
+        departments={lookups.departments}
         selectedKeys={selected}
         onSelectionChange={setSelected}
       />

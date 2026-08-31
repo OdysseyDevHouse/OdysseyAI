@@ -121,6 +121,24 @@ const REQUIRED: Record<string, { tokens: string[]; literals: string[] }> = {
 type FoundToken = { key: string; inSection: SectionKey | null }
 
 /**
+ * "an invoice", "a quote" — the document's name with the right article.
+ *
+ * Every message below names the document type, and the four that did it by hand
+ * all read "a invoice", because `invoice` is the one common doc type starting
+ * with a vowel. Small, but these sentences are what a shop reads when its own
+ * stationery is refused, and a typo there costs the warning its authority.
+ */
+function aDoc(label: string): string {
+  const lower = label.toLowerCase()
+  return `${/^[aeiou]/.test(lower) ? 'an' : 'a'} ${lower}`
+}
+
+/** "an invoice" → "An invoice", for a sentence that starts with it. */
+function capitalise(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/**
  * Walk the template once, tracking which `{#each}` we are inside.
  *
  * A hand-written scan rather than a parser: the grammar is two productions
@@ -132,7 +150,23 @@ function scan(body: string): { tokens: FoundToken[]; errors: ValidationError[] }
   const errors: ValidationError[] = []
 
   let section: SectionKey | null = null
-  const re = /\{#each\s+([a-zA-Z]+)\s*\}|\{\/each\}|\{([a-zA-Z][a-zA-Z0-9.]*)\}/g
+  /*
+   * ── THE DOUBLED BRACES ARE NOT TOKENS ───────────────────────────────────
+   *
+   * `{{tax}}`, `{{barcode:…}}` and `{{qr:…}}` are COMPILER markers, resolved by
+   * render.ts long after this runs — `{{tax}}` becomes the shop's word for VAT,
+   * which is why it cannot be baked in at design time (see render.ts).
+   *
+   * Without the guards below the scanner matched the INNER `{tax}` of `{{tax}}`
+   * and reported it as a token no invoice can print. That marker is in the
+   * SHIPPED default invoice, so every shop saving the standard layout was told
+   * its own stationery was broken — twice, once per marker — and the warning
+   * named a token they had never typed.
+   *
+   * `(?<!\{)` and `(?!\})` say: a token is a single brace on each side.
+   */
+  const re =
+    /\{#each\s+([a-zA-Z]+)\s*\}|\{\/each\}|(?<!\{)\{([a-zA-Z][a-zA-Z0-9.]*)\}(?!\})/g
 
   let m: RegExpExecArray | null
   while ((m = re.exec(body)) !== null) {
@@ -205,7 +239,7 @@ export function validateTemplate(docTypeKey: string, body: string): ValidationRe
     if (!def) {
       errors.push({
         kind: 'unknown-token',
-        message: `"{${found.key}}" is not something a ${doc.label.toLowerCase()} can print. It will be left blank.`,
+        message: `"{${found.key}}" is not something ${aDoc(doc.label)} can print. It will be left blank.`,
         token: found.key,
       })
       continue
@@ -230,7 +264,7 @@ export function validateTemplate(docTypeKey: string, body: string): ValidationRe
     if (!getSection(doc, s[1])) {
       errors.push({
         kind: 'unknown-section',
-        message: `"${s[1]}" is not a repeating section on a ${doc.label.toLowerCase()}.`,
+        message: `"${s[1]}" is not a repeating section on ${aDoc(doc.label)}.`,
         token: s[1],
       })
     }
@@ -254,7 +288,7 @@ function missingRequired(doc: DocTypeDef, body: string, tokens: FoundToken[]): V
       const def = findToken(doc, key)
       out.push({
         kind: 'missing-required',
-        message: `A ${doc.label.toLowerCase()} must show ${def?.label.toLowerCase() ?? key}. Add {${key}} to the template.`,
+        message: `${capitalise(aDoc(doc.label))} must show ${def?.label.toLowerCase() ?? key}. Add {${key}} to the template.`,
         token: key,
       })
     }
@@ -265,7 +299,7 @@ function missingRequired(doc: DocTypeDef, body: string, tokens: FoundToken[]): V
     if (!text.includes(literal.toLowerCase())) {
       out.push({
         kind: 'missing-required',
-        message: `A ${doc.label.toLowerCase()} must carry the words "${literal}".`,
+        message: `${capitalise(aDoc(doc.label))} must carry the words "${literal}".`,
       })
     }
   }

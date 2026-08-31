@@ -39,13 +39,28 @@ const ok = (label: string, cond: boolean, extra = '') => {
 
 const MERCHANT = '10000100'
 const PASSPHRASE = 'test-passphrase-do-not-use'
+/** Exactly 13 characters, as PayFast requires — see PAYFAST_KEY_LENGTH. A
+    shorter fixture passed here and would have been refused by PayFast. */
+const TEST_KEY = 'abc123def456g'
 
 /** Build a signed ITN body exactly as PayFast would. */
+/**
+ * An ITN body signed the way PayFast signs one.
+ *
+ * ── EVERY FIELD, INCLUDING THE EMPTY ONES ────────────────────────────────
+ *
+ * This used to filter empty values out, mirroring the CHECKOUT algorithm — and
+ * so did the verifier it was testing. The two agreed with each other and both
+ * disagreed with PayFast, which includes its unused `custom_str1..5`,
+ * `custom_int1..5`, `name_first`, `name_last` and `email_address` in the digest.
+ *
+ * Nothing caught it because no fixture here had an empty field. Every real
+ * callback does, so every real payment verified as a signature mismatch and was
+ * recorded FAILED — while the money had actually been taken.
+ */
 function signedItn(fields: Record<string, string>, passphrase = PASSPHRASE): string {
   const entries = Object.entries(fields)
-  const parts = entries
-    .filter(([, v]) => v !== '')
-    .map(([k, v]) => `${k}=${phpUrlEncode(v.trim())}`)
+  const parts = entries.map(([k, v]) => `${k}=${phpUrlEncode(v.trim())}`)
   const withPass = passphrase ? [...parts, `passphrase=${phpUrlEncode(passphrase)}`] : parts
   const signature = require('node:crypto').createHash('md5').update(withPass.join('&')).digest('hex')
   return [...entries.map(([k, v]) => `${k}=${encodeURIComponent(v).replace(/%20/g, '+')}`), `signature=${signature}`].join('&')
@@ -99,6 +114,42 @@ async function main() {
   const entries = parseItnBody(body)
   const received = Object.fromEntries(entries).signature
   ok('a genuine ITN signature verifies', verifyItnSignature(entries.filter(([k]) => k !== 'signature'), received, PASSPHRASE))
+
+  /*
+   * THE SHAPE PAYFAST ACTUALLY SENDS — with its unused fields empty.
+   *
+   * This is the case that was missing, and its absence cost a real payment: the
+   * verifier skipped empty values (the CHECKOUT rule) while PayFast signs them,
+   * so every genuine callback failed verification and was recorded as a failed
+   * payment. The fixtures above have no empty field, so they agreed with a
+   * verifier that was wrong.
+   */
+  const realistic = signedItn({
+    m_payment_id: 'REF-EMPTY',
+    pf_payment_id: '3354036',
+    payment_status: 'COMPLETE',
+    item_name: 'Invoice INV000001',
+    item_description: 'Payment to Test Shop',
+    amount_gross: '575.00',
+    amount_fee: '-9.20',
+    amount_net: '565.80',
+    custom_str1: '',
+    custom_str2: '',
+    custom_int1: '',
+    name_first: '',
+    name_last: '',
+    email_address: '',
+    merchant_id: MERCHANT,
+  })
+  const realEntries = parseItnBody(realistic)
+  ok(
+    'an ITN carrying EMPTY fields still verifies',
+    verifyItnSignature(
+      realEntries.filter(([k]) => k !== 'signature'),
+      Object.fromEntries(realEntries).signature,
+      PASSPHRASE,
+    ),
+  )
   ok(
     'the wrong passphrase does NOT verify',
     !verifyItnSignature(entries.filter(([k]) => k !== 'signature'), received, 'wrong'),
@@ -142,7 +193,7 @@ async function main() {
   console.log('\n— Credentials at rest —')
   const saved = await saveGateway(
     SITE,
-    { isActive: true, isSandbox: true, merchantId: MERCHANT, merchantKey: 'super-secret-key', passphrase: PASSPHRASE },
+    { isActive: true, isSandbox: true, merchantId: MERCHANT, merchantKey: TEST_KEY, passphrase: PASSPHRASE },
     'test',
   )
   ok('the gateway saves', saved.ok, saved.ok ? '' : saved.error)
@@ -151,17 +202,52 @@ async function main() {
     SITE,
     `SELECT merchant_id, merchant_key, passphrase FROM payment_gateways WHERE provider = 'payfast'`,
   )
-  ok('the merchant key is NOT stored in plaintext', !String(stored?.merchant_key).includes('super-secret-key'))
+  ok('the merchant key is NOT stored in plaintext', !String(stored?.merchant_key).includes(TEST_KEY))
   ok('the passphrase is NOT stored in plaintext', !String(stored?.passphrase).includes(PASSPHRASE))
   ok('the merchant id IS plaintext (it is public)', String(stored?.merchant_id) === MERCHANT)
 
   const readBack = await getGateway(SITE)
-  ok('they decrypt back correctly', readBack?.merchantKey === 'super-secret-key' && readBack.passphrase === PASSPHRASE)
+  ok('they decrypt back correctly', readBack?.merchantKey === TEST_KEY && readBack.passphrase === PASSPHRASE)
   ok('the store can now take payments', await canTakePayments(SITE))
 
   ok(
     'a non-numeric merchant id is refused',
-    !(await saveGateway(SITE, { isActive: true, isSandbox: true, merchantId: 'abc', merchantKey: 'k', passphrase: '' }, 'test')).ok,
+    !(await saveGateway(SITE, { isActive: true, isSandbox: true, merchantId: 'abc', merchantKey: TEST_KEY, passphrase: '' }, 'test')).ok,
+  )
+
+  /*
+   * A merchant key of the wrong LENGTH.
+   *
+   * PayFast rejects anything but 13 characters, but only once the shopper has
+   * been handed to its checkout — so without this check the shop discovers it
+   * on PayFast's own 400 page, in front of a customer trying to pay. It shipped
+   * exactly that way: a shop typed its account PASSWORD into the field, which
+   * saved happily and failed every payment.
+   */
+  const wrongLength = await saveGateway(
+    SITE,
+    { isActive: true, isSandbox: true, merchantId: MERCHANT, merchantKey: 'Odyssey5204!', passphrase: '' },
+    'test',
+  )
+  ok('a merchant key of the wrong length is refused', !wrongLength.ok)
+  ok(
+    '  and the message says what to do about it',
+    !wrongLength.ok && /13 characters/.test(wrongLength.error) && /not your account password/.test(wrongLength.error),
+    wrongLength.ok ? '' : wrongLength.error,
+  )
+
+  /*
+   * A BLANK key when one is already stored means "keep it", not "erase it".
+   * The form is write-only and says so; refusing the blank meant a shop could
+   * not switch its own gateway on without retyping a key it had already saved.
+   */
+  ok(
+    'a blank key is allowed when one is stored',
+    (await saveGateway(SITE, { isActive: true, isSandbox: true, merchantId: MERCHANT, merchantKey: '', passphrase: '' }, 'test')).ok,
+  )
+  ok(
+    '  and the stored key survived it',
+    (await getGateway(SITE))?.merchantKey === TEST_KEY,
   )
 
   /* ── Verification ─────────────────────────────────────────────────────── */
@@ -211,7 +297,10 @@ async function main() {
      SELECT ?, id, 'collect', ?, 250 FROM online_order_statuses WHERE role = 'new' LIMIT 1`,
     [`${TAG}-1`, TAG],
   )
-  const intent = await createIntent(SITE, { targetId: order.insertId, amountIncl: 250 })
+  const intent = await createIntent(SITE, {
+    target: { purpose: 'online_order', orderId: order.insertId },
+    amountIncl: 250,
+  })
 
   ok('a reference is unguessable', intent.reference.length > 20, intent.reference)
   ok('the expected amount is recorded up front', intent.amountIncl === 250)
@@ -243,7 +332,10 @@ async function main() {
      SELECT ?, id, 'collect', ?, 99 FROM online_order_statuses WHERE role = 'new' LIMIT 1`,
     [`${TAG}-2`, TAG],
   )
-  const intent2 = await createIntent(SITE, { targetId: order2.insertId, amountIncl: 99 })
+  const intent2 = await createIntent(SITE, {
+    target: { purpose: 'online_order', orderId: order2.insertId },
+    amountIncl: 99,
+  })
   const failed = await settleIntent(SITE, intent2.reference, { paid: false, failureReason: 'Card declined' })
   ok('a declined payment is recorded as failed', failed.outcome === 'failed')
   ok('with its reason', (await getIntent(SITE, intent2.reference))?.failureReason === 'Card declined')
