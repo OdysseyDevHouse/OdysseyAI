@@ -231,9 +231,27 @@ export function ProductTile({
           /* The barcode, as the till's own tile shows it — see CatalogPane, which
              swaps in a STOCK note there instead. It does not belong here: a manager
              arranging the menu is identifying which product a tile is, and "none on
-             hand" answers a question nobody is asking at this desk. */
-          subtitle={product.barcode || product.code}
-          price={formatMoney(product.price)}
+             hand" answers a question nobody is asking at this desk.
+
+             A variant GROUP says so instead (070). Its own barcode is usually
+             blank — a grouping row is never scanned — and more to the point the
+             thing a manager needs to know before placing this tile is that it
+             behaves differently from its neighbours: at the till it opens a
+             picker rather than ringing up, and hiding or moving it takes every
+             size with it. */
+          subtitle={
+            product.hasVariants
+              ? `${product.variantCount} ${product.variantCount === 1 ? 'variant' : 'variants'}`
+              : product.barcode || product.code
+          }
+          /* "from R199" on a group: the figure is its cheapest member's, and a
+             bare price would state as fact something that is true of one size
+             and wrong for the rest. The picker quotes the exact one. */
+          price={
+            product.hasVariants
+              ? `from ${formatMoney(product.price)}`
+              : formatMoney(product.price)
+          }
           /* The product's own icon when a manager has uploaded one, so the tile a
              cashier will actually press is what shows here. It sits ON the tone rather
              than replacing it, so a transparent glyph keeps its background.

@@ -30,6 +30,11 @@
 import { siteExecute, siteQuery } from '../src/lib/siteDb'
 import { makeParent, attachChild, allVariantAxes } from '../src/lib/site/productVariants'
 import { browseForTill, searchForTill, resolveScan, tillProductCounts } from '../src/lib/site/tillSearch'
+import {
+  listMenuProducts,
+  setProductsVisibleInPos,
+  moveProductsToDepartment,
+} from '../src/lib/site/menuDesigner'
 
 const SITE = 1
 const TAG = 'ZZTILLVAR'
@@ -237,7 +242,94 @@ async function main() {
     .join(',')
   ok('members carry a real position, in attachment order', ordered === 'S,M,L', ordered)
 
-  /* ── 7. The count is a promise about the tile ────────────────────────── */
+  /* ── 7. The MENU DESIGNER, which arranges the same tiles ─────────────── */
+
+  /*
+   * The designer's palette is the other half of "a group is one tile". If it
+   * offered the members too, a shopkeeper could drag a shirt and a medium onto
+   * the same menu and get two tiles a cashier cannot tell apart — and, worse,
+   * every writer in that module would then be able to single out a member:
+   * moving one to its own department breaks rule 5's inheritance, and hiding
+   * one leaves it answering to a picker behind a tile that is gone.
+   */
+  const palette = await listMenuProducts(SITE)
+  const mine = palette.filter((p) => p.code.startsWith(TAG))
+  ok(
+    'the designer palette offers the GROUP, not its sizes',
+    codes(mine) === `${TAG}-CAP,${TAG}-EMPTY,${TAG}-SHIRT`,
+    codes(mine),
+  )
+  const paletteTile = mine.find((p) => p.code === `${TAG}-SHIRT`)!
+  ok('and badges it as a group', paletteTile.hasVariants && paletteTile.variantCount === 3,
+    `hasVariants=${paletteTile.hasVariants} count=${paletteTile.variantCount}`)
+  ok(
+    'quoting its cheapest member rather than R0.00',
+    paletteTile.price === 100,
+    String(paletteTile.price),
+  )
+
+  /*
+   * And it has to come back in a reasonable time.
+   *
+   * The first version of that query put an unguarded correlated subquery on
+   * every row and took NINE MINUTES on this site's 40,000 products — for a
+   * shop with no variant groups at all. It is guarded by `has_variants = 1`
+   * now, and this assertion is here because the failure mode is a designer
+   * that simply never loads rather than an error anybody can read.
+   *
+   * Deliberately loose: 10s is nowhere near the ~500ms it measures at, so this
+   * will not go red on a slow laptop or a cold buffer pool. It is a tripwire
+   * for a return to minutes, not a benchmark.
+   */
+  const started = Date.now()
+  await listMenuProducts(SITE)
+  const took = Date.now() - started
+  ok('the palette query stays off the products table’s neck', took < 10_000, `${took}ms`)
+
+  /* Hiding a group must reach its members: LIVE_GROUP_ONLY deliberately does
+     not check visible_in_pos on a child, so a parent-only write would leave
+     five sizes answering to a picker behind a tile that is no longer there. */
+  await setProductsVisibleInPos(SITE, [shirt], false)
+  const hidden = await siteQuery<any>(
+    SITE,
+    `SELECT visible_in_pos FROM products WHERE id = ? OR parent_id = ?`,
+    [shirt, shirt],
+  )
+  ok(
+    'hiding a group hides its members too',
+    hidden.length === 4 && hidden.every((r: any) => Number(r.visible_in_pos) === 0),
+    hidden.map((r: any) => r.visible_in_pos).join(','),
+  )
+  await setProductsVisibleInPos(SITE, [shirt], true)
+  const shown = await siteQuery<any>(
+    SITE,
+    `SELECT visible_in_pos FROM products WHERE id = ? OR parent_id = ?`,
+    [shirt, shirt],
+  )
+  ok(
+    'and showing it brings them back',
+    shown.every((r: any) => Number(r.visible_in_pos) === 1),
+    shown.map((r: any) => r.visible_in_pos).join(','),
+  )
+
+  /* Department is INHERITED (rule 5), so dragging the group's tile to another
+     department has to carry the members — a group under Clothing whose mediums
+     sit under Groceries is a broken record. */
+  const other = await makeDepartment(`${TAG} Elsewhere`)
+  await moveProductsToDepartment(SITE, [shirt], other)
+  const moved = await siteQuery<any>(
+    SITE,
+    `SELECT department_id FROM products WHERE parent_id = ?`,
+    [shirt],
+  )
+  ok(
+    'moving a group carries its members’ department',
+    moved.every((r: any) => Number(r.department_id) === other),
+    moved.map((r: any) => r.department_id).join(','),
+  )
+  await moveProductsToDepartment(SITE, [shirt], dept)
+
+  /* ── 8. The count is a promise about the tile ────────────────────────── */
 
   const counts = await tillProductCounts(SITE)
   ok(

@@ -2,6 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteExecute, siteTransaction } from '../siteDb'
 import { listDepartments, descendantIds, type Department } from './departments'
+import { cascadeInherited } from './productVariants'
 
 /**
  * The menu designer's data layer: the till's browse menu as one editable thing.
@@ -42,6 +43,16 @@ export type MenuProduct = {
   imageColor: string | null
   /** Stored icon name, or null for the colour-and-initial tile. */
   imageIcon: string | null
+  /**
+   * True when this tile is a variant GROUP (070) — a shirt, not a size.
+   *
+   * The designer needs to say so on the tile, because a group behaves
+   * differently from the product beside it: at the till it opens a picker
+   * rather than ringing up, and every edit made here reaches its members.
+   */
+  hasVariants: boolean
+  /** How many live members are behind a group tile. 0 on an ordinary product. */
+  variantCount: number
 }
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -69,6 +80,8 @@ function mapProduct(r: Row): MenuProduct {
     price: Number(r.price ?? 0),
     imageColor: (r.image_color as string | null) ?? null,
     imageIcon: (r.image_icon as string | null) ?? null,
+    hasVariants: Number(r.has_variants ?? 0) === 1,
+    variantCount: Number(r.variant_count ?? 0),
   }
 }
 
@@ -79,6 +92,10 @@ function mapProduct(r: Row): MenuProduct {
  * sellable, so a tile for one is a button that cannot work. Products with no
  * department come back too — those are the "not on the menu" tray, and they are
  * the whole reason the designer has one.
+ *
+ * Variant MEMBERS are excluded as well, and that is load-bearing rather than
+ * cosmetic — see the WHERE clause. A group is one tile here exactly as it is
+ * one tile at the till.
  *
  * The price is the DEFAULT price structure's shelf price — the number the till
  * puts on the button. Read as a scalar subquery rather than a join so a product
@@ -91,14 +108,49 @@ export async function listMenuProducts(siteId: number): Promise<MenuProduct[]> {
     siteId,
     `SELECT p.id, p.code, p.barcode, p.description, p.department_id,
             p.pos_sort_order, p.visible_in_pos, p.image_color, p.image_icon,
-            COALESCE((
+            p.has_variants,
+            -- Both variant subqueries sit behind has_variants = 1, and that
+            -- guard is a PERFORMANCE requirement rather than tidiness.
+            --
+            -- Measured: a shop with 40,036 live products and no groups at all
+            -- ran the unguarded version for over nine minutes — 40,036
+            -- evaluations of a two-table join to discover there was nothing to
+            -- find. MariaDB will not short-circuit a correlated subquery on
+            -- its own, so the CASE has to. Guarded, a shop with no variants
+            -- pays one integer comparison per row, and a shop with twenty
+            -- groups pays the subquery twenty times.
+            CASE WHEN p.has_variants = 1 THEN (
+              SELECT COUNT(*) FROM products c
+               WHERE c.parent_id = p.id AND c.is_archived = 0
+            ) ELSE 0 END AS variant_count,
+            -- A GROUP has no price row of its own, so it quotes its cheapest
+            -- member — the same figure the till's tile shows, and for the same
+            -- reason: a shirt priced at R0.00 in the palette is a tile nobody
+            -- can place with confidence. See selectProduct in tillSearch.ts.
+            CASE WHEN p.has_variants = 1 THEN COALESCE((
+              SELECT MIN(cpp.selling_price_incl) FROM products c
+                JOIN product_prices cpp ON cpp.product_id = c.id
+                JOIN price_structures cps ON cps.id = cpp.price_structure_id
+               WHERE c.parent_id = p.id AND c.is_archived = 0
+                 AND cps.is_default = 1
+            ), 0) ELSE COALESCE((
               SELECT pp.selling_price_incl FROM product_prices pp
                 JOIN price_structures ps ON ps.id = pp.price_structure_id
                WHERE pp.product_id = p.id
                ORDER BY ps.is_default DESC, ps.id LIMIT 1
-            ), 0) AS price
+            ), 0) END AS price
        FROM products p
       WHERE p.is_archived = 0
+        -- Variant MEMBERS are not tiles (070). The group stands for them, and
+        -- listing both would offer a shirt six times — five sizes plus the
+        -- thing that contains them — with no way for a shopkeeper to tell
+        -- which tile does what once they are side by side on the menu.
+        --
+        -- This is also what keeps every WRITER below safe: a member cannot be
+        -- selected here, so nothing in this module can move one to its own
+        -- department (breaking rule 5's inheritance) or hide one out from
+        -- under the picker that lists it.
+        AND p.parent_id IS NULL
       ORDER BY ${productOrder('p')}`,
   )
   return rows.map(mapProduct)
@@ -162,6 +214,20 @@ export async function moveProductsToDepartment(
         'UPDATE products SET department_id = ?, pos_sort_order = ? WHERE id = ?',
         [departmentId, next, id],
       )
+      /*
+       * A GROUP takes its members with it (070, rule 5).
+       *
+       * Department is an INHERITED column: a group filed under Clothing whose
+       * mediums sit under Groceries is a broken record, and the storefront's
+       * breadcrumb cannot point two ways at once. Dragging the tile here is a
+       * legitimate way to change it, so the change has to reach the members.
+       *
+       * `cascadeInherited` rather than a second UPDATE of `department_id`
+       * alone: it is the one definition of what a child inherits, and a copy
+       * here would silently stop matching the day a fifth column joins the
+       * list. It is a no-op on an ordinary product, which has no children.
+       */
+      await cascadeInherited(tx, id)
     }
   })
 
@@ -188,7 +254,11 @@ export async function reorderMenuProducts(
 
   const rows = await siteQuery<RowDataPacket & { id: number }>(
     siteId,
-    `SELECT id FROM products WHERE department_id = ? AND is_archived = 0`,
+    /* Members excluded, matching `listMenuProducts`: they are not tiles, so
+       they can never appear in an order the designer submits. Leaving them in
+       would make this guard admit an id the palette cannot produce. */
+    `SELECT id FROM products
+      WHERE department_id = ? AND is_archived = 0 AND parent_id IS NULL`,
     [departmentId],
   )
   const here = new Set(rows.map((r) => Number(r.id)))
@@ -251,6 +321,19 @@ export async function moveDepartment(
  * Hiding is not archiving and not deleting: the product stays sellable by scan
  * and by search, it just stops taking a tile. That distinction is why the
  * designer offers it at all — a shop with 400 SKUs wants 30 on the grid.
+ *
+ * ── A GROUP AND ITS MEMBERS MOVE TOGETHER ────────────────────────────────
+ *
+ * Hiding a variant group means exactly what hiding anything else means: the
+ * tile leaves the grid and the goods stay sellable by scan. But the flag has to
+ * reach the MEMBERS too, and the reason is `LIVE_GROUP_ONLY` in tillSearch.ts:
+ * it deliberately does not check `visible_in_pos` on a child, so that hiding
+ * one size thins the picker rather than deleting the whole group. Written only
+ * to the parent, "hide" would leave five members still answering to a picker
+ * behind a tile that is no longer there.
+ *
+ * Showing cascades for the same reason from the other side — a group turned
+ * back on whose members were left hidden opens an empty picker.
  */
 export async function setProductsVisibleInPos(
   siteId: number,
@@ -260,10 +343,13 @@ export async function setProductsVisibleInPos(
   const ids = [...new Set(productIds.filter((id) => Number.isInteger(id) && id > 0))]
   if (ids.length === 0) return { ok: true }
 
+  const list = ids.map(() => '?').join(',')
   await siteExecute(
     siteId,
-    `UPDATE products SET visible_in_pos = ? WHERE id IN (${ids.map(() => '?').join(',')})`,
-    [visible ? 1 : 0, ...ids],
+    `UPDATE products SET visible_in_pos = ?
+      WHERE id IN (${list})
+         OR parent_id IN (${list})`,
+    [visible ? 1 : 0, ...ids, ...ids],
   )
   return { ok: true }
 }
