@@ -4,6 +4,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne, execute } from './db'
 import { siteQueryOne, MASTER, type SitePurpose } from './siteDb'
 import { entitlementsForSite, allHold, has as hasModule } from './control/modules'
+import { isControlUnreachable } from './sites'
 
 /**
  * Linked stores.
@@ -227,17 +228,46 @@ function mapMember(r: MemberRow): GroupMember {
   }
 }
 
-/** The group a site belongs to, if any. A site belongs to at most one. */
+/**
+ * The group a site belongs to, if any. A site belongs to at most one.
+ *
+ * ── AN UNREACHABLE CONTROL PANEL MEANS "NO GROUP", NOT AN ERROR ─────────────
+ *
+ * This is the first control-database read on the product screens, the storefront
+ * routes and every group report, and it used to throw straight through them. On
+ * a local-backend shop with no line that produced
+ *
+ *     Error: connect ENETUNREACH 105.30.57.88:3306
+ *
+ * on the screen of a machine holding every product, price and sale it needed —
+ * because it could not find out whether it had SIBLINGS.
+ *
+ * Null is the honest degradation, and it is the same trade ownerSiteFor() has
+ * always made two hundred lines below: the shop behaves as a single store,
+ * which is what the overwhelming majority of them are and what every one of
+ * them was before groups existed. Nothing is shown that should not be — a group
+ * read that fails can only ever HIDE another store's data, never expose it.
+ *
+ * The write paths are deliberately NOT wrapped. createGroup, addMember,
+ * setMemberSharing and the rest must fail loudly on a machine that cannot reach
+ * the control panel: a sharing change that silently did nothing is far worse
+ * than one that says it could not be saved.
+ */
 export async function groupForSite(siteId: number): Promise<StoreGroup | null> {
-  const row = await queryOne<GroupRow>(
-    `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode, g.legal_entity, g.shares_loyalty_wallet, g.shares_gift_cards
-       FROM cp2_store_groups g
-       JOIN cp2_store_group_members m ON m.group_id = g.id
-      WHERE m.site_id = ? AND g.status = 'active'
-      LIMIT 1`,
-    [siteId],
-  )
-  return row ? mapGroup(row) : null
+  try {
+    const row = await queryOne<GroupRow>(
+      `SELECT g.id, g.name, g.primary_site_id, g.status, g.online_group_mode, g.legal_entity, g.shares_loyalty_wallet, g.shares_gift_cards
+         FROM cp2_store_groups g
+         JOIN cp2_store_group_members m ON m.group_id = g.id
+        WHERE m.site_id = ? AND g.status = 'active'
+        LIMIT 1`,
+      [siteId],
+    )
+    return row ? mapGroup(row) : null
+  } catch (err) {
+    if (!isControlUnreachable(err)) throw err
+    return null
+  }
 }
 
 /**
@@ -264,6 +294,23 @@ export async function membersOfGroup(groupId: number): Promise<GroupMember[]> {
       [groupId],
     )
   ).map(mapMember)
+}
+
+/**
+ * membersOfGroup, for the read paths that must survive a dead line.
+ *
+ * An empty list reads as "no siblings to share with", which is the same safe
+ * narrowing groupForSite() makes above. Kept separate from membersOfGroup
+ * itself so the SETUP screen — where an empty list would look like a group that
+ * had lost its members — still gets the throw and can say so.
+ */
+export async function membersOrNone(groupId: number): Promise<GroupMember[]> {
+  try {
+    return await membersOfGroup(groupId)
+  } catch (err) {
+    if (!isControlUnreachable(err)) throw err
+    return []
+  }
 }
 
 /**
@@ -298,7 +345,7 @@ export async function linkedStores(siteId: number): Promise<GroupMember[]> {
   const entitlements = await entitlementsForSite(siteId)
   if (!hasModule(entitlements, 'multi_branch')) return []
 
-  const members = await membersOfGroup(group.id)
+  const members = await membersOrNone(group.id)
   /*
    * A store with sharing switched off belongs to the group but exchanges
    * nothing, so it is excluded here — this is the list the product screen fans

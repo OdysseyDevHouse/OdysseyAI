@@ -1,5 +1,5 @@
 /**
- * Odyssey Database Setup — the provisioning run.
+ * OdysseyAI Database Setup — the provisioning run.
  *
  * A technician runs this on the ONE machine that hosts a shop's database: the
  * in-store box on a hybrid site, the back-office machine on a local one. A
@@ -134,7 +134,7 @@ function describe(plan: SetupPlan): void {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
 
-  console.log('\nOdyssey Database Setup\n')
+  console.log('\nOdysseyAI Database Setup\n')
 
   const email = args.email || (await ask('Email: '))
   const password = args.password || (await ask('Password: '))

@@ -1,5 +1,5 @@
 /**
- * The apply step of Odyssey Database Setup.
+ * The apply step of OdysseyAI Database Setup.
  *
  * What it decides, and why each matters:
  *
@@ -182,7 +182,7 @@ async function main() {
     await localDb.provisionForPlan({ port: 33104, statements: STATEMENTS, lan: false })
   } catch (err) {
     /* The actionable message: name the missing step rather than blame the build. */
-    noServer = /Odyssey Database Setup|ODYSSEY_MARIADB_DIR/.test(err.message)
+    noServer = /OdysseyAI Database Setup|ODYSSEY_MARIADB_DIR/.test(err.message)
   }
   process.env.ODYSSEY_MARIADB_DIR = keep
   check('a machine with no server says which step is missing', noServer)

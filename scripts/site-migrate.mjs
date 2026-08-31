@@ -59,7 +59,7 @@ const control = await mysql.createConnection({
  *
  * So the master is named rather than sorted to. The `hybrid` record is
  * deliberately excluded: that box holds open tabs and an outbox, not a shop.
- * It is provisioned by Odyssey Database Setup and migrated by
+ * It is provisioned by OdysseyAI Database Setup and migrated by
  * scripts/box-migrate.mjs, which applies sql/box/ instead.
  */
 const [rows] = await control.query(

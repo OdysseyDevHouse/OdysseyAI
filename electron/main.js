@@ -14,6 +14,7 @@ const dbSetupBridge = require('./dbSetupBridge')
 const { applyMigrations } = require('./siteMigrate')
 const log = require('./log')
 const updater = require('./updater')
+const { appRequire } = require('./appModules')
 
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
@@ -52,9 +53,9 @@ let appOrigin = null
  * technician reads before deciding they opened the wrong program.
  */
 function windowTitle() {
-  if (isPos()) return 'Odyssey Point of Sale'
-  if (isDatabaseSetup()) return 'Odyssey Database Setup'
-  return 'Odyssey Back Office'
+  if (isPos()) return 'OdysseyAI Point of Sale'
+  if (isDatabaseSetup()) return 'OdysseyAI Database Setup'
+  return 'OdysseyAI Back Office'
 }
 
 function isTillUrl(url) {
@@ -105,7 +106,7 @@ function waitForServer(url, timeoutMs = 60000) {
  *
  * ── THE GAP THIS CLOSES ─────────────────────────────────────────────────────
  *
- * Odyssey Database Setup applies sql/site/*.sql when it adopts a machine, and
+ * OdysseyAI Database Setup applies sql/site/*.sql when it adopts a machine, and
  * until now that was the ONLY thing that ever did. So every migration written
  * after a shop was set up was stranded: the Back Office shipped with the files
  * in resources/sql, read none of them, and the shop stayed on the schema it had
@@ -178,7 +179,7 @@ async function prepareRuntime(onProgress) {
 
   /* ── AN ADOPTED INSTALL DOES NOT OWN THE SERVER ─────────────────────────────
    *
-   * Odyssey Database Setup registered MariaDB as a Windows service, running as
+   * OdysseyAI Database Setup registered MariaDB as a Windows service, running as
    * the machine and started at boot. This app connects to it and nothing more:
    * it must not try to start a server it did not install, and it must certainly
    * not initialise a data directory that already holds the shop's trading
@@ -250,8 +251,42 @@ async function prepareRuntime(onProgress) {
 async function startNextServer() {
   // Packaged: run Next's own server against the prebuilt .next output. app.asar
   // is read-only, so the build must already exist — `npm run dist` handles that.
-  const next = require('next')
+  const next = appRequire('next')
   const appDir = app.isPackaged ? path.join(process.resourcesPath, 'app') : path.join(__dirname, '..')
+
+  /* ── HAND NEXT THE CONFIG INSTEAD OF LETTING IT GO AND READ ONE ──────────
+   *
+   * next({ dev: false }) would otherwise load next.config.mjs from disk at
+   * startup, and loading a config means loadWebpackHook() — webpack, @babel
+   * /runtime, and the rest of Next's BUILD toolchain. None of that is in
+   * app/node_modules, because appModules.js points us at the traced tree and
+   * the trace is of the SERVER, which never reads a config.
+   *
+   * So prepare() threw, in a packaged build only, before the listener was ever
+   * created. The shell waits on /api/health to decide the app is up, so the
+   * window simply never opened — no error on screen, nothing in the app's own
+   * log, because none of our code had run yet.
+   *
+   * Next expects this. config.js swallows the loadWebpackHook failure — but
+   * only when this variable is set:
+   *
+   *     } catch (err) {
+   *       // this can fail in standalone mode as the files aren't traced/included
+   *       if (!process.env.__NEXT_PRIVATE_STANDALONE_CONFIG) { throw err }
+   *     }
+   *
+   * and then uses the parsed value as the config, applying no defaults because
+   * they are already baked in. `.next/required-server-files.json` is where
+   * `next build` writes exactly that resolved config; Next's own standalone
+   * server.js does the same thing with a copy inlined into itself. Reading the
+   * file instead of inlining it means the config can never drift from the build
+   * sitting next to it.
+   *
+   * Not gated on app.isPackaged: a dev checkout resolves the whole toolchain
+   * from the repository and would work either way, and a startup path that
+   * differs between dev and packaged is one that gets tested in the wrong one. */
+  const { config } = require(path.join(appDir, '.next', 'required-server-files.json'))
+  process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(config)
 
   const nextApp = next({ dev: false, dir: appDir })
   await nextApp.prepare()
@@ -383,7 +418,7 @@ async function createWindow() {
           minWidth: 1024,
           minHeight: 640,
           backgroundColor: '#0f1216',
-          title: 'Odyssey Point of Sale',
+          title: 'OdysseyAI Point of Sale',
           webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -433,7 +468,7 @@ async function createWindow() {
    * being silently swallowed: a waiter following a help link should get the
    * help page, just not inside the till.
    */
-  /* Odyssey Database Setup is guarded for the same reason and by the same
+  /* OdysseyAI Database Setup is guarded for the same reason and by the same
      shape of rule: it ships without a back office, so a link into one must not
      open a screen this machine has no business showing. */
   const guard = isPos() ? posNavigation : isDatabaseSetup() ? setupNavigation : null

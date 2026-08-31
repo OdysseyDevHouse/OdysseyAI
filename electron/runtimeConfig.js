@@ -172,7 +172,7 @@ function resolveEnv() {
   if (mode === 'local' && cfg.siteDbSealed) {
     /* ── ADOPTED: THE SHOP IS LOCAL, THE CONTROL PANEL IS NOT ────────────────
      *
-     * Odyssey Database Setup created ONE database on this machine — the shop's
+     * OdysseyAI Database Setup created ONE database on this machine — the shop's
      * own, ODY10003_master and a user granted on it alone. It did not create a
      * control database, and there is no schema in this repository to create one
      * from.
@@ -211,7 +211,7 @@ function resolveEnv() {
      *
      * The licence check runs inside every finalised sale, so it cannot post the
      * owner's password — there is nobody at the counter to type it. It signs
-     * with this key instead. Collected by Odyssey Database Setup from /login
+     * with this key instead. Collected by OdysseyAI Database Setup from /login
      * and sealed by adoptMachineConfig(); absent on a machine set up before the
      * portal issued them, and every caller works without one by falling back to
      * the direct connection it used before.
@@ -440,7 +440,7 @@ function ensureBackend() {
    * become the other.
    *
    * But the first decision is often not a decision at all. A Back Office
-   * installed BEFORE Odyssey Database Setup has run finds no marker, defaults to
+   * installed BEFORE OdysseyAI Database Setup has run finds no marker, defaults to
    * cloud, and writes that down. userData survives reinstalls — deliberately, so
    * an upgrade cannot lose a database password — so every later install inherits
    * that default and never looks at backend.txt again. The machine then has a
@@ -462,7 +462,7 @@ function ensureBackend() {
      * There are two ways a machine can come to have a local database, and only
      * one of them may win on any given machine.
      *
-     *   · Odyssey Database Setup created it, from credentials the control panel
+     *   · OdysseyAI Database Setup created it, from credentials the control panel
      *     already held. It left them in ProgramData for us — see machineConfig.
      *   · provisionLocal() invents its own on first run, seals them under
      *     DPAPI, and picks a port in 33060–33359.
@@ -486,7 +486,7 @@ function ensureBackend() {
 }
 
 /**
- * Take what Odyssey Database Setup left in ProgramData into this install's own
+ * Take what OdysseyAI Database Setup left in ProgramData into this install's own
  * config, sealing the password per Windows account on the way in.
  *
  * Idempotent, and deliberately one-way: once adopted, the sealed copy is the

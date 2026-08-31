@@ -21,7 +21,7 @@ import { MOBILE_SHELL_COOKIE, MOBILE_SHELL_HEADER } from '@/lib/mobileShellKeys'
 // and reads no store — every value on it comes from exported constants in the
 // source, and the page opens no database connection. Exact, so a future
 // '/api-docs-internal' does not become public by accident.
-// '/database-setup' is Odyssey Database Setup's only screen, and '/api/db-setup'
+// '/database-setup' is OdysseyAI Database Setup's only screen, and '/api/db-setup'
 // is the wizard's own back end. Both run BEFORE there is anything to have a
 // session with: the technician is installing the database that the users table
 // will eventually live in, so requiring a session here is asking them to sign in
@@ -31,7 +31,7 @@ import { MOBILE_SHELL_COOKIE, MOBILE_SHELL_HEADER } from '@/lib/mobileShellKeys'
 // The API is not unguarded, and is guarded by something a cookie could not do
 // here anyway: main.js mints a random key at startup into the environment the
 // Next server inherits, and a caller that cannot present it gets a 404 — see
-// src/app/api/db-setup/route.ts. Only Odyssey Database Setup ever mints one, so
+// src/app/api/db-setup/route.ts. Only OdysseyAI Database Setup ever mints one, so
 // on a back office or a till these routes answer nothing at all.
 //
 // Exact for the screen, so a future '/database-setup-report' is not public by

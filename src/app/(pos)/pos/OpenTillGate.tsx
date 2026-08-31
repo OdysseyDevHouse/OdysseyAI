@@ -222,7 +222,7 @@ export default function OpenTillGate({
            */}
           <Image
             src="/logo-full.png"
-            alt="Odyssey Point of Sale"
+            alt="OdysseyAI Point of Sale"
             width={1109}
             height={304}
             priority

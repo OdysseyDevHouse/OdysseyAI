@@ -205,7 +205,7 @@ async function call(origin, action, payload = {}) {
     throw new Error(
       res.status === 404
         ? 'The setup service did not recognise this app. In a packaged build that means it was ' +
-          'not started as Odyssey Database Setup; running from source it usually means ' +
+          'not started as OdysseyAI Database Setup; running from source it usually means ' +
           'ODYSSEY_SETUP_KEY is missing from .env.local, so the two dev processes disagree.'
         : `Setup service returned ${res.status}.`,
     )
@@ -226,6 +226,19 @@ async function call(origin, action, payload = {}) {
  */
 function register({ getOrigin, getWindow }) {
   const progress = (message) => {
+    /* ── ALSO TO THE LOG, WITH A TIMESTAMP ────────────────────────────────
+     *
+     * The wizard's phases were the one part of an install that left no trace:
+     * every message went to the window and nowhere else, so once it closed
+     * there was no way to answer "which step took the twenty minutes" except by
+     * standing next to the machine with a stopwatch.
+     *
+     * log.start() patches console, so a plain console.log lands in the file in
+     * userData with an ISO timestamp on it — which turns a support request into
+     * arithmetic on two lines of a log a customer can email. Kept OUTSIDE the
+     * try below on purpose: a closed window must not also cost the record of
+     * what happened. */
+    console.log('[setup]', String(message))
     try {
       getWindow()?.webContents.send('db-setup:progress', String(message))
     } catch {
@@ -482,7 +495,7 @@ function register({ getOrigin, getWindow }) {
           ok: false,
           error:
             'Installing the database service needs administrator rights. Close this, right-click ' +
-            'Odyssey Database Setup and choose "Run as administrator", then try again.',
+            'OdysseyAI Database Setup and choose "Run as administrator", then try again.',
         }
       }
 
@@ -541,14 +554,14 @@ function register({ getOrigin, getWindow }) {
         await conn.end().catch(() => {})
       }
 
-      /* 3. Leave the connection where Odyssey Back Office will find it.
+      /* 3. Leave the connection where OdysseyAI Back Office will find it.
        *
        * The two are separate installers with separate userData directories, so
        * this is the only handoff between them — and without it the Back Office
        * would have a database on the machine and no idea how to reach it,
        * because looking it up means asking the control panel. See
        * electron/machineConfig.js for why it is written in the clear. */
-      progress('Recording the connection for Odyssey Back Office…')
+      progress('Recording the connection for OdysseyAI Back Office…')
       machineConfig.write({
         siteId: plan.siteId,
         siteCode: plan.siteCode,

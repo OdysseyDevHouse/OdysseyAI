@@ -10,7 +10,7 @@ import {
 } from '@/lib/dbSetupClient'
 
 /**
- * Odyssey Database Setup, as a person experiences it.
+ * OdysseyAI Database Setup, as a person experiences it.
  *
  * ── ONE COLUMN, ONE QUESTION AT A TIME ──────────────────────────────────────
  *
@@ -52,7 +52,7 @@ export default function SetupWizard() {
    * dbSetup() reads `window`, which does not exist while this is rendered on
    * the server — so calling it in the render body made the SERVER decide "no
    * bridge" and the CLIENT decide "bridge", which is a hydration mismatch. It
-   * showed as "Not running as Odyssey Database Setup" flashing before the real
+   * showed as "Not running as OdysseyAI Database Setup" flashing before the real
    * card, in the packaged app as well as in dev.
    *
    * `undefined` is therefore a third state and not laziness: not-yet-looked.
@@ -91,12 +91,12 @@ function NoBridge() {
   return (
     <Card>
       <CardHeader
-        title="Not running as Odyssey Database Setup"
+        title="Not running as OdysseyAI Database Setup"
         description="This screen installs a shop's database, and needs the desktop installer to do it."
       />
       <CardBody>
         <p className="text-muted text-sm">
-          You are seeing it in a browser. Run the Odyssey Database Setup installer on the machine
+          You are seeing it in a browser. Run the OdysseyAI Database Setup installer on the machine
           that will host the database.
         </p>
       </CardBody>
@@ -557,12 +557,12 @@ function DoneStep({ siteName, ownerName }: { siteName: string; ownerName: string
           </p>
           {ownerName ? (
             <p className="text-ink">
-              Install Odyssey Back Office on this machine and sign in as{' '}
+              Install OdysseyAI Back Office on this machine and sign in as{' '}
               <span className="text-ink font-medium">{ownerName}</span> with the PIN you just set.
             </p>
           ) : (
             <p className="text-ink">
-              This shop already had users. Install Odyssey Back Office on this machine and sign in
+              This shop already had users. Install OdysseyAI Back Office on this machine and sign in
               with an existing name and PIN.
             </p>
           )}

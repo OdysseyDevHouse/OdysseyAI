@@ -34,7 +34,7 @@ import { createStoreOwner, hasAnyUser } from '@/lib/dbSetup/firstUser'
  * information.
  *
  * That single check also decides WHICH BUILD has these routes, and deliberately
- * so. Only Odyssey Database Setup sets the key, so on a back office or a till
+ * so. Only OdysseyAI Database Setup sets the key, so on a back office or a till
  * this file is dead weight rather than a second guard that might disagree with
  * the first about what "the setup build" means.
  */

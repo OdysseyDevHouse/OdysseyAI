@@ -43,7 +43,7 @@ let serverProcess = null
  *
  * ── THEY ARE NO LONGER IN THIS APP ──────────────────────────────────────────
  *
- * MariaDB ships in its own installer — Odyssey Database Setup — rather than
+ * MariaDB ships in its own installer — OdysseyAI Database Setup — rather than
  * inside the Back Office and Point of Sale builds. It is ~200MB of third-party
  * binaries on their own release cadence, and bundling it meant every app update
  * re-downloaded a database that had not changed. It also meant a ten-till
@@ -75,7 +75,7 @@ function binDir() {
 }
 
 /**
- * Where Odyssey Database Setup installs the server.
+ * Where OdysseyAI Database Setup installs the server.
  *
  * ProgramData, not userData: the database is a MACHINE-level asset that outlives
  * any one Windows account. A technician provisions it under their own login and
@@ -455,13 +455,13 @@ async function ensureRunning({
 }) {
   if (!isBundled()) {
     /* The ordering trap: someone ran the app installer, chose "this machine
-       hosts the database", and has not run Odyssey Database Setup. Say exactly
+       hosts the database", and has not run OdysseyAI Database Setup. Say exactly
        that. The app deliberately does not fetch or install it — the three
        artifacts stay independent — so the only useful thing here is to name the
        missing step. */
     throw new Error(
       'This installation is set to keep its database on this machine, but no database server is installed. ' +
-        'Run Odyssey Database Setup on this machine first.',
+        'Run OdysseyAI Database Setup on this machine first.',
     )
   }
 
@@ -491,7 +491,7 @@ async function ensureRunning({
 /**
  * Provision this machine for a site, from a plan the control panel produced.
  *
- * This is the apply step of Odyssey Database Setup: the statements were built
+ * This is the apply step of OdysseyAI Database Setup: the statements were built
  * and checked by lib/dbSetup, and this is what runs them against a server that
  * may not exist yet.
  *
@@ -525,7 +525,7 @@ async function provisionForPlan({ port, statements, lan = false, rootPassword, o
   if (!isBundled()) {
     throw new Error(
       'No database server is installed on this machine. ' +
-        'Run Odyssey Database Setup, or point ODYSSEY_MARIADB_DIR at an existing install.',
+        'Run OdysseyAI Database Setup, or point ODYSSEY_MARIADB_DIR at an existing install.',
     )
   }
   if (!Array.isArray(statements) || statements.length === 0) {

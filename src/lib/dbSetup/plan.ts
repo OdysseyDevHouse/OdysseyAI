@@ -3,7 +3,7 @@ import { getSiteDatabase, type SiteDatabase } from '../siteDb'
 import { listSitesForUser, type ConnectionType, type Site } from '../sites'
 
 /**
- * What Odyssey Database Setup should do on this machine.
+ * What OdysseyAI Database Setup should do on this machine.
  *
  * ── WHY A PLAN, SEPARATE FROM DOING IT ────────────────────────────────────
  *

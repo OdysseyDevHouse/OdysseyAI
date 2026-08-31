@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { requireSession, requireSiteUser } from '@/lib/auth'
-import { listSitesForUser } from '@/lib/sites'
+import { listSitesForUser, isControlUnreachable } from '@/lib/sites'
 import { opensHere } from '@/lib/desktopBackOffice'
 import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
@@ -10,6 +10,7 @@ import { isMobileShell } from '@/lib/mobileShell'
 import { ToastProvider } from '@/components/ui'
 import DesktopLicenceGate from './DesktopLicenceGate'
 import LeaseLockScreen from './LeaseLockScreen'
+import ControlUnreachable from './ControlUnreachable'
 import { lockState } from '@/lib/licence/lockState'
 import PrecisionProvider from '@/components/PrecisionProvider'
 import { getSettings } from '@/lib/site/settings'
@@ -32,7 +33,43 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Site access, the local user record and their permissions, all re-read per
   // request rather than trusted from the token — so access revoked upstream or
   // a role changed on the permissions screen takes effect on the next load.
-  const { site, user, capabilities, modules } = await requireSiteUser()
+  /*
+   * ── THE LINE IS DOWN: ONE SCREEN, NOT A STACK TRACE ─────────────────────
+   *
+   * Everything below needs the control panel at least indirectly, and on a
+   * machine with no internet these reads throw a raw socket error — `connect
+   * ENETUNREACH 105.30.57.88:3306`. That lands on global-error.tsx, which is a
+   * DIAGNOSTIC screen by design: it shows the real error because for a genuine
+   * fault the only reader is the person who can act on it.
+   *
+   * A shop with no internet is not a genuine fault, and the reader is the owner.
+   * So the one condition that has a plain-English remedy is caught here and
+   * given the same treatment as an expired lease — a screen that says what
+   * happened and what to do.
+   *
+   * ── WHY THE CATCH IS NARROW ──────────────────────────────────────────────
+   *
+   * `redirect()` works by throwing, and requireSession()/requireSiteUser() both
+   * use it — for a password change, a missing site, a superseded session.
+   * Swallowing that would strand the user on this screen instead of sending
+   * them where they were meant to go. So only a recognised offline error is
+   * caught and everything else, redirects included, is re-thrown untouched.
+   */
+  let resolved
+  try {
+    resolved = await requireSiteUser()
+  } catch (err) {
+    if (!isControlUnreachable(err)) throw err
+    /* Which screen that becomes depends on the build — see ControlUnreachable.
+       A till gets the plain-English remedy; the web build gets the error, because
+       there the reader is an operator and the cause is a setting. */
+    return (
+      <ToastProvider>
+        <ControlUnreachable err={err} />
+      </ToastProvider>
+    )
+  }
+  const { site, user, capabilities, modules } = resolved
 
   /*
    * ── HOW MANY DECIMALS THIS SHOP SHOWS ───────────────────────────────────

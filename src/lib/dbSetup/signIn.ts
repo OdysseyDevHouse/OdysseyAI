@@ -8,7 +8,7 @@ import { verifyPassword } from '../password'
  * ── WHY NOT lib/auth.signIn ───────────────────────────────────────────────
  *
  * That one sets a session cookie, which means it needs a Next request context.
- * Odyssey Database Setup is a console program run before any of this shop's
+ * OdysseyAI Database Setup is a console program run before any of this shop's
  * software exists; there is no request, no cookie jar, and nothing to keep a
  * session for. It authenticates once, reads two rows, and exits.
  *

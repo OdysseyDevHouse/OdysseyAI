@@ -1,6 +1,7 @@
 import 'server-only'
 import mysql from 'mysql2/promise'
 import type { Pool, RowDataPacket, ResultSetHeader } from 'mysql2/promise'
+import { decryptSecret } from './crypto/secrets'
 
 /**
  * The CONTROL database (odyssey_tickets).
@@ -21,7 +22,28 @@ function createPool(): Pool {
     host: process.env.DB_HOST || 'localhost',
     port: Number(process.env.DB_PORT || 3306),
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
+    /**
+     * DB_PASSWORD may arrive encrypted, and on a shared server it should.
+     *
+     * The v2 backend keeps this credential as an `enc:v1:` envelope in its own
+     * .env and decrypts on the way to MySQL (utils/secret.ts). Reading it raw
+     * here meant a .env copied from that backend — the obvious thing to do,
+     * since both connect to the SAME odyssey_tickets — sent the literal
+     * ciphertext as the password. MySQL's answer to that is
+     *
+     *     Access denied for user 'X'@'host' (using password: YES)
+     *
+     * which reads as a wrong password or a missing grant and is neither.
+     *
+     * secrets.ts already implements that exact envelope byte for byte, because
+     * it has to read cp2_site_databases.db_password_enc written by the same
+     * backend. So this is not a new format to support — it is the one already
+     * in the process, applied to the one credential that was missing it.
+     *
+     * Plaintext passes straight through, so a desktop install (whose value
+     * comes from buildDefaults.json) and every existing .env keep working.
+     */
+    password: decryptSecret(process.env.DB_PASSWORD),
     database: process.env.DB_NAME || 'odyssey_tickets',
     connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 10),
     waitForConnections: true,
@@ -32,6 +54,22 @@ function createPool(): Pool {
     decimalNumbers: false,
     dateStrings: ['DATE'],
   })
+}
+
+/**
+ * Drops the cached pool so the next call re-reads the environment.
+ *
+ * mysql2 builds a pool without connecting, so a pool aimed at a wrong or
+ * unresolvable host is cached exactly like a working one and keeps failing
+ * identically for the life of the process. Editing DB_HOST then has no visible
+ * effect and the natural conclusion is that the edit did not take — see
+ * invalidateSitePool in siteDb.ts, which exists for the same reason.
+ */
+export function invalidateControlPool(): void {
+  const existing = globalForDb.odysseyControlPool
+  if (!existing) return
+  globalForDb.odysseyControlPool = undefined
+  void existing.end().catch(() => {})
 }
 
 export function pool(): Pool {

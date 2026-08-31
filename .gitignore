@@ -38,3 +38,8 @@ vendor/mariadb/
 # Per-BUILD marker, not a repo fact: committed, it would silently make every
 # build a local one. See docs/local-backend.md.
 build/backend.txt
+
+# Deploy staging output. A full copy of a build (~150MB) plus the bundled
+# process manager, rebuilt by deploy/deploy-local.ps1 on demand.
+deploy/staged/
+deploy/staged*.zip

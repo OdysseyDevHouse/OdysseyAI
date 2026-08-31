@@ -25,7 +25,7 @@ import { createHash, createHmac } from 'node:crypto'
  *     A customer can unpack these from an asar and the portal's own
  *     documentation says so; they are the outer lock, not the answer.
  *   · the SHOP — an HMAC over the request, keyed with a per-site key the portal
- *     issues through /login and Odyssey Database Setup stores on the machine.
+ *     issues through /login and OdysseyAI Database Setup stores on the machine.
  *
  * The signature covers the method, the path, a timestamp and a digest of the
  * body. Method and path are in there so a signature captured from one endpoint

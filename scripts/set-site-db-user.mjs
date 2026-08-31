@@ -3,7 +3,7 @@
  *
  * ── WHY THIS IS NEEDED ──────────────────────────────────────────────────────
  *
- * Odyssey Database Setup refuses to provision a site whose `db_username` is
+ * OdysseyAI Database Setup refuses to provision a site whose `db_username` is
  * `root`, and it is right to: provisioning runs `CREATE USER ... IDENTIFIED BY`
  * and `ALTER USER`, so pointing that at root would set the password of the
  * account that administers the whole MariaDB server. The machine would be
@@ -18,7 +18,7 @@
  * `db_username` and `db_password_enc`. Nothing else, and no other site.
  *
  * It does NOT touch any MariaDB server. The user it names does not have to
- * exist yet — Odyssey Database Setup creates it from these very credentials,
+ * exist yet — OdysseyAI Database Setup creates it from these very credentials,
  * which is the whole point of storing them here first.
  *
  * ── DRY RUN BY DEFAULT ──────────────────────────────────────────────────────
@@ -131,6 +131,6 @@ await conn.execute(
   [username, encryptSecret(password), row.id],
 )
 
-console.log('  Written. Run Odyssey Database Setup on that machine to create the user.')
+console.log('  Written. Run OdysseyAI Database Setup on that machine to create the user.')
 console.log('')
 await conn.end()

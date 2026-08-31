@@ -43,7 +43,7 @@ export default function PosNotLicensed({
            uses the same three-way selector the tokens do. See globals.css. */
         <Image
           src="/logo-full.png"
-          alt="Odyssey Point of Sale"
+          alt="OdysseyAI Point of Sale"
           width={1109}
           height={304}
           className="logo-plate h-20 w-auto object-contain"

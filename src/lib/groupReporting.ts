@@ -1,6 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
-import { groupForSite, membersOfGroup, linkedStores, type StoreGroup } from './storeGroups'
+import { groupForSite, membersOfGroup,
+  membersOrNone, linkedStores, type StoreGroup } from './storeGroups'
 import { getSiteForUser } from './sites'
 import { entitlementsForSite, allHold, has as hasModule } from './control/modules'
 import { getUserByControlId } from './site/users'
@@ -95,7 +96,7 @@ export async function groupScopeFor(
   const ownEntitlements = await entitlementsForSite(currentSiteId)
   if (!hasModule(ownEntitlements, 'multi_branch')) return null
 
-  const members = (await membersOfGroup(group.id)).filter((m) => m.hasDatabase)
+  const members = (await membersOrNone(group.id)).filter((m) => m.hasDatabase)
   /* Which members hold it too. A store that declined Multi-Branch is listed as
      excluded rather than silently dropped: a total that quietly omits a branch
      is worse than one that says which branch it left out and why. */

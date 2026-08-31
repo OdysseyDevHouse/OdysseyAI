@@ -61,7 +61,7 @@ export type LocalSignInResult = { ok: true } | { ok: false; error: string }
  * and lands on somebody's default site — a different shop entirely. Which is
  * exactly what happened.
  *
- * The right question here is narrower: did Odyssey Database Setup give this
+ * The right question here is narrower: did OdysseyAI Database Setup give this
  * machine a database of its own? That is what the adopted connection means, and
  * it is a stronger claim than an environment variable on its own — those values
  * are not typed by anybody, they are unsealed from a DPAPI-sealed config that
@@ -98,7 +98,7 @@ export async function signInLocal(name: string, pin: string): Promise<LocalSignI
   if (siteId === null) {
     return {
       ok: false,
-      error: 'This machine has not been set up for a shop yet. Run Odyssey Database Setup first.',
+      error: 'This machine has not been set up for a shop yet. Run OdysseyAI Database Setup first.',
     }
   }
 

@@ -4057,7 +4057,7 @@ function WordmarkSection() {
           <div className="rounded-card bg-canvas p-4">
             <Image
               src="/logo-full.png"
-              alt="Odyssey Point of Sale"
+              alt="OdysseyAI Point of Sale"
               width={1109}
               height={304}
               className="logo-plate h-12 w-auto object-contain"

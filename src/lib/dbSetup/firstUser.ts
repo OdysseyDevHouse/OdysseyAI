@@ -8,7 +8,7 @@ import type { RowDataPacket } from 'mysql2'
  *
  * ── WHY PROVISIONING CANNOT END WITHOUT THIS ────────────────────────────────
  *
- * Odyssey Database Setup creates a database and fills it with 254 migrations'
+ * OdysseyAI Database Setup creates a database and fills it with 254 migrations'
  * worth of tables, and every one of those tables is empty — `users` included.
  * A technician who stopped there would hand over a machine nobody can sign in
  * to, and no way to fix it short of running the wizard again.

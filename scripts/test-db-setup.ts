@@ -1,5 +1,5 @@
 /**
- * The statements Odyssey Database Setup runs on a shop's server.
+ * The statements OdysseyAI Database Setup runs on a shop's server.
  *
  * These build DDL by string interpolation, because MariaDB does not allow
  * placeholders in CREATE USER or CREATE DATABASE. That makes the quoting the

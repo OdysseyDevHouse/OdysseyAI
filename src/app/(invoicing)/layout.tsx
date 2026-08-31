@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSession, requireSiteUser } from '@/lib/auth'
+import { isControlUnreachable } from '@/lib/sites'
+import ControlUnreachable from '../(app)/ControlUnreachable'
 import { getUser } from '@/lib/site/users'
 import { can, capabilitiesForRole } from '@/lib/site/permissions'
 import { getTillSession } from '@/lib/tillSession'
@@ -55,7 +57,18 @@ export default async function InvoicingLayout({ children }: { children: React.Re
   if (session.mustChangePassword) redirect('/change-password')
   if (session.siteId === null) redirect('/select-site')
 
-  const { site, capabilities } = await requireSiteUser()
+  /* Same gate as (app)/layout.tsx, and for the same reason: this resolves the
+     site through the control database, so a machine with no line throws a raw
+     socket error at a user who can only read it as "the product is broken".
+     Narrow on purpose — redirect() is also a throw and must pass through. */
+  let resolved
+  try {
+    resolved = await requireSiteUser()
+  } catch (err) {
+    if (!isControlUnreachable(err)) throw err
+    return <ControlUnreachable err={err} />
+  }
+  const { site, capabilities } = resolved
   if (!can(capabilities, 'sales.view')) redirect('/not-allowed')
 
   /*

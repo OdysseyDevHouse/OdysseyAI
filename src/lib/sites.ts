@@ -158,6 +158,133 @@ export async function listSitesForUser(userId: number): Promise<Site[]> {
  * Suspended sites are still returned so a caller can say WHICH kind of no it
  * is; archived ones are gone rather than withheld.
  */
+/**
+ * A desktop machine that has never once reached the control panel.
+ *
+ * ── WHY THIS IS A TYPE AND NOT JUST A MESSAGE ───────────────────────────────
+ *
+ * It used to be a bare `new Error(...)` with the explanation in the string, and
+ * the explanation was good — but nothing could TELL it apart from a genuine
+ * fault, so it landed on global-error.tsx, which is a diagnostic screen. A shop
+ * owner opening their back office for the first time got a stack trace naming
+ * three Turbopack chunks above a sentence they had to read past.
+ *
+ * The condition is not a fault. It is an ordinary state with one remedy, known
+ * in advance, and it wants the same treatment as an expired lease: a screen
+ * that says what happened and what to do. Being a distinguishable type is what
+ * lets `(app)/layout.tsx` catch exactly this and nothing else — importantly not
+ * the redirect() signal, which is also a throw and must be allowed past.
+ *
+ * The remedy runs out exactly once per machine: after one successful sign-in
+ * with a working line, writeSiteProfile() has a mirror and this branch is
+ * unreachable for good.
+ */
+export class StoreDetailsUnavailableError extends Error {
+  /* A property rather than relying on instanceof alone: the server bundle and
+     a route chunk can end up with separate copies of a class, and a check that
+     silently stops matching would put the stack trace back on screen. */
+  readonly storeDetailsUnavailable = true
+
+  constructor(options?: { cause?: unknown }) {
+    super(
+      'This machine has not yet stored its store details, so it cannot open without an ' +
+        'internet connection. Connect it to the internet and sign in once — after that it ' +
+        'will work offline.',
+      options,
+    )
+    this.name = 'StoreDetailsUnavailableError'
+  }
+}
+
+/**
+ * The socket errors a machine with no line produces.
+ *
+ * ENETUNREACH is the one that started this — `connect ENETUNREACH 105.30.57.88:3306`
+ * on a shop's screen, twice, from two different unguarded control reads. The
+ * rest are the same condition wearing a different coat depending on where the
+ * connection died: no route, no DNS, a firewall that refuses rather than drops,
+ * or one that drops rather than refuses.
+ *
+ * Checked down the `cause` chain because mysql2 wraps, and because
+ * StoreDetailsUnavailableError deliberately carries the original as its cause.
+ */
+const OFFLINE_CODES = new Set([
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNRESET',
+  'EPIPE',
+  'PROTOCOL_CONNECTION_LOST',
+  'ER_GET_CONNECTION_TIMEOUT',
+])
+
+/**
+ * Could this machine simply not reach the control panel?
+ *
+ * The question a gate screen asks. It is deliberately BROADER than
+ * isStoreDetailsUnavailable: that names one known state, this names the whole
+ * family of "the line is down", which is what a shop owner actually sees and
+ * what they can actually act on.
+ *
+ * Never used to decide whether to TRUST something — only whether to show a
+ * sentence instead of a stack trace. A false positive here costs a friendlier
+ * error message on a genuine fault; the same guess used to grant access would
+ * be a security decision, and it is not made anywhere.
+ */
+export function isControlUnreachable(err: unknown): boolean {
+  if (isStoreDetailsUnavailable(err)) return true
+  let cur: unknown = err
+  for (let depth = 0; cur && depth < 5; depth++) {
+    const code = (cur as { code?: unknown }).code
+    if (typeof code === 'string' && OFFLINE_CODES.has(code)) return true
+    cur = (cur as { cause?: unknown }).cause
+  }
+  return false
+}
+
+/** One link in a `cause` chain, flattened to strings a screen can render. */
+export type ErrorLink = { name: string; code: string | null; message: string }
+
+/**
+ * The whole `cause` chain, as plain strings.
+ *
+ * Same walk and same depth limit as isControlUnreachable — and for the same
+ * reason: mysql2 wraps, and StoreDetailsUnavailableError deliberately carries
+ * the original underneath. The useful sentence is rarely the outermost one.
+ * `connect ECONNREFUSED 127.0.0.1:3306` is two links down and names both the
+ * fault and the address that produced it.
+ *
+ * Strings rather than the Error itself because this crosses into a rendered
+ * screen: an Error is not serialisable, and a stack is not what a person
+ * commissioning a server needs — the code and the address are.
+ */
+export function describeErrorChain(err: unknown, maxDepth = 5): ErrorLink[] {
+  const chain: ErrorLink[] = []
+  let cur: unknown = err
+  for (let depth = 0; cur && depth < maxDepth; depth++) {
+    const e = cur as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown }
+    chain.push({
+      name: typeof e.name === 'string' ? e.name : typeof cur,
+      code: typeof e.code === 'string' ? e.code : null,
+      message: typeof e.message === 'string' ? e.message : String(cur),
+    })
+    cur = e.cause
+  }
+  return chain
+}
+
+/** Is this the first-run-with-no-line case, rather than a real failure? */
+export function isStoreDetailsUnavailable(err: unknown): err is StoreDetailsUnavailableError {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { storeDetailsUnavailable?: unknown }).storeDetailsUnavailable === true
+  )
+}
+
 export async function getSite(siteId: number): Promise<Site | null> {
   let row: SiteRow | null
   try {
@@ -202,12 +329,7 @@ export async function getSite(siteId: number): Promise<Site | null> {
        this shop has been opened with a working line at least once, there is
        nothing for the offline copy to have copied. */
     if (keepsProfile()) {
-      throw new Error(
-        'This machine has not yet stored its store details, so it cannot open without an ' +
-          'internet connection. Connect it to the internet and sign in once — after that it ' +
-          'will work offline.',
-        { cause: err },
-      )
+      throw new StoreDetailsUnavailableError({ cause: err })
     }
     throw err
   }

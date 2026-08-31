@@ -3,7 +3,7 @@
  *
  * ── WHY THIS IS THE FRAGILE JOINT ───────────────────────────────────────────
  *
- * Odyssey Database Setup and Odyssey Back Office are separate installers with
+ * OdysseyAI Database Setup and OdysseyAI Back Office are separate installers with
  * separate appIds, so they have separate userData directories and share nothing
  * except the machine. One file in ProgramData is the only thing that carries
  * "which shop is this, and how do I reach its database" from the one that knows

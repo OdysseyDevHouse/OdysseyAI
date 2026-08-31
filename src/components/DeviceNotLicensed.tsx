@@ -47,7 +47,7 @@ import { deviceTitleFor, type DeviceState, type SelfRegisterActionResult } from 
  *
  * ── EXCEPT ON A TILL BUILD, WHERE THE BACK OFFICE DOES NOT EXIST ───────────
  *
- * Odyssey Point of Sale ships without a back office at all, so that button would
+ * OdysseyAI Point of Sale ships without a back office at all, so that button would
  * navigate to a screen this machine cannot show — and the will-navigate guard in
  * electron/main.js refuses it anyway. A button that visibly does nothing reads
  * as a broken app rather than a locked-down one, so it is hidden there.

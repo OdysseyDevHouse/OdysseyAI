@@ -112,7 +112,7 @@ export async function listSiteDatabases(siteId: number): Promise<SiteDatabase[]>
  * install is that it opens on a morning when the line is down, and there is no
  * local copy of that table to read instead.
  *
- * So Odyssey Database Setup — which DID have the control panel in front of it —
+ * So OdysseyAI Database Setup — which DID have the control panel in front of it —
  * writes the connection where this install can find it, and
  * electron/runtimeConfig.js hands it over in the environment. See
  * docs/plans/database-setup-app.md.
@@ -121,7 +121,7 @@ export async function listSiteDatabases(siteId: number): Promise<SiteDatabase[]>
  * exactly this problem and only ever covered one field of four.
  *
  * The trade is real and worth naming: an install holding these no longer hears
- * about a change made in the control panel. Re-running Odyssey Database Setup
+ * about a change made in the control panel. Re-running OdysseyAI Database Setup
  * is what re-points it — the "Retrieve new details" path, which already exists
  * and is already safe to re-run.
  */
@@ -329,6 +329,26 @@ export async function siteTransaction<T>(
  * this, changing a site's stored credentials would not take effect until the
  * process restarted.
  */
+/**
+ * Drops every cached pool.
+ *
+ * The per-site version above is the one to use when a known site's stored
+ * credentials changed. This is for the other case: a connection setting that
+ * governs ALL of them — SITE_DB_HOST_OVERRIDE, or a corrected DNS name — where
+ * the caller cannot say which sites are affected because the answer is "any of
+ * them", and where it may not know a site id at all, having failed before it
+ * could resolve one.
+ *
+ * Costs only the reconnection it forces: pools are rebuilt lazily on next use.
+ */
+export function invalidateAllSitePools(): void {
+  const cache = poolCache()
+  for (const [key, pool] of cache) {
+    cache.delete(key)
+    void pool.end().catch(() => {})
+  }
+}
+
 export function invalidateSitePool(siteId: number, purpose: SitePurpose = MASTER): void {
   const key = `${siteId}:${purpose}`
   const pool = poolCache().get(key)

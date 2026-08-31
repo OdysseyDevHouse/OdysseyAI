@@ -1,4 +1,4 @@
-# Odyssey Database Setup — MariaDB, and the provisioning that configures it.
+# OdysseyAI Database Setup — MariaDB, and the provisioning that configures it.
 #
 # Run once, by a technician, on the ONE machine that hosts the shop's database:
 # the in-store box on a hybrid site, or the back-office machine on a local one.
@@ -21,7 +21,7 @@
 # binaries with their own release cadence.
 extends: ./electron-builder.yml
 
-productName: Odyssey Database Setup
+productName: OdysseyAI Database Setup
 
 appId: za.co.pointofsale.odyssey.database
 
@@ -45,6 +45,46 @@ extraMetadata:
 win:
   requestedExecutionLevel: requireAdministrator
 
+# ── AND ONLY THE PARTS OF IT A SHOP RUNS ───────────────────────────────────
+#
+# The official portable ZIP is a DEVELOPER distribution: it carries the debug
+# symbols and link libraries you would need to build a C client against it, and
+# a shop needs none of them. Measured on the tree this build was cut from,
+# 292MB shipped and ~133MB of it could never be executed.
+#
+# That 133MB was paid three times over on an all-in-one — once in the download,
+# once by NSIS writing it to Program Files, and once more by
+# mariaService.installBinaries copying the lot into ProgramData.
+#
+# Filtered here rather than by pruning vendor/mariadb, so that repopulating the
+# folder from a newer official ZIP does not quietly put it all back.
+#
+# ── WHAT IS SAFE TO CUT, AND HOW THAT WAS ESTABLISHED ──────────────────────
+#
+# The app only ever executes four of these binaries — mariadbd, mariadb,
+# mariadb-install-db and mariadb-admin, each with its legacy mysql* alias as a
+# fallback. See localDb.js's exe() helpers, which name them all. Nothing in
+# electron/, src/ or scripts/ shells out to anything else, which is what makes
+# the backup pair below droppable rather than merely unused today.
 extraResources:
   - from: vendor/mariadb
     to: mariadb
+    filter:
+      - '**/*'
+      # Debug symbols. 73MB for server.pdb alone — a crash dump from a customer
+      # machine is not something this product has ever asked for or could read.
+      - '!**/*.pdb'
+      # Link-time import libraries, for COMPILING against MariaDB. There is no
+      # compiler on a shop counter.
+      - '!**/*.lib'
+      # C headers, same reason.
+      - '!include{,/**/*}'
+      # 37MB of physical-backup tooling, in two identically-sized copies under
+      # the old and new names. Backups here are logical dumps (scripts/backup.mjs
+      # shells out to mysqldump, which stays), and nothing invokes either of
+      # these. Restore them the day a backup story actually needs them.
+      - '!bin/mariabackup.exe'
+      - '!bin/mariadb-backup.exe'
+      # The CONNECT engine's MongoDB Java driver. No JVM ships here, and no shop
+      # federates a Mongo table from its till.
+      - '!share/Mongo*.jar'

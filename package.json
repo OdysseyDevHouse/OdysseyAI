@@ -54,6 +54,7 @@
     "test:unlock-exchange": "tsx scripts/test-unlock-exchange.ts",
     "test:lease": "tsx --conditions=react-server scripts/test-lease.ts",
     "test:runtime-config": "node scripts/test-runtime-config.mjs",
+    "test:offline-gate": "tsx --conditions=react-server scripts/test-offline-gate.ts",
     "test:offline-backoffice": "tsx scripts/test-offline-backoffice.ts",
     "test:backup-push": "node scripts/test-backup-push.mjs",
     "test:replication": "node scripts/test-replication.mjs",

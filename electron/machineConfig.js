@@ -1,4 +1,4 @@
-// What Odyssey Database Setup leaves behind for Odyssey Back Office to find.
+// What OdysseyAI Database Setup leaves behind for OdysseyAI Back Office to find.
 //
 // ── WHY THIS FILE EXISTS AT ALL ─────────────────────────────────────────────
 //
@@ -58,7 +58,7 @@ function write({ siteId, siteCode, host, port, databaseName, username, password 
     /* A note to whoever finds this file, rather than a comment in code they
        will never read. */
     _note:
-      'Written by Odyssey Database Setup so Odyssey Back Office on this machine can reach the ' +
+      'Written by OdysseyAI Database Setup so OdysseyAI Back Office on this machine can reach the ' +
       'shop database. Not encrypted: it has to be readable by a different Windows account than ' +
       'the one that wrote it.',
     siteId,
@@ -98,7 +98,7 @@ function read() {
   }
 }
 
-/** Has Odyssey Database Setup run on this machine? */
+/** Has OdysseyAI Database Setup run on this machine? */
 function exists() {
   return read() !== null
 }

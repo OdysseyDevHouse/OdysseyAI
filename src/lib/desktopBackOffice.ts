@@ -2,7 +2,7 @@ import 'server-only'
 import type { ConnectionType } from './sites'
 
 /**
- * The one rule that makes Odyssey Back Office worth installing.
+ * The one rule that makes OdysseyAI Back Office worth installing.
  *
  * ── WHY A CLOUD SITE IS REFUSED HERE ────────────────────────────────────────
  *
@@ -78,6 +78,6 @@ export function cloudSiteMessage(displayName?: string): string {
   return (
     `${who} its data in the cloud, so this app has nothing to reach that a ` +
     `web browser cannot. Sign in to your back office in your browser instead. ` +
-    `Odyssey Back Office is for stores whose data lives on their own premises.`
+    `OdysseyAI Back Office is for stores whose data lives on their own premises.`
   )
 }

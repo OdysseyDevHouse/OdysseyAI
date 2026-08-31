@@ -141,9 +141,9 @@ withEnv('pos', () => {
 import { readFileSync, existsSync } from 'node:fs'
 
 const CONFIGS = [
-  ['backoffice', 'Odyssey Back Office'],
-  ['pos', 'Odyssey Point of Sale'],
-  ['database', 'Odyssey Database Setup'],
+  ['backoffice', 'OdysseyAI Back Office'],
+  ['pos', 'OdysseyAI Point of Sale'],
+  ['database', 'OdysseyAI Database Setup'],
 ]
 
 for (const [role, productName] of CONFIGS) {
@@ -273,7 +273,7 @@ for (const [role, productName] of CONFIGS) {
   for (const need of ['.next', 'public', 'node_modules', 'package.json', 'next.config.mjs']) {
     check(`${role} still ships ${need}`, to.includes(`app/${need}`))
   }
-  /* The schema has to travel with the installer. Odyssey Database Setup
+  /* The schema has to travel with the installer. OdysseyAI Database Setup
      creates an empty database and fills it from sql/site — 254 files applied by
      electron/siteMigrate.js — and until this shipped, the wizard would have
      created a database with no tables and called it done. Silent success is

@@ -46,36 +46,193 @@ directories:
 
 # The Next server runs in-process, so the build output and runtime deps must be
 # unpacked next to the asar rather than compiled into it.
+#
+# ── THE `!node_modules` LINE IS LOAD-BEARING ────────────────────────────────
+#
+# Listing only `electron/**/*` and `package.json` reads as "the asar holds the
+# shell and nothing else". It did not. electron-builder packs the production
+# dependency tree into the asar whatever this list says, so every build shipped
+# node_modules TWICE — 387MB of it inside app.asar (plus 120MB pulled back out
+# into app.asar.unpacked for the native modules), and the whole tree again under
+# extraResources at app/node_modules for the Next server.
+#
+# Both copies were live, which is the part that made it more than waste:
+# `require('next')` from main.js resolved inside the asar while the compiled
+# server chunks resolved React against app/node_modules. Two trees in one
+# process is how a build ends up with two Reacts.
+#
+# So the asar keeps the shell alone and electron/appModules.js resolves the
+# three packages this process needs — next, mysql2, electron-updater — against
+# the app directory. That copy has to exist regardless, because Next loads its
+# own build from there.
+#
+# The saving is ~400MB and ~10,000 files off EVERY installer, paid twice over on
+# an all-in-one that installs both Back Office and Database Setup.
+#
+# ── WHAT THE `node_modules/{…}` LINE PUTS BACK, AND WHY ────────────────────
+#
+# Two packages are the SHELL's, not the app's: electron-updater, which Next has
+# never heard of, and mysql2, which main.js and dbSetupBridge.js use to migrate
+# a site database before any server is running. `output: 'standalone'` traces
+# the NEXT app, so its node_modules carries mysql2 (it is a
+# serverExternalPackage) but not electron-updater — and leaning on the app's
+# copy for the shell's own needs would make a silent breakage the day Next stops
+# tracing it. So the shell brings its own.
+#
+# 27 packages, 670 files, 4.3MB — and it costs NOTHING at install time, because
+# the asar is a single file on disk. That is the whole trick: files in an asar
+# are free, files beside it are not.
+#
+# Regenerate the list by walking `dependencies` from electron-updater and mysql2
+# in a hoisted node_modules. It is written out rather than computed so a build
+# never silently ships a different set than the one that was reviewed.
 files:
   - electron/**/*
   - package.json
+  - '!node_modules{,/**/*}'
+  - 'node_modules/{argparse,aws-ssl-profiles,builder-util-runtime,debug,denque,electron-updater,fs-extra,generate-function,graceful-fs,iconv-lite,is-property,js-yaml,jsonfile,lazy-val,lodash.escaperegexp,lodash.isequal,long,lru.min,ms,mysql2,named-placeholders,safer-buffer,sax,semver,sql-escaper,tiny-typed-emitter,universalify}/**/*'
 
 extraResources:
-  # ── ONLY THE PRODUCTION BUILD, NOT THE WHOLE .next DIRECTORY ──────────────
+  # ── THE BUILD OUTPUT, LESS THE PARTS NOTHING RUNS ─────────────────────────
   #
   # `next dev` and `next build` write into the SAME .next folder, and the dev
-  # artefacts are the larger by an order of magnitude: on a machine that has
-  # run the desktop dev server, .next/dev reaches 7GB and .next/cache another
-  # 700MB, against ~200MB of actual server + static output.
+  # artefacts are the larger by an order of magnitude: on a machine that has run
+  # the desktop dev server, .next/dev reaches 7GB and .next/cache another 700MB,
+  # against ~200MB of actual server + static output.
   #
-  # Shipped unfiltered that is a nine-gigabyte install and an installer no
-  # customer on a South African line will ever finish downloading. Neither
-  # folder is read at runtime — `dev` exists for the dev server's HMR and
-  # `cache` for incremental rebuilds — so both are dropped here rather than by
-  # cleaning .next before a build, which would throw away the incremental
-  # cache every developer depends on.
+  # `standalone` is dropped here because only ONE part of it is shipped, and it
+  # is taken directly below. Leaving it in would ship a second copy of .next.
+  #
+  # ── AND NOT THE TWO KINDS OF FILE NOTHING READS AT RUNTIME ────────────────
+  #
+  # Measured on the shipped .next: 8,507 files, 200MB. Of that,
+  #
+  #   .map       2,881 files  119.2MB   source maps
+  #   .nft.json    362 files   31.4MB   file-tracing metadata
+  #
+  # 3,243 files and 150MB - a third of the file count and three quarters of the
+  # bytes - for two things the running app never opens.
+  #
+  # SOURCE MAPS are not applied by anything here. Node ignores them without
+  # --enable-source-maps, and nothing in electron/ or next.config.mjs passes it;
+  # the proof is in the field, where a customer's stack trace reads
+  # `src_lib_auth_ts_0r2vclv._.js:33:491` rather than a .ts file and line. So
+  # they cost 119MB to change nothing about diagnosis.
+  #
+  # They are also the ORIGINAL TYPESCRIPT, readable with a text editor, on a
+  # machine the customer owns. Dropping them is worth doing on that ground
+  # alone.
+  #
+  # .nft.json is what Next writes so that `output: 'standalone'` can work out
+  # which modules to copy. It is consumed at BUILD time, by the build that
+  # already happened. Shipping it is shipping the workings.
+  #
+  # Note the other 1,660 .json files are KEPT and must be: build-manifest,
+  # app-paths-manifest, server-reference-manifest and friends are read on every
+  # request. They are 1.6MB in total, so there is nothing to gain by being
+  # clever about them and a broken app to lose.
   - from: .next
     to: app/.next
     filter:
       - '**/*'
       - '!dev{,/**/*}'
       - '!cache{,/**/*}'
+      - '!standalone{,/**/*}'
+      - '!**/*.map'
+      - '!**/*.nft.json'
+  # ── THE TRACED DEPENDENCY SET, AND ONLY THAT ──────────────────────────────
+  #
+  # `output: 'standalone'` in next.config.mjs makes Next work out which modules
+  # the server actually loads. Taking its node_modules and nothing else:
+  #
+  #     before   app/node_modules   33,969 files   468MB
+  #     after    app/node_modules    1,338 files    22MB
+  #
+  # ── WHY ONLY ITS node_modules, AND NOT THE REST OF STANDALONE ─────────────
+  #
+  # Because the rest of it does not work here, and it fails in a way worth
+  # writing down. This app builds with Turbopack, and a standalone build does
+  # NOT trace Turbopack's server chunks: .next/standalone/.next/server/chunks
+  # came out with 3 files where the real build has 5,030, 3,942 of them under
+  # chunks/ssr. The packaged app then prepares cleanly, serves /api/health, and
+  # 500s on the first page with
+  #
+  #     Cannot find module '../chunks/ssr/[turbopack]_runtime.js'
+  #
+  # Found by making a real request to the packaged build; `prepare()` succeeding
+  # proves nothing, and neither does a size diff. So the real .next is shipped
+  # above, and standalone is used ONLY for the one thing it gets right — the
+  # traced module list, which is derived from those same chunks and is therefore
+  # complete for them.
+  #
+  # If a later Next fixes Turbopack tracing, this collapses back into a single
+  # `from: .next/standalone` entry — but verify it by serving a page, not by
+  # looking at the folder.
+  - from: .next/standalone/node_modules
+    to: app/node_modules
+  # ── THE SAME GAP AGAIN, INSIDE next ITSELF ────────────────────────────────
+  #
+  # The trace misses Next's own server runtimes the way it misses the chunks
+  # above: app/node_modules/next/dist/compiled/next-server came out with 3 of
+  # the 13 .runtime.prod.js files. app-route-turbo.runtime.prod.js is one of
+  # the ten missing, so PAGES render and every App Route — /api/health
+  # included, which is what this shell waits on — dies with
+  #
+  #     Cannot find module 'next/dist/compiled/next-server/app-route-turbo.runtime.prod.js'
+  #
+  # Listed after the entry above so it lands on top of the traced copy rather
+  # than being overwritten by it. 4.1MB for all thirteen, so they are shipped
+  # whole rather than picked over; the .runtime.dev.js set is 13MB and is only
+  # ever loaded by `next dev`, which a packaged build cannot run.
+  #
+  # Same caveat as above: if a later Next traces these, verify the removal by
+  # REQUESTING AN API ROUTE from the packaged build. Nothing about the folder
+  # looks wrong when they are missing.
+  - from: node_modules/next/dist/compiled/next-server
+    to: app/node_modules/next/dist/compiled/next-server
+    filter:
+      - '**/*.runtime.prod.js'
+  # ── NEXT'S OWN INTERNALS, WHICH THE TRACER KEEPS MISSING ──────────────────
+  #
+  # Three separate "cannot find module" bugs came out of the same hole, each
+  # found only after the previous fix looked complete:
+  #
+  #   .next/server/chunks/ssr/[turbopack]_runtime.js   -> every PAGE 500s
+  #   next-server/app-route-turbo.runtime.prod.js      -> every APP ROUTE 500s
+  #   next/dist/compiled/webpack/webpack-lib           -> the server will not boot
+  #
+  # Standalone ships 129 of the 1,155 files under next/dist/compiled. Under
+  # Turbopack the trace simply does not see what the server lazily requires, and
+  # each round of patching one path has been followed by another path.
+  #
+  # So this stops guessing and ships the directory, minus the two parts that are
+  # genuinely not needed:
+  #
+  #   next-server   78MB of the 125MB, and the entry above already ships the 13
+  #                 .runtime.prod.js files it actually loads - verified against a
+  #                 real failure rather than assumed.
+  #   next-devtools dev tooling; a packaged production server never opens it.
+  #
+  # ~1,080 files and ~44MB. Against a 6,855-file package that is a rounding error
+  # on install time, which is per-file - and the alternative is discovering the
+  # fourth missing module on a customer's counter.
+  #
+  # scripts/verify-packaged-build.mjs is what catches this class of bug: it
+  # copies the payload OUT of the repo before booting it, because in place Node
+  # walks up into OdysseyAI/node_modules and resolves modules that were never
+  # shipped. All three bugs above passed an in-place check.
+  - from: node_modules/next/dist/compiled
+    to: app/node_modules/next/dist/compiled
+    filter:
+      - '**/*'
+      - '!next-server{,/**/*}'
+      - '!next-devtools{,/**/*}'
   - from: public
     to: app/public
   # ── THE SCHEMA, SO A NEW DATABASE CAN BE GIVEN ONE ────────────────────────
   #
   # Odyssey Database Setup creates an empty database and then has to fill it —
-  # 254 files in sql/site, applied once each by electron/siteMigrate.js. Until
+  # 261 files in sql/site, applied once each by electron/siteMigrate.js. Until
   # this entry existed they were not in the package at all, so the wizard would
   # have created a database with no tables in it and reported success.
   #
@@ -83,61 +240,16 @@ extraResources:
   # never read them again, and a technician can open the one that failed.
   #
   # Not under app/ — this is the installer's own material, not the Next server's.
+  # next.config.mjs excludes sql/ from the file tracer for the same reason: the
+  # Next server never reads a migration, only this installer does.
   - from: sql
     to: sql
-  # ── WHAT THE APP RUNS, NOT WHAT BUILT IT ──────────────────────────────────
-  #
-  # The Next server runs in-process and needs its production dependencies
-  # beside the asar, so the folder is copied wholesale. Wholesale also brings
-  # every devDependency, and those are not small: 597MB of the 1081MB shipped
-  # was tooling the app never loads.
-  #
-  # `electron` is the clearest case — a complete second copy of Electron, inside
-  # an Electron app that already has one — and `app-builder-bin` is the program
-  # that produced this installer, packed inside it. Every customer downloaded
-  # both, and unpacked them on every install.
-  #
-  # Excluded by NAME rather than by reading devDependencies, because a build
-  # must not silently drop something the app needs the day a package moves
-  # between the two lists. Getting this wrong fails loudly and immediately —
-  # a missing runtime module is a crash on launch, not a subtle wrong answer.
-  #
-  # Checked before cutting: nothing in src/, electron/ or server/ references
-  # any of these outside comments.
-  - from: node_modules
-    to: app/node_modules
-    filter:
-      - '**/*'
-      # A second Electron, inside Electron.
-      - '!electron{,/**/*}'
-      - '!@electron{,/**/*}'
-      # The builder, and its binaries, inside the thing they built.
-      - '!electron-builder{,/**/*}'
-      - '!app-builder-bin{,/**/*}'
-      - '!app-builder-lib{,/**/*}'
-      - '!dmg-builder{,/**/*}'
-      - '!builder-util{,/**/*}'
-      - '!builder-util-runtime{,/**/*}'
-      - '!7zip-bin{,/**/*}'
-      # Compilers and test tooling. Next ships compiled; nothing compiles here.
-      - '!typescript{,/**/*}'
-      - '!esbuild{,/**/*}'
-      - '!@esbuild{,/**/*}'
-      - '!tsx{,/**/*}'
-      - '!playwright-core{,/**/*}'
-      - '!playwright{,/**/*}'
-      - '!@playwright{,/**/*}'
-      # Scripts-only helpers, used by npm run, never by the app.
-      - '!concurrently{,/**/*}'
-      - '!wait-on{,/**/*}'
-      - '!cross-env{,/**/*}'
-      - '!@capacitor{,/**/*}'
   # ── A COPY, NOT THE FILE ITSELF ────────────────────────────────────────────
   #
   # Every `from` listed here is added to the app copier's EXCLUDE list — see
   # platformPackager.ts, which feeds extraResources through
-  # computeParsedPatterns into `excludePatterns`. That is right for .next and
-  # node_modules, which belong beside the asar and not inside it.
+  # computeParsedPatterns into `excludePatterns`. That is right for .next, which
+  # belongs beside the asar and not inside it.
   #
   # It is fatal for package.json. Naming the real one here removed it from the
   # asar ROOT, where Electron requires it to find `main` — and the build then

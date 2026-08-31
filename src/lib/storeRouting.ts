@@ -1,7 +1,7 @@
 import 'server-only'
 import { cookies } from 'next/headers'
 import { verifyPublicStoreToken } from './publicStoreToken'
-import { groupForSite, membersOfGroup } from './storeGroups'
+import { groupForSite, membersOrNone } from './storeGroups'
 import { branchPinsFor, type BranchPin } from './control/storeBranches'
 import { allHold } from './control/modules'
 import { branchCookieName, parseBranchCookie } from './branchChoice'
@@ -165,7 +165,7 @@ export async function resolveStoreRouting(
      * product fan-out. A group whose primary declined the module does not get a
      * shared storefront through the back door of a member's link.
      */
-    const members = await membersOfGroup(group.id)
+    const members = await membersOrNone(group.id)
     const memberIds = members.filter((m) => m.hasDatabase).map((m) => m.siteId)
     const ids = [...new Set([catalogueSiteId, ...memberIds])]
     const [entitled, shops] = await Promise.all([

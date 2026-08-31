@@ -161,7 +161,7 @@ export type UserInput = {
   /**
    * This user signs in with their name and PIN, not an email and a password.
    *
-   * Set by Odyssey Database Setup when it creates a local site's first user.
+   * Set by OdysseyAI Database Setup when it creates a local site's first user.
    * It cannot be inferred there: the wizard runs as a CLOUD client, because
    * reading the control panel is its entire job, so "what kind of install is
    * this" gives the wrong answer about the site it is building.
@@ -193,7 +193,7 @@ async function validate(
    *
    * Two ways to know we are in the second case, and BOTH are needed:
    *
-   *   · `pinIsCredential`, set by the caller. Odyssey Database Setup creates
+   *   · `pinIsCredential`, set by the caller. OdysseyAI Database Setup creates
    *     the store owner while running as a CLOUD client — it has to be, since
    *     its whole job is reading the control panel — so it cannot be recognised
    *     by asking what kind of install it is. It knows, and says so.
