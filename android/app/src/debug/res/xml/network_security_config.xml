@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG BUILDS ONLY. This file lives in src/debug/, so it is compiled into a
+  debug APK and can never reach a release one.
+
+  WHY IT EXISTS
+
+  A PRODUCTION Next build marks the session cookie `Secure` (see
+  setSessionCookie in src/lib/session.ts), and Android refuses to store a Secure
+  cookie on an http:// origin:
+
+    Strict Secure Cookie policy does not allow setting a secure cookie for
+    http://<host> for apps targeting >= R
+
+  The failure is silent — the API answers 200, the cookie is dropped, and the
+  till simply returns to the login screen. So a production build cannot be
+  tested on a device over cleartext at all; it needs TLS, and a LAN address has
+  no publicly trusted certificate.
+
+  This trusts an extra CA generated for local testing, IN ADDITION to the system
+  ones, so the till can reach https://192.168.10.101:8443. Cleartext stays
+  permitted so a plain `next dev` LAN target keeps working unchanged.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/odyssey_dev_ca" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
