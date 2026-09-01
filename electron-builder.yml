@@ -40,8 +40,10 @@
 appId: za.co.pointofsale.odysseyai
 copyright: Copyright © Point of Sale (Pty) Ltd
 
+# `output` is NOT here. Each build config names its own release/<role> folder,
+# because electron-builder calls the update manifest `latest.yml` whatever the
+# product is, and three of them in one folder leaves one. See build-config/.
 directories:
-  output: release
   buildResources: build
 
 # The Next server runs in-process, so the build output and runtime deps must be
@@ -283,28 +285,57 @@ extraFiles:
 
 # ── WHERE UPDATES COME FROM ─────────────────────────────────────────────────
 #
-# Deliberately NOT a `publish:` block. electron-builder expands ${env.X} at
-# build time and treats an unset variable as a FATAL error — so putting the feed
-# URL here made every build depend on an environment variable that only matters
-# to a released one, and a developer building locally got "cannot expand
-# pattern" instead of an installer.
+# In two places, for two different jobs, and it is worth being clear which is
+# which because the split is not obvious.
 #
-# The updater sets its own feed at runtime instead, from a URL baked alongside
-# the other build defaults — see electron/updater.js and
-# scripts/make-build-defaults.mjs. A build made without one still runs and says
-# so; it simply cannot update itself.
+#   build-config/*.yml `publish:`   a LITERAL generic URL per product. Its only
+#                                   job is to make electron-builder write a
+#                                   truthful app-update.yml into resources/ —
+#                                   which electron-updater reads for
+#                                   `updaterCacheDirName` even when the feed is
+#                                   set at runtime. Never an ${env.X}: those are
+#                                   expanded at build time and an unset one is
+#                                   FATAL, so a developer building locally would
+#                                   get "cannot expand pattern" instead of an
+#                                   installer.
 #
-# What the build DOES emit either way is what the updater consumes: latest.yml
-# and a .blockmap per installer. Publishing is then a matter of copying the
-# contents of release/ to the host. Upload the .blockmap alongside the .exe or
-# every shop re-downloads the whole installer rather than the parts that
-# changed.
+#   ODYSSEY_UPDATE_URL              the runtime authority. Baked into
+#                                   electron/buildDefaults.json by
+#                                   scripts/make-build-defaults.mjs and read by
+#                                   electron/updater.js, which appends the role
+#                                   folder and calls setFeedURL. This is what
+#                                   lets one build be pointed at a staging host.
+#
+# A build made without ODYSSEY_UPDATE_URL still runs and says so in the log; it
+# simply cannot update itself, and make-build-defaults warns loudly.
+#
+# What the build emits either way is what the updater consumes: latest.yml and a
+# .blockmap per installer, in release/<role>/. `npm run publish:release` uploads
+# them. Upload the .blockmap alongside the .exe or every shop re-downloads the
+# whole 130MB installer rather than the parts that changed.
 
+# ── THE ICON, IN ONE PLACE FOR ALL THREE PRODUCTS ──────────────────────────
+#
+# Named explicitly rather than left to the buildResources convention. Both find
+# the same file today, but a silent convention is a bad way to carry branding:
+# rename the file or move buildResources and every installer quietly reverts to
+# the stock Electron atom, and nothing in the build output says so.
+#
+# It is a .ico, not the .png, deliberately. electron-builder WILL convert a png,
+# and the conversion is a single bitmap scaled to every size — legible at 256px
+# and mush at 16px, which is the size Explorer and the taskbar use most.
+# scripts/make-icons.mjs builds the real thing from public/logo-icon.png, with
+# seven bitmaps in it, and commits the result. Re-run it when the artwork
+# changes; a build never runs it.
+#
+# The NSIS installer and uninstaller inherit this — `installerIcon` and
+# `uninstallerIcon` both fall back to the app icon — so there is deliberately no
+# second copy of it under `nsis:` to fall out of step.
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
-  artifactName: ${productName}-${version}-${arch}.${ext}
 
 nsis:
   oneClick: false

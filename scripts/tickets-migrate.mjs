@@ -9,17 +9,38 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { createDecipheriv, scryptSync } from 'node:crypto'
 import mysql from 'mysql2/promise'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const migrationsDir = path.join(root, 'sql', 'tickets')
 const dryRun = process.argv.includes('--dry-run')
 
+// Mirrors src/lib/crypto/secrets.ts, duplicated rather than imported because
+// this script also runs from the deployed app folder, which ships no build of
+// src/. Same reason site-migrate.mjs and box-migrate.mjs each carry a copy.
+const PREFIX = 'enc:v1:'
+function decryptSecret(stored) {
+  if (!stored) return ''
+  if (!stored.startsWith(PREFIX)) return stored
+  const [iv, tag, ct] = stored
+    .slice(PREFIX.length)
+    .split(':')
+    .map((s) => Buffer.from(s, 'base64'))
+  const key = scryptSync(process.env.ENCRYPTION_KEY, 'odyssey-secret-v1', 32)
+  const d = createDecipheriv('aes-256-gcm', key, iv)
+  d.setAuthTag(tag)
+  return Buffer.concat([d.update(ct), d.final()]).toString('utf8')
+}
 const db = await mysql.createConnection({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+  // DB_PASSWORD may itself be an enc:v1 envelope - see the note in
+  // src/lib/db.ts createPool(). Sending the ciphertext raw gets "Access
+  // denied ... (using password: YES)", which reads as a wrong password or a
+  // missing grant and is neither. Plaintext passes through unchanged.
+  password: decryptSecret(process.env.DB_PASSWORD),
   database: process.env.DB_NAME,
   multipleStatements: true,
 })

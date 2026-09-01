@@ -109,6 +109,12 @@ type CatalogResponse = {
   serverTime: string
   delta: boolean
   reloadProducts: boolean
+  /**
+   * How many products a full load would hold, per the server.
+   * Optional: a server older than this check sends nothing, and the till then
+   * behaves exactly as it did before — see the audit in refreshCatalog.
+   */
+  productTotal?: number
   products: TillProduct[]
   deletedIds: number[]
   departments: {
@@ -189,12 +195,21 @@ export type CatalogResult =
  * same: keep trading on what is already stored and say when it was last refreshed.
  * A till that cannot reach the server is the normal case here, not an error.
  */
-export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
+/**
+ * @param forceFull Skip the delta and ask for everything. Set only by the
+ *   audit at the foot of this function, which is why it is not exported: a
+ *   caller reaching for it would be papering over the same bug by hand.
+ */
+export async function refreshCatalog(
+  siteId: number,
+  forceFull = false,
+): Promise<CatalogResult> {
   const meta = await kvGet<CatalogMeta>(siteId, KV.catalogMeta)
 
   /* A stored catalog from a different site or an older shape cannot be patched.
      Cheaper to notice here than to serve a cashier a half-migrated product file. */
-  const canDelta = meta?.cursor != null && meta.schema === SCHEMA && meta.siteId === siteId
+  const canDelta =
+    !forceFull && meta?.cursor != null && meta.schema === SCHEMA && meta.siteId === siteId
 
   /*
    * `deviceId` is REQUIRED, not decorative.
@@ -314,6 +329,37 @@ export async function refreshCatalog(siteId: number): Promise<CatalogResult> {
     await seedSequence(siteId, body.creditSequence, 'return')
   }
 
+
+  /*
+   * ── A TILL THAT ONCE GOT A SHORT ANSWER MUST NOT KEEP IT FOREVER ────────
+   *
+   * Everything above trusts the first full load and never revisits it. A delta
+   * carries only what has MOVED, so rows missing from that first answer predate
+   * every cursor that follows and are never sent again: the gap is permanent,
+   * and nothing in the till reports it.
+   *
+   * Not hypothetical. A till was found holding 2 products against a shop of 60,
+   * with its department tiles reading correctly throughout — those are counted
+   * on the SERVER while the grid is drawn from here, so the two disagreed in
+   * silence. `canSellOffline` asks only for more than zero, so it also believed
+   * it was ready to trade offline on those 2.
+   *
+   * The server's own total settles it. Disagreement means this cache is wrong by
+   * definition, and the only honest repair is to take the lot again.
+   *
+   * ONCE, never in a loop: the retry sets `forceFull`, which suppresses this
+   * check on the way back. A server whose count can never be reconciled — a
+   * predicate drifting from tillCatalogTotal, say — then costs one extra request
+   * per sync rather than an unbounded chain of them.
+   */
+  if (
+    !full &&
+    !forceFull &&
+    typeof body.productTotal === 'number' &&
+    productCount !== body.productTotal
+  ) {
+    return refreshCatalog(siteId, true)
+  }
   return {
     ok: true,
     full,

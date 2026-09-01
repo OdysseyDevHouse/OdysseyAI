@@ -44,7 +44,11 @@ const control = await mysql.createConnection({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+  // DB_PASSWORD may itself be an enc:v1 envelope - see the note in
+  // src/lib/db.ts createPool(). Sending the ciphertext raw gets "Access
+  // denied ... (using password: YES)", which reads as a wrong password or a
+  // missing grant and is neither. Plaintext passes through unchanged.
+  password: decryptSecret(process.env.DB_PASSWORD),
   database: process.env.DB_NAME,
 })
 

@@ -23,10 +23,59 @@
 // directory; the shop's data lives in ProgramData and the service that serves
 // it keeps running throughout — see electron/mariaService.js.
 const { app, dialog } = require('electron')
+const { appRole } = require('./appRole')
 
-/** Where releases are published. Baked at build time, empty on a dev checkout. */
+/**
+ * The host releases are published to, without the per-build folder.
+ *
+ * ── READ FROM buildDefaults, NOT FROM process.env ───────────────────────────
+ *
+ * It used to read process.env.ODYSSEY_UPDATE_URL, and that made the whole
+ * feature a no-op in every packaged build ever cut. runtimeConfig.resolveEnv()
+ * is what puts the baked value into the environment, and it is called from
+ * prepareRuntime() inside createWindow() — which main.js reaches AFTER
+ * updater.start(). So start() read an empty string, said "No update server
+ * configured for this build", and set `started` so nothing would ever try
+ * again. The URL was present the whole time, half a second too late.
+ *
+ * Reading the baked file directly removes the ordering entirely: this module
+ * no longer cares what has or has not run before it. The environment is still
+ * consulted FIRST, because that is the support engineer's override and the
+ * only thing that makes the updater exercisable on a dev checkout.
+ */
+function baseUrl() {
+  const fromEnv = String(process.env.ODYSSEY_UPDATE_URL || '').trim()
+  if (fromEnv) return fromEnv
+  try {
+    // eslint-disable-next-line global-require
+    return String(require('./buildDefaults.json').ODYSSEY_UPDATE_URL || '').trim()
+  } catch {
+    /* A dev checkout that has never run `npm run build:defaults`. */
+    return ''
+  }
+}
+
+/**
+ * Where THIS build's releases are published.
+ *
+ * ── ONE HOST, THREE FOLDERS ────────────────────────────────────────────────
+ *
+ * electron-builder writes the update manifest as `latest.yml`, and the name is
+ * not derived from the product — so Back Office, POS and Database Setup each
+ * produce a file called `latest.yml`. Published to one folder, the last build
+ * uploaded wins and the other two products are handed a manifest describing
+ * somebody else's installer. (The download would then fail its checksum rather
+ * than install the wrong thing, so the symptom is not a corrupted till: it is
+ * three products that quietly never update.)
+ *
+ * The role already distinguishes them — it is baked into package.json by
+ * `extraMetadata` and is the same string the build config uses — so the feed is
+ * simply the host plus that folder. Nothing new has to be kept in step.
+ */
 function feedUrl() {
-  return String(process.env.ODYSSEY_UPDATE_URL || '').trim()
+  const base = baseUrl()
+  if (!base) return ''
+  return `${base.replace(/\/+$/, '')}/${appRole()}/`
 }
 
 let started = false
@@ -109,8 +158,16 @@ function start({ onStatus } = {}) {
 /**
  * Check because a person asked, and tell them the answer either way.
  *
- * The one place a dialog is right: somebody chose Help → Check for updates and
- * is owed a response, including "you are already current".
+ * The one place a dialog is right: somebody asked, and is owed a response —
+ * including "you are already current".
+ *
+ * NOT WIRED TO ANYTHING YET. main.js calls hideApplicationMenu(), so there is
+ * no Help menu to hang it off, and no screen currently offers the action. It is
+ * kept because the thing it is for is real — a support call where the answer is
+ * "click this and read me what it says" beats "close the app and open it again
+ * and wait four hours" — and because the four lines below are the whole cost.
+ * Wiring it means an IPC handler beside the diagnostics ones in main.js and a
+ * button on a settings screen.
  */
 async function checkNow() {
   const url = feedUrl()

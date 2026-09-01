@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { siteIdForCapability } from '@/lib/auth'
-import { browseForTill } from '@/lib/site/tillSearch'
+import { browseForTill, tillCatalogTotal } from '@/lib/site/tillSearch'
 import { listDepartments } from '@/lib/site/departments'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { liveSpecials } from '@/lib/site/specials'
@@ -318,6 +318,10 @@ export async function GET(req: NextRequest) {
     departments.filter((d) => keyDepartmentIds.has(d.id)).map((d) => [d.id, d.name]),
   )
 
+
+  /* One COUNT beside the queries already run here. See tillCatalogTotal: it
+     shares browseForTill's predicates so the two cannot drift. */
+  const productTotal = await tillCatalogTotal(siteId)
   return NextResponse.json(
     {
       schema: CATALOG_SCHEMA,
@@ -333,6 +337,15 @@ export async function GET(req: NextRequest) {
        * price the shelf edge no longer agrees with.
        */
       reloadProducts: pricesChanged,
+      /**
+       * What a FULL load would hold, so the till can audit what it has.
+       *
+       * Sent on every response, delta included — it is on a DELTA that it
+       * matters. A till whose one full load came back short can never fill the
+       * gap from deltas alone, because the missing rows predate every cursor
+       * that follows. This is the only number that lets it notice.
+       */
+      productTotal,
       products,
       /** Archived or hidden since the cursor. Empty on a full load. */
       deletedIds,

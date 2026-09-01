@@ -24,6 +24,38 @@ const devLanOrigins = (process.env.DEV_LAN_ORIGINS ?? '')
   .map((host) => host.trim())
   .filter(Boolean)
 
+/**
+ * Public hostnames this app is served from, for Server Action validation.
+ *
+ * Next compares the browser's `Origin` against the forwarded host on every
+ * Server Action and rejects a mismatch. Behind IIS that mismatch is the normal
+ * case rather than the exception: ARR forwards `x-forwarded-host:
+ * 127.0.0.1:4100` unless its preserveHostHeader is on, while the browser still
+ * sends the public origin. The site then renders perfectly and every save,
+ * every form and every delete fails with an opaque "Invalid Server Actions
+ * request" — and nothing in the app's own logs points at IIS.
+ *
+ * Listing the origins here is the per-app half of that fix, and the half that
+ * touches nothing outside this project. The alternative — flipping ARR's
+ * preserveHostHeader — is SERVER-WIDE, and this VM also proxies Odyssey_bind's
+ * Express backend, which would start seeing a different Host on every request.
+ * See the note at step 2 of deploy/iis-setup.ps1.
+ *
+ * READ AT BUILD TIME, like everything else in this file, and baked into the
+ * output. A new hostname therefore needs a re-run of deploy-local.ps1 and a
+ * redeploy — editing .env on the server does nothing.
+ *
+ * Hosts only: no scheme, no port. Set SERVER_ACTION_ORIGINS in .env to a
+ * comma-separated list to add more without editing this file.
+ */
+const serverActionOrigins = [
+  'odysseytesting.odysseysoftware.co.za',
+  ...(process.env.SERVER_ACTION_ORIGINS ?? '')
+    .split(',')
+    .map((host) => host.trim())
+    .filter(Boolean),
+]
+
 const nextConfig = {
   /**
    * Ship only the modules the server actually loads.
@@ -129,6 +161,10 @@ const nextConfig = {
       // the smaller of the two the user would get an opaque framework error
       // instead of the sentence naming the limit.
       bodySizeLimit: '10mb',
+
+      // Every Server Action fails behind the IIS proxy without this. See the
+      // note on serverActionOrigins above.
+      allowedOrigins: serverActionOrigins,
     },
   },
   env: {

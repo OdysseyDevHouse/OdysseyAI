@@ -173,7 +173,44 @@ Push-Location $appLive
 # the deploy would look successful while running the old settings.
 Invoke-Pm2 $pm2Cmd delete odyssey-ai *> $null
 Invoke-Pm2 $pm2Cmd start ecosystem.config.js --update-env
-Invoke-Pm2 $pm2Cmd save
+
+# `pm2 save` writes EVERY app in this PM2_HOME to dump.pm2, and the boot task
+# registered by iis-setup.ps1 replays that file with `pm2 resurrect`.
+#
+# This home was designed to hold odyssey-ai alone. On the real server it does
+# not: Odyssey_bind's odyssey-api and odyssey-digest were found registered here
+# too, which is the same sharing that made step 1 stop using `pm2 kill`. An
+# unconditional save would therefore put Odyssey_bind's processes into
+# OdysseyAI's boot task, and after the next reboot this app's scheduled task
+# would start them a second time, racing whatever else owns them on :3001.
+#
+# So the save is app-scoped by refusing to run when it would not be. Skipping
+# it costs nothing here — odyssey-ai is already in dump.pm2 from the install,
+# and its entry is unchanged by a redeploy to the same path.
+# Where-Object drops nulls, and it is load-bearing. An EMPTY daemon makes
+# `(... ).name` evaluate to $null, and @($null) is a one-element array whose
+# Count is 1 - so without the filter an empty list would look like a populated
+# one, fall through to the save, and write an empty dump.pm2. That would delete
+# odyssey-ai's resurrect entry, and it would happen precisely when the start
+# above had just failed.
+$occupants = $null
+try {
+  $occupants = @((Invoke-Pm2 $pm2Cmd jlist 2>$null | ConvertFrom-Json).name | Where-Object { $_ })
+} catch { }
+$foreign = @($occupants | Where-Object { $_ -and $_ -ne 'odyssey-ai' } | Sort-Object -Unique)
+
+if ($null -eq $occupants -or $occupants.Count -eq 0) {
+  # Could not read the list. Do not guess: an unreadable list is the one case
+  # where saving might be the wrong thing, and not saving is always survivable.
+  Write-Host "  Skipped 'pm2 save' - the process list was empty or unreadable." -ForegroundColor Yellow
+} elseif ($foreign.Count -gt 0) {
+  Write-Host "  Skipped 'pm2 save' - this PM2_HOME also holds: $($foreign -join ', ')" -ForegroundColor Yellow
+  Write-Host "  Saving would add those to OdysseyAI's boot task. dump.pm2 left untouched." -ForegroundColor Yellow
+  Write-Host "  They belong in their own PM2_HOME; until they are moved, this is the safe" -ForegroundColor Yellow
+  Write-Host "  behaviour and odyssey-ai still resurrects from its existing dump entry." -ForegroundColor Yellow
+} else {
+  Invoke-Pm2 $pm2Cmd save
+}
 Pop-Location
 
 # --- 5. Prove it answers ------------------------------------

@@ -17,6 +17,27 @@ const updater = require('./updater')
 const licenceRefresh = require('./licenceRefresh')
 const { appRequire } = require('./appModules')
 
+/* ── THE SHOP'S DATA DIRECTORY IS NAMED HERE, NOT INHERITED ─────────────────
+ *
+ * Electron derives userData from package.json — `productName` if there is one,
+ * otherwise `name`. That makes the shop's machine config a hostage of the
+ * packaging: change either field and %APPDATA%\odyssey-ai moves, taking with it
+ * which backend this install uses, the sealed database password and the site
+ * id. There is no migration for that and no error either. It presents as a
+ * machine that has to be provisioned from scratch, on a morning when nobody
+ * touched it.
+ *
+ * The three builds now carry DIFFERENT package names — see build-config/*.yml,
+ * where electron-updater's download cache had to be split per product. Naming
+ * the directory here is what makes that safe, and keeps it safe for whichever
+ * packaging change comes next.
+ *
+ * Before app.getPath('userData') is first called, which is the only ordering
+ * requirement: every caller in electron/ is inside a function reached after
+ * `ready`.
+ */
+app.setName('odyssey-ai')
+
 const DEV_URL = process.env.ELECTRON_DEV_URL
 const PORT = Number(process.env.PORT || 4100)
 
@@ -343,6 +364,24 @@ function hideApplicationMenu(win) {
   })
 }
 
+/* ── THE WINDOW ICON, WHICH ONLY AN UNPACKAGED RUN NEEDS ────────────────────
+ *
+ * A packaged Windows build takes its title-bar and taskbar icon straight out of
+ * the .exe, where electron-builder has embedded build/icon.ico — seven sizes,
+ * and Windows picks the right one per surface. Passing a path here would
+ * override that correctly sized set with one bitmap scaled to whatever is
+ * asked for, so it is deliberately left alone.
+ *
+ * Unpackaged there is no .exe of ours to read from, and the window wears the
+ * stock Electron atom unless it is told otherwise. The source artwork is the
+ * same one scripts/make-icons.mjs builds the .ico from, so the two cannot
+ * drift.
+ */
+function devWindowIcon() {
+  if (app.isPackaged) return undefined
+  return path.join(__dirname, '..', 'public', 'logo-icon.png')
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -352,6 +391,7 @@ async function createWindow() {
     show: false,
     backgroundColor: '#0f1216',
     title: windowTitle(),
+    icon: devWindowIcon(),
     /* Belt and braces with hideApplicationMenu below: this stops the bar being
        painted for the moment between the window appearing and the menu being
        cleared, which is visible as a flicker on a slow machine. */
@@ -428,6 +468,7 @@ async function createWindow() {
           minHeight: 640,
           backgroundColor: '#0f1216',
           title: 'Odyssey POS',
+          icon: devWindowIcon(),
           webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,

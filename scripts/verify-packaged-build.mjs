@@ -34,7 +34,12 @@
  * `Cannot find module '../chunks/ssr/[turbopack]_runtime.js'`. Checking one and
  * inferring the other is how that shipped.
  *
- *   node scripts/verify-packaged-build.mjs [--keep]
+ *   node scripts/verify-packaged-build.mjs [backoffice|pos|database] [--keep]
+ *
+ * Defaults to the Back Office, which is the build that carries the whole app
+ * and therefore the one where a missing module shows up. Each build now packs
+ * into its own release/<role>/ — see build-config/*.yml, where they had to be
+ * separated so that three products would stop overwriting one latest.yml.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -43,15 +48,22 @@ import http from 'node:http'
 import { createRequire } from 'node:module'
 
 const REPO = process.cwd()
-const SRC = path.join(REPO, 'release', 'win-unpacked', 'resources', 'app')
 const KEEP = process.argv.includes('--keep')
+const ROLE = process.argv.slice(2).find((a) => !a.startsWith('--')) || 'backoffice'
+const SRC = path.join(REPO, 'release', ROLE, 'win-unpacked', 'resources', 'app')
 
 let failures = 0
 const fail = (m) => { failures++; console.log(`  FAIL  ${m}`) }
 const pass = (m) => console.log(`  PASS  ${m}`)
 
 if (!fs.existsSync(SRC)) {
-  console.error(`No packaged app at ${SRC}. Run an electron-builder pack first.`)
+  console.error(`No packaged app at ${SRC}. Run \`npm run dist:${ROLE}\` first.`)
+  /* Named explicitly, because the folder moved: a tree built before the three
+     products were separated has it at release/win-unpacked, and "no packaged
+     app" would otherwise read as a failed build rather than a stale path. */
+  if (fs.existsSync(path.join(REPO, 'release', 'win-unpacked'))) {
+    console.error('(release/win-unpacked is from before the per-product split — rebuild.)')
+  }
   process.exit(1)
 }
 

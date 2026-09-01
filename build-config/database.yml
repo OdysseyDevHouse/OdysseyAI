@@ -25,8 +25,59 @@ productName: Odyssey Database Setup
 
 appId: za.co.pointofsale.odyssey.database
 
+# ── WHERE THIS BUILD'S RELEASES LIVE ────────────────────────────────────────
+#
+# Its OWN output folder, because electron-builder names the update manifest
+# `latest.yml` regardless of product. Three builds sharing `release/` meant one
+# latest.yml describing whichever installer was cut last — and `npm run dist`
+# builds all three, so that was every full build.
+#
+# `publish` is here rather than in the shared file for the same reason: the
+# generic provider needs a URL, and the URL differs per product. It is a
+# LITERAL, deliberately — electron-builder expands ${env.X} at build time and
+# treats an unset variable as fatal, so an env var here would mean a developer
+# building locally gets "cannot expand pattern" instead of an installer.
+#
+# It is not the authority at runtime. electron/updater.js sets its own feed from
+# ODYSSEY_UPDATE_URL, baked into buildDefaults.json, so a build can be pointed
+# at a staging host without touching this file. What `publish` is FOR is
+# app-update.yml, which electron-builder writes into resources/ and which
+# electron-updater reads for `updaterCacheDirName` whatever the feed says.
+# Without a publish block that file was generated from the git remote and
+# claimed a private GitHub repo — harmless only by accident.
+directories:
+  output: release/database
+
+publish:
+  provider: generic
+  url: https://updates.odysseysoftware.co.za/database/
+
+# No spaces. electron-builder writes the SAFE name into latest.yml — spaces
+# collapsed to dashes — while writing the file to disk under the name below. A
+# `${productName}` with a space in it therefore produced a manifest pointing at
+# a filename that does not exist, and every update 404'd on download.
+artifactName: Odyssey-Database-Setup-${version}-${arch}.${ext}
+
 extraMetadata:
   odysseyRole: database
+
+  # ── A PACKAGE NAME PER PRODUCT, FOR THE UPDATER'S CACHE ────────────────────
+  #
+  # electron-updater keeps downloads in %LOCALAPPDATA%\<name>-updater, derived
+  # from package.json's `name` — which was `odyssey-ai` in all three builds. A
+  # machine running Back Office and POS side by side (explicitly supported, see
+  # the shared config) had both writing into one folder, and the first thing
+  # either does before downloading is EMPTY it. Each would delete the other's
+  # finished download minutes before quit applied it, so neither ever updated
+  # and nothing anywhere said why.
+  #
+  # `productName` is pinned back to the old value because Electron prefers it
+  # over `name` when deriving userData — without it this line would move
+  # %APPDATA%\odyssey-ai and every shop would lose its machine config.
+  # electron/main.js calls app.setName('odyssey-ai') as well; belt and braces on
+  # a failure that has no recovery path.
+  name: odyssey-database
+  productName: odyssey-ai
 
 # ── THE ONE BUILD THAT ASKS FOR ADMINISTRATOR ───────────────────────────────
 #

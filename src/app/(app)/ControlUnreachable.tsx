@@ -1,4 +1,5 @@
-import { Callout, Card, Icons } from '@/components/ui'
+import { ButtonLink, Callout, Card, Icons } from '@/components/ui'
+import { getSession } from '@/lib/session'
 import { describeErrorChain, isStoreDetailsUnavailable } from '@/lib/sites'
 import NeedsInternetScreen from './NeedsInternetScreen'
 import RetryConnectionButton from './RetryConnectionButton'
@@ -36,8 +37,23 @@ import RetryConnectionButton from './RetryConnectionButton'
  *
  * If that ordering ever changes — a gate moved above the session check — this
  * reasoning goes with it, and the screen must go back to a digest.
+ *
+ * ── AND IT IS NOT A DEAD END ────────────────────────────────────────────────
+ *
+ * Every route inside (app) renders through the layout that shows this, so
+ * without a way out the reader is stuck on it: no top bar, no site picker, no
+ * sign-out. That is wrong for the commonest cause — ONE site's row pointing at
+ * a host that no longer resolves — where the account can still open a different
+ * store perfectly well, and it is wrong for the next commonest, wanting to come
+ * back as somebody else.
+ *
+ * Sign out works whatever is down: it verifies the cookie, and releaseSession()
+ * logs a failed control write rather than throwing, so the cookie is cleared
+ * either way. The store picker does need the control database — it lists the
+ * account's stores — which is why it is offered as the secondary of the two and
+ * why /select-site carries its own catch for that case.
  */
-export default function ControlUnreachable({ err }: { err: unknown }) {
+export default async function ControlUnreachable({ err }: { err: unknown }) {
   /* Read on the server from the baked build mode, not from the client. Same
      check as the layouts' own `isDesktop`; it is repeated here rather than
      passed in so that both call sites cannot drift into different answers. */
@@ -46,6 +62,10 @@ export default function ControlUnreachable({ err }: { err: unknown }) {
   }
 
   const chain = describeErrorChain(err)
+  /* The cookie, not the database — see connectionActions.ts. It is only used to
+     name the account in the footer, and an unnamed footer is the right outcome
+     if there is no readable session. */
+  const session = await getSession()
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas p-6">
@@ -115,6 +135,38 @@ export default function ControlUnreachable({ err }: { err: unknown }) {
               reads that once at startup, so it needs restarting.
             </p>
           </Callout>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+            <p className="text-sm text-muted">
+              {session?.email ? (
+                <>
+                  Signed in as{' '}
+                  <span className="font-medium text-ink-2">{session.email}</span>
+                </>
+              ) : (
+                'Signed in'
+              )}
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <ButtonLink href="/select-site" variant="secondary" size="sm">
+                <Icons.Store size={16} />
+                Choose another store
+              </ButtonLink>
+              {/* A form POST rather than a link: signing out changes something,
+                  and /api/auth/signout only answers POST. Quiet text so it does
+                  not compete with Try again above, which is still the first
+                  thing to do — same treatment as the site picker's own. */}
+              <form action="/api/auth/signout" method="post">
+                <button
+                  data-kit-ok
+                  type="submit"
+                  className="text-sm text-muted transition hover:text-ink"
+                >
+                  Sign out
+                </button>
+              </form>
+            </div>
+          </div>
         </div>
       </Card>
     </div>
