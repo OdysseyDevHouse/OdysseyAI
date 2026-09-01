@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { startPosSync, syncCounts, type SyncHandle } from './sync'
 import { catalogAgeHours, catalogMeta, refreshCatalog, type CatalogMeta } from './catalog'
 import { hasSequence } from './saleNumber'
-import { offlineStorageWorks } from './db'
+import { offlineStorageWorks } from './store'
 import type { PosSyncState } from './types'
 
 /**

@@ -277,40 +277,12 @@ export function posDb(siteId: number): PosDatabase {
   return db
 }
 
-/**
- * Whether IndexedDB is usable at all.
- *
- * Private browsing and locked-down kiosk profiles can have `indexedDB` present but
- * throw on open. Checked rather than assumed so the till can say "this machine
- * cannot trade offline" on the screen instead of failing at the moment the network
- * drops, which is the worst possible time to discover it.
+/*
+ * `kvGet`, `kvPut` and `offlineStorageWorks` used to live here and now live in
+ * `store.ts`. They talk to whichever store this machine uses, and this file is
+ * one of those stores — keeping them here would have sent the operator session
+ * and the invoice counter to Dexie while the sales went to SQLite.
  */
-export async function offlineStorageWorks(siteId: number): Promise<boolean> {
-  try {
-    const db = posDb(siteId)
-    await db.open()
-    return true
-  } catch {
-    return false
-  }
-}
-
-/* ── kv helpers ──────────────────────────────────────────────────────────── */
-
-export async function kvGet<T>(siteId: number, key: string): Promise<T | null> {
-  try {
-    const row = await posDb(siteId).kv.get(key)
-    return (row?.value as T | undefined) ?? null
-  } catch {
-    // A read failure is a missing value, not an error worth propagating: every
-    // caller's fallback is "fetch it from the server", which is correct anyway.
-    return null
-  }
-}
-
-export async function kvPut(siteId: number, key: string, value: unknown): Promise<void> {
-  await posDb(siteId).kv.put({ key, value })
-}
 
 /** The keys `kv` holds, named so a typo is a compile error rather than a null. */
 export const KV = {

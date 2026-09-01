@@ -4,7 +4,8 @@ import { nextLocalNumber, releaseLocalNumber } from './saleNumber'
 import { dropQueuedSale, queueReturn, queueSale } from './sync'
 import { offerToBox } from './boxQueue'
 import { decrementStock } from './catalog'
-import { kvGet, KV } from './db'
+import { KV } from './db'
+import { kvGet } from './store'
 import type {
   OfflineReturn,
   OfflineReturnLine,

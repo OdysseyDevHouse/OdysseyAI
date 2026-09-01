@@ -196,3 +196,38 @@ export interface PosStore {
 export function posStore(siteId: number): PosStore {
   return dexieStore(siteId)
 }
+
+/**
+ * Read and write one `kv` document.
+ *
+ * Free functions rather than methods on a caller-held store, because thirty
+ * call sites across the till read a single key and nothing else — the operator
+ * session, the shift, the number sequence — and making each of them resolve a
+ * store first would be ceremony around a one-line read.
+ *
+ * ⚠ These MUST go through `posStore`. They used to live in `db.ts` and talk to
+ * Dexie directly, which was harmless while Dexie was the only store and
+ * actively dangerous the moment it stopped being: the products and the outbox
+ * would have moved to SQLite while the operator session, the offline PIN
+ * lockout and the invoice counter stayed behind in IndexedDB. A till would
+ * then hold its sales in one place and its numbering in another.
+ */
+export async function kvGet<T>(siteId: number, key: string): Promise<T | null> {
+  return posStore(siteId).kvGet<T>(key)
+}
+
+export async function kvPut(siteId: number, key: string, value: unknown): Promise<void> {
+  await posStore(siteId).kvPut(key, value)
+}
+
+/**
+ * Whether this machine can store anything locally at all.
+ *
+ * Moved here for the same reason as the two above: the answer depends on which
+ * store is in use, and a browser that refuses site data and a device whose
+ * SQLite file will not open are the same fact to the cashier being told the
+ * till cannot trade offline.
+ */
+export async function offlineStorageWorks(siteId: number): Promise<boolean> {
+  return posStore(siteId).storageWorks()
+}

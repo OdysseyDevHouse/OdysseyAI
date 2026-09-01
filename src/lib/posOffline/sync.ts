@@ -1,6 +1,6 @@
 'use client'
 
-import { posDb } from './db'
+import { posStore } from './store'
 import { pendingCancellations, markCancellationSynced } from './cancelOffline'
 import type {
   OfflineReturn,
@@ -60,11 +60,7 @@ class TransportError extends Error {
 /* ── Reading the queue ───────────────────────────────────────────────────── */
 
 async function pendingSales(siteId: number, limit: number): Promise<OutboxSale[]> {
-  return posDb(siteId)
-    .outbox.where('status')
-    .equals('pending')
-    .sortBy('takenAt')
-    .then((rows) => rows.slice(0, limit))
+  return posStore(siteId).outboxPending(limit)
 }
 
 /**
@@ -91,17 +87,13 @@ export async function syncCounts(
   pendingReturns: number
   failedReturns: number
 }> {
-  const db = posDb(siteId)
+  const store = posStore(siteId)
   const [pending, failed, cancelled, retPending, retFailed] = await Promise.all([
-    db.outbox.where('status').equals('pending').count(),
-    db.outbox.where('status').equals('failed').count(),
-    db.outbox
-      .where('status')
-      .equals('cancelled')
-      .filter((row) => row.syncedAt === null)
-      .count(),
-    db.returns.where('status').equals('pending').count(),
-    db.returns.where('status').equals('failed').count(),
+    store.outboxCount('pending'),
+    store.outboxCount('failed'),
+    store.outboxCancelledUnsyncedCount(),
+    store.returnCount('pending'),
+    store.returnCount('failed'),
   ])
   return {
     pending,
@@ -132,7 +124,7 @@ export async function queueSale(siteId: number, sale: OfflineSale): Promise<void
   // `put`, not `add`: re-queueing the same uid must overwrite rather than throw.
   // The uid is generated once per sale, so this only happens on a retry of the
   // queueing itself, and a throw there would lose the sale.
-  await posDb(siteId).outbox.put(entry)
+  await posStore(siteId).outboxPut(entry)
 }
 
 /**
@@ -164,12 +156,7 @@ export async function queueSale(siteId: number, sale: OfflineSale): Promise<void
  * delivered — that one is genuinely `synced` and belongs to the prune timer.
  */
 export async function dropQueuedSale(siteId: number, saleUid: string): Promise<boolean> {
-  const removed = await posDb(siteId)
-    .outbox.where('saleUid')
-    .equals(saleUid)
-    .and((row) => row.status === 'pending')
-    .delete()
-  return removed > 0
+  return posStore(siteId).outboxDropPending(saleUid)
 }
 
 /**
@@ -190,16 +177,12 @@ export async function queueReturn(siteId: number, ret: OfflineReturn): Promise<v
     syncedAt: null,
   }
   // `put`, not `add` — see queueSale. A throw here would lose the return.
-  await posDb(siteId).returns.put(entry)
+  await posStore(siteId).returnPut(entry)
 }
 
 /** Pending returns, OLDEST FIRST — the same rule sales flush by. */
 async function pendingReturns(siteId: number, limit: number): Promise<OutboxReturn[]> {
-  return posDb(siteId)
-    .returns.where('status')
-    .equals('pending')
-    .sortBy('takenAt')
-    .then((rows) => rows.slice(0, limit))
+  return posStore(siteId).returnPending(limit)
 }
 
 /* ── One flush ───────────────────────────────────────────────────────────── */
@@ -259,7 +242,7 @@ async function flushBatch(siteId: number): Promise<number> {
     throw new TransportError('The server sent no results.', 200)
   }
 
-  const db = posDb(siteId)
+  const store = posStore(siteId)
   let accepted = 0
 
   for (const result of payload.results) {
@@ -268,7 +251,7 @@ async function flushBatch(siteId: number): Promise<number> {
 
     if (result.ok) {
       accepted += 1
-      await db.outbox.update(result.saleUid, {
+      await store.outboxUpdate(result.saleUid, {
         status: 'synced',
         syncedAt: new Date().toISOString(),
         lastError: null,
@@ -286,7 +269,7 @@ async function flushBatch(siteId: number): Promise<number> {
      * stays pending and goes again — including an unexplained failure, because the
      * sale is real and the fault is more likely ours than the cashier's.
      */
-    await db.outbox.update(result.saleUid, {
+    await store.outboxUpdate(result.saleUid, {
       status: result.retryable === false ? 'failed' : 'pending',
       attempts: entry.attempts + 1,
       lastError: result.error ?? 'The server would not accept this sale.',
@@ -309,7 +292,7 @@ async function flushBatch(siteId: number): Promise<number> {
 
     if (result.ok) {
       accepted += 1
-      await db.returns.update(result.returnUid, {
+      await store.returnUpdate(result.returnUid, {
         status: 'synced',
         syncedAt: new Date().toISOString(),
         lastError: null,
@@ -318,7 +301,7 @@ async function flushBatch(siteId: number): Promise<number> {
       continue
     }
 
-    await db.returns.update(result.returnUid, {
+    await store.returnUpdate(result.returnUid, {
       status: result.retryable === false ? 'failed' : 'pending',
       attempts: entry.attempts + 1,
       lastError: result.error ?? 'The server would not accept this return.',
@@ -381,21 +364,13 @@ function stripReturnLocalFields(entry: OutboxReturn): OfflineReturn {
  */
 export async function pruneSynced(siteId: number): Promise<void> {
   const cutoff = new Date(Date.now() - KEEP_SYNCED_DAYS * 86_400_000).toISOString()
-  const db = posDb(siteId)
-  await db.outbox
-    .where('status')
-    .equals('synced')
-    .filter((row) => (row.syncedAt ?? '') < cutoff)
-    .delete()
+  const store = posStore(siteId)
+  await store.outboxPruneSynced(cutoff)
   /* Returns on identical terms, and written out rather than shared so the
      `.equals('synced')` predicate above is repeated verbatim rather than abstracted
      into something that could later be loosened for one table and not the other. A
      pending or failed return is the only record that money left the drawer. */
-  await db.returns
-    .where('status')
-    .equals('synced')
-    .filter((row) => (row.syncedAt ?? '') < cutoff)
-    .delete()
+  await store.returnPruneSynced(cutoff)
 }
 
 /* ── The engine ──────────────────────────────────────────────────────────── */

@@ -1,7 +1,8 @@
 'use client'
 
 import { formatNumber } from '../numberFormat'
-import { kvGet, kvPut, KV } from './db'
+import { KV } from './db'
+import { kvGet, kvPut } from './store'
 
 /**
  * Numbering a sale with no server.

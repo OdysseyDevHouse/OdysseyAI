@@ -2,7 +2,8 @@
 
 import { deriveVerifier, verifierMatches } from '../offlinePin'
 import { currentWindowId, ensureWindowId, windowMatches } from '../windowSession'
-import { kvGet, kvPut, KV } from './db'
+import { KV } from './db'
+import { kvGet, kvPut } from './store'
 import { storedOperators } from './catalog'
 import type { OfflineOperator } from '../site/offlineOperators'
 
