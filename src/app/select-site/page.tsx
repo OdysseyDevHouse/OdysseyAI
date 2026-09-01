@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { Building2, ChevronRight, StatusError as AlertCircle } from '@/components/ui/icons'
 import { requireSession } from '@/lib/auth'
-import { listSitesForUser } from '@/lib/sites'
+import { listSitesForUser, isControlUnreachable } from '@/lib/sites'
 import { opensHere, cloudSiteMessage } from '@/lib/desktopBackOffice'
 import LoginScreen from '@/components/LoginScreen'
 import { selectSiteAction } from './actions'
@@ -33,7 +33,49 @@ export default async function SelectSitePage({
      lib/desktopBackOffice.ts. `hidden` is what got filtered out, so the screen
      can say so rather than silently showing a shorter list than the one the
      same account sees in a browser. */
-  const all = await listSitesForUser(session.userId)
+  /* ── THE LIST IS THE ONE THING HERE THAT NEEDS THE CONTROL DATABASE ───────
+   *
+   * ControlUnreachable offers this page as the way out of a store whose own
+   * database cannot be opened, which is the usual cause: one row in
+   * cp2_site_databases pointing at a host that no longer resolves, while the
+   * account's other stores are fine. But the SAME screen appears when the
+   * control database itself is down, and then this read throws — turning the
+   * door out of that screen into a stack trace on global-error.tsx.
+   *
+   * So the failure is caught and said in a sentence. Signing out still works
+   * from here (it touches no database that has to answer), which is the only
+   * action left worth offering.
+   */
+  let all
+  try {
+    all = await listSitesForUser(session.userId)
+  } catch (err) {
+    if (!isControlUnreachable(err)) throw err
+    return (
+      <LoginScreen>
+        <div className="flex flex-col gap-4">
+          <div className="text-center">
+            <h2 className="text-sm font-semibold text-ink">Can&rsquo;t list your stores</h2>
+            <p className="mt-0.5 text-xs text-muted">Signed in as {session.email}</p>
+          </div>
+          <p className="flex items-start gap-2 rounded-md bg-warning/10 px-3 py-2.5 text-sm text-warning">
+            <AlertCircle size={15} className="mt-0.5 shrink-0" />
+            <span>
+              The server could not reach the control database, which is where the list of
+              stores your account can open lives. Try again in a moment; if it keeps
+              happening it is a setting or a network fault on the server rather than
+              anything you have done.
+            </span>
+          </p>
+          <form action="/api/auth/signout" method="post" className="text-center">
+            <button data-kit-ok type="submit" className="text-xs text-muted hover:text-ink">
+              Sign out
+            </button>
+          </form>
+        </div>
+      </LoginScreen>
+    )
+  }
   const sites = all.filter((s) => opensHere(s.connectionType))
   const hidden = all.length - sites.length
 
