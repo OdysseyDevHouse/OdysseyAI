@@ -1,6 +1,7 @@
 'use client'
 
-import { posDb, type LocalParkedSale } from './db'
+import type { LocalParkedSale } from './db'
+import { posStore } from './store'
 import type { OfflineSaleLine } from './types'
 
 /**
@@ -74,13 +75,13 @@ export async function parkOffline(
     itemCount: input.lines.length,
     totalIncl: input.totalIncl,
   }
-  await posDb(siteId).parked.put(row)
+  await posStore(siteId).parkedPut(row)
   return row.uid
 }
 
 /** What is parked on this till, most recent first. */
 export async function listParkedOffline(siteId: number): Promise<ParkedBasket[]> {
-  const rows = await posDb(siteId).parked.orderBy('parkedAt').reverse().toArray()
+  const rows = await posStore(siteId).parkedList()
   return rows.map((r) => ({
     uid: r.uid,
     parkedAt: r.parkedAt,
@@ -91,7 +92,7 @@ export async function listParkedOffline(siteId: number): Promise<ParkedBasket[]>
 }
 
 export async function countParkedOffline(siteId: number): Promise<number> {
-  return posDb(siteId).parked.count()
+  return posStore(siteId).parkedCount()
 }
 
 /**
@@ -111,16 +112,10 @@ export async function recallOffline(
   siteId: number,
   parkedUid: string,
 ): Promise<LocalParkedSale | null> {
-  const db = posDb(siteId)
-  return db.transaction('rw', db.parked, async () => {
-    const row = await db.parked.get(parkedUid)
-    if (!row) return null
-    await db.parked.delete(parkedUid)
-    return row
-  })
+  return posStore(siteId).recallParked(parkedUid)
 }
 
 /** Throws a parked basket away without recalling it. */
 export async function discardParkedOffline(siteId: number, parkedUid: string): Promise<void> {
-  await posDb(siteId).parked.delete(parkedUid)
+  await posStore(siteId).parkedDelete(parkedUid)
 }
