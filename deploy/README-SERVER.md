@@ -40,9 +40,22 @@ C:\inetpub\odyssey_ai\
 
 ## PM2
 
-This app has its own `PM2_HOME`, so it has its own daemon, separate from
+This app has its own `PM2_HOME` so that it has its own daemon, separate from
 Odyssey_bind's. That is deliberate: Odyssey_bind's deploy runs `pm2 kill`,
 which would otherwise stop this app too.
+
+> **On the live VM the separation is not actually in place.** Checked
+> 2026-09-01: `odyssey-api` and `odyssey-digest` are registered in *this*
+> app's home, so all three share one daemon and `pm2 kill` from either side
+> stops the other. `odyssey-ai` was found stopped this way, having served
+> requests until 11:28 with no crash in its log.
+>
+> The deploy scripts are written to survive that rather than depend on it:
+> `update-on-server.ps1` uses `pm2 delete odyssey-ai` rather than `pm2 kill`,
+> matches stray processes on the app folder path, and skips `pm2 save`
+> entirely while any foreign app is listed in this home — a save would put
+> Odyssey_bind's processes into OdysseyAI's boot task. The real fix is still
+> to move them back to their own home.
 
 Every PM2 command therefore needs the home set:
 
@@ -99,7 +112,7 @@ node --env-file=.env scripts\site-migrate.mjs <siteId>
 |---|---|
 | Browser shows a 502 | The app is not up. `app\logs\error.log`, then `pm2 logs odyssey-ai`. |
 | `curl 127.0.0.1:4100/api/health` works but the site does not | IIS. ARR proxy not enabled, or the site is bound to the wrong host/port. Re-run `iis-setup.ps1`. |
-| Pages render but every save fails | ARR is not preserving the host header. Re-run `iis-setup.ps1`. |
+| Pages render but every save fails | The Server Action origin check. The public hostname must be in `serverActionOrigins` in `next.config.mjs` — that is read at BUILD time, so it needs a re-stage, not a server edit. Re-running `iis-setup.ps1` fixes it only with `-SetPreserveHostHeader`, which is server-wide and changes what Odyssey_bind sees in `Host`. |
 | Unstyled page, no JavaScript | `app\.next\static` is missing — the staged folder was built by something other than `deploy-local.ps1`. |
 | `Cannot find module '.next\server\chunks\...'` | The staged folder is a raw copy of `.next\standalone`, which is missing Turbopack's server chunks. Re-stage with `deploy-local.ps1`. |
 | PM2 says `online`, nothing answers, log says `Cannot find module 'next/dist/compiled/next-server/...'` | The staged folder is missing Next's server runtimes. Re-stage with `deploy-local.ps1`; do not try to patch it here. |

@@ -176,6 +176,10 @@ New-Item -ItemType Directory -Path (Join-Path $app 'electron') -Force | Out-Null
 Copy-Item (Join-Path $root 'scripts\tickets-migrate.mjs') (Join-Path $app 'scripts')
 Copy-Item (Join-Path $root 'scripts\site-migrate.mjs')    (Join-Path $app 'scripts')
 Copy-Item (Join-Path $root 'scripts\box-migrate.mjs')     (Join-Path $app 'scripts') -ErrorAction SilentlyContinue
+# Diagnostics. Answers "does the SITE connection see this table" - which the
+# migration ledger cannot (see sql/site/098_restore_products.sql) and a
+# control-credentials check does not ask.
+Copy-Item (Join-Path $root 'scripts\probe-site-table.mjs') (Join-Path $app 'scripts') -ErrorAction SilentlyContinue
 # The applying half. site-migrate.mjs imports it, and it reads sql/<kind>/ as a
 # sibling of its own parent - which is why it goes in app\electron\.
 Copy-Item (Join-Path $root 'electron\siteMigrate.js')     (Join-Path $app 'electron')
