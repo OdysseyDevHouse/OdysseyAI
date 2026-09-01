@@ -830,3 +830,44 @@ export async function tillProductCounts(siteId: number): Promise<Record<number, 
   )
   return Object.fromEntries(rows.map((r) => [Number(r.department_id), Number(r.n)]))
 }
+
+/**
+ * How many products a FULL catalog load would put on a till.
+ *
+ * The offline catalog is the union of two `browseForTill` calls — the grid
+ * (groups and loose products) and the members beneath a group — so this counts
+ * exactly that union and nothing else.
+ *
+ * ── WHY A TILL NEEDS THIS AT ALL ──────────────────────────────────────────
+ *
+ * It is how a till tells whether what it HOLDS is what the shop HAS. Nothing
+ * else can: a delta carries only what has MOVED, so rows that predate the
+ * cursor are never sent again, and a catalog that came back short once stays
+ * short for the life of the install. See `refreshCatalog`, which reloads the
+ * lot when this number and the stored one disagree.
+ *
+ * ⚠ These are `browseForTill`'s own predicates — `LIVE_GROUP_ONLY` is the same
+ * constant, and the rest is the two flags it filters on. They must stay in step
+ * in BOTH directions: a count admitting a row the load excludes turns the guard
+ * into a full load on every sync, and one excluding a row the load admits hides
+ * the very gap it exists to catch.
+ */
+export async function tillCatalogTotal(siteId: number): Promise<number> {
+  const rows = await siteQuery<{ n: number }>(
+    siteId,
+    `SELECT COUNT(*) AS n
+       FROM products p
+      WHERE p.is_archived = 0
+        AND p.visible_in_pos = 1
+        AND (
+          /* The grid: a group stands for its members, loose products for
+             themselves — browseForTill under includeVariantParents. */
+          (p.parent_id IS NULL ${LIVE_GROUP_ONLY})
+          /* The members themselves, which the feed carries so a scanned
+             barcode still resolves. Parents are excluded by has_variants,
+             exactly as the second browseForTill call excludes them. */
+          OR (p.parent_id IS NOT NULL AND p.has_variants = 0)
+        )`,
+  )
+  return Number(rows[0]?.n ?? 0)
+}
