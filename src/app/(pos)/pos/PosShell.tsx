@@ -6312,6 +6312,9 @@ export default function PosShell({
       {closedGate ? (
         <OpenTillGate
           mode={closedGate.mode}
+          /* The same word the status bar puts beside the mark — this screen
+             just draws the lockup large. See lib/posMode. */
+          modeName={modeName}
           operatorName={operatorName}
           terminalId={terminal?.id ?? null}
           terminalLabel={terminal?.code ?? null}

@@ -1,6 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import * as billingWritePortal from '@/lib/control/billingWritePortal'
 import { actorFor, requireSession, type Denied } from '@/lib/auth'
 import { listSitesForUser } from '@/lib/sites'
 import {
@@ -82,6 +83,21 @@ export async function applyModuleChangesAction(
       continue
     }
 
+    /* The portal first on a desktop install, where the writes below cannot
+       reach 3306 at all. null means no portal or no line and the SQL path runs
+       unchanged; a REFUSAL is an answer — "the Starter Pack cannot be removed" —
+       and is shown rather than retried, because falling back on a refusal would
+       re-attempt a write the portal has already declined. */
+    const viaPortal = change.want
+      ? await billingWritePortal.addModule(change.siteId, change.moduleKey, actor)
+      : await billingWritePortal.scheduleRemoval(change.siteId, change.moduleKey, actor)
+
+    if (viaPortal) {
+      if (viaPortal.ok) applied++
+      else refusals.push(viaPortal.error)
+      continue
+    }
+
     const result = change.want
       ? await addModule(change.siteId, change.moduleKey, actor, account.id)
       : await scheduleRemoval(change.siteId, change.moduleKey, actor, account.id, billingDay)
@@ -139,11 +155,16 @@ export async function setDevicesAction(
   if (guard) return guard
 
   const session = await requireSession()
-  const result = await setRequestedDevices(siteId, requested, {
-    name: ctx.actor.userName,
-    email: session.email,
-  })
-  if (!result.ok) return { ok: false, error: result.error }
+  const actor = { name: ctx.actor.userName, email: session.email }
+
+  /* Portal first, SQL when there is none. See applyModuleChangesAction. */
+  const viaPortal = await billingWritePortal.setRequestedDevices(siteId, requested, actor)
+  if (viaPortal && !viaPortal.ok) return { ok: false, error: viaPortal.error }
+
+  if (!viaPortal) {
+    const result = await setRequestedDevices(siteId, requested, actor)
+    if (!result.ok) return { ok: false, error: result.error }
+  }
 
   // A till count change moves the monthly figure, so PayFast has to hear it.
   const account = await accountForSite(ctx.siteId)

@@ -1,6 +1,7 @@
 import 'server-only'
 import { portalConfig, send } from '@/lib/control/portalApi'
 import type { AiFeature, TokenUsage } from './pricing'
+import type { LedgerEntry } from './ledger'
 
 /**
  * The AI wallet, asked over HTTPS instead of a MySQL socket.
@@ -29,9 +30,22 @@ import type { AiFeature, TokenUsage } from './pricing'
  *     free AI on Odyssey's own Anthropic account for the length of the outage,
  *     billed to us, for every shop at once.
  *
- * So there is no fallback here. `unreachable` is surfaced to the caller, which
- * refuses the AI call and says why. A shop that cannot reach Odyssey cannot
- * spend Odyssey's money, which is the honest answer and the safe one.
+ * So there is no fallback on the SPENDING path. `unreachable` is surfaced to
+ * the caller, which refuses the AI call and says why. A shop that cannot reach
+ * Odyssey cannot spend Odyssey's money, which is the honest answer and the safe
+ * one.
+ *
+ * ── DISPLAYING A BALANCE IS NOT SPENDING ───────────────────────────────────
+ *
+ * fetchWallet below is the exception, and it proves the rule rather than
+ * bending it. Nothing is spent by DRAWING a balance, so refusing to draw one
+ * protects nothing — it would only replace a working billing screen with an
+ * error for a shop that came to check its modules. It returns null and lets the
+ * caller read the database, exactly as devicesPortal does.
+ *
+ * The distinction is the direction of the failure: the meter must fail CLOSED
+ * because failing open costs money, and the screen must fail SOFT because
+ * failing hard costs a page.
  *
  * ── THE SERVER HALF IS NOT IN THIS REPOSITORY ──────────────────────────────
  *
@@ -69,6 +83,57 @@ export async function fetchBalance(): Promise<PortalOutcome<PortalBalance>> {
   return toFailure('ai/credits/balance', res)
 }
 
+/* ── The wallet, for the billing screen ──────────────────────────────────── */
+
+/**
+ * The balance AND the recent rows, in one call.
+ *
+ * ── WHY THIS IS NOT fetchBalance ────────────────────────────────────────────
+ *
+ * Same endpoint, different question. fetchBalance is the METER's: asked before
+ * every AI call, hundreds of times a day, and it wants nothing but a number.
+ * This is the SCREEN's, asked when somebody opens Plan & billing, and it wants
+ * the history beside the balance — one card, whose figures must agree.
+ *
+ * The `entries` parameter is opt-in precisely so the meter's call stays exactly
+ * as cheap as it was; the portal reads no rows unless this asks for them.
+ *
+ * ── WHY THIS ONE DOES FALL BACK, WHEN THE METER DOES NOT ────────────────────
+ *
+ * The header above explains why spending must never fail open: an unreadable
+ * balance that lets a call run is free AI on Odyssey's account.
+ *
+ * DISPLAYING a balance is the opposite case. Nothing is spent by drawing it, so
+ * refusing to draw it protects nothing — it just replaces a working billing
+ * screen with an error on a shop that may only want to check its modules. So
+ * null here means "read the database yourself", exactly as devicesPortal does,
+ * and the caller degrades instead of failing.
+ */
+export type WalletView = {
+  balanceMicros: number
+  accountId: number
+  currency: string
+  entries: RawLedgerEntry[]
+}
+
+/** A ledger row as JSON carries it — `createdAt` is a string on this wire. */
+export type RawLedgerEntry = Omit<LedgerEntry, 'createdAt'> & { createdAt: string }
+
+export async function fetchWallet(limit: number): Promise<WalletView | null> {
+  if (!portalAvailable()) return null
+
+  const res = await send<WalletView>('GET', `/ai/credits/balance?entries=${Math.max(1, Math.min(500, Math.floor(limit)))}`)
+  if (res.ok) return { ...res.data, entries: res.data.entries ?? [] }
+
+  /* Logged, then degraded. A refusal here is worth reading — it usually means
+     the store has no billing account, which the screen already has a banner
+     for — but it is never a reason to refuse to draw the page. */
+  if (res.reason === 'refused') {
+    console.error(`[portal] ai/credits/balance refused (${res.code}): ${res.error}`)
+  }
+  return null
+}
+
 /* ── Usage ───────────────────────────────────────────────────────────────── */
 
 export type ConsumeInput = {
@@ -99,6 +164,53 @@ export async function consume(input: ConsumeInput): Promise<PortalOutcome<Consum
   const res = await send<ConsumeResult>('POST', '/ai/credits/consume', input)
   if (res.ok) return { ok: true, data: res.data }
   return toFailure('ai/credits/consume', res)
+}
+
+/* ── Opening a top-up ─────────────────────────────────────────────────────── */
+
+export type TopupIntent = {
+  /** What to sign as m_payment_id. */
+  reference: string
+  accountId: number
+  /** The amount to charge, and the currency to charge it in. */
+  amountPay: number
+  payCurrency: string
+  /** The credit it buys, fixed at checkout so a moving rate cannot change it. */
+  amountMicros: number
+}
+
+/**
+ * Mint the pending row for a top-up checkout.
+ *
+ * ── ONLY THE ROW, NOT THE FORM ──────────────────────────────────────────────
+ *
+ * The PayFast form is signed with the PLATFORM's merchant credentials, which
+ * live in this server's environment and must never travel to a shop's machine.
+ * So the caller still builds and signs the form itself; what it cannot do on a
+ * firewalled desktop is write the pending row, and that is exactly what this
+ * fetches.
+ *
+ * The portal re-derives everything from the amount: the currency comes from the
+ * account, the credit is computed from both, and an amount that was never
+ * offered is refused. Nothing here can name its own price.
+ *
+ * null means no portal, no line, or not an answer — try SQL. A refusal is
+ * carried back, because "choose one of the listed amounts" is something the
+ * person who clicked needs to read.
+ */
+export async function startTopup(
+  amount: number,
+): Promise<{ ok: true; intent: TopupIntent } | { ok: false; error: string } | null> {
+  if (!portalAvailable()) return null
+
+  const res = await send<TopupIntent>('POST', '/ai/credits/topup', { amount })
+  if (res.ok) return { ok: true, intent: res.data }
+
+  if (res.reason === 'refused') {
+    console.error(`[portal] ai/credits/topup refused (${res.code}): ${res.error}`)
+    return { ok: false, error: res.error }
+  }
+  return null
 }
 
 /* ── Outcomes ────────────────────────────────────────────────────────────── */

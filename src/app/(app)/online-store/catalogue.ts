@@ -133,6 +133,62 @@ const DECLARED: DeclaredGroup<OnlineStoreHref>[] = [
       },
     ],
   },
+  /*
+   * LAST, and deliberately.
+   *
+   * These four came from the Online Store's own Setup hub, which was a second
+   * menu row and a second landing page for a section that already had one. A
+   * shop opens this section to look at orders or to change what it sells; the
+   * domain and the trading hours are set once and revisited rarely, so they sit
+   * at the bottom where a rarely-needed thing belongs rather than behind a row
+   * of their own.
+   *
+   * Grouped together rather than split across the four above: they are all "how
+   * the shop RUNS" as opposed to "what it is selling today", which is the
+   * distinction the old hub was built on and the one worth keeping.
+   */
+  {
+    label: 'How the shop runs',
+    description: 'Set once — the shop’s own details, when it trades, and what happens after an order.',
+    tone: 'slate',
+    icon: 'Settings',
+    items: [
+      {
+        href: '/online-store/setup',
+        description:
+          'The name, the domain, delivery charges, and whether the shop is live. A chain also sets up one shop for the whole group here.',
+        keywords:
+          'domain url delivery fees shipping open closed launch go live group branches one shop nearest branch pins map coordinates settings configure',
+        icon: 'Settings',
+        tone: 'slate',
+        capability: 'online.edit',
+      },
+      {
+        href: '/online-store/trading',
+        description: 'When the shop is open, and whether it is taking orders right now.',
+        keywords: 'hours open closed holidays busy pause sold out collection times trading',
+        icon: 'Clock',
+        tone: 'amber',
+        capability: 'online.edit',
+      },
+      {
+        href: '/online-store/statuses',
+        description: 'The steps an order moves through, from paid to collected.',
+        keywords: 'workflow stages pipeline packing shipped fulfilment order statuses',
+        icon: 'ListOrdered',
+        tone: 'sky',
+        capability: 'online.edit',
+      },
+      {
+        href: '/online-store/discounts',
+        description: 'Codes a shopper can type at checkout, and what each takes off.',
+        keywords: 'promo coupon voucher promotion sale code discount',
+        icon: 'Tag',
+        tone: 'rose',
+        capability: 'online.edit',
+      },
+    ],
+  },
 ]
 
 export const ONLINE_STORE_GROUPS: HubGroup[] = resolveGroups(DECLARED)

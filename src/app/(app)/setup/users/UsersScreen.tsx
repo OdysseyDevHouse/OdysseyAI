@@ -7,6 +7,8 @@ import {
   ButtonLink,
   Callout,
   Card,
+  CardFooter,
+  CardHeader,
   DataTable,
   Badge,
   Modal,
@@ -17,8 +19,10 @@ import {
   Checkbox,
   Icons,
   EmptyState,
+  RowTile,
   Skeleton,
   TableToolbar,
+  ToolbarSearch,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -66,6 +70,7 @@ export default function UsersScreen({
   const [editing, setEditing] = useState<SiteUser | null>(null)
   const [adding, setAdding] = useState(false)
   const [phonesFor, setPhonesFor] = useState<SiteUser | null>(null)
+  const [search, setSearch] = useState('')
   const [pending, startTransition] = useTransition()
   const toast = useToast()
   const router = useRouter()
@@ -97,20 +102,54 @@ export default function UsersScreen({
     })
   }
 
+  /* Narrowed by the search box in the toolbar. Name, email and role, because
+     those are the three things somebody knows about the person they are looking
+     for — "the Sipho one", "the @gmail address", "the cashiers". */
+  const query = search.trim().toLowerCase()
+  const visible = query
+    ? users.filter((u) =>
+        [u.name, u.email ?? '', u.roleName ?? ''].some((f) => f.toLowerCase().includes(query)),
+      )
+    : users
+
   const columns: Column<SiteUser>[] = [
     {
       key: 'name',
-      header: 'Name',
+      header: 'User',
       sortValue: (u) => u.name,
       cell: (u) => (
-        <div>
-          <div className="font-medium text-ink">
-            {u.name}
-            {u.id === currentUserId && <span className="ml-2 text-xs text-muted">(you)</span>}
+        <div className="flex items-center gap-3">
+          {/* Findable by shape rather than by reading — worth its 26px on any
+              list of people (see odyssey-craft). The colour derives from the
+              name, so it is stable across renders and sorts. */}
+          <RowTile label={u.name} />
+          <div className="min-w-0">
+            <div className="truncate font-medium text-ink">
+              {u.name}
+              {u.id === currentUserId && <span className="ml-2 text-xs text-muted">(you)</span>}
+            </div>
+            {/* The ROLE under the name, not the email — the email has a column
+                of its own now, and repeating it here said the same thing twice
+                while the role was three columns away from the person. */}
+            <div className="truncate text-xs text-muted">
+              {u.roleName ?? 'No role'}
+            </div>
           </div>
-          {u.email && <div className="text-xs text-muted">{u.email}</div>}
         </div>
       ),
+    },
+    {
+      key: 'email',
+      header: 'Email address',
+      sortValue: (u) => u.email ?? '',
+      cell: (u) =>
+        u.email ? (
+          <span className="truncate text-sm text-brand">{u.email}</span>
+        ) : (
+          /* A till-only user legitimately has none — they sign in with a PIN.
+             Not a gap to fill, so it stays quiet rather than warning. */
+          <span className="text-sm text-faint">—</span>
+        ),
     },
     {
       key: 'access',
@@ -137,7 +176,7 @@ export default function UsersScreen({
       sortValue: (u) => u.roleName ?? '',
       cell: (u) =>
         u.roleName ? (
-          <span className="text-ink-2">{u.roleName}</span>
+          <Badge tone="brand">{u.roleName}</Badge>
         ) : (
           // Deny-by-default makes this a real state, not a cosmetic gap: they
           // can sign in and do nothing at all until someone picks a role.
@@ -165,29 +204,46 @@ export default function UsersScreen({
 
   return (
     <>
-      <TableToolbar
-        actions={
-          <>
-            {/* Roles & permissions is no longer a tile of its own in the setup
-                hub — it is reached from here, because "who may sign in" and
-                "what they may do" are one job and were two front doors to it.
-                Secondary, so Add user stays the screen's one primary. */}
-            <ButtonLink href="/setup/roles" variant="secondary">
-              <Icons.KeyRound size={16} />
-              Roles &amp; permissions
-            </ButtonLink>
-            <Button variant="primary" onClick={() => setAdding(true)}>
-              <Icons.Plus size={16} />
-              Add user
-            </Button>
-          </>
-        }
-      />
-
       <Card>
+        <CardHeader
+          icon={<Icons.Users size={18} />}
+          title="Users"
+          description="Everyone who may sign in — at the till, in the back office, or both."
+        />
+
+        {/* Inside the card, above its own table, rather than floating above it:
+            the search and the actions operate THIS list, and a toolbar sitting
+            outside read as page-level chrome that happened to sit nearby. */}
+        <TableToolbar
+          inCard
+          actions={
+            <>
+              {/* Roles & permissions is no longer a tile of its own in the setup
+                  hub — it is reached from here, because "who may sign in" and
+                  "what they may do" are one job and were two front doors to it.
+                  Secondary, so Add user stays the screen's one primary. */}
+              <ButtonLink href="/setup/roles" variant="secondary">
+                <Icons.KeyRound size={16} />
+                Roles &amp; permissions
+              </ButtonLink>
+              <Button variant="primary" onClick={() => setAdding(true)}>
+                <Icons.Plus size={16} />
+                Add user
+              </Button>
+            </>
+          }
+        >
+          <ToolbarSearch
+            value={search}
+            onChange={setSearch}
+            placeholder="Search users…"
+            aria-label="Search users"
+          />
+        </TableToolbar>
+
         <DataTable
           columns={columns}
-          rows={users}
+          rows={visible}
           getRowKey={(u) => u.id}
           actions={(u) => (
             <div className="flex justify-end gap-1">
@@ -259,18 +315,47 @@ export default function UsersScreen({
               )}
             </div>
           )}
-          empty={{
-            title: 'Nobody can sign in yet',
-            hint: 'Add the people who work here — a till user needs only a PIN.',
-            action: (
-              // Secondary: the toolbar's Add user above stays the one primary.
-              <Button variant="secondary" onClick={() => setAdding(true)}>
-                <Icons.Plus size={15} />
-                Add user
-              </Button>
-            ),
-          }}
+          /* Two different empties, and the screen says which. A search that
+             matched nothing is not the same as a shop with no users, and
+             offering "Add user" to somebody who has simply mistyped a name is
+             an answer to a question they did not ask. */
+          empty={
+            query
+              ? {
+                  title: `No user matches “${search.trim()}”`,
+                  hint: 'Try part of a name, an email address, or a role.',
+                  icon: <Icons.Search size={28} strokeWidth={1.75} />,
+                  action: (
+                    <Button variant="secondary" onClick={() => setSearch('')}>
+                      Clear search
+                    </Button>
+                  ),
+                }
+              : {
+                  title: 'Nobody can sign in yet',
+                  hint: 'Add the people who work here — a till user needs only a PIN.',
+                  action: (
+                    // Secondary: the toolbar's Add user above stays the one primary.
+                    <Button variant="secondary" onClick={() => setAdding(true)}>
+                      <Icons.Plus size={15} />
+                      Add user
+                    </Button>
+                  ),
+                }
+          }
         />
+
+        {/* What the table is showing, against what there is — the half a count
+            cannot give on its own once a search can narrow it. */}
+        {visible.length > 0 && (
+          <CardFooter className="justify-start">
+            <span className="text-xs text-muted">
+              {query
+                ? `Showing ${visible.length} of ${users.length} ${users.length === 1 ? 'user' : 'users'}`
+                : `${users.length} ${users.length === 1 ? 'user' : 'users'}`}
+            </span>
+          </CardFooter>
+        )}
       </Card>
 
       {(adding || editing) && (

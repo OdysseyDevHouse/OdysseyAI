@@ -13,6 +13,7 @@
 
 export { Button, ButtonLink, type ButtonSize, type ButtonVariant } from './Button'
 export { TintButton } from './TintButton'
+export { BrandLockup } from './BrandLockup'
 export { PromoArt, type PromoArtKind } from './PromoArt'
 export {
   PosSignInArt,
@@ -59,6 +60,7 @@ export {
   TABLE_TH_CAPTION,
   TABLE_TOTAL_ROW,
 } from './styles'
+export { SortableList } from './SortableList'
 export { TableScroller } from './TableScroller'
 export { useFitViewport } from './useFitViewport'
 export { usePrintDocument } from './usePrintDocument'

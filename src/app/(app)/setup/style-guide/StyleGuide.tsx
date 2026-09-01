@@ -6,6 +6,7 @@ import {
   Accordion,
   ActionTile,
   Badge,
+  BrandLockup,
   CategoryTile,
   ChoiceTile,
   BulkActionBar,
@@ -77,6 +78,7 @@ import {
   PickerResults,
   SettingGroup,
   SettingRow,
+  SortableList,
   WeekHours,
   type HoursRange,
   Sparkline,
@@ -202,6 +204,7 @@ export default function StyleGuidePage() {
         <IdentitySection />
         <PickerResultsSection />
         <SettingRowSection />
+        <SortableListSection />
         <WeekHoursSection />
         <AccordionSection />
         <RowDisclosureSection />
@@ -611,6 +614,38 @@ function SettingRowSection() {
             </Select>
           </SettingRow>
         </SettingGroup>
+      </CardBody>
+    </Card>
+  )
+}
+
+function SortableListSection() {
+  const [rows, setRows] = useState([
+    { id: 1, name: 'Cash' },
+    { id: 2, name: 'Card' },
+    { id: 3, name: 'EFT' },
+    { id: 4, name: 'Account' },
+  ])
+
+  return (
+    <Card>
+      <CardHeader
+        title="Sortable list"
+        description="<SortableList /> — rows reordered by dragging a handle. Replaces a pair of up/down arrows: it carries the keyboard sensor, so focusing a handle and pressing the arrow keys moves the row too. Pass `disabled` while a list is filtered — dropping a row inside a filter would land it past rows nobody can see."
+      />
+      <CardBody>
+        <SortableList items={rows} getId={(r) => r.id} onReorder={setRows}>
+          {(row, handle) => (
+            <SettingRow
+              leading={handle}
+              icon={<Icons.CreditCard size={16} />}
+              label={row.name}
+              description="Drag the grip, or focus it and use the arrow keys."
+            >
+              <Badge tone="neutral">{rows.findIndex((r) => r.id === row.id) + 1}</Badge>
+            </SettingRow>
+          )}
+        </SortableList>
       </CardBody>
     </Card>
   )
@@ -4044,6 +4079,20 @@ function WordmarkSection() {
         description="The treatment for headings that sit beside the logo — the till header, the login lockup. The whole app is set in Inter (self-hosted by next/font), so these are no longer a separate typeface: what remains is the uppercasing, the weight and the tracking, measured against the logo artwork."
       />
       <CardBody className="grid gap-5">
+        {/* The assembled lockup first, because it is what a screen should
+            actually reach for — the three classes under it are the parts it is
+            built from, kept on show for the rare heading that needs one alone. */}
+        <div className="grid gap-2">
+          <Spec
+            name="<BrandLockup sub size as>"
+            note="The whole lockup — mark, name, and the module on the subline between two rules. Every corner of the product that names the product uses THIS: the back office rail (default 'Software'), the till's status bar, and the invoicing counter's doors. sub is the only thing that varies."
+          />
+          <div className="flex flex-wrap items-end gap-8">
+            <BrandLockup size="sm" sub="Retail" />
+            <BrandLockup sub="Hospitality" />
+            <BrandLockup size="lg" sub="Invoicing" />
+          </div>
+        </div>
         <div className="grid gap-2">
           <Spec name=".wordmark" note="Uppercased and tightened to match the artwork" />
           <p className="wordmark text-[32px] text-ink">Odyssey POS</p>

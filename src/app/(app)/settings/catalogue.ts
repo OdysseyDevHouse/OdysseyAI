@@ -69,6 +69,7 @@ export type SettingsIconName =
   | 'Barcode'
   | 'Calendar'
   | 'Code'
+  | 'Hash'
 
 export const SETTINGS_CATEGORIES = [
   {
@@ -169,6 +170,21 @@ export const SETTINGS_CATEGORIES = [
     /* Standing access with no person behind it, which is why it has always worn
        its own capability rather than riding setup.edit. */
     capability: 'setup.api',
+  },
+  {
+    key: 'decimals',
+    label: 'Decimal places',
+    blurb: 'Precision on screen',
+    description:
+      'How many decimals your quantities and costs are shown with. Nothing stored changes — only what you read.',
+    icon: 'Hash',
+    tone: 'cyan',
+    /* The last four came off a settingSearch entry that named this screen and
+       duplicated its label; they were folded into the /setup tile and travel
+       here with it. Dropping them would make the screen harder to find than it
+       was before either move. */
+    keywords:
+      'decimals decimal places precision rounding quantity qty cost digits display format weight accuracy fractions three four places',
   },
 ] as const satisfies readonly SettingsCategory[]
 

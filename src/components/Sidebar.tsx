@@ -1,11 +1,10 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PanelLeft, Search, ChevronDown } from '@/components/ui/icons'
-import { Button } from '@/components/ui'
+import { BrandLockup, Button } from '@/components/ui'
 import GlobalSearch from '@/components/GlobalSearch'
 import SettingAnchor from '@/components/SettingAnchor'
 import {
@@ -329,61 +328,12 @@ export default function Sidebar({
       {/* Logo + collapse */}
       <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-4">
         {!collapsed && (
-          /* gap-3 (12px), not the kit's usual gap-2: the mark is a round globe,
-             so its bounding box touches the text only at the sphere's widest
-             point and an 8px gap reads tighter than 8px does beside a square
-             icon. The extra 4px buys back what the curve gives away. */
-          <Link href="/dashboard" className="flex min-w-0 items-center gap-3">
-            {/* The real mark, same as the till's open-tables gate — this used to
-                be a bordered <span> standing in for it. Decorative beside the
-                wordmark text, so no alt of its own. */}
-            <Image
-              src="/logo-icon.png"
-              alt=""
-              aria-hidden
-              width={318}
-              height={278}
-              unoptimized
-              className="h-8 w-auto shrink-0 object-contain"
-            />
-            {/* Set in the LOGO's own face, not the UI stack: it sits directly
-                against the mark and the two have to read as one lockup.
-
-                `.wordmark-lockup`, not `.wordmark` — this is the name standing
-                alone in the rail rather than a title beside the artwork, and it
-                wants open tracking to read as a wordmark. See globals.css.
-
-                Two lines, matching the printed mark: the name, then "SOFTWARE"
-                on a subline tracked wide and flanked by rules. The rail names
-                the COMPANY. Caps have no descenders, so the pair stacks inside
-                the header's existing 64px rather than growing it. */}
-            <span className="flex min-w-0 flex-col gap-1">
-              <span className="wordmark-lockup truncate text-lg leading-none text-ink">
-                Odyssey
-              </span>
-              {/* The flanking rules are DRAWN, not typed. Em dashes either side
-                  would be read out as punctuation by a screen reader and would
-                  come along when the name is copied; these are 1px lines that
-                  inherit the subline's own colour.
-
-                  `text-brand` on the WRAPPER, not on the word: the rules are
-                  `bg-current`, so colouring the parent carries the letters and
-                  both rules together and there is one place to change it. This
-                  is the same --color-brand the primary buttons use, so the
-                  subline restyles with the rest of the app rather than being a
-                  second blue that has to be found and updated separately. */}
-              <span aria-hidden className="flex items-center gap-1 text-brand">
-                <span className="h-px w-2 shrink-0 bg-current" />
-                {/* -0.34em back: letter-spacing is applied AFTER the last
-                    letter too, so without this the right-hand rule sits a
-                    tracking-step further out than the left one and the pair
-                    looks unbalanced rather than symmetrical. */}
-                <span className="wordmark-sub -mr-[0.34em] truncate text-[9px] leading-none">
-                  Software
-                </span>
-                <span className="h-px w-2 shrink-0 bg-current" />
-              </span>
-            </span>
+          /* The kit's lockup, so the rail, the till and the counter are drawn
+             by ONE component — see components/ui/BrandLockup. The rail names
+             the COMPANY, hence the default "Software" subline; a till passes
+             its module there instead. */
+          <Link href="/dashboard" className="flex min-w-0 items-center">
+            <BrandLockup />
           </Link>
         )}
         <Button

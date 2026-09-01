@@ -1,6 +1,6 @@
 'use client'
 
-import Image from 'next/image'
+import { BrandLockup } from '@/components/ui'
 import DeviceNotLicensed from '@/components/DeviceNotLicensed'
 import { deviceId, deviceLabel } from '@/lib/deviceId'
 import { startCounterAction } from './deviceActions'
@@ -46,23 +46,7 @@ export default function InvoicingNotLicensed({
 }) {
   return (
     <DeviceNotLicensed
-      wordmark={
-        <span className="flex items-center gap-3">
-          <Image
-            src="/logo-icon.png"
-            alt=""
-            aria-hidden
-            width={318}
-            height={278}
-            className="h-14 w-auto object-contain"
-            priority
-            unoptimized
-          />
-          <span className="wordmark-lockup text-3xl leading-none text-ink">
-            Odyssey <span className="font-bold text-brand">Invoicing</span>
-          </span>
-        </span>
-      }
+      wordmark={<BrandLockup size="lg" sub="Invoicing" />}
       reason={reason}
       message={message}
       offer={offer}

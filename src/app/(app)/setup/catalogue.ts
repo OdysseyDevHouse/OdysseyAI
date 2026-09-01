@@ -60,39 +60,9 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
     tone: 'teal',
     icon: 'Store',
     items: [
-      /* First in the group, and deliberately: it is the only tile here that
-         answers "who are we" rather than "how do we work", and it is the first
-         thing a new shop has to get right — every document it prints carries
-         these details. */
-      {
-        href: '/setup/store-info',
-        description: 'Your name, address and contact details — and the logo on your documents.',
-        keywords:
-          'store shop company name trading name address phone telephone email vat number registration number contact details letterhead logo my details business information branding',
-        icon: 'Store',
-        tone: 'teal',
-        capability: 'setup.edit',
-      },
-      {
-        href: '/setup/linked-stores',
-        description: 'Branches that share products, customers or loyalty with this one.',
-        /* “online” and “storefront” deliberately absent: one shop for the group is
-           set up on the online store’s own Setup screen, and a hit here would send
-           somebody looking for it to the wrong page. */
-        keywords: 'multi store group branches sharing',
-        icon: 'Store',
-        tone: 'violet',
-        capability: 'setup.edit',
-        module: 'multi_branch',
-      },
-      {
-        href: '/setup/terminals',
-        description: 'Which register rang up a sale, and which machine is which.',
-        keywords: 'terminals registers pos devices',
-        icon: 'Terminal',
-        tone: 'sky',
-        capability: 'setup.edit',
-      },
+      /* First in the group: before a shop can do anything else, somebody has to
+         be able to sign in — and on a new install the person reading this screen
+         is usually here to let the rest of their staff in. */
       {
         href: '/setup/users',
         description:
@@ -111,78 +81,55 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
          "Add user". "Who may sign in" and "what they may do" are one job, and
          two tiles for it were two front doors that people had to choose
          between before they knew which they wanted. */
-    ],
-  },
-  /*
-   * Renamed from "Users & access", which stopped describing it.
-   *
-   * Users, roles and the API key screen all left — the first two to "My store"
-   * above, the third to /settings. What remained was four tiles about what
-   * people COST: pay rules, leave entitlement, cost per employee and commission.
-   * That is a different question, asked by a different person on a different
-   * day, so the heading now says so.
-   */
-  {
-    label: 'Pay & commission',
-    description: 'What an hour is worth, what leave grants, and who earns on a sale.',
-    tone: 'sky',
-    icon: 'Coins',
-    items: [
-      /* The audit trail is NOT here any more — it is in the reports catalogue,
-         under Operations. It was the one tile in this hub that answered a
-         question rather than deciding something, and "who changed this price"
-         is asked at the reports screen. The route is unchanged; only where it
-         is listed moved. See `/reports` and `AUDIT_HREF` in nav.ts. */
-      /* API & webhooks is NOT here any more — it moved to /settings under the
-         "System" tab, where the machine-facing configuration belongs. */
-      /* Pay rules and cost sit with people rather than under Staff: both are
-         configuration that decides what every figure on the staff screens comes
-         to, and neither is opened in the course of a normal week. */
+      /* Second: what they sign in ON. Who may trade, then the machines they
+         trade from — the two halves of getting a counter open. */
       {
-        href: '/staff/pay-rules',
-        description: 'Overtime, Sundays and public holidays — what an hour is worth.',
-        keywords: 'overtime rates wages salary hourly bcea holidays',
-        icon: 'Percent',
-        tone: 'amber',
-        capability: 'staff.cost',
-        /* Goes with the Staff section. A shop that has switched that off should
-           not be left configuring pay rules for rows it cannot see. */
-        menuArea: 'staff',
-      },
-      /* Leave entitlement is configuration for the same reason pay rules are:
-         it decides what every balance on the leave screen comes to, and it is
-         set once rather than touched in a normal week. */
-      {
-        href: '/staff/leave-types',
-        description: 'Annual, sick and family leave — how many days each grants, and how they arrive.',
-        keywords: 'leave days annual sick family maternity unpaid entitlement accrual bcea holiday allowance',
-        icon: 'Clock',
+        href: '/setup/terminals',
+        description: 'Which register rang up a sale, and which machine is which.',
+        keywords: 'terminals registers pos devices',
+        icon: 'Terminal',
         tone: 'sky',
-        capability: 'staff.edit',
-        menuArea: 'staff',
+        capability: 'setup.edit',
+      },
+      /* Then who the business IS: the names and numbers every document it
+         prints carries. */
+      {
+        href: '/setup/store-info',
+        description: 'Your name, address and contact details — and the logo on your documents.',
+        keywords:
+          'store shop company name trading name address phone telephone email vat number registration number contact details letterhead logo my details business information branding',
+        icon: 'Store',
+        tone: 'teal',
+        capability: 'setup.edit',
+      },
+      /* Second, straight after the shop's own details: what this business is
+         called, then what it pays to run. Moved up from the System group, where
+         it sat with the plumbing — a plan is not plumbing, it is one of the few
+         things an owner opens Setup specifically to read. */
+      {
+        href: '/setup/billing',
+        description: 'The modules this store pays for, and what the account is charged.',
+        keywords:
+          'plan subscription modules upgrade downgrade invoice licence licences price cost add-on billing account debit order',
+        icon: 'CreditCard',
+        tone: 'indigo',
+        capability: 'setup.edit',
       },
       {
-        href: '/staff/cost',
-        description: 'What each employee costs the business, once the rules are applied.',
-        keywords: 'wages salary labour cost payroll per employee',
-        icon: 'Coins',
-        tone: 'emerald',
-        capability: 'staff.cost',
-        menuArea: 'staff',
-      },
-      /* The other half of what a person is paid, and until now reachable only
-         from /commission by somebody who already knew it was there. */
-      {
-        href: '/commission/rules',
-        description: 'Who earns commission, on what they sell, and at what rate.',
-        keywords: 'commission rates rules percentage sales rep earnings targets',
-        icon: 'Percent',
-        tone: 'rose',
-        capability: 'commission.edit',
-        menuArea: 'staff',
+        href: '/setup/linked-stores',
+        description: 'Branches that share products, customers or loyalty with this one.',
+        /* “online” and “storefront” deliberately absent: one shop for the group is
+           set up on the online store’s own Setup screen, and a hit here would send
+           somebody looking for it to the wrong page. */
+        keywords: 'multi store group branches sharing',
+        icon: 'Store',
+        tone: 'violet',
+        capability: 'setup.edit',
+        module: 'multi_branch',
       },
     ],
   },
+
   {
     label: 'Money & pricing',
     description: 'What a line costs, and how a sale can be paid for.',
@@ -309,16 +256,11 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'orange',
         capability: 'setup.edit',
       },
-      {
-        href: '/setup/import',
-        description: 'Bring a catalogue, a debtors list or a supplier book in from a spreadsheet.',
-        keywords: 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments',
-        icon: 'Boxes',
-        tone: 'indigo',
-        // The tile is only a door: each import guards itself with the
-        // capability of the thing it writes, and the index filters to those.
-        capability: 'setup.view',
-      },
+      /* Import data is NOT here any more — it moved to the System group, with
+         the rest of the tooling. It used to sit beside Opening balances, the two
+         being the go-live pair: what you already own, and what you are already
+         owed. That tile stays here because a balance is money; an import is a
+         mechanism, and mechanisms live under System. */
     ],
   },
   {
@@ -429,43 +371,7 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
    * capability the page does not use hides a screen from somebody who can
    * open it.
    */
-  {
-    label: 'Accounting & posting',
-    description: 'Where figures land in the ledger, and when the books are closed.',
-    tone: 'indigo',
-    icon: 'Scale',
-    items: [
-      {
-        href: '/accounting/accounts',
-        description: 'The ledger accounts everything posts to, and what each is for.',
-        keywords: 'chart of accounts ledger codes general ledger',
-        icon: 'Landmark',
-        tone: 'indigo',
-        capability: 'reports.financial',
-      },
-      {
-        href: '/accounting/periods',
-        description: 'Close a month so nobody can post into it after the fact.',
-        keywords: 'period lock close month year end freeze',
-        icon: 'Lock',
-        tone: 'amber',
-        capability: 'setup.edit',
-      },
-      {
-        href: '/expenses/recurring',
-        description: 'Rent, subscriptions — the costs that repeat without being asked.',
-        keywords: 'standing order repeating monthly rent subscription',
-        icon: 'Repeat',
-        tone: 'violet',
-        capability: 'cashbook.edit',
-      },
-      /* Scheduled reports is NOT here any more. The SCREEN is unchanged and
-         still lives at /reports/schedules — only this tile went, because it is
-         reached from the reports hub's own "Schedule a report" button beside
-         "Build a report". A scheduled report is something you make where the
-         reports are, not a setting you configure once. */
-    ],
-  },
+
   {
     label: 'System',
     description: 'The plumbing — document numbers, databases, and whether it all adds up.',
@@ -480,20 +386,10 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'slate',
         capability: 'setup.edit',
       },
-      {
-        /* Beside numbering: both shape how the app PRESENTS itself rather than
-           what it does, and neither changes a stored figure. */
-        href: '/setup/decimals',
-        description: 'How many decimals your quantities and costs are shown with.',
-        /* The last four came off a settingSearch entry that named this screen
-           and duplicated its label, printing the same row twice. Folded in here
-           rather than dropped with it. */
-        keywords:
-          'decimals decimal places precision rounding quantity qty cost digits display format weight accuracy fractions three four places',
-        icon: 'Hash',
-        tone: 'slate',
-        capability: 'setup.edit',
-      },
+      /* Decimal places is NOT here any more — it moved to /settings under its
+         own "Decimal places" tab. It used to sit beside Numbering because both
+         shape how the app PRESENTS itself rather than what it does; that tile
+         stays, and the two are now on different screens. */
       {
         /* Under System rather than under Jobs, because it is not a job feature:
            the same mechanism serves jobs, customers and equipment, and filing it
@@ -522,6 +418,20 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'amber',
         capability: 'setup.edit',
       },
+      /* Beside Training and Reconciliation, which is the company it keeps: all
+         three ACT on the shop's data rather than configure how it behaves. It
+         came from Money & pricing, where it sat beside Opening balances as the
+         other half of going live — see the note left there. */
+      {
+        href: '/setup/import',
+        description: 'Bring a catalogue, a debtors list or a supplier book in from a spreadsheet.',
+        keywords: 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments',
+        icon: 'Boxes',
+        tone: 'indigo',
+        // The tile is only a door: each import guards itself with the
+        // capability of the thing it writes, and the index filters to those.
+        capability: 'setup.view',
+      },
       {
         href: '/setup/databases',
         description: 'This shop’s details, and the health of every database behind it.',
@@ -530,21 +440,17 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         tone: 'indigo',
         capability: 'setup.edit',
       },
-      {
-        href: '/setup/billing',
-        description: 'The modules this store pays for, and what the account is charged.',
-        keywords:
-          'plan subscription modules upgrade downgrade invoice licence licences price cost add-on billing account debit order',
-        icon: 'CreditCard',
-        tone: 'indigo',
-        capability: 'setup.edit',
-      },
+      /* Plan & billing is NOT here any more — it moved to the "My store" group
+         at the top, because what the shop pays for is part of what the shop IS.
+         It used to sit directly above Modules, the two being the same subject a
+         step apart (what you PAY for, what you want to LOOK at); that adjacency
+         is the cost of the move, and Modules keeps its own note below. */
       {
         /*
-         * Directly after billing, because the two are the same subject asked one
-         * step apart: what this shop PAYS for, and what it wants to LOOK at. A
-         * shop that has just read its plan is exactly the reader who wants to
-         * put half of it away.
+         * Was directly after Plan & billing, which has moved to "My store" — the
+         * two are the same subject asked one step apart: what this shop PAYS
+         * for, and what it wants to LOOK at. They are on the same screen no
+         * longer, so somebody arriving here from their plan has to come back up.
          *
          * Deliberately carries NO `module`. Every other tile here can be filtered
          * out of the hub; this one must never be, or a shop that hides a module

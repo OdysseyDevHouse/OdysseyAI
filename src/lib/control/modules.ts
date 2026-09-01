@@ -6,6 +6,7 @@ import { query, queryOne, transaction } from '@/lib/db'
 import { toNum } from '@/lib/decimals'
 import { periodEnd } from '@/lib/billing/period'
 import { billableDeviceCount } from './devices'
+import * as entitlementsPortal from './entitlementsPortal'
 
 /**
  * What a site has BOUGHT.
@@ -228,6 +229,20 @@ async function readEntitlementsFromControl(
   siteId: number,
   today: string = todayIso(),
 ): Promise<ModuleEntitlements> {
+  /* ── THE PORTAL FIRST, WHERE THERE IS ONE ────────────────────────────────
+     On a desktop install the query below crosses to port 3306, which a shop's
+     firewall usually does not permit — and this function is the ONLY thing that
+     renews the lease. A machine that can never run it does not degrade, it
+     expires: the lease counts down and the lock screen arrives with nothing
+     wrong. One signed HTTPS call is the same question over a transport the line
+     allows.
+
+     Null means no key, no line, or an answer that was not one, and the query
+     below then runs exactly as it always did — which on a cloud install is the
+     ordinary path. See entitlementsPortal.ts. */
+  const viaPortal = await entitlementsPortal.entitlementsForSite(siteId)
+  if (viaPortal) return { ...viaPortal, degraded: false, leased: false }
+
   {
     /* The date is bound as a parameter computed HERE, not CURDATE().
        Comparing against the database's clock while every other date in this app

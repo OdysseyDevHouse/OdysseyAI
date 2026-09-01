@@ -205,10 +205,10 @@ export const NAV: NavSection[] = [
        */
       { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', keywords: 'gift card voucher stored value balance top up redeem', description: 'Sell, check and manage stored-value cards' },
       { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup', description: 'Count a drawer and close off a shift' },
-      /* Paying tips out, beside the cash-up rather than under Setup: it happens at the end
-         of a shift, by whoever counts the drawer, and shares that capability. Setup → Tips
-         is the other half — what a bill is CHARGED, which is configuration. */
-      { label: 'Tips', href: '/sales/tips', icon: HandCoins, built: true, capability: 'sales.cashup', description: 'What was collected, and paying it out to staff' },
+      /* Tips is NOT here any more — it moved to Staff. It sat beside the cash-up
+         because paying tips out happens at the end of a shift, by whoever counts
+         the drawer; but what it decides is what a PERSON takes home, which is
+         the question the Staff section answers. Its route is unchanged. */
       /* Offline sales is NOT here any more — it is a reconciliation check
          ("is yesterday's offline trading on the books"), so it sits in the
          accounting hub beside the other checks that catch a figure going wrong.
@@ -309,72 +309,6 @@ export const NAV: NavSection[] = [
     ],
   },
   /*
-   * A section of its own, not a row under Customers and not a tile in the
-   * online store's hub.
-   *
-   * The members list was moved into that hub on the reasoning that loyalty is
-   * something a shop OFFERS shoppers. That holds for a shop with a storefront;
-   * it strands every shop without one, because the hub carries its own
-   * `online_store` module and a till-only shop that has bought loyalty then has
-   * no front door to it at all.
-   *
-   * Four rows, not a members list and a Setup hub.
-   *
-   * The hub held exactly three tiles, which is the size at which a hub costs
-   * more than it gives: every route to Tiers went Loyalty → Setup → Tiers, two
-   * clicks and a landing page whose only job was to list what the menu could
-   * have listed itself. A hub earns its place when browsing it beats reading a
-   * list, and three items is never that.
-   *
-   * They are still the screens that are SET ONCE, so they come after the
-   * members list somebody opens daily — the order is how often a row is used,
-   * not how important it is.
-   */
-  {
-    label: 'Loyalty',
-    icon: Gem,
-    module: 'loyalty',
-    keywords: 'members points balance rewards earned loyalty programme tiers punch cards',
-    items: [
-      {
-        label: 'Members',
-        href: '/loyalty',
-        icon: Gem,
-        built: true,
-        capability: 'loyalty.view',
-        keywords: 'member balance points held who joined enrolled',
-        description: 'Members, their points and what they have earned',
-      },
-      {
-        label: 'Programme',
-        href: '/loyalty/programme',
-        icon: Settings,
-        built: true,
-        capability: 'loyalty.view',
-        keywords: 'points rewards earn rate redemption programme rules settings configure',
-        description: 'Whether points are earned, at what rate, and what they redeem for',
-      },
-      {
-        label: 'Tiers',
-        href: '/loyalty/tiers',
-        icon: Gem,
-        built: true,
-        capability: 'loyalty.view',
-        keywords: 'tiers levels vip bronze silver gold status benefits',
-        description: 'Bronze, silver, gold — what it takes to get there and what it gives',
-      },
-      {
-        label: 'Punch cards',
-        href: '/loyalty/cards',
-        icon: Stamp,
-        built: true,
-        capability: 'loyalty.view',
-        keywords: 'punch card stamps buy x get y free coffee',
-        description: 'Buy nine, get the tenth free — punch cards and what fills them',
-      },
-    ],
-  },
-  /*
    * One link, not a group of thirteen — the same move Setup made, and for the
    * same reasons with more force. "Unallocated", "Interest", "Write-offs" and
    * "Periods" are exactly the screens nobody can choose between from the name
@@ -444,6 +378,24 @@ export const NAV: NavSection[] = [
       { label: 'Leave', href: '/staff/leave', icon: CalendarRange, built: true, capability: 'staff.view_own', description: 'Requests, balances and who is away when' },
       { label: 'People', href: '/staff', icon: Contact, built: true, capability: 'staff.view_all', description: 'Everyone who works here and their terms' },
       { label: 'Commission', href: '/commission', icon: Percent, built: true, capability: 'commission.view_own', description: 'What each person earned on what they sold' },
+      /* Beside Commission: both are what a person takes home ON TOP of their
+         hours. It was a row under Sales, next to the cash-up — paying tips out
+         does happen at the end of a shift — but the question it answers is
+         about a PERSON, which is what this section is for. Its capability is
+         still `sales.cashup`, because the drawer is where the money is counted. */
+      { label: 'Tips', href: '/sales/tips', icon: HandCoins, built: true, capability: 'sales.cashup', keywords: 'tips gratuity payout share waiter pool collected', description: 'What was collected, and paying it out to staff' },
+      /* The two configuration rows, last: they are SET ONCE and decide what
+         every figure above them comes to, where the five rows above are opened
+         in the course of a normal week. Same ordering rule the rest of this
+         section follows — how often a row is used, not how important it is.
+
+         They were tiles in the setup hub until now, which put "what an hour is
+         worth" three sections away from the timesheet it prices. Leave types
+         and Commission rules made the same journey and did NOT come here: each
+         already had a button on the screen it belongs to — Leave and
+         Commission — so a menu row would have been a second front door. */
+      { label: 'Pay rules', href: '/staff/pay-rules', icon: Percent, built: true, capability: 'staff.cost', keywords: 'overtime rates wages salary hourly bcea holidays sunday public holiday', description: 'Overtime, Sundays and public holidays — what an hour is worth' },
+      { label: 'Cost per employee', href: '/staff/cost', icon: Coins, built: true, capability: 'staff.cost', keywords: 'wages salary labour cost payroll per employee', description: 'What each employee costs the business, once the rules are applied' },
     ],
   },
   /*
@@ -456,31 +408,96 @@ export const NAV: NavSection[] = [
    * general Setup hub. They have their own row now, and one front door.
    */
   {
+    /*
+     * ONE LINK, NOT A GROUP OF TWO.
+     *
+     * It was a section holding "The shop" and "Setup" — two rows that both led
+     * to a hub, one of which was a hub of four tiles. That is a menu asking
+     * somebody to choose between two front doors before they know which they
+     * want, and the same problem the Setup section records solving.
+     *
+     * The four setup tiles now sit in a "How the shop runs" group at the FOOT of
+     * /online-store, where a rarely-changed thing belongs. Opening the section
+     * goes straight there.
+     *
+     * `/online-store/settings` — the hub those four tiles used to live on — is
+     * deleted rather than left orphaned: a second page listing the same four
+     * screens is the duplication this move removed. `SUBPAGE_OWNER` names the
+     * four explicitly instead, so their breadcrumbs read "Online Store › …".
+     */
     label: 'Online Store',
+    href: '/online-store',
     icon: ShoppingBag,
+    built: true,
     module: 'online_store',
-    keywords: 'web shop ecommerce storefront online orders pages checkout',
+    capability: 'online.view',
+    keywords:
+      'web shop ecommerce storefront online orders pages checkout products listings menu collections reviews builder funnel domain delivery trading hours discount codes',
+    description: 'The public shop — orders, pages, what it sells and how it runs',
+  },
+  /*
+   * A section of its own, not a row under Customers and not a tile in the
+   * online store's hub.
+   *
+   * The members list was moved into that hub on the reasoning that loyalty is
+   * something a shop OFFERS shoppers. That holds for a shop with a storefront;
+   * it strands every shop without one, because the hub carries its own
+   * `online_store` module and a till-only shop that has bought loyalty then has
+   * no front door to it at all.
+   *
+   * Four rows, not a members list and a Setup hub.
+   *
+   * The hub held exactly three tiles, which is the size at which a hub costs
+   * more than it gives: every route to Tiers went Loyalty → Setup → Tiers, two
+   * clicks and a landing page whose only job was to list what the menu could
+   * have listed itself. A hub earns its place when browsing it beats reading a
+   * list, and three items is never that.
+   *
+   * They are still the screens that are SET ONCE, so they come after the
+   * members list somebody opens daily — the order is how often a row is used,
+   * not how important it is.
+   */
+  {
+    label: 'Loyalty',
+    icon: Gem,
+    module: 'loyalty',
+    keywords: 'members points balance rewards earned loyalty programme tiers punch cards',
     items: [
       {
-        label: 'The shop',
-        href: '/online-store',
-        icon: ShoppingBag,
+        label: 'Members',
+        href: '/loyalty',
+        icon: Gem,
         built: true,
-        capability: 'online.view',
-        keywords: 'orders products listings menu collections reviews pages builder funnel',
-        description: 'The public shop — orders, pages and what it sells',
+        capability: 'loyalty.view',
+        keywords: 'member balance points held who joined enrolled',
+        description: 'Members, their points and what they have earned',
       },
       {
-        /* The route is /online-store/settings, NOT /setup: the latter is
-           already one of the screens this hub lists — the shop's own name,
-           domain and delivery rules — and two things cannot share a URL. */
-        label: 'Setup',
-        href: '/online-store/settings',
+        label: 'Programme',
+        href: '/loyalty/programme',
         icon: Settings,
         built: true,
-        capability: 'online.edit',
-        keywords: 'domain delivery trading hours open closed payments gateway order statuses discount codes settings configure',
-        description: 'Whether the shop is open, how it takes money, and what happens after an order',
+        capability: 'loyalty.view',
+        keywords: 'points rewards earn rate redemption programme rules settings configure',
+        description: 'Whether points are earned, at what rate, and what they redeem for',
+      },
+      {
+        label: 'Tiers',
+        href: '/loyalty/tiers',
+        icon: Gem,
+        built: true,
+        capability: 'loyalty.view',
+        keywords: 'tiers levels vip bronze silver gold status benefits',
+        description: 'Bronze, silver, gold — what it takes to get there and what it gives',
+      },
+      {
+        label: 'Punch cards',
+        href: '/loyalty/cards',
+        icon: Stamp,
+        built: true,
+        capability: 'loyalty.view',
+        keywords: 'punch card stamps buy x get y free coffee',
+        description: 'Buy nine, get the tenth free — punch cards and what fills them',
       },
     ],
   },
@@ -796,11 +813,12 @@ export const SUBPAGE_LABELS = {
   // "terminals" on the tile, so looking for either finds it.
   '/setup/terminals': 'Tills',
   '/setup/billing': 'Plan & billing',
-  // "Menu & modules", not "Modules" — the module list is what it SHOWS, but what
-  // it CHANGES is the menu, and somebody looking to tidy the sidebar would not
-  // think to open a screen named after the billing catalogue.
-  '/setup/modules': 'Menu & modules',
-  '/setup/decimals': 'Decimal places',
+  // Named for what it CHANGES, not what it shows. The screen lists modules, but
+  // the thing it edits is the sidebar — and somebody looking to tidy their menu
+  // would not think to open a screen named after the billing catalogue. "Side
+  // menu customization" says it in the words a shop would use.
+  '/setup/modules': 'Side menu customization',
+  /* '/setup/decimals' was here. It moved to /settings → "Decimal places". */
   '/setup/numbering': 'Numbering',
   /* Quick keys is a hub screen again — the menu no longer names it, so the
      setup catalogue may claim it, which is what makes the tile compile.
@@ -919,7 +937,9 @@ export const SUBPAGE_LABELS = {
      same subject. */
   '/setup/payments': 'Online payments',
   '/online-store/setup': 'Store setup',
-  '/online-store/settings': 'Online store setup',
+  /* '/online-store/settings' was here — the section's own Setup hub. Its four
+     tiles moved into /online-store itself, under "How the shop runs", and a
+     second page listing the same four was the duplication that removed. */
 
   // ── Reports ───────────────────────────────────────────────────────────
   /* The reports hub renders its own catalogue and does not read this map, so
@@ -983,21 +1003,31 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
      `breadcrumbFor`'s section scan resolves them. An entry here would win over
      that scan — `hubFor` is consulted first — and put a screen back under a hub
      a till-only shop cannot see. */
-  '/staff/pay-rules': '/setup',
-  '/staff/leave-types': '/setup',
-  '/staff/cost': '/setup',
+  /* Pay rules and cost per employee are MENU ROWS under Staff now, so the
+     section scan resolves them and an entry here would win over it — putting
+     them back under a hub that no longer lists them. Leave types is not a menu
+     row, but it belongs to the Leave screen that links it rather than to Setup,
+     which is why it names the section rather than the hub. */
+  '/staff/leave-types': '/staff',
   '/credit/levels': '/setup',
-  /* The online store's five switches, likewise. They were cross-references
-     from the general setup hub; now they have one front door. */
-  '/online-store/setup': '/online-store/settings',
-  '/online-store/trading': '/online-store/settings',
-  '/online-store/statuses': '/online-store/settings',
-  '/online-store/discounts': '/online-store/settings',
-  /* Beside pay rules, for the same reason: it is set once and decides what
-     every figure on /commission comes to. It had no owner at all before, so
-     its breadcrumb fell through to a prefix that is not a hub and the screen
-     rendered with no trail and no way back. */
-  '/commission/rules': '/setup',
+  /* The online store's four switches. They were owned by
+     /online-store/settings, the section's own Setup hub — which is no longer a
+     menu row, so an owner pointing at it left all four with no trail and no way
+     back. They are tiles of /online-store itself now, in its "How the shop
+     runs" group, and the trail says so.
+
+     Written out rather than left to the URL prefix, because the prefix would
+     resolve /online-store/setup to the SECTION anyway but /online-store/settings
+     first — longest match wins — and that hub is not in the menu. */
+  '/online-store/setup': '/online-store',
+  '/online-store/trading': '/online-store',
+  '/online-store/statuses': '/online-store',
+  '/online-store/discounts': '/online-store',
+  /* Reached from the Commission screen's own button rather than from the setup
+     hub, which no longer lists it — so the trail names the section it belongs
+     to. Without an entry its breadcrumb falls through to a prefix that is not a
+     hub, and the screen renders with no trail and no way back. */
+  '/commission/rules': '/commission',
 }
 
 /**
@@ -1083,7 +1113,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/modules':
     'menu modules hide show sidebar navigation simplify remove sections turn off disable declutter tidy job cards loyalty online store accounting customers',
   '/setup/numbering': 'sequences document numbers prefix autocode',
-  '/setup/decimals': 'decimals decimal places precision rounding quantity qty cost digits',
+
   /* The two till designers' synonyms moved onto their NAV rows, where a menu
      item carries its own. This map is only for screens the menu does not name. */
   '/setup/pos-menus':

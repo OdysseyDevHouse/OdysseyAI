@@ -2,9 +2,8 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
 import Link from 'next/link'
-import { Card, Icons, PinPad } from '@/components/ui'
+import { BrandLockup, Card, Icons, PinPad } from '@/components/ui'
 import { counterSignInAction } from './pinActions'
 import { ensureWindowId } from '@/lib/windowSession'
 
@@ -80,21 +79,7 @@ export default function InvoicingGate({ siteName }: { siteName: string }) {
         lockup beside it says which window this is, set exactly as the chrome
         behind this gate sets it, so signing in and being signed in agree.
       */}
-      <span className="flex items-center gap-3">
-        <Image
-          src="/logo-icon.png"
-          alt=""
-          aria-hidden
-          width={318}
-          height={278}
-          className="h-14 w-auto object-contain"
-          priority
-          unoptimized
-        />
-        <span className="wordmark-lockup text-3xl leading-none text-ink">
-          Odyssey <span className="font-bold text-brand">Invoicing</span>
-        </span>
-      </span>
+      <BrandLockup size="lg" sub="Invoicing" />
 
       <Card>
         {/* Sized by the PAD and nothing else — see PosGate for the measurements

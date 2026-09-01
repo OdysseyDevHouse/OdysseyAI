@@ -322,6 +322,10 @@ export function OpenTillPreview() {
         <div className="flex h-full flex-col">
           <OpenTillGate
             mode="terminal"
+            /* A hospitality till, so the preview shows the lockup naming a
+               module OTHER than retail — the case the old raster artwork got
+               wrong by reading "POINT OF SALE" on every shop's morning. */
+            modeName="Hospitality"
             operatorName="Tiaan"
             terminalId={state === 'unclaimed' ? null : 1}
             terminalLabel={state === 'unclaimed' ? null : 'TILL001'}

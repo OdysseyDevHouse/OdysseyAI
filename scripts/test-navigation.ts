@@ -66,7 +66,6 @@ const { buildPageIndex, searchPages, scorePage } = nodeRequire(
 const { SETUP_GROUPS, DEV_ONLY_ROUTES } = nodeRequire('../src/app/(app)/setup/catalogue') as typeof import('../src/app/(app)/setup/catalogue')
 const { ACCOUNTING_GROUPS } = nodeRequire('../src/app/(app)/accounting/catalogue') as typeof import('../src/app/(app)/accounting/catalogue')
 const { ONLINE_STORE_GROUPS } = nodeRequire('../src/app/(app)/online-store/catalogue') as typeof import('../src/app/(app)/online-store/catalogue')
-const { ONLINE_STORE_SETUP_GROUPS } = nodeRequire('../src/app/(app)/online-store/settings/catalogue') as typeof import('../src/app/(app)/online-store/settings/catalogue')
 const { JOBS_SETUP_GROUPS } = nodeRequire('../src/app/(app)/jobs/setup/catalogue') as typeof import('../src/app/(app)/jobs/setup/catalogue')
 
 let failures = 0
@@ -101,7 +100,10 @@ check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', '
    it — a prefix scan would file this under Sales and never reach Accounting. */
 check('/sales/offline', crumbs('/sales/offline'), ['Accounting', 'Offline sales'])
 check('/cashbook', crumbs('/cashbook'), ['Accounting', 'Cashbook'])
-check('/staff/pay-rules', crumbs('/staff/pay-rules'), ['Setup', 'Pay rules'])
+/* Staff, not Setup: pay rules is a MENU ROW under Staff now, so the section
+   scan resolves it. The check still earns its place — /commission/rules is the
+   remaining screen of this shape, reached from a button rather than a row. */
+check('/commission/rules', crumbs('/commission/rules'), ['Staff', 'Commission', 'Commission rules'])
 // A screen below a hub screen keeps the page it belongs to in the middle.
 check('/accounting/assets/depreciation', crumbs('/accounting/assets/depreciation'), [
   'Accounting',
@@ -111,8 +113,8 @@ check('/accounting/assets/depreciation', crumbs('/accounting/assets/depreciation
 
 /* A key the MENU itself names, rather than a screen only a hub lists.
 
-   Three sections carry their own Setup hub as a row — Job cards, Tickets and
-   the Online Store — so a key can be both a menu destination and a
+   Two sections carry their own Setup hub as a row — Job cards and Tickets —
+   so a key can be both a menu destination and a
    SUBPAGE_LABELS entry. That is not the "two front doors" problem the
    invariants below guard against: the label is what the hub tile and the
    breadcrumb read, and the menu row points at the same screen. The entries
@@ -123,6 +125,15 @@ check('/accounting/assets/depreciation', crumbs('/accounting/assets/depreciation
    three are menu rows now and /loyalty/setup is gone. Its own key stays for
    the SubpageHref reason alone.
 
+   Pay rules and Cost per employee joined the list from the other direction:
+   they were setup TILES and are menu rows now, under the Staff section whose
+   figures they price. Their SUBPAGE_LABELS keys stay because the breadcrumb
+   and SubpageHref both read them.
+
+   Nor is the Online Store. Its Setup hub held four tiles and sat behind a
+   second menu row under a section that already had one; the four are now a
+   group at the foot of /online-store, and the hub itself is deleted.
+
    What the hub invariants below DO apply to is everything else: a screen the
    menu does not name has to resolve to a hub, or it renders with no trail. */
 const menuHrefs = new Set(
@@ -130,9 +141,9 @@ const menuHrefs = new Set(
 )
 const hubScreens = Object.keys(SUBPAGE_LABELS).filter((h) => !menuHrefs.has(h))
 check(
-  'the menu-named keys are the three Setup hubs and Loyalty',
+  'the menu-named keys are the two Setup hubs, Loyalty and the two pay rows',
   Object.keys(SUBPAGE_LABELS).filter((h) => menuHrefs.has(h)).sort(),
-  ['/jobs/setup', '/loyalty', '/online-store/settings', '/tickets/setup/desk'],
+  ['/jobs/setup', '/loyalty', '/staff/cost', '/staff/pay-rules', '/tickets/setup/desk'],
 )
 /* ...and each must still lead somewhere sensible. */
 check('/loyalty', crumbs('/loyalty'), ['Loyalty', 'Members'])
@@ -142,7 +153,9 @@ check('/loyalty/programme', crumbs('/loyalty/programme'), ['Loyalty', 'Programme
 check('/loyalty/tiers', crumbs('/loyalty/tiers'), ['Loyalty', 'Tiers'])
 check('/loyalty/cards', crumbs('/loyalty/cards'), ['Loyalty', 'Punch cards'])
 check('/jobs/setup/workflow', crumbs('/jobs/setup/workflow'), ['Job cards', 'Setup', 'Workflow'])
-check('/online-store/trading', crumbs('/online-store/trading'), ['Online Store', 'Setup', 'Trading hours'])
+/* Two crumbs, not three: the section's Setup hub is gone and this is a tile of
+   /online-store itself now. */
+check('/online-store/trading', crumbs('/online-store/trading'), ['Online Store', 'Trading hours'])
 check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', 'Orders'])
 /* The hub LANDING pages themselves. Each sits under its section's route, so
    hubFor reports the section owns it and the middle-crumb lookup would pick
@@ -150,7 +163,6 @@ check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', '
    setup". A menu-named path must use the section scan instead. */
 check('/jobs/setup', crumbs('/jobs/setup'), ['Job cards', 'Setup'])
 check('/tickets/setup/desk', crumbs('/tickets/setup/desk'), ['Tickets', 'Setup'])
-check('/online-store/settings', crumbs('/online-store/settings'), ['Online Store', 'Setup'])
 
 // Every screen a hub can link to must resolve, or it renders with no trail.
 const unnamed = hubScreens.filter((href) => (crumbs(href) ?? []).length < 2)
@@ -189,7 +201,9 @@ check('"page builder" finds Online Store', found('page builder'), ['Online Store
    point of the check is that a screen the MENU does not name is reachable by
    typing what it is called — only the section that owns it has changed. */
 check('"punch" finds Loyalty', found('punch'), ['Loyalty'])
-check('"pay rules" finds Setup', found('pay rules'), ['Setup'])
+/* Staff, not Setup: pay rules moved from a setup tile to a menu row under the
+   section whose figures it prices. */
+check('"pay rules" finds Staff', found('pay rules'), ['Staff'])
 // Reports keeps its shortcuts findable by name without listing them as rows.
 check('"build a report" finds Reports', found('build a report'), ['Reports'])
 check('a miss finds nothing', found('zzzzz'), [])
@@ -432,7 +446,7 @@ check('every item href is unique', [...new Set(duplicates)], [])
    that is what the four Setup rows are. What must never happen is a menu row
    that some hub also lists as one of its tiles. */
 const hubTiles = new Set<string>(
-  [...SETUP_GROUPS, ...ACCOUNTING_GROUPS, ...ONLINE_STORE_GROUPS, ...ONLINE_STORE_SETUP_GROUPS,
+  [...SETUP_GROUPS, ...ACCOUNTING_GROUPS, ...ONLINE_STORE_GROUPS,
    ...JOBS_SETUP_GROUPS].flatMap((g) => g.items).map((i) => i.href),
 )
 const bothPlaces = allItems.map((i) => i.href).filter((href) => hubTiles.has(href))
@@ -455,8 +469,8 @@ check('no section is both a link and a group', ambiguous, [])
 
 /* The menu and the trail must agree about where somebody is.
  *
- * A hub screen whose URL sits beneath a MENU item — /staff/pay-rules under
- * "People", /cashbook under nothing but /sales/offline under "Documents" — is
+ * A hub screen whose URL sits beneath a MENU item — /commission/rules under
+ * "Commission", /cashbook under nothing but /sales/offline under "Documents" — is
  * the case that broke: the sidebar highlighted the section by prefix while the
  * breadcrumb above it named the hub. Both now resolve ownership through hubFor,
  * so the check is that the two answers match for every hub screen.

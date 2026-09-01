@@ -1,0 +1,472 @@
+OdysseyAI — pre-publish check
+gates: static, migrations, domain, smoke
+database: localhost/odyssey_tickets  sites on: localhost
+
+========================================================================
+  GATE 1 / static — types, build, design system
+========================================================================
+
+> tsc --noEmit
+  clean (13.4s)
+
+> design system (scripts/check-ui-kit.mjs)
+  FINDINGS (0.8s)
+  OdysseyAI design system — this file bypasses the shared UI kit:
+  
+    src\app\(app)\setup\style-guide\GatePreview.tsx:361  [hex-colour]
+        Raw hex colour. Colours are tokens in src/app/globals.css — never inline.
+  
+  Read .claude/skills/odyssey-ui/SKILL.md and /setup/style-guide.
+  Fix by importing from @/components/ui — or, if the kit lacks it, add it there,
+  export it from index.ts, and demo it on the Style Guide page.
+
+> next build
+  built (48.7s)
+
+  static: 2/3 ok
+
+========================================================================
+  GATE 2 / migrations — sql/site/*.sql on every active site
+========================================================================
+  23 active site(s): 1, 2, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53
+
+> site 1
+  site 1 "master" -> root@localhost:3306/ody10000_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 2
+  site 2 "master" -> root@localhost:3306/ody10001_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 33
+  site 33 "master" -> root@localhost:3306/ody220001_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 34
+  site 34 "master" -> root@localhost:3306/ody220002_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 35
+  site 35 "master" -> root@localhost:3306/ody220003_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 36
+  site 36 "master" -> root@localhost:3306/ody220004_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 37
+  site 37 "master" -> root@localhost:3306/ody220005_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 38
+  site 38 "master" -> root@localhost:3306/ody220006_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 39
+  site 39 "master" -> root@localhost:3306/ody220007_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 40
+  site 40 "master" -> root@localhost:3306/ody220008_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 41
+  site 41 "master" -> root@localhost:3306/ody220009_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 42
+  site 42 "master" -> root@localhost:3306/ody220010_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 43
+  site 43 "master" -> root@localhost:3306/ody220011_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 44
+  site 44 "master" -> root@localhost:3306/ody220012_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 45
+  site 45 "master" -> root@localhost:3306/ody220013_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 46
+  site 46 "master" -> root@localhost:3306/ody220014_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 47
+  site 47 "master" -> root@localhost:3306/ody220015_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 48
+  site 48 "master" -> root@localhost:3306/ody220016_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 49
+  site 49 "master" -> root@localhost:3306/ody220017_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 50
+  site 50 "master" -> root@localhost:3306/ody220018_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 51
+  site 51 "master" -> root@localhost:3306/ody220019_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 52
+  site 52 "master" -> root@localhost:3306/ody220020_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+> site 53
+  site 53 "master" -> root@localhost:3306/ody27995_demo_master
+  already up to date
+  control users: 1 added, 0 refreshed
+
+  migrations: 23/23 ok
+
+========================================================================
+  GATE 3 / domain — every scripts/test-*.ts
+========================================================================
+  258 test script(s): 197 in parallel (4 at a time),
+  then 61 one at a time — they assert site-wide reconciliation,
+  which cannot distinguish another test's in-flight rows from real drift.
+
+PASS  basket                    0.2s
+PASS  attachments               0.4s
+PASS  billing-periods           0.3s
+PASS  billing-subscription      0.9s
+PASS  ai-credits                2.2s
+**FAIL**  billing-itn-route         2.1s  2 assertion(s) failed
+PASS  box-handover              0.3s
+PASS  box-flush                 1.0s
+PASS  box-outbox                0.6s
+**FAIL**  box-schema                0.8s  (exited non-zero)
+PASS  branch-routing            1.0s
+**FAIL**  browse-parity             0.6s  1 assertion(s) failed
+PASS  branch-trading            1.1s
+PASS  budgets                   0.5s
+PASS  cash-denominations        0.4s
+PASS  builder                   1.0s
+PASS  cancellation-cuts         1.0s
+PASS  alerts                    5.2s
+**FAIL**  cashup-numbers            0.5s  2 assertion(s) failed
+PASS  cashup-breakdown          1.9s
+PASS  cashup-report             1.3s
+PASS  cashup-modes              2.0s
+PASS  catalog-drill             0.2s
+PASS  cashup-declaration        3.1s
+PASS  cashup                    1.7s
+PASS  catalogue-export          1.1s
+PASS  cloud-site-refusal        0.2s
+PASS  code128                   0.4s
+PASS  conditions                0.3s
+PASS  contract-model            0.2s
+PASS  commission                0.7s
+PASS  credit-model              0.2s
+PASS  contracts                 1.2s
+PASS  customer-addresses        0.4s
+PASS  customer-duplicates       0.4s
+PASS  customer-accounts         1.7s
+PASS  credit-control            2.3s
+PASS  catalog-fields            4.0s
+PASS  customer-groups           0.5s
+PASS  db-setup                  0.2s
+PASS  customer-owner            0.4s
+PASS  customer-pricing          0.4s
+**FAIL**  delivery-note             0.3s  1 assertion(s) failed
+PASS  display-precision         0.3s
+PASS  discount-codes            0.4s
+PASS  deposits                  0.6s
+PASS  document-math             0.3s
+PASS  employment                0.4s
+PASS  escpos                    0.2s
+PASS  dunning-sms               0.9s
+PASS  gift-cards                0.9s
+PASS  group-reporting           1.6s
+PASS  holidays                  0.2s
+**FAIL**  imports                   0.6s  3 assertion(s) failed
+PASS  invoice-blocks            0.2s
+PASS  invoice-email             0.7s
+PASS  kitchen-printing          0.4s
+PASS  hardening                 5.4s
+PASS  dashboard                 8.0s
+PASS  lease                     0.3s
+PASS  last-sold-date            2.6s
+PASS  line-session              0.2s
+PASS  leave                     0.4s
+PASS  licence-refresh           0.3s
+PASS  local-backend-status      0.3s
+PASS  listing-presets           0.3s
+PASS  mail-config               0.3s
+**FAIL**  master-codes              0.7s  1 assertion(s) failed
+**FAIL**  document-scan             9.0s  (exited non-zero)
+PASS  mobile-devices            0.4s
+PASS  modules                   0.3s
+**FAIL**  multi-site-reports        0.6s  3 assertion(s) failed
+**FAIL**  multistore-orders         0.6s  2 assertion(s) failed
+PASS  loyalty                   2.4s
+**FAIL**  navigation                0.5s  (exited non-zero)
+PASS  notifications             0.4s
+PASS  offline-backoffice        0.2s
+PASS  offline-capability        0.2s
+PASS  offline-cancel            0.4s
+PASS  mobile-auth-contract      2.6s
+PASS  offline-gate              0.3s
+PASS  offline-numbering         0.2s
+PASS  offline-pin               0.2s
+PASS  offline-signin            0.3s
+PASS  offledger-cash            1.1s
+**FAIL**  online-content            0.5s  1 assertion(s) failed
+PASS  online-orders             0.5s
+**FAIL**  online-store              0.7s  1 assertion(s) failed
+PASS  online-phase10            0.9s
+PASS  order-email               0.5s
+PASS  order-statuses            0.6s
+PASS  overrides                 0.4s
+PASS  payfast-subscription      0.2s
+PASS  overtime                  0.4s
+PASS  party-records             0.5s
+PASS  period-locks              0.5s
+PASS  pay-links                 0.9s
+PASS  portal-signing            0.2s
+PASS  payments                  0.8s
+**FAIL**  pos-floor                 0.4s  (exited non-zero)
+**FAIL**  permissions               1.0s  (exited non-zero)
+PASS  pos-licensing             0.4s
+PASS  pos-menus                 0.2s
+PASS  pos-menu-rotation         0.3s
+**FAIL**  pos-split                 0.5s  (exited non-zero)
+PASS  pos-till-rules            0.3s
+**FAIL**  pos-tables                0.4s  (exited non-zero)
+PASS  price-guard               0.4s
+**FAIL**  pos-voids                 0.5s  (exited non-zero)
+**FAIL**  price-history             0.5s  (exited non-zero)
+PASS  price-schedule-run        0.6s
+PASS  price-schedules           0.2s
+**FAIL**  pos-unlock                1.2s  4 assertion(s) failed
+PASS  pos-declaration           2.4s
+PASS  product-reports           0.4s
+PASS  product-images            0.5s
+PASS  product-barcodes          0.5s
+PASS  pricing-setup             0.8s
+PASS  product-setup             0.5s
+PASS  purchase-lines            0.3s
+PASS  purchase-approval         0.6s
+PASS  public-api                0.7s
+PASS  quick-key-runner          0.3s
+PASS  receipt-data              0.3s
+PASS  quick-keys                0.6s
+PASS  quotes                    0.8s
+PASS  recipe-cost-cascade       0.8s
+PASS  report-columns            0.4s
+PASS  report-catalog-fields     0.7s
+PASS  refer-range               0.9s
+PASS  report-covers             0.4s
+PASS  report-shared-files       0.3s
+PASS  repricing                 0.2s
+PASS  reservations              0.5s
+PASS  report-templates          1.4s
+PASS  report-sources            1.6s
+PASS  sale-paper-route          0.2s
+PASS  sale-comments             0.4s
+PASS  rich-paste                0.9s
+PASS  sale-reducer              0.2s
+PASS  saved-baskets             0.3s
+PASS  section-columns           0.2s
+PASS  scale-barcodes            0.5s
+**FAIL**  setting-search            0.3s  (exited non-zero)
+PASS  sequences                 0.4s
+PASS  slip-design               0.2s
+PASS  site-profile              0.3s
+PASS  sms-model                 0.2s
+PASS  special-fanout            0.5s
+PASS  settings-tabs             1.1s
+PASS  specials                  0.5s
+PASS  staff-cost                0.6s
+**FAIL**  statement-design          0.5s  1 assertion(s) failed
+PASS  reprice-run               4.0s
+PASS  statement-periods         0.3s
+PASS  stationery-barcode        0.3s
+PASS  staff-time                0.9s
+PASS  stationery-blocks         0.3s
+PASS  stationery-columns        0.3s
+**FAIL**  stationery-copy           0.2s  1 assertion(s) failed
+PASS  stationery-pictures       0.2s
+PASS  stationery-qr             0.3s
+PASS  stationery-pdf            0.4s
+PASS  stationery                0.2s
+PASS  stationery-store          0.4s
+PASS  stock-warning             0.2s
+PASS  stock-intel               0.6s
+PASS  store-info                0.3s
+PASS  store-branches            0.3s
+PASS  storefront-theme          0.2s
+PASS  storefront-menus          0.4s
+PASS  storefront-collections    0.6s
+**FAIL**  storefront                0.5s  2 assertion(s) failed
+PASS  supplier-price-import     0.5s
+PASS  table-autosave            0.2s
+PASS  tab-routing               0.4s
+PASS  supplier-prices           0.6s
+PASS  template-fields           0.2s
+PASS  tax-identity              0.3s
+**FAIL**  table-transfer            0.3s  (exited non-zero)
+PASS  tender-offers             0.2s
+PASS  tip-math                  0.2s
+PASS  timesheets                0.4s
+PASS  totp                      0.2s
+PASS  trading-hours             0.2s
+PASS  unlock-code               0.2s
+**FAIL**  tips                      0.7s  (exited non-zero)
+PASS  two-factor                0.5s
+PASS  unlock-exchange           0.2s
+PASS  user-sessions             0.3s
+PASS  variant-tiles             0.2s
+PASS  voucher-order             0.2s
+PASS  statement-runs            4.6s
+PASS  window-session            0.2s
+PASS  webhooks                  0.7s
+PASS  users-pins                1.9s
+PASS  variant-till              1.8s
+
+  — site-wide reconciliation, one at a time —
+
+**FAIL**  account-sales             1.5s  [solo]  1 assertion(s) failed
+PASS  account-types             0.5s  [solo]
+PASS  accounting                0.7s  [solo]
+PASS  adjustments               1.1s  [solo]
+PASS  batches                   1.7s  [solo]
+PASS  cashbook                  0.7s  [solo]
+PASS  close-short               0.9s  [solo]
+PASS  composition               2.7s  [solo]
+**FAIL**  credit-notes              1.9s  [solo]  1 assertion(s) failed
+PASS  cycle-counts              1.2s  [solo]
+**FAIL**  doc-discount              0.8s  [solo]  1 assertion(s) failed
+PASS  expenses                  0.6s  [solo]
+PASS  fixed-assets              0.5s  [solo]
+PASS  general-ledger            0.7s  [solo]
+PASS  grv-repricing             1.0s  [solo]
+PASS  grv-serials               1.5s  [solo]
+PASS  instructions              0.8s  [solo]
+PASS  invoice-match             0.5s  [solo]
+PASS  invoicing                 1.3s  [solo]
+**FAIL**  job-cards                 9.0s  [solo]  1 assertion(s) failed
+PASS  last-transfer-date        0.4s  [solo]
+PASS  laybys                    1.6s  [solo]
+PASS  locations                 1.4s  [solo]
+PASS  lot-capture               1.5s  [solo]
+PASS  manufacturing             1.9s  [solo]
+PASS  offline-returns           0.8s  [solo]
+PASS  offline-sync              0.9s  [solo]
+PASS  opening-balances          0.6s  [solo]
+PASS  payment-runs              0.6s  [solo]
+PASS  per-till-numbering        0.7s  [solo]
+**FAIL**  pos-void                  0.8s  [solo]  1 assertion(s) failed
+PASS  purchase-bonus            1.1s  [solo]
+PASS  purchase-discount         0.9s  [solo]
+PASS  purchase-drafts           0.8s  [solo]
+PASS  purchase-guards           0.9s  [solo]
+PASS  purchase-orders           1.0s  [solo]
+PASS  purchase-shipping         0.9s  [solo]
+PASS  purchasing                1.1s  [solo]
+PASS  receipted-returns         1.3s  [solo]
+PASS  recurring-journals        0.5s  [solo]
+PASS  refers                    1.5s  [solo]
+PASS  reorder-suggestions       1.0s  [solo]
+PASS  sales-edit                2.3s  [solo]
+PASS  sales-orders              3.5s  [solo]
+PASS  sales-posting             2.7s  [solo]
+PASS  serials                   2.8s  [solo]
+PASS  settlement-discount       0.6s  [solo]
+PASS  shared-customer-queries    8.9s  [solo]
+PASS  spend-limits              1.1s  [solo]
+PASS  statements                0.4s  [solo]
+PASS  stock-holds               0.9s  [solo]
+PASS  stock-takes               2.3s  [solo]
+PASS  store-transfer-drift      0.6s  [solo]
+PASS  supplier-returns          1.1s  [solo]
+PASS  tickets                   0.5s  [solo]
+PASS  till-codes                0.9s  [solo]
+PASS  till-location             2.3s  [solo]
+**FAIL**  training-mode             2.4s  [solo]  2 assertion(s) failed
+PASS  transfers                 1.4s  [solo]
+PASS  variants                  0.8s  [solo]
+**FAIL**  void                      2.1s  [solo]  2 assertion(s) failed
+
+  domain: 225/258 ok
+
+========================================================================
+  GATE 4 / smoke — skipped
+========================================================================
+  the static gate failed; a browser crawl would only repeat that error.
+
+========================================================================
+  SUMMARY
+========================================================================
+  static       1 FAILED
+      - design system
+  migrations   PASS
+  domain       33 FAILED
+      - account-sales (1 assertion(s))
+      - billing-itn-route (2 assertion(s))
+      - box-schema
+      - browse-parity (1 assertion(s))
+      - cashup-numbers (2 assertion(s))
+      - credit-notes (1 assertion(s))
+      - delivery-note (1 assertion(s))
+      - doc-discount (1 assertion(s))
+      - document-scan
+      - imports (3 assertion(s))
+      - job-cards (1 assertion(s))
+      - master-codes (1 assertion(s))
+      - multi-site-reports (3 assertion(s))
+      - multistore-orders (2 assertion(s))
+      - navigation
+      - online-content (1 assertion(s))
+      - online-store (1 assertion(s))
+      - permissions
+      - pos-floor
+      - pos-split
+      - pos-tables
+      - pos-unlock (4 assertion(s))
+      - pos-void (1 assertion(s))
+      - pos-voids
+      - price-history
+      - setting-search
+      - statement-design (1 assertion(s))
+      - stationery-copy (1 assertion(s))
+      - storefront (2 assertion(s))
+      - table-transfer
+      - tips
+      - training-mode (2 assertion(s))
+      - void (2 assertion(s))
+  smoke        SKIPPED
+
+  total 196.1s
+  report -> .pre-publish/report.json
+
+NOT READY — see the failures above.
+

@@ -103,6 +103,7 @@ const RETIRED: Record<string, string> = {
   '/setup/stock-tracking': 'Stock tracking',
   '/setup/reservations': 'Online bookings',
   '/setup/api': 'System',
+  '/setup/decimals': 'Decimal places',
   /* NOT '/setup/terminals'. That was a PARTIAL move: seven behaviour panels
      went to the Till tab and the screen itself stays, still listing the
      registers and their licences. A route only belongs in this table when its

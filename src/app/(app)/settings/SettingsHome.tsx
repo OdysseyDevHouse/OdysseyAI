@@ -12,6 +12,7 @@ import StockTrackingPanel from './panels/stock-tracking/StockTrackingPanel'
 import TillPanel from './panels/till/TillPanel'
 import OnlineBookingsPanel from './panels/online-bookings/OnlineBookingsPanel'
 import SystemPanel from './panels/system/SystemPanel'
+import DecimalsPanel from './panels/decimals/DecimalsPanel'
 
 /**
  * Name → glyph, resolved here rather than in the catalogue because the
@@ -27,6 +28,7 @@ const GLYPH: Record<SettingsIconName, LucideIcon> = {
   Barcode: Icons.Barcode,
   Calendar: Icons.Calendar,
   Code: Icons.Code,
+  Hash: Icons.Hash,
 }
 
 /**
@@ -49,6 +51,7 @@ const PANELS: Record<string, () => ReactElement> = {
   till: TillPanel,
   'online-bookings': OnlineBookingsPanel,
   system: SystemPanel,
+  decimals: DecimalsPanel,
 }
 
 function glyph(name: SettingsIconName, size = 18) {

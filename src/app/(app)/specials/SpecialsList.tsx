@@ -13,6 +13,7 @@ import {
   Icons,
   Modal,
   SegmentedControl,
+  SortableList,
   Switch,
   useToast,
 } from '@/components/ui'
@@ -255,11 +256,10 @@ export default function SpecialsList({
     )
   }
 
-  function nudge(index: number, delta: -1 | 1) {
-    const to = index + delta
-    if (to < 0 || to >= rows.length) return
-    const next = [...rows]
-    ;[next[index], next[to]] = [next[to], next[index]]
+  /* Applied locally FIRST, then written. A drag that snapped back while the
+     server thought about it would read as the drop having failed, so the row
+     stays where it was dropped and only a refusal puts it back. */
+  function reorder(next: SpecialWithUse[]) {
     setRows(next)
     start(async () => {
       const result = await reorderSpecialsAction(next.map((s) => s.id))
@@ -336,40 +336,23 @@ export default function SpecialsList({
               }
             />
           ) : (
-            <ul className="flex flex-col gap-2">
-              {visible.map((special) => {
+            /* Reordering only makes sense against the WHOLE list — dropping a
+               row inside a filter would land it past rows nobody can see — so
+               the handle goes quiet while one is on. The rows still render and
+               everything else on them still works. */
+            <SortableList
+              items={visible}
+              getId={(s) => s.id}
+              onReorder={reorder}
+              disabled={filter !== 'all' || busy}
+              className="flex flex-col gap-2"
+            >
+              {(special, handle) => {
                 const index = rows.findIndex((s) => s.id === special.id)
                 const status = statusOf(special, now)
                 return (
-                  <li
-                    key={special.id}
-                    className="flex flex-wrap items-center gap-3 rounded-card border border-border bg-surface px-3 py-2.5"
-                  >
-                    {/* Reordering only makes sense against the whole list —
-                        moving a row "up" inside a filter would move it past
-                        rows nobody can see. */}
-                    <span className="flex flex-col">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label={`Move ${special.name} earlier`}
-                        disabled={filter !== 'all' || index === 0 || busy}
-                        onClick={() => nudge(index, -1)}
-                      >
-                        <Icons.ChevronUp size={14} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        iconOnly
-                        aria-label={`Move ${special.name} later`}
-                        disabled={filter !== 'all' || index === rows.length - 1 || busy}
-                        onClick={() => nudge(index, 1)}
-                      >
-                        <Icons.ChevronDown size={14} />
-                      </Button>
-                    </span>
+                  <div className="flex flex-wrap items-center gap-3 rounded-card border border-border bg-surface px-3 py-2.5">
+                    {handle}
 
                     <span className="numeric w-6 shrink-0 text-right text-sm text-muted">
                       {index + 1}
@@ -487,10 +470,10 @@ export default function SpecialsList({
                         <Icons.Trash size={15} />
                       </Button>
                     </span>
-                  </li>
+                  </div>
                 )
-              })}
-            </ul>
+              }}
+            </SortableList>
           )}
         </CardBody>
       </Card>

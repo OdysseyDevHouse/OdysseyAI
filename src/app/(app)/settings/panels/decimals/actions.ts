@@ -57,3 +57,22 @@ export async function saveDecimalSettingsAction(
     settings: { qty: saved.qty_decimals, cost: saved.cost_decimals },
   }
 }
+
+/**
+ * The two settings this panel renders.
+ *
+ * New with the move out of /setup: the screen used to be a route whose page.tsx
+ * read them on the server. As a TAB of /settings there is no page of its own,
+ * so the panel asks when it is opened — see `usePanelData`.
+ */
+export type DecimalPanelState =
+  | { ok: true; settings: DecimalSettings }
+  | { ok: false; error: string }
+
+export async function loadDecimalSettingsAction(): Promise<DecimalPanelState> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const settings = await getSettings(ctx.siteId, ['qty_decimals', 'cost_decimals'])
+  return { ok: true, settings: { qty: settings.qty_decimals, cost: settings.cost_decimals } }
+}

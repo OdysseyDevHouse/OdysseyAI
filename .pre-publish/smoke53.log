@@ -1,0 +1,4 @@
+OdysseyAI — pre-publish check
+gates: smoke
+Could not reach the control database (localhost/odyssey_tickets): Too many connections
+Fix the connection before running the suite — every gate below needs it.

@@ -171,10 +171,11 @@ export const SETTINGS: SettingEntry[] = [
     keywords:
       'rounding round up down nearest cent 5c 10c cash total swedish rounding smallest coin change drawer price types vat',
   },
-  /* No "Decimal places" entry: /setup/decimals is itself called Decimal places,
-     so this was a second row with the same words that could never outrank the
-     screen. Its extra synonyms (accuracy, fractions, three, four) were folded
-     into that screen's catalogue keywords, so nothing stopped being findable. */
+  /* No "Decimal places" entry: the screen is itself called Decimal places, so
+     this was a second row with the same words that could never outrank it. Its
+     extra synonyms (accuracy, fractions, three, four) were folded into that
+     screen's catalogue keywords, so nothing stopped being findable — and they
+     travelled again when it moved to /settings → "Decimal places". */
 
   /* ── Documents and printing ────────────────────────────────────────────── */
   {

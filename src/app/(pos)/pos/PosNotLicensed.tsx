@@ -1,6 +1,6 @@
 'use client'
 
-import Image from 'next/image'
+import { BrandLockup } from '@/components/ui'
 import DeviceNotLicensed from '@/components/DeviceNotLicensed'
 import { deviceId, deviceLabel } from '@/lib/deviceId'
 import { startTillAction } from './deviceActions'
@@ -16,12 +16,21 @@ import type { DeviceState } from '@/lib/control/deviceMessages'
  * `sales.till`, which the counter's reader does not necessarily hold.
  */
 export default function PosNotLicensed({
+  modeName,
   reason,
   message,
   offer,
   serial,
   onRetry,
 }: {
+  /**
+   * The module on the lockup's subline — "Retail", "Hospitality", "Invoicing".
+   *
+   * Passed in rather than read here for the same reason the status bar takes
+   * it: this component stays mode-blind, and PosEntry has already resolved
+   * which till this machine is. See lib/posMode.
+   */
+  modeName: string
   /** Which refusal this is, for the heading. */
   reason: Extract<DeviceState, { status: 'blocked' }>['reason']
   /** The specific refusal, from `deviceLabelFor`. */
@@ -36,20 +45,16 @@ export default function PosNotLicensed({
   return (
     <DeviceNotLicensed
       wordmark={
-        /* `.logo-plate` rather than a `dark:` variant: this app has no such
-           variant registered — it themes by swapping custom properties under
-           [data-theme] — so `dark:bg-white` fired off the OS preference alone
-           and put a white plate behind the wordmark on a LIGHT screen. The class
-           uses the same three-way selector the tokens do. See globals.css. */
-        <Image
-          src="/logo-full.png"
-          alt="OdysseyAI Point of Sale"
-          width={1109}
-          height={304}
-          className="logo-plate h-20 w-auto object-contain"
-          priority
-          unoptimized
-        />
+        /* The TYPESET lockup, not `logo-full.png`.
+
+           That artwork reads "POINT OF SALE" in the raster itself, so a shop
+           running tables was refused a licence under the name of a product it
+           does not run — and being a raster, the words could not be swapped.
+           The kit's lockup says the same thing in the same shape and puts THIS
+           till's module on the subline. It is also drawn in ink rather than
+           dark navy, which retires the `.logo-plate` workaround this screen
+           needed to stay visible in dark mode. */
+        <BrandLockup size="lg" sub={modeName} />
       }
       reason={reason}
       message={message}

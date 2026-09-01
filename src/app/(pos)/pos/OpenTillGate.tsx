@@ -1,9 +1,9 @@
 'use client'
 
-import Image from 'next/image'
 import { useMemo, useState, useTransition } from 'react'
 import {
   Badge,
+  BrandLockup,
   Button,
   Callout,
   DeepPanel,
@@ -74,6 +74,7 @@ import { tillOpenShiftAction } from './shiftActions'
  */
 export default function OpenTillGate({
   mode,
+  modeName,
   operatorName,
   terminalId,
   terminalLabel,
@@ -85,6 +86,15 @@ export default function OpenTillGate({
   onExit,
 }: {
   mode: 'terminal' | 'user'
+  /**
+   * The module on the lockup's subline — "Retail", "Hospitality", "Invoicing".
+   *
+   * A different axis entirely from `mode` above, which is about WHO owns the
+   * shift. Named the way the status bar names it (see lib/posMode) because it
+   * is the same word in the same lockup — this screen is simply the one that
+   * has room to draw it large.
+   */
+  modeName: string
   operatorName: string
   /**
    * The till this machine has claimed. REQUIRED in terminal mode — `openShift`
@@ -209,26 +219,23 @@ export default function OpenTillGate({
            * a mark in the bar would be a fourth thing competing with a greeting
            * that is already the largest text on the screen.
            *
-           * The real artwork rather than the typeset lockup the crowded rows
-           * use, because this column has the room for it and nothing to squeeze
-           * it. `.logo-plate` is the same fix PosGate makes: the wordmark inside
-           * the PNG is dark navy and would all but vanish on the dark canvas, so
-           * it gets a white backing in dark mode and nothing in light.
+           * The TYPESET lockup, not `logo-full.png`, which this used to show.
+           *
+           * That raster reads "POINT OF SALE" in the artwork itself, so a
+           * restaurant opened its day under the name of a product it does not
+           * run — and being a raster, the words could not be swapped. The kit's
+           * lockup is the same shape at the size this column has room for, and
+           * puts THIS till's module on the subline. See components/ui/
+           * BrandLockup, which draws the back office rail and the status bar
+           * too. It is set in ink rather than the artwork's dark navy, which
+           * also retires the `.logo-plate` backing this needed in dark mode.
            *
            * `mb-8`, deliberately wider than the 4-unit rhythm below it: the gap
            * separates the BRAND from the greeting, and at the same spacing as
            * the greeting's own parts the logo read as the first line of the
            * sentence rather than the mark above it.
            */}
-          <Image
-            src="/logo-full.png"
-            alt="OdysseyAI Point of Sale"
-            width={1109}
-            height={304}
-            priority
-            unoptimized
-            className="logo-plate mb-8 h-16 w-auto object-contain"
-          />
+          <BrandLockup size="lg" sub={modeName} className="mb-8" />
 
           {/* The rule and the day. A weekday matters more at a till than it
               looks — a rota that changes by day gets checked on the way in. */}

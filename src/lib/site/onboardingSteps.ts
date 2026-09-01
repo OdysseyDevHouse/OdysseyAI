@@ -135,7 +135,10 @@ export const STEPS: readonly OnboardingStep[] = [
     short: 'Decimals',
     blurb: 'How precisely quantities and costs are shown on screen.',
     why: 'Display only — nothing stored changes, so this one is safe to revisit whenever it starts to annoy you.',
-    href: '/setup/decimals',
+    /* Moved out of /setup with the screen. This is the "change this later
+       under …" reference rather than a wizard destination, and the tab is named
+       in the settings rail, which is how somebody finds it again. */
+    href: '/settings?tab=decimals',
     cheapToChangeLater: true,
   },
   {

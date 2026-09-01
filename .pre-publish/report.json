@@ -1,24 +1,25 @@
 {
-  "startedAt": "2026-08-08T05:39:29.456Z",
+  "startedAt": "2026-08-31T21:46:04.603Z",
   "gates": [
     {
       "gate": "static",
-      "ok": true,
+      "ok": false,
       "checks": [
         {
           "name": "tsc --noEmit",
           "ok": true,
-          "ms": 2051
+          "ms": 13425
         },
         {
           "name": "design system",
-          "ok": true,
-          "ms": 137
+          "ok": false,
+          "ms": 794,
+          "output": "OdysseyAI design system — this file bypasses the shared UI kit:\n\n  src\\app\\(app)\\setup\\style-guide\\GatePreview.tsx:361  [hex-colour]\n      Raw hex colour. Colours are tokens in src/app/globals.css — never inline.\n\nRead .claude/skills/odyssey-ui/SKILL.md and /setup/style-guide.\nFix by importing from @/components/ui — or, if the kit lacks it, add it there,\nexport it from index.ts, and demo it on the Style Guide page."
         },
         {
           "name": "next build",
           "ok": true,
-          "ms": 10906
+          "ms": 48654
         }
       ]
     },
@@ -29,12 +30,117 @@
         {
           "name": "site 1",
           "ok": true,
-          "ms": 149
+          "ms": 199
         },
         {
           "name": "site 2",
           "ok": true,
-          "ms": 142
+          "ms": 189
+        },
+        {
+          "name": "site 33",
+          "ok": true,
+          "ms": 178
+        },
+        {
+          "name": "site 34",
+          "ok": true,
+          "ms": 184
+        },
+        {
+          "name": "site 35",
+          "ok": true,
+          "ms": 191
+        },
+        {
+          "name": "site 36",
+          "ok": true,
+          "ms": 202
+        },
+        {
+          "name": "site 37",
+          "ok": true,
+          "ms": 196
+        },
+        {
+          "name": "site 38",
+          "ok": true,
+          "ms": 194
+        },
+        {
+          "name": "site 39",
+          "ok": true,
+          "ms": 200
+        },
+        {
+          "name": "site 40",
+          "ok": true,
+          "ms": 187
+        },
+        {
+          "name": "site 41",
+          "ok": true,
+          "ms": 195
+        },
+        {
+          "name": "site 42",
+          "ok": true,
+          "ms": 197
+        },
+        {
+          "name": "site 43",
+          "ok": true,
+          "ms": 204
+        },
+        {
+          "name": "site 44",
+          "ok": true,
+          "ms": 195
+        },
+        {
+          "name": "site 45",
+          "ok": true,
+          "ms": 197
+        },
+        {
+          "name": "site 46",
+          "ok": true,
+          "ms": 183
+        },
+        {
+          "name": "site 47",
+          "ok": true,
+          "ms": 193
+        },
+        {
+          "name": "site 48",
+          "ok": true,
+          "ms": 200
+        },
+        {
+          "name": "site 49",
+          "ok": true,
+          "ms": 179
+        },
+        {
+          "name": "site 50",
+          "ok": true,
+          "ms": 184
+        },
+        {
+          "name": "site 51",
+          "ok": true,
+          "ms": 186
+        },
+        {
+          "name": "site 52",
+          "ok": true,
+          "ms": 171
+        },
+        {
+          "name": "site 53",
+          "ok": true,
+          "ms": 161
         }
       ]
     },
@@ -44,475 +150,1852 @@
       "checks": [
         {
           "name": "account-sales",
-          "ok": true,
-          "ms": 1606,
-          "failedAssertions": 0,
-          "exclusive": true
+          "ok": false,
+          "ms": 1470,
+          "failedAssertions": 1,
+          "exclusive": true,
+          "output": "PASS  available credit = limit - balance\nPASS  within headroom is allowed\nPASS  beyond headroom is refused  -- Test Co would be 100.00 over their 1000.00 limit.\nPASS  on hold blocked\nPASS  cash-only blocked\nPASS  zero limit means NO credit, not unlimited\nPASS  already over limit blocked\nPASS  negative available credit clamps to 0\nPASS  till sees the new account as sellable\nPASS    with full credit available  -- 1000\nPASS  till search finds it by code\nPASS  *** account sale posted ***  -- INV834244\nPASS    balance moved to the ledger  -- 575\nPASS    available credit fell\nPASS    ledger entry created\nPASS    entry is linked to the sale document  -- sourceDocId=101689\nPASS    entry source says it came from a sale  -- sale\nPASS    entry carries the invoice number  -- INV834244\nPASS    entry has a due date from the terms  -- 2026-09-30\nPASS  *** over-limit sale REFUSED ***  -- Account Test Co would be 475.00 over their 1000.00 limit.\nPASS  *** on-hold sale REFUSED ***  -- Account Test Co is on hold.\nPASS    and the till agrees it is blocked\nPASS  *** cash-only sale REFUSED ***  -- Account Test Co is a cash account — no credit.\nPASS  cash-only customer CAN still pay cash\nPASS    and that did not touch their balance  -- 575\nPASS  account tender without a customer refused  -- Account: attach a customer first.\nPASS  *** reconcileBalances zero drift ***\n**FAIL**  *** reconcileStock zero drift ***\n\n1 FAILURE(S)"
         },
         {
           "name": "account-types",
           "ok": true,
-          "ms": 454,
+          "ms": 523,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
           "name": "accounting",
           "ok": true,
-          "ms": 593,
+          "ms": 668,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
+          "name": "adjustments",
+          "ok": true,
+          "ms": 1096,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "ai-credits",
+          "ok": true,
+          "ms": 2216,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "alerts",
+          "ok": true,
+          "ms": 5153,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
           "name": "attachments",
           "ok": true,
-          "ms": 574,
+          "ms": 437,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "basket",
+          "ok": true,
+          "ms": 241,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "batches",
+          "ok": true,
+          "ms": 1705,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "billing-itn-route",
+          "ok": false,
+          "ms": 2093,
+          "failedAssertions": 2,
+          "exclusive": false,
+          "output": "PASS  *** the route answers without a session ***  -- status 200\nPASS  an unreadable token is acknowledged, not errored\nPASS  a GET probe is answered\nPASS  a payload with no pf_payment_id is refused\nPASS    and nothing was recorded for it\nPASS  *** a forged payload is still written down ***\nPASS    marked unverified, with the reason\nPASS    and the mandate is untouched\nPASS  a checkout attempt is claimed\nPASS  the site starts at its known licence count  -- 3\nPASS  the notification is acknowledged\nPASS  *** the mandate is active ***  -- active\nPASS    the PayFast token is stored\nPASS    the amount is the one WE recorded, not the payload\n**FAIL**  *** paying provisioned the till licences ***  -- 5 licences, expected 4\nPASS    and they are unclaimed spots a till can take\nPASS    the order is no longer awaiting payment\nPASS  a replay is acknowledged\nPASS  *** a replay leaves the mandate byte-identical ***\nPASS    and writes no second payment row\n**FAIL**    and provisions no extra licences\nPASS  a later collection is accepted\nPASS    it stays active\nPASS    and it is a second payment row\nPASS  a failed collection marks past_due\nPASS  a token for an unknown account is acknowledged\nPASS    and records nothing\nPASS  the payment rows this run wrote are cleaned up  -- 0\n\n2 failure(s)"
+        },
+        {
+          "name": "billing-periods",
+          "ok": true,
+          "ms": 258,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "billing-subscription",
+          "ok": true,
+          "ms": 936,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "box-flush",
+          "ok": true,
+          "ms": 962,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "box-handover",
+          "ok": true,
+          "ms": 281,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "box-outbox",
+          "ok": true,
+          "ms": 563,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "box-schema",
+          "ok": false,
+          "ms": 809,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "The in-store box\n\n  PASS  box_identity is present\n  PASS  box_migrations is present\n  PASS  box_outbox is present\n  PASS  pos_floor_features is present\n  PASS  pos_floor_rooms is present\n  PASS  pos_tables is present\n  PASS  pos_visit_types is present\n  PASS  sales_documents is present\n  PASS  sales_document_lines is present\n  PASS  sales_document_line_instructions is present\n  PASS  sales_reps is present\n  PASS  terminals is present\n  PASS  users is present\n  PASS  document_audit is present\n  PASS  licence_lease is present\n  FAIL  the box holds nothing else — activity_log\n  PASS  sales_documents has every column the shop has\n  PASS  sales_document_lines has every column the shop has\n  PASS  pos_tables has every column the shop has\n  PASS  pos_visit_types rows are mirrored from the shop\n  FAIL  pos_floor_rooms rows are mirrored from the shop — box 2 vs shop 0\n  FAIL  sales_reps rows are mirrored from the shop — box 2 vs shop 0\n  PASS  users rows are mirrored from the shop\n  FAIL  terminals rows are mirrored from the shop — box 5 vs shop 4\n  PASS  no foreign key points at a missing table\n  PASS  a document still cascades to its lines\n  PASS  a table still points at its bill\n\n4 FAILED"
+        },
+        {
+          "name": "branch-routing",
+          "ok": true,
+          "ms": 1002,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "branch-trading",
+          "ok": true,
+          "ms": 1076,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "browse-parity",
+          "ok": false,
+          "ms": 594,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "site 33: 14 departments\n\nPASS  every department's subtree matches the server CTE\n**FAIL**  the site actually HAS nested departments (else this proves nothing)  -- 0 departments have children\nPASS  dept    7 grid: 70 online vs 70 in local scope\nPASS  dept    8 grid: 9 online vs 9 in local scope\nPASS  dept    9 grid: 17 online vs 17 in local scope\nPASS  dept   10 grid: 11 online vs 11 in local scope\nPASS  dept   11 grid: 11 online vs 11 in local scope\nPASS  dept   12 grid: 21 online vs 21 in local scope\n\n1 FAILED"
+        },
+        {
+          "name": "budgets",
+          "ok": true,
+          "ms": 521,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "builder",
           "ok": true,
-          "ms": 537,
+          "ms": 1044,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "cancellation-cuts",
+          "ok": true,
+          "ms": 1036,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "cash-denominations",
+          "ok": true,
+          "ms": 414,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "cashbook",
           "ok": true,
-          "ms": 457,
+          "ms": 678,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
           "name": "cashup",
-          "ok": false,
-          "ms": 691,
-          "failedAssertions": 1,
-          "exclusive": false,
-          "output": "PASS  no shift open to start\nPASS  *** shift opened with a R500 float ***\nPASS  a second shift on the same till is refused\nPASS  negative float refused\nPASS  cash sale with change posted\nPASS  exact cash sale posted\nPASS  card sale posted\n**FAIL**  *** sale stamped with the shift ***  -- 136\nC:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-cashup.ts:83\r\n  ok('cash expected is NET of change (150 not 250)', cashLine.expected === 150, String(cashLine.expected))\r\n                                                              ^\r\n\r\nTypeError: Cannot read properties of undefined (reading 'expected')\r\n    at main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-cashup.ts:83:63)\r\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\r\n\r\nNode.js v24.16.0"
+          "ok": true,
+          "ms": 1655,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "cashup-breakdown",
+          "ok": true,
+          "ms": 1881,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "cashup-declaration",
+          "ok": true,
+          "ms": 3086,
+          "failedAssertions": 0,
+          "exclusive": false
         },
         {
           "name": "cashup-modes",
           "ok": true,
-          "ms": 1742,
+          "ms": 1982,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "cashup-numbers",
+          "ok": false,
+          "ms": 481,
+          "failedAssertions": 2,
+          "exclusive": false,
+          "output": "PASS  a cashup sequence exists  -- run site-migrate for 233\nPASS  it is the SITE-wide sequence, not a till one\nPASS  prefixed CSH  -- CSH\nPASS  padded to 6  -- 6\nPASS  does not reset yearly  -- none\nPASS  *** shift opened ***\nPASS  the shift exists\nPASS  an OPEN shift already carries its number  -- CSH_01_000085\nPASS  the number is CSH_01_000085  -- CSH_01_000085\nPASS  it reads CSH_<store>_<counter>  -- CSH_01_000085\nPASS  it carries NO till segment  -- CSH_01_000085\nPASS  the store segment is this store  -- 01\nPASS  numberValueOf reads the counter back\nPASS  the sequence advanced by one\nPASS  last_issued_number is the number issued\nPASS  *** shift closed clean ***\nPASS  the number is unchanged by closing  -- CSH_01_000085\nPASS  status followed closed_at to \"closed\"  -- closed\n**FAIL**  listShifts publishes the number\n**FAIL**  every concurrent shift opened\nPASS  every concurrent shift got a number  -- [\"CSH_01_000086\"]\nPASS  *** no two shifts share a number ***  -- [\"CSH_01_000086\"]\nPASS  and they are consecutive  -- [86]\nPASS  the audit reaches shifts, not sales_documents  -- CSH_01_000086\nPASS  the audit sees the run this test issued  -- {\"docType\":\"cashup\",\"terminalId\":0,\"issued\":86,\"live\":6,\"voided\":0,\"missing\":80,\"firstNumber\":\"CSH_01_000081\",\"lastNumber\":\"CSH_01_000086\"}\nPASS  *** every number this run issued has a shift behind it ***  -- 2 of 2\nPASS  *** no number is shared by two shifts, site-wide ***  -- 0\n\n2 FAILURE(S)"
+        },
+        {
+          "name": "cashup-report",
+          "ok": true,
+          "ms": 1320,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "catalog-drill",
+          "ok": true,
+          "ms": 221,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "catalog-fields",
+          "ok": true,
+          "ms": 4010,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "catalogue-export",
+          "ok": true,
+          "ms": 1051,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "close-short",
+          "ok": true,
+          "ms": 895,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "cloud-site-refusal",
+          "ok": true,
+          "ms": 221,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "code128",
+          "ok": true,
+          "ms": 391,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "commission",
           "ok": true,
-          "ms": 590,
+          "ms": 724,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "composition",
           "ok": true,
-          "ms": 2389,
+          "ms": 2673,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
+          "name": "conditions",
+          "ok": true,
+          "ms": 269,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
           "name": "contract-model",
           "ok": true,
-          "ms": 234,
+          "ms": 215,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "contracts",
           "ok": true,
-          "ms": 964,
+          "ms": 1175,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "credit-control",
           "ok": true,
-          "ms": 2308,
+          "ms": 2268,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "credit-model",
           "ok": true,
-          "ms": 193,
+          "ms": 214,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "credit-notes",
-          "ok": true,
-          "ms": 1647,
-          "failedAssertions": 0,
-          "exclusive": true
+          "ok": false,
+          "ms": 1868,
+          "failedAssertions": 1,
+          "exclusive": true,
+          "output": "PASS  invoice posted  -- INV834248\nPASS    stock down to 90  -- 90\nPASS    customer owes 1150\nPASS  creditable shows the full 10  -- 10\nPASS  *** partial credit note posted ***  -- CRN003054\nPASS    numbered from the CRN sequence  -- CRN003054\nPASS    worth 345 (3 × 115)  -- 345\nPASS    lines are NEGATIVE  -- -3\nPASS    total is negative  -- -345\nPASS    document balances\nPASS  *** cost copied from the ORIGINAL line, not today's 25 ***  -- 10\nPASS    stock returned to 93  -- 93\nPASS    a sale_return movement was written\nPASS  *** ledger reduced to 805 (1150 - 345) ***  -- 805\nPASS    credit note on the ledger  -- -345\nPASS    auto-allocated against the invoice  -- 0\nPASS  creditable now shows 7 left  -- 7\nPASS  *** over-crediting REFUSED ***  -- Credit test item: only 7 left to credit (3 already credited of 10).\nPASS  crediting exactly the remainder allowed\nPASS    balance back to 0  -- 0\nPASS    stock back to 100  -- 100\nPASS    invoice now fully credited\nPASS    two credit notes linked to the invoice\nPASS  credit without a reason refused\nPASS  credit with a void reason refused\nPASS  credit with no lines refused\nPASS  *** no-receipt return accepted ***  -- CRN003056\nPASS  non-refundable tender refused  -- Direct deposit cannot be refunded at the till — pay it back through the bank instead.\nPASS  *** locked VAT period REFUSES a credit ***  -- Nothing on or before 2026-08-31 may be posted — that period is closed.\nPASS  *** locked VAT period REFUSES a void ***  -- Nothing on or before 2026-08-31 may be posted — that period is closed.\nPASS  unlocking lets it through again\n**FAIL**  *** reconcileStock zero drift ***  -- [{\"productId\":40852,\"code\":\"SPB12857709\",\"description\":\"Split test beer 12857709\",\"stored\":500,\"computed\":0,\"drift\":500,\"locationId\":null,\"locationCode\":null},{\"productId\":40853,\"code\":\"SPS12857709\",\"description\":\"Split test steak 12857709\",\"stored\":500,\"computed\":0,\"drift\":500,\"locationId\":null,\"locationCode\":null}]\nPASS  *** reconcileBalances zero drift ***\n\n1 FAILURE(S)"
         },
         {
           "name": "customer-accounts",
           "ok": true,
-          "ms": 2001,
+          "ms": 1694,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "dashboard",
+          "name": "customer-addresses",
           "ok": true,
-          "ms": 8645,
+          "ms": 409,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "document-math",
+          "name": "customer-duplicates",
           "ok": true,
-          "ms": 265,
+          "ms": 437,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "employment",
+          "name": "customer-groups",
           "ok": true,
-          "ms": 573,
+          "ms": 484,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "expenses",
+          "name": "customer-owner",
           "ok": true,
-          "ms": 507,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "fixed-assets",
-          "ok": false,
-          "ms": 433,
-          "failedAssertions": 1,
-          "exclusive": true,
-          "output": "PASS    and reports the closing book value\nPASS  a month before the start charges nothing\nPASS    and says why\nPASS  *** the final month charges only what remains ***  -- 200\nPASS    and is flagged as the last one\nPASS  *** it lands exactly on zero, not below ***  -- 0\nPASS  *** a fully depreciated asset charges nothing ***\nPASS    and says so\nPASS  *** a month already charged is refused ***\nPASS    and the next month proceeds\nPASS  a disposed asset charges nothing\nPASS  a pending asset charges nothing\nPASS  *** THE SCHEDULE SUMS TO THE DEPRECIABLE AMOUNT ***  -- 24000 over 36 months\nPASS    ending at zero book value\nPASS  *** an awkward division still sums exactly ***  -- 10000 over 8 months\nPASS  *** a residual is never depreciated through ***  -- 60000\nPASS  a sale above book value is a profit  -- book 120000, result 30000\nPASS  scrapping mid-life is a loss  -- -16000\nPASS  a residual above cost is refused\nPASS  a zero life is refused\nPASS  *** depreciating before acquisition is refused ***\nPASS  a valid asset passes\n\n── The register ────────────────────────────────────────────\n\nPASS  categories are seeded  -- 4\nPASS  computers depreciate over 3 years\nPASS  *** vehicles carry a residual by default ***  -- 20%\nPASS    and are mapped to their own accounts\nPASS  an asset is created  -- FA00027\nPASS    with a generated code\nPASS    it carries at cost before depreciation\nPASS    and is not yet fully depreciated\nPASS    its schedule runs for the life  -- 3 months\n\n── A depreciation run ──────────────────────────────────────\n\nPASS  a run is proposed  -- 1 assets, 1000\nPASS    our asset is on it\nPASS    charging a third of the cost  -- 1000\nPASS    with the workings kept\nPASS  *** a draft run charges nothing ***\nPASS  the run posts  -- 1 assets, 1000\nPASS    the register moved  -- 1000\nPASS    the book value dropped\nPASS    and the month is recorded\nPASS  *** the ledger entry balances ***  -- 1000 / 1000\nPASS    debiting depreciation expense\nPASS    and crediting accumulated depreciation\nPASS  *** the same month cannot be charged twice ***  -- 2026-01 has already been charged.\nPASS  *** THE ASSET LANDS EXACTLY ON ZERO ***  -- book 0, accumulated 3000\nPASS    and is flagged fully depreciated\nPASS  *** a fully depreciated asset is skipped, not charged ***  -- Fully depreciated.\n\n── Editing guards ──────────────────────────────────────────\n\nPASS  *** the cost of a depreciated asset cannot change ***  -- FA00027 has already depreciated 3000.00. Its cost cannot change — dispose of it and record the correct asset, so both are on the trail.\nPASS    but it can still be renamed\n\n── Disposal ────────────────────────────────────────────────\n\nPASS  disposal needs a reason\nPASS  an asset can be disposed of  -- book 100000, result -10000\nPASS    its status changes\nPASS    the proceeds are recorded\nPASS  *** and the profit on sale is computed ***  -- -10000\nPASS    the disposal journal balances  -- 100000 / 100000\nPASS    removing the asset at cost\nPASS  disposing twice is refused\nPASS  *** a disposed asset leaves the register by default ***\n\n── Invariants ──────────────────────────────────────────────\n\nPASS  *** every asset agrees with the runs that depreciated it ***  -- []\n**FAIL**  *** every GL balance agrees with its journal lines ***  -- [{\"id\":1,\"accountCode\":\"1000\",\"name\":\"Bank and cash\",\"stored\":353200,\"computed\":352270,\"drift\":930},{\"id\":18,\"accountCode\":\"4000\",\"name\":\"Sales\",\"stored\":-441065.54,\"computed\":-440256.83,\"drift\":-808.71}]\nPASS  *** the trial balance still balances ***  -- out by 0\nPASS  the register summarises  -- 1 assets\nPASS    book value is cost less accumulated\n\n1 FAILURE(S)"
-        },
-        {
-          "name": "general-ledger",
-          "ok": true,
-          "ms": 584,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "grv-serials",
-          "ok": true,
-          "ms": 1325,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "holidays",
-          "ok": true,
-          "ms": 363,
+          "ms": 407,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "invoicing",
-          "ok": true,
-          "ms": 1075,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "laybys",
-          "ok": true,
-          "ms": 1827,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "leave",
-          "ok": true,
-          "ms": 462,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "locations",
-          "ok": true,
-          "ms": 1337,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "loyalty",
-          "ok": true,
-          "ms": 2005,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "master-codes",
-          "ok": true,
-          "ms": 612,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "online-content",
-          "ok": true,
-          "ms": 445,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "online-orders",
-          "ok": true,
-          "ms": 471,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "online-store",
-          "ok": true,
-          "ms": 580,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "opening-balances",
-          "ok": true,
-          "ms": 511,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "order-statuses",
-          "ok": true,
-          "ms": 762,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "overtime",
+          "name": "customer-pricing",
           "ok": true,
           "ms": 397,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "party-records",
+          "name": "cycle-counts",
           "ok": true,
-          "ms": 403,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "payment-runs",
-          "ok": true,
-          "ms": 518,
+          "ms": 1163,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
-          "name": "payments",
+          "name": "dashboard",
           "ok": true,
-          "ms": 1339,
+          "ms": 7994,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "period-locks",
+          "name": "db-setup",
           "ok": true,
-          "ms": 373,
+          "ms": 196,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "permissions",
+          "name": "delivery-note",
+          "ok": false,
+          "ms": 250,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "-- a delivery note carries no prices, and cannot be made to --\nPASS  no money appears anywhere on it  -- R \nPASS  ...and no price, total or VAT wording  -- Acme Trading Unit 4 Industrial Park Cape Town 7441 VAT no. 4123456789 Reg. no. 2019/123456/07 021 555 0100 sales@acme.co.za DELIVERY NOTE SO000001 2026-08-19 PART DELIVERY — the balance is still to co\nPASS  the catalog exposes no money token at all\nPASS  ...and a template naming one anyway resolves it to nothing\n\n-- ordered, sent before, going now --\nPASS  the columns say what they are\nPASS  a part delivery shows all three numbers  -- Acme Trading Unit 4 Industrial Park Cape Town 7441 VAT no. 4123456789 Reg. no. 2019/123456/07 021 555 0100 sales@acme.co.za DELIVERY NOTE SO000001 2026-08-19 PART DELIVERY — the balance is still to come DELIVER TO Harbour Cafe 9 Long Street Cape Town 8001 021 555 0100 Account CUST-003 Order SO000001 Delivery date 2026-08-22 Your order no. PO-99001 Taken by Tiaan Item Ordered Sent before Delivered now Avo each AVO 10 10 Coca-Cola 500ml CC500 8 3 5 Full Cream Milk 1L FCM1L 4 4 DELIVERY INSTRUCTIONS Ring the bell at the gate. Received by (print name and sign) Date received Please check the goods against this note before signing. Shortages or damage must be reported on delivery. Printed 19/08/2026, 14:30\nPASS  a line already delivered shows no quantity for today\nPASS  ...but still shows what was ordered and what came before\nPASS  a first delivery leaves \"sent before\" blank\nPASS  ...and shows the full quantity as going now\nPASS  an order with something outstanding says PART DELIVERY\nPASS  ...and a complete one says nothing at all\n\n-- the paper is usable --\nPASS  it carries who sent it\nPASS  it carries what it is\nPASS  it carries the order number\nPASS  it carries who it is for\nPASS  it carries where it goes\nPASS  it carries when it is due\nPASS  it carries the customer's own order number\nPASS  it carries what is in the boxes\nPASS  it carries the delivery instructions\nPASS  it carries somewhere to sign\nPASS  it carries a date to write\nPASS  it carries what to do before signing\nPASS  the signature lines are drawn rules, not empty values\nPASS  ...so nothing can hide them\n\n-- structure, storage and the law --\nPASS  the shipped design passes the validator  -- []\nPASS  a delivery note without the address is refused\nPASS  a delivery note without the letterhead is refused\nPASS  it validates structurally  -- []\nPASS  the design survives being stored and read back\nPASS  the visual designer is offered for it\nPASS  ...and the shipped design is registered so the screen can fork it\n**FAIL**  the markup default matches the block design  -- regenerate defaults/deliveryNote.ts\nPASS  each block's canvas markup appears verbatim in the printed page\nPASS  it survives the sanitiser with its structure intact\n\n1 FAILED"
+        },
+        {
+          "name": "deposits",
           "ok": true,
-          "ms": 479,
+          "ms": 584,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "price-guard",
+          "name": "discount-codes",
           "ok": true,
-          "ms": 314,
+          "ms": 433,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "pricing-setup",
+          "name": "display-precision",
           "ok": true,
-          "ms": 702,
+          "ms": 251,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "product-images",
-          "ok": true,
-          "ms": 427,
-          "failedAssertions": 0,
-          "exclusive": false
+          "name": "doc-discount",
+          "ok": false,
+          "ms": 817,
+          "failedAssertions": 1,
+          "exclusive": true,
+          "output": "── The shares sum exactly ──────────────────────────────────\n\nPASS  *** R10 spreads to exactly R10 ***  -- [3.33,3.33,3.34]\nPASS  the remainder lands on the largest line\nPASS  10% of R100 is R10  -- [3.33,3.33,3.34]\nPASS  *** a discount larger than the basket clamps to the basket ***  -- [33.33,33.33,33.34]\nPASS  *** an eligibility mask keeps ineligible lines at zero ***\nPASS  …and still spreads the full amount over the rest  -- [4.5,4.5,0]\nPASS  no discount is all zeros\nPASS  an empty basket is an empty array\n\n── VAT stays exact through the spread ──────────────────────\n\nPASS  *** excl + VAT = incl, to the cent ***  -- 78.27 + 11.73 vs 90\nPASS  the discount total is the shares  -- 10\nPASS  the total dropped by exactly the discount\nPASS  *** payload lines carry the absolute discount ***  -- [3.33,3.33,3.34]\nPASS  *** a line discount and a doc share fold into one figure ***  -- 15\n\n── The cap cannot be dodged in rands ───────────────────────\n\nPASS  *** a rand discount over the cap is refused ***  -- x: 25% is more than the 10% this product allows. A supervisor can authorise it.\nPASS  a rand discount inside the cap passes\nPASS  the supervisor right lifts it\n\n── It posts, and the books balance ─────────────────────────\n\nPASS  *** the discounted sale posts ***  -- INV_01_99_000001\nPASS  the header carries the whole discount  -- 100\nPASS  the total is net of it  -- 900\nPASS  *** the document balances (excl + VAT = incl) ***\nPASS  *** the GL mirror posted and balances to zero ***  -- {\"id\":1140,\"diff\":\"0.0000\"}\n**FAIL**  reconcileStock zero drift\n\n── Cleanup ────────────────────────────────────────────────\n\nPASS  test data cleaned up\n\n1 FAILURE(S)"
         },
         {
-          "name": "product-setup",
-          "ok": true,
-          "ms": 468,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "purchasing",
-          "ok": true,
-          "ms": 1049,
-          "failedAssertions": 0,
-          "exclusive": true
-        },
-        {
-          "name": "quotes",
-          "ok": true,
-          "ms": 580,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "reprice-run",
-          "ok": true,
-          "ms": 1053,
-          "failedAssertions": 0,
-          "exclusive": false
-        },
-        {
-          "name": "repricing",
+          "name": "document-math",
           "ok": true,
           "ms": 259,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
+          "name": "document-scan",
+          "ok": false,
+          "ms": 9031,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "── printed figures ──\nPASS  15 printed figures parse  -- 0 wrong\n\n── reading the document ──\n  BW-4471    Sunflower Cooking Oil 2L         qty=   24 cost=    58.9 none\n  BW-1120    White Sugar 2.5kg                qty=   36 cost=   42.15 supplier_code\n  BW-9903    Long Grain Rice 10kg             qty=   12 cost=     189 none\n  (none)     Assorted Spice Sachets (mixed)   qty=   60 cost=    4.25 none\n  BW-2288    Full Cream Milk 1L UHT           qty=   48 cost=    17.8 none\n\n── header ──\nPASS  their invoice number  -- BW-88214\nPASS  the document date  -- 2026-08-11\nPASS  the total, through a space separator and an R prefix  -- 7556.22\n\n── goods lines only ──\nPASS  five lines  -- got 5\nPASS  freight is not a product\nPASS  the fuel levy is not a product\nPASS  no VAT or subtotal line\n\n── what each line says ──\nPASS  the sugar line came back\nPASS  delivered 36, not the 40 ordered  -- 36\nPASS  its cost through a decimal comma  -- 42.15\nPASS  its 5% discount  -- 5\nPASS  a fractional discount survives  -- 2.5\nPASS  a line with no code still comes back\nPASS  and carries no invented reference  -- \"\"\n\n── resolution ──\nPASS  the sugar matched on THEIR code  -- supplier_code\nPASS  and matched the right product  -- 40840 vs 40840\nPASS  everything else is unmatched, not guessed  -- 1 matched\nPASS  unmatched lines are counted for the buyer  -- 4\nPASS  an unmatched line keeps what the PDF called it\nPASS  test records cleaned up  -- 0\n\nALL PASS\nAssertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\\win\\async.c, line 94"
+        },
+        {
+          "name": "dunning-sms",
+          "ok": true,
+          "ms": 859,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "employment",
+          "ok": true,
+          "ms": 416,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "escpos",
+          "ok": true,
+          "ms": 217,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "expenses",
+          "ok": true,
+          "ms": 565,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "fixed-assets",
+          "ok": true,
+          "ms": 505,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "general-ledger",
+          "ok": true,
+          "ms": 676,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "gift-cards",
+          "ok": true,
+          "ms": 869,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "group-reporting",
+          "ok": true,
+          "ms": 1649,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "grv-repricing",
+          "ok": true,
+          "ms": 957,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "grv-serials",
+          "ok": true,
+          "ms": 1522,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "hardening",
+          "ok": true,
+          "ms": 5444,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "holidays",
+          "ok": true,
+          "ms": 193,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "imports",
+          "ok": false,
+          "ms": 641,
+          "failedAssertions": 3,
+          "exclusive": false,
+          "output": "── Departments: a path is created once, however often it is named\nPASS  *** every row was understood ***  -- []\nPASS    three rows ready  -- 3\nPASS    three created  -- {\"created\":3,\"updated\":0,\"skipped\":0,\"failed\":0,\"partial\":0,\"problems\":[]}\nPASS    nothing failed\nPASS  *** the shared parent was created ONCE, not once per row ***  -- 5 new (root + Fruit + Citrus + Berries + Veg)\nPASS    the leaf carries the code from its own row\nPASS    a branch walked through did NOT take the leaf colour  -- null\n\n── The same file twice\nPASS  *** a re-import skips rather than duplicating ***  -- plan: {\"total\":1,\"create\":0,\"update\":0,\"skip\":1,\"problem\":0} ready=[]\nPASS    and writes nothing\nPASS    the tree did not grow  -- 69 vs 69\n\n── A partial file in update mode\nPASS  *** an existing path updates rather than duplicating ***  -- {\"created\":0,\"updated\":1,\"skipped\":0,\"failed\":0,\"partial\":0,\"problems\":[]}\nPASS    the mapped column changed  -- #ff0000\nPASS  *** the UNMAPPED code was not blanked ***  -- CIT\nPASS  *** and sort order the import never heard of survived ***  -- 7\n\n── Every row is accounted for\nPASS  *** every row is in exactly one bucket ***  -- 5 of 5\nPASS  *** a blank required cell is caught BEFORE anything is written ***  -- 4:Department is empty, and it is needed. | 5:The same path is on line 3 of this file as well. Remove one of them. | 6:\"not-a-colour\" is not a colour. Write it as #2f6fed.\nPASS    the same path twice in one file is refused by name  -- Department is empty, and it is needed. | The same path is on line 3 of this file as well. Remove one of them. | \"not-a-colour\" is not a colour. Write it as #2f6fed.\nPASS    a colour in the wrong notation is refused with what to write  -- Department is empty, and it is needed. | The same path is on line 3 of this file as well. Remove one of them. | \"not-a-colour\" is not a colour. Write it as #2f6fed.\nPASS    the row that could import did  -- {\"created\":1,\"updated\":0,\"skipped\":0,\"failed\":0,\"partial\":0,\"problems\":[]}\n\n── ensureDepartmentPath\nPASS  *** a three-level path creates three ***  -- {\"ok\":true,\"id\":85,\"created\":[\"Walk 12846883\",\"Walk 12846883 › One\",\"Walk 12846883 › One › Two\"]}\nPASS    a sibling reuses both ancestors  -- {\"ok\":true,\"id\":86,\"created\":[\"Walk 12846883 › One › Three\"]}\nPASS  *** case-only difference matches, it does not duplicate ***  -- {\"ok\":true,\"id\":85,\"created\":[]}\nPASS    a name under two parents is recorded as ambiguous  -- SHARED12846883\nPASS  *** a bare name two branches share is refused, not guessed ***  -- {\"kind\":\"problem\",\"reason\":\"More than one department is called \\\"Shared12846883\\\". Write the full path, like \\\"Fresh Produce › Shared12846883\\\".\"}\nPASS    and the full path resolves it  -- {\"kind\":\"value\",\"value\":\"Amb 12846883 A › Shared12846883\"}\n\n── mergeForUpdate\nPASS  the mapped field changes\nPASS  *** an unmapped field keeps its stored value ***  -- 12.5\nPASS    including one the file never mentioned\nPASS  a field that opted into clearing does clear\nPASS  *** a mapped column with a blank cell leaves the value alone ***  -- 600123\nPASS  fileSpeaksTo sees a mapped key\nPASS  *** and refuses a replace when the file never mentioned it ***\n\n── Suppliers\nPASS  *** suppliers import ***  -- {\"created\":2,\"updated\":0,\"skipped\":0,\"failed\":0,\"partial\":0,\"problems\":[]}\nPASS    nothing was refused  -- []\nPASS  *** the quoted comma survived into the name ***  -- Acme Trading, Ltd\nPASS    terms were read as a number  -- 45\nPASS  *** a two-column file updates ***  -- {\"created\":0,\"updated\":1,\"skipped\":0,\"failed\":0,\"partial\":0,\"problems\":[]}\nPASS    the mapped column changed  -- 60\nPASS  *** the unmapped NAME was not blanked ***  -- Acme Trading, Ltd\nPASS  *** the unmapped CONTACT was not blanked ***  -- Jane Dlamini\nPASS  *** the unmapped EMAIL was not blanked ***  -- orders@acme.co.za\nPASS  *** the unmapped LEAD TIME was not zeroed ***  -- 7\nPASS  *** the unmapped CATEGORY was not blanked ***  -- Groceries\nPASS  *** a non-active account with no reason is refused at review ***  -- Give a reason when an account is not active.\nPASS    and nothing was written\n\n── Customers\nPASS  *** customers import ***  -- {\"created\":1,\"updated\":0,\"skipped\":0,\"failed\":0,\"partial\":0,\"problems\":[]}\nPASS    the quoted comma survived  -- Smith, T (Pty) Ltd\nPASS    a formatted rand amount read as a number  -- 10000.0000\nPASS  *** an unknown price list is refused, not silently retail ***  -- No customer group called \"No Such Group\". A price list is set on the group, not the account — add the group under Setup first.\nPASS    and the refusal explains where a price list actually lives  -- No customer group called \"No Such Group\". A price list is set on the group, not the account — add the group under Setup first.\nPASS    unresolved values are grouped for the review screen  -- [{\"kind\":\"customerGroup\",\"column\":\"Price List\",\"values\":[{\"value\":\"No Such Group\",\"rows\":1}]}]\n\n── Products\nPASS  *** a price column exists per price list ***  -- 1 price columns\nPASS    and a min/max pair per location  -- 2 min columns\n**FAIL**  *** a product imports ***  -- {\"created\":0,\"updated\":0,\"skipped\":0,\"failed\":1,\"partial\":0,\"problems\":[{\"line\":2,\"code\":\"IMPP12846883\",\"status\":\"failed\",\"reason\":\"This store has no VAT number, so a product cannot be put on a VAT rate. Add one under Setup › My store information first.\"}]}\nPASS    with no refusals  -- []\nPASS    and nothing was left half-written  -- [{\"line\":2,\"code\":\"IMPP12846883\",\"status\":\"failed\",\"reason\":\"This store has no VAT number, so a product cannot be put on a VAT rate. Add one under Setup › My store information first.\"}]\n**FAIL**    the barcode survived Excel  -- undefined\n**FAIL**    the department was created on the way in  -- undefined\nTypeError: Bind parameters must not contain undefined. To pass SQL NULL specify JS null\n    at siteQuery (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\siteDb.ts:281:29)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async siteQueryOne (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\siteDb.ts:291:16)\n    at async main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-imports.ts:468:21)"
+        },
+        {
+          "name": "instructions",
+          "ok": true,
+          "ms": 834,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "invoice-blocks",
+          "ok": true,
+          "ms": 240,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "invoice-email",
+          "ok": true,
+          "ms": 744,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "invoice-match",
+          "ok": true,
+          "ms": 513,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "invoicing",
+          "ok": true,
+          "ms": 1324,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "job-cards",
+          "ok": false,
+          "ms": 9014,
+          "failedAssertions": 1,
+          "exclusive": true,
+          "output": "PASS  (J28) *** and reconcile reports it — nobody is named to ask about the crew ***  -- 1 reported\nPASS  (J28) a crew deletes with no refusal — it holds no jobs\nPASS  (J28) *** and the people it put on the job STAY ***  -- 2 row(s)\nPASS  (J28) deleting it twice says so rather than throwing\nPASS  (J29) *** the default demands nothing — a migration must not refuse every close ***\nPASS  (J29) so an unsigned job still closes\nPASS  (J29) *** a CLOSED job refuses a signature — otherwise the rule is decorative ***  -- This job is closed, so it cannot be signed now.\nPASS  (J29) *** with a signature required, closing is REFUSED ***  -- This job needs a signature from the customer before it can be closed.\nPASS  (J29) and the refusal NAMES who has to sign  -- This job needs a signature from the customer before it can be closed.\nPASS  (J29) the customer signs\nPASS  (J29) the mark reads back with the name they typed, not the account name  -- Mrs Adams\nPASS  (J29) *** and resolves the STORED name, not the display filename ***  -- jct-892572-cust.png\nPASS  (J29) the technician side is still empty — one party is not both\nPASS  (J29) and now it closes\nPASS  (J29) with BOTH required, one signature is not enough  -- This job needs a signature from a technician before it can be closed.\nPASS  (J29) and it names the missing party only — not the one already signed  -- This job needs a signature from a technician before it can be closed.\nPASS  (J29) the technician signs\nPASS  (J29) an unnamed TECHNICIAN mark falls back to the actor  -- Job Card Test\nPASS  (J29) *** but an unnamed CUSTOMER mark stays unnamed — it is not our name to give ***\nPASS  (J29) with both signed it closes\nPASS  (J29) *** an UNSIGNED job still cancels — a job nobody wants must not be trapped ***\nPASS  (J29) withdrawing clears the claim\nPASS  (J29) *** but the marks stay on the Files tab — a withdrawal is not a deletion ***  -- 3 document(s)\nPASS  (J29) the drift fixture is genuinely closed and unsigned\nPASS  (J29) *** reconcile REPORTS a job closed without the signature it needed ***  -- 1 reported\nPASS  (J29) and repairs nothing — reconcile never signs on anybody behalf\nPASS  (J30) an expense line saves\nPASS  (J30) it keeps who was paid, and reads the name back  -- 650 / JCT892572 subcontractor\nPASS  (J30) and the category it lands in on the P&L  -- JCT892572 subcontract\nPASS  (J30) *** a supplier sent on a LABOUR line is dropped — it belongs to an expense ***  -- null / null\nPASS  (J30) the line changes kind\nPASS  (J30) *** and switching AWAY from expense clears the supplier ***  -- null\nPASS  (J30) *** an expense counts in cost — (J2) holds for the new kind ***  -- cost 250\nPASS  (J30) *** the report builder offers Expense — a hard-coded list would hide it ***  -- part, labour, travel, charge, expense\nPASS  (J31) a second unit goes on the visit\nPASS  (J31) *** the primary is NOT one of the others — it is the subject, not a member ***\nPASS  (J31) adding the same unit twice says so rather than duplicating  -- AS892572 multi second is already on this job.\nPASS  (J31) the list holds the second unit and its note  -- 1 row(s)\nPASS  (J31) the primary asset has the job in its history, marked primary\nPASS  (J31) *** and so does the SECOND — a history that missed it would say the unit was never touched ***  -- 1 row(s)\nPASS  (J31) *** the job COUNT spans both sources — fixing only the history is the silent failure ***  -- primary 1, second 1\nPASS  (J31) *** closing services every unit on the visit, not just the primary ***  -- primary 2026-08-31, second 2026-08-31\nPASS  (J31) a closed job refuses another unit\nPASS  (J31) a unit comes off the visit\nPASS  (J31) and removing it twice says so rather than throwing\nPASS  (J31) its history entry goes with it — the visit no longer covered it\nPASS  (J32) a technician can ask for a part\nPASS  (J38) *** asking for a part puts the job into Awaiting Parts ***  -- status 6, expected 6\nPASS  (J32) *** asking writes NO stock movement — a request reserves nothing ***  -- 464841 then 464841\nPASS  (J32) it shows on the job, and on the buyer queue\nPASS  (J32) a buyer approves it\nPASS  (J32) *** and a decided request cannot be decided again ***  -- JCT892572 brake pad set is already approved.\nPASS  (J32) linking it to a purchase line moves it to on order\nPASS  (J32) and the job can see which order it is on\nPASS  (J32) *** nothing received yet, so nothing is claimed ***\nPASS  (J32) once the goods arrive, the request says so\nPASS  (J38) *** and the job comes back OUT of Awaiting Parts by itself ***  -- status 4, which must not be 6\nPASS  (J38) a second request puts it back\nPASS  (J38) *** and a receipt that settles NOTHING leaves it there ***  -- status 6\nPASS  (J38) *** declining the last one settles it too ***  -- status 4\nPASS  (J32) *** running the receipt tail twice notifies ONCE — the claim precedes the bell ***  -- 1 then 1\nPASS  (J32) *** and it is addressed to the person who ASKED — the first userId producer ***\nPASS  (J32) *** reconcile catches a request whose purchase line has vanished ***  -- 1 reported\nPASS  (J32) and one still outstanding on a CLOSED job\nPASS  (J32) a closed job refuses a new request\nPASS  (J33) a customer gets their own promise\nPASS  (J33) *** a SECOND business default is refused — the nullable key cannot dedupe it ***  -- There is already a business-wide promise for that priority. Edit it instead.\nPASS  (J33) and a second promise to the same customer at the same priority  -- That customer already has a promise for that priority. Edit it instead.\nPASS  (J33) it reads back against the customer, with their name  -- JCT Test Customer 892572\nPASS  (J33) *** the customer is measured against THEIR promise ***  -- 68 vs 68\nPASS  (J33) *** and everybody else against the business default ***  -- other 2, none 2, default 2\nPASS  (J33) a business default cannot be deleted — every job with no policy needs it\nPASS  (J33) escalation is OFF by default — it fills somebody elses bell\nPASS  (J33) a missed promise escalates  -- pass1 1\nPASS  (J33) *** and running the tick again escalates NOTHING — the claim precedes the bell ***  -- pass2 0\nPASS  (J33) it is addressed to the named manager, not to an audience\nPASS  (J33) the breach is still read off the deadline, never stored as a flag\nPASS  (J17) *** the suite leaves NOTHING behind — litter is how another suite fails ***\n\n1 failure(s)"
+        },
+        {
+          "name": "kitchen-printing",
+          "ok": true,
+          "ms": 360,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "last-sold-date",
+          "ok": true,
+          "ms": 2643,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "last-transfer-date",
+          "ok": true,
+          "ms": 358,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "laybys",
+          "ok": true,
+          "ms": 1638,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "lease",
+          "ok": true,
+          "ms": 258,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "leave",
+          "ok": true,
+          "ms": 428,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "licence-refresh",
+          "ok": true,
+          "ms": 261,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "line-session",
+          "ok": true,
+          "ms": 202,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "listing-presets",
+          "ok": true,
+          "ms": 344,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "local-backend-status",
+          "ok": true,
+          "ms": 266,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "locations",
+          "ok": true,
+          "ms": 1425,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "lot-capture",
+          "ok": true,
+          "ms": 1481,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "loyalty",
+          "ok": true,
+          "ms": 2422,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "mail-config",
+          "ok": true,
+          "ms": 349,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "manufacturing",
+          "ok": true,
+          "ms": 1856,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "master-codes",
+          "ok": false,
+          "ms": 677,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "PASS  off: nothing is suggested\nPASS  off: a blank code stays blank\nPASS  off: a blank code is still refused  -- A customer code is required.\nPASS  preview claims nothing  -- TCUS8520090001 then TCUS8520090001\nPASS  customer gets the first code  -- TCUS8520090001\nPASS  the next customer gets the next code  -- TCUS8520090002\nPASS  a typed code is kept  -- TCUS852009-MINE\nPASS  a typed code does not consume a number  -- TCUS8520090003\nPASS  a taken code is skipped, not reused  -- TCUS8520090004\nPASS  supplier has its own counter  -- TSUP8520090001\n**FAIL**  product has its own counter  -- undefined\nPASS  till has its own counter  -- TT8520090001\nPASS  *** and its till_number is allocated separately, not from the code ***  -- code TT8520090001, till_number 01\nPASS  the next till gets the next code  -- TT8520090002\nPASS  a typed till code is kept  -- TT852009-BAR\nPASS  all ten concurrent saves succeeded  -- 10/10\nPASS  no code was issued twice  -- 10 distinct of 10\nPASS  a save with no name is refused\nPASS  a refused save never re-issues a claimed code  -- TCUS8520090015 then TCUS8520090016\n\n1 FAILURE(S)"
+        },
+        {
+          "name": "mobile-auth-contract",
+          "ok": true,
+          "ms": 2561,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "mobile-devices",
+          "ok": true,
+          "ms": 440,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "modules",
+          "ok": true,
+          "ms": 328,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "multi-site-reports",
+          "ok": false,
+          "ms": 591,
+          "failedAssertions": 3,
+          "exclusive": false,
+          "output": "Group: Odyssey demo group (Odyssey Software AI 1, Smash Burger Joint)\n\nWhat can and cannot be merged\nPASS  *** a sum/count spec is accepted ***\nPASS  *** a plain average is REFUSED, not silently averaged ***  -- This report uses avg, which cannot be combined across stores\nPASS    min is refused too\nPASS    max is refused too\nPASS  *** top-N per group is refused — a per-store top 5 is not the group's ***  -- This report keeps only the top 5 of each group, which cannot\n\nMerged figures equal the sum of the parts\nPASS  *** the merge ran and reported its stores ***  -- 2 stores, 7 rows\n**FAIL**  *** the merged total equals the sum of each store's own total ***  -- merged 131866590.02 vs summed 131866540.02\nPASS    each group key appears exactly once in the merged set  -- 7 rows, 7 distinct\n**FAIL**    the row count is summed across stores, not overwritten  -- merged 21812 vs summed 21811\n\nDetail reports carry their store\nPASS  *** a detail report gains a Store column ***  -- __store, documentNumber, totalIncl\nPASS    and every row names the store it came from  -- Odyssey Software AI 1\nPASS    a summarised report does NOT gain one — the row is every store\n\nFail-soft, per store\nPASS  *** an unreachable store is a failure, not a crash ***  -- Ghost\n**FAIL**    and the readable stores still report\nPASS  *** a store the user cannot read drops out with a reason ***  -- You do not have access to this data.\n\n3 FAILED"
+        },
+        {
+          "name": "multistore-orders",
+          "ok": false,
+          "ms": 647,
+          "failedAssertions": 2,
+          "exclusive": false,
+          "output": "catalogue = site 1, branch = site 2\n\n— The storefront resolves to two shops —\nPASS  it is a group storefront\nPASS  the catalogue is head office\nPASS  the branch is the shop that will pack it\nPASS  the context prices from the catalogue\nPASS  and owes from the branch\nPASS  the branch is named separately from the shop front  -- front \"Odyssey Software AI 1\" vs branch \"Smash Burger Joint\"\nPASS  and it is the branch’s own name  -- Smash Burger Joint\n\n— A product both shops carry —\nPASS  the catalogue has it\nPASS  the branch has it too\nPASS  and their ids genuinely differ  -- catalogue 40848 vs branch 424\n**FAIL**  the catalogue publishes it  -- 0\n**FAIL**  the seeded product is not publishable — cannot continue"
+        },
+        {
+          "name": "navigation",
+          "ok": false,
+          "ms": 511,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "\nThe sidebar search still finds settings\n  ok   \"tender\" finds Setup\n  ok   \"reconcil\" finds Setup\n  ok   \"vat\" finds Accounting AND Setup\n  ok   \"cashbook\" finds Accounting\n  ok   \"journals\" finds Accounting\n  ok   \"discount\" finds Online Store\n  ok   \"page builder\" finds Online Store\n  ok   \"punch\" finds Loyalty\n  ok   \"pay rules\" finds Staff\n  ok   \"build a report\" finds Reports\n  ok   a miss finds nothing\n  ok   the match is scoped to the subtree\n  ok   an empty term matches nothing\n\nSynonyms reach screens the menu does not name\n  ok   \"terminal\" finds Setup\n  ok   \"register\" finds Setup\n  ok   \"permissions\" finds Setup\n  ok   a synonym is still scoped to its subtree\n  ok   every synonym key is a real screen\n\nThe global search finds screens, not just their hub\n  ok   \"tender\" finds the screen itself\n  ok   \"reconcil\" finds Reconciliation\n  ok   \"journals\" finds Journals\n  ok   \"cashbook\" finds Cashbook\n  ok   \"punch\" finds Punch cards\n  ok   \"pay rules\" finds Pay rules\n  ok   \"discount codes\" finds the screen\n  ok   \"terminal\" finds Tills\n  ok   \"register\" reaches Tills\n  ok   \"permissions\" finds Roles\n  ok   \"gratuity\" finds Hospitality\n  ok   an exact label wins\n  ok   a prefix beats a longer containing match\n  ok   \"customers\" finds the list first\n  ok   \"reasons\" alone finds more than one\n  ok   \"setup reasons\" narrows to one screen\n  ok   a miss finds nothing\n  ok   an empty term finds nothing\n  ok   every hub screen is in the index\n  ok   every menu item is in the index\n  ok   no screen is indexed twice\n  ok   no setting is indexed twice\n  ok   a hub screen describes itself\n  ok   a menu item describes itself too\n  ok   and so does a hub link\n  ok   a description is searchable\n  ok   the settings tabs are indexed\n  ok   the tills screen is indexed\n  ok   a synonym scores above prose\n  ok   and prose still scores at all\n  ok   no screen carries a synonym twice\n  ok   every screen has a description\n  ok   every catalogue icon resolves to a glyph\n  ok   a setting is not indexed without its hub\n  ok   nor is another section’s screen\n  ok   but the granted one is\n\nCapabilities gate the entry\n  ok   setup.view is enough\n  ok   an unrelated capability is not\n\nThe tree is structurally sound\n  ok   every item href is unique\n  ok   no screen is both a menu item and a hub tile\n  ok   every hub subpage resolves to a real hub\n  ok   no section is both a link and a group\n  ok   the menu and the trail agree on every hub screen\n  ok   every hub screen under a menu item declares its hub\n\nEvery page is reachable\n  FAIL no page is reachable by URL but linked from nowhere\n         got  [\"/welcome\"]\n         want []\n  ok   the allowlist has no stale entries\n\n1 check(s) FAILED"
+        },
+        {
+          "name": "notifications",
+          "ok": true,
+          "ms": 390,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offledger-cash",
+          "ok": true,
+          "ms": 1078,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-backoffice",
+          "ok": true,
+          "ms": 234,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-cancel",
+          "ok": true,
+          "ms": 427,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-capability",
+          "ok": true,
+          "ms": 189,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-gate",
+          "ok": true,
+          "ms": 296,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-numbering",
+          "ok": true,
+          "ms": 203,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-pin",
+          "ok": true,
+          "ms": 199,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-returns",
+          "ok": true,
+          "ms": 800,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "offline-signin",
+          "ok": true,
+          "ms": 251,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "offline-sync",
+          "ok": true,
+          "ms": 921,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "online-content",
+          "ok": false,
+          "ms": 519,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "— Department visibility —\nPASS  the tree loads  -- 80 departments\nPASS  ticking a parent sticks\nPASS  the child is NOT ticked itself\nPASS  but the child publishes via its parent\n**FAIL**  the count includes products under the child  -- 0 vs 0 filed directly\nPASS  unticking the parent unpublishes the child too\nPASS  an unknown department is refused\n\n— Review moderation —\nPASS  new reviews land in the queue\nPASS  they start as pending — nothing self-publishes\nPASS  an unapproved review is NOT public\nPASS  a rejection needs a reason\nPASS  rejecting with a reason works\nPASS  approving works\nPASS  the approved one is now public\nPASS  the rejected one is still not\nPASS  an average is reported  -- 5\nPASS  the rejection reason is kept\nPASS  who moderated it is kept\nPASS  counts are reported per status\nPASS  a moderated review can be reopened\nPASS  reopening takes it off the storefront again\nPASS  a review can be deleted\nPASS  deleting a missing review is refused\n\n— Cleanup —\nPASS  test reviews removed\nPASS  department flags restored\n\n1 FAILED."
+        },
+        {
+          "name": "online-orders",
+          "ok": true,
+          "ms": 545,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "online-phase10",
+          "ok": true,
+          "ms": 926,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "online-store",
+          "ok": false,
+          "ms": 659,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "— Seeded defaults —\nPASS  a new store ships CLOSED  -- 0\nPASS  publish defaults to the narrowest option  -- departments\nPASS  payment defaults to pay-on-collection  -- on_collection\nPASS  a default pipeline exists  -- 7 statuses\nPASS  exactly one status holds the \"new\" role  -- 1\nPASS  exactly one status holds the \"completed\" role  -- 1\nPASS  exactly one status holds the \"cancelled\" role  -- 1\nPASS  statuses come back in pipeline order\n\n— Publish counts —\nPASS  a total is reported  -- 40030 sellable products\nPASS  \"all\" equals the total\nPASS  counts never exceed the total\nPASS  a ticked parent publishes its children too  -- 3769 via tree vs 0 filed directly\n\n— A half-configured store cannot be opened —\nPASS  refuses to open with no collection and no delivery\nPASS  refuses to open with an empty catalogue\nPASS  refuses to offer delivery with no areas\nPASS  a refused save never opens the store\nPASS  refuses pay-online with no payment account\n**FAIL**  allows pay-online once an account is connected  -- Connect a working payment account before asking customers to pay online.\n\n— Valid configurations are accepted —\nPASS  a half-configured store saves while CLOSED\nPASS  the value persisted\nPASS  collection-only with a catalogue opens\nPASS  and the store really is open\n\n— Delivery areas —\nPASS  an area can be added\nPASS  two areas cannot claim one suburb\nPASS  an area must be named\nPASS  delivery opens once an area exists\n\n— Validation —\nPASS  an absurd preparation time is refused\nPASS  a negative minimum order is refused\n\n— Department pictures —\nPASS  the department-picture setting saves\nPASS  and reads back on\nPASS  and off again\nPASS  the till icon is stored  -- 11\nPASS  the shop picture is stored  -- 22\nPASS  the two are independent\nPASS  a 0 picture id becomes none  -- null\nPASS  and an unset one stays none\nPASS  the department is put back\nPASS  settings restored\nPASS  delivery areas left as they were\n\n1 FAILED."
+        },
+        {
+          "name": "opening-balances",
+          "ok": true,
+          "ms": 588,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "order-email",
+          "ok": true,
+          "ms": 542,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "order-statuses",
+          "ok": true,
+          "ms": 591,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "overrides",
+          "ok": true,
+          "ms": 444,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "overtime",
+          "ok": true,
+          "ms": 446,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "party-records",
+          "ok": true,
+          "ms": 498,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pay-links",
+          "ok": true,
+          "ms": 894,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "payfast-subscription",
+          "ok": true,
+          "ms": 240,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "payment-runs",
+          "ok": true,
+          "ms": 585,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "payments",
+          "ok": true,
+          "ms": 788,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "per-till-numbering",
+          "ok": true,
+          "ms": 734,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "period-locks",
+          "ok": true,
+          "ms": 462,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "permissions",
+          "ok": false,
+          "ms": 994,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "pages\n  ok   every page checks a capability (214/214)\n\nserver actions\n FAIL  every action file checks a capability (123/124) — src/app/(app)/connectionActions.ts\n\napi routes\n FAIL  every non-public api route checks a capability (42 of 47) — src/app/api/db-setup/route.ts, src/app/api/jobs/calendar/feed/[token]/route.ts, src/app/api/jobs/calendar/tick/route.ts, src/app/api/licence/refresh/route.ts, src/app/api/pos/signin-art/route.ts\n\nno stale role checks\n  ok   nothing decides access from the control-panel role\n\ncapabilities exist\n  ok   permissions.ts declares capabilities — 89 found\n  ok   every guard names a real capability\n\n88 of 89 capabilities are enforced somewhere\nnot yet enforced: tickets.close\n\nnav matches enforcement\n  ok   every nav capability is declared\n  ok   SUBPAGE_LABELS was found and parsed — 33 entries\n FAIL  every Setup menu item has a label entry — /setup/menu-designer\n  ok   the Setup menu and the Setup hub agree on every screen name\n  ok   the Setup catalogue was found and parsed — 31 tiles\n  ok   every Setup hub tile has a label entry\n FAIL  no label entry points at a screen the hub has dropped — /setup/roles\n  ok   a setup-routed screen listed by another hub is claimed in SUBPAGE_OWNER — /setup/audit\n\ntill sales name the operator\n  ok   every till action that writes a sale resolves the PIN operator\n  ok   withTillOperator swaps identity as well as rights\n\n4 FAILURE(S)"
+        },
+        {
+          "name": "portal-signing",
+          "ok": true,
+          "ms": 201,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pos-declaration",
+          "ok": true,
+          "ms": 2369,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pos-floor",
+          "ok": false,
+          "ms": 372,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "(swept 1 room(s), 2 table(s))\nPASS  a room is created\nPASS  a duplicate room name is refused  -- There is already a room called \"FLR Inside 12857126\".\nPASS    and says so in words a manager can act on  -- There is already a room called \"FLR Inside 12857126\".\nPASS  a room smaller than 10 × 10 is refused\nPASS  the room lists\nPASS  with its own extent\nPASS  a new table starts unplaced\nPASS    with a default size rather than null\nPASS  the arrangement saves\nPASS  the position is stored  -- 10,20\nPASS  the size is stored  -- 12×8\nPASS  the rotation is stored  -- 90\nPASS  the shape is stored  -- round\nPASS  *** an off-canvas position is clamped so the whole table stays visible ***  -- 90,50 in a 100×60 room with a 10×10 table\nPASS  a rotation past a full turn normalises  -- 10\nPASS  a negative position clamps to the corner  -- 0\nPASS  a placement into a room that does not exist is refused\nPASS  a non-finite position is refused\nPASS  a wall is added\nPASS  it lists for its room\nPASS  an oversize feature is clamped rather than refused\nPASS    down to the room  -- 100×60\nnode:internal/process/promises:394\r\n    triggerUncaughtException(err, true /* fromPromise */);\r\n    ^\r\n\r\nError: Unknown column 'batch_no' in 'INSERT INTO'\r\n    at <anonymous> (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\site\\salesDocuments.ts:1168:34)\r\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\r\n    at async siteTransaction (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\siteDb.ts:316:20)\r\n    at async main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-pos-floor.ts:197:17) {\r\n  code: 'ER_BAD_FIELD_ERROR',\r\n  errno: 1054,\r\n  sqlState: '42S22',\r\n  sqlMessage: \"Unknown column 'batch_no' in 'INSERT INTO'\",\r\n  sql: 'INSERT INTO sales_document_lines\\n' +\r\n    '           (document_id, line_number, product_id, product_code, description, product_type,\\n' +\r\n    '            department_id, sales_rep_id, source_line_id, sales_rep_user_id,\\n' +\r\n    '            qty, unit_price_incl, discount_pct, discount_incl,\\n' +\r\n    '            vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,\\n' +\r\n    '            special_id, discount_code_id, gift_card_code, batch_no, serial_id, line_note, ordered_at)\\n' +\r\n    '         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'\r\n}\r\n\r\nNode.js v24.16.0"
+        },
+        {
+          "name": "pos-licensing",
+          "ok": true,
+          "ms": 369,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pos-menu-rotation",
+          "ok": true,
+          "ms": 329,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pos-menus",
+          "ok": true,
+          "ms": 224,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pos-split",
+          "ok": false,
+          "ms": 464,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "(swept 2 table(s) from an earlier run)\nnode:internal/process/promises:394\r\n    triggerUncaughtException(err, true /* fromPromise */);\r\n    ^\r\n\r\nError: Unknown column 'batch_no' in 'INSERT INTO'\r\n    at <anonymous> (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\site\\salesDocuments.ts:1168:34)\r\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\r\n    at async siteTransaction (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\siteDb.ts:316:20)\r\n    at async openBill (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-pos-split.ts:106:19)\r\n    at async main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-pos-split.ts:124:18) {\r\n  code: 'ER_BAD_FIELD_ERROR',\r\n  errno: 1054,\r\n  sqlState: '42S22',\r\n  sqlMessage: \"Unknown column 'batch_no' in 'INSERT INTO'\",\r\n  sql: 'INSERT INTO sales_document_lines\\n' +\r\n    '           (document_id, line_number, product_id, product_code, description, product_type,\\n' +\r\n    '            department_id, sales_rep_id, source_line_id, sales_rep_user_id,\\n' +\r\n    '            qty, unit_price_incl, discount_pct, discount_incl,\\n' +\r\n    '            vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,\\n' +\r\n    '            special_id, discount_code_id, gift_card_code, batch_no, serial_id, line_note, ordered_at)\\n' +\r\n    '         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'\r\n}\r\n\r\nNode.js v24.16.0"
+        },
+        {
+          "name": "pos-tables",
+          "ok": false,
+          "ms": 437,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "PASS  a table needs a code\nPASS  a long code is refused\nPASS  negative seats are refused\nPASS  a plain table is accepted\nPASS  tables are created\nPASS  a duplicate code is refused  -- There is already a table \"T9857837A\".\nPASS  both are on the floor  -- 2\nPASS  and both start FREE  -- free,free\nPASS    with nothing on them\nPASS    sort_order is appended, not left at zero  -- 3,4\nError: Unknown column 'batch_no' in 'INSERT INTO'\n    at <anonymous> (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\site\\salesDocuments.ts:1168:34)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async siteTransaction (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\siteDb.ts:316:20)\n    at async openBasket (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-pos-tables.ts:86:19)\n    at async main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-pos-tables.ts:139:16) {\n  code: 'ER_BAD_FIELD_ERROR',\n  errno: 1054,\n  sqlState: '42S22',\n  sqlMessage: \"Unknown column 'batch_no' in 'INSERT INTO'\",\n  sql: 'INSERT INTO sales_document_lines\\n' +\n    '           (document_id, line_number, product_id, product_code, description, product_type,\\n' +\n    '            department_id, sales_rep_id, source_line_id, sales_rep_user_id,\\n' +\n    '            qty, unit_price_incl, discount_pct, discount_incl,\\n' +\n    '            vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,\\n' +\n    '            special_id, discount_code_id, gift_card_code, batch_no, serial_id, line_note, ordered_at)\\n' +\n    '         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'\n}"
+        },
+        {
+          "name": "pos-till-rules",
+          "ok": true,
+          "ms": 328,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pos-unlock",
+          "ok": false,
+          "ms": 1223,
+          "failedAssertions": 4,
+          "exclusive": false,
+          "output": "(active sites: 1, 2, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53)\nPASS  an empty device id resolves to nothing\nPASS  a short device id is refused\nPASS  a device id with SQL in it is refused by shape\nPASS  an over-long device id is refused\nPASS  an UNCLAIMED device resolves to no site\nPASS  a claimed device resolves to ITS site  -- 2 vs 2\n      (2 till-capable, 0 not, of 2 users)\nPASS  at least one operator could unlock this till\nPASS  a wrong PIN is refused\nPASS  and the message names no operator  -- That PIN was not recognised.\n**FAIL**  no device is claimed at more than one site  -- b7a53389…@2+53\n**FAIL**  *** a machine claimed at one shop cannot be claimed at another ***  -- the claim SUCCEEDED — a PIN could now unlock the wrong site\n**FAIL**    and the refusal names where it is already registered\n**FAIL**    and it wrote nothing  -- 1\n\n4 check(s) failed."
+        },
+        {
+          "name": "pos-void",
+          "ok": false,
+          "ms": 802,
+          "failedAssertions": 1,
+          "exclusive": true,
+          "output": "PASS  selling 3 takes 3 off the shelf  -- 40 -> 37\n**FAIL**  the till sale carries a per-till number  -- INV834268\nPASS  a same-day sale voids\nPASS  the stock comes BACK  -- 37 -> 40 (was 40)\nPASS  the voided sale still exists\nPASS  its status is cancelled  -- cancelled\nPASS  it KEEPS its number  -- INV834268\nPASS  the reason is recorded against it  -- Wrong item rung up — wrong item scanned\nPASS  voiding twice is refused  -- That document is already void.\nPASS  a missing reason is refused  -- Choose a void reason.\nPASS  an unknown reason id is refused  -- That void reason no longer exists.\nPASS  a PRIOR-DAY sale is refused, and says so  -- INV834270 was issued on 2026-08-30. Raise a credit note instead — voiding it would change a day that has already been banked.\nPASS  the refusal points at a credit note  -- INV834270 was issued on 2026-08-30. Raise a credit note instead — voiding it would change a day that has already been banked.\nPASS  every test sale is reversed, so stock is back where it started  -- 40 vs 40\n      (scratch product kept — 3 line(s) reference it — and hidden)\nPASS  *** reconcileStock returns ZERO drift ***  -- []\n\n1 check(s) failed."
+        },
+        {
+          "name": "pos-voids",
+          "ok": false,
+          "ms": 510,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "POS voids\n\nAn item void\n  PASS  the write reports success\n  PASS  it is stored as an item void\n  PASS  the quantity is what came off\n  PASS  the value is what it was worth\n  PASS  the note survives\n  PASS  the reason code is denormalised onto the row\n\nA line void\n  PASS  it is stored as a line void\n  PASS  the whole line quantity came off\n\nA sale void\n  PASS  the basket wrote a rollup and one row per line\n  PASS  the rollup carries the basket total\n  PASS  the lines under it add up to the same money\n  PASS  summing rollup AND lines together double counts — the trap the filters avoid\n\nThe summary\n  PASS  the summary found the reason we wrote under\n  PASS  it keeps item voids in their own group\n  PASS  the reason name is resolved, not just the code\n\nThe report source\n  PASS  the catalog knows the source\n  PASS  it points at the right table\n  FAIL  the built-in void reports are registered — saw 1\n  PASS  \"Till void history\" runs and returns rows\n  FAIL  every grouped void report filters the sale rollup out — saw []\n\nA reason that no longer exists\n  PASS  the void still reports under its stored code\n\n2 FAILURE(S)"
+        },
+        {
+          "name": "price-guard",
+          "ok": true,
+          "ms": 418,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "price-history",
+          "ok": false,
+          "ms": 456,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "── The editor path ─────────────────────────────────────────\n\nThis store has no VAT number, so a product cannot be put on a VAT rate. Add one under Setup › My store information first."
+        },
+        {
+          "name": "price-schedule-run",
+          "ok": true,
+          "ms": 628,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "price-schedules",
+          "ok": true,
+          "ms": 233,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "pricing-setup",
+          "ok": true,
+          "ms": 836,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "product-barcodes",
+          "ok": true,
+          "ms": 547,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "product-images",
+          "ok": true,
+          "ms": 527,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "product-reports",
+          "ok": true,
+          "ms": 421,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "product-setup",
+          "ok": true,
+          "ms": 541,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "public-api",
+          "ok": true,
+          "ms": 708,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "purchase-approval",
+          "ok": true,
+          "ms": 574,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "purchase-bonus",
+          "ok": true,
+          "ms": 1108,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "purchase-discount",
+          "ok": true,
+          "ms": 915,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "purchase-drafts",
+          "ok": true,
+          "ms": 792,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "purchase-guards",
+          "ok": true,
+          "ms": 876,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "purchase-lines",
+          "ok": true,
+          "ms": 253,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "purchase-orders",
+          "ok": true,
+          "ms": 1036,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "purchase-shipping",
+          "ok": true,
+          "ms": 920,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "purchasing",
+          "ok": true,
+          "ms": 1128,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "quick-key-runner",
+          "ok": true,
+          "ms": 273,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "quick-keys",
+          "ok": true,
+          "ms": 577,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "quotes",
+          "ok": true,
+          "ms": 819,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "receipt-data",
+          "ok": true,
+          "ms": 310,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "receipted-returns",
+          "ok": true,
+          "ms": 1290,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "recipe-cost-cascade",
+          "ok": true,
+          "ms": 774,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "recurring-journals",
+          "ok": true,
+          "ms": 459,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "refer-range",
+          "ok": true,
+          "ms": 920,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "refers",
+          "ok": true,
+          "ms": 1470,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "reorder-suggestions",
+          "ok": true,
+          "ms": 967,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "report-catalog-fields",
+          "ok": true,
+          "ms": 692,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "report-columns",
+          "ok": true,
+          "ms": 379,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "report-covers",
+          "ok": true,
+          "ms": 427,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "report-shared-files",
+          "ok": true,
+          "ms": 287,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "report-sources",
+          "ok": true,
+          "ms": 1572,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "report-templates",
+          "ok": true,
+          "ms": 1386,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "reprice-run",
+          "ok": true,
+          "ms": 3962,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "repricing",
+          "ok": true,
+          "ms": 229,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "reservations",
+          "ok": true,
+          "ms": 526,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "rich-paste",
+          "ok": true,
+          "ms": 942,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "sale-comments",
+          "ok": true,
+          "ms": 420,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "sale-paper-route",
+          "ok": true,
+          "ms": 241,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "sale-reducer",
+          "ok": true,
+          "ms": 230,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
           "name": "sales-edit",
           "ok": true,
-          "ms": 1750,
+          "ms": 2290,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
           "name": "sales-orders",
           "ok": true,
-          "ms": 3025,
+          "ms": 3531,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
           "name": "sales-posting",
           "ok": true,
-          "ms": 1678,
+          "ms": 2708,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
+          "name": "saved-baskets",
+          "ok": true,
+          "ms": 334,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "scale-barcodes",
+          "ok": true,
+          "ms": 526,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "section-columns",
+          "ok": true,
+          "ms": 222,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
           "name": "sequences",
           "ok": true,
-          "ms": 436,
+          "ms": 382,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "serials",
           "ok": true,
-          "ms": 2531,
+          "ms": 2830,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
-          "name": "settlement-discount",
-          "ok": true,
-          "ms": 510,
+          "name": "setting-search",
+          "ok": false,
+          "ms": 343,
           "failedAssertions": 0,
-          "exclusive": true
+          "exclusive": false,
+          "output": "C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\node_modules\\lucide-react\\src\\context.ts:14\r\nconst LucideContext = createContext<LucideProps>({});\r\n                      ^\r\n\r\nTypeError: react.createContext is not a function\r\n    at Object.<anonymous> (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\node_modules\\lucide-react\\src\\context.ts:14:23)\r\n    at Module._compile (node:internal/modules/cjs/loader:1854:14)\r\n    at Object.transformer (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\node_modules\\tsx\\dist\\register-BcxQ17Jo.cjs:9:3339)\r\n    at Module.load (node:internal/modules/cjs/loader:1577:32)\r\n    at Module._load (node:internal/modules/cjs/loader:1379:12)\r\n    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)\r\n    at Module.require (node:internal/modules/cjs/loader:1600:12)\r\n    at require (node:internal/modules/helpers:153:16)\r\n    at named (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\nav.ts:45:8)\r\n    at Object.<anonymous> (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\nav.ts:1379:17)\r\n\r\nNode.js v24.16.0"
         },
         {
-          "name": "specials",
+          "name": "settings-tabs",
           "ok": true,
-          "ms": 400,
+          "ms": 1057,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
+          "name": "settlement-discount",
+          "ok": true,
+          "ms": 629,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "shared-customer-queries",
+          "ok": true,
+          "ms": 8931,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "site-profile",
+          "ok": true,
+          "ms": 271,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "slip-design",
+          "ok": true,
+          "ms": 219,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "sms-model",
+          "ok": true,
+          "ms": 210,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "special-fanout",
+          "ok": true,
+          "ms": 546,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "specials",
+          "ok": true,
+          "ms": 484,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "spend-limits",
+          "ok": true,
+          "ms": 1083,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
           "name": "staff-cost",
           "ok": true,
-          "ms": 415,
+          "ms": 571,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "staff-time",
           "ok": true,
-          "ms": 992,
+          "ms": 935,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "statement-design",
+          "ok": false,
+          "ms": 489,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "-- a statement, a supplier account and a remittance --\nPASS  a customer statement calls itself a STATEMENT\nPASS  a supplier one calls itself a SUPPLIER ACCOUNT\nPASS  a remittance calls itself a REMITTANCE ADVICE\nPASS  the customer statement asks for an Amount due\nPASS  the supplier one reports a Balance owed\nPASS  the remittance reports an Amount paid\nPASS  a customer statement asks for payment\nPASS  ...and a remittance asks for nothing at all\nPASS  all three render from one design\n\n-- how old the debt is --\nPASS  the ladder prints its rungs\nPASS  ...with the amounts against them\nPASS  ...and a total\nPASS  a weekly account gets weekly rungs  -- Current, 7 days, 14 days, 21 days, 28+ days, Total\nPASS  a remittance emits no ladder rows\nPASS  ...and the empty table can hide its own headings\n\n-- the account block --\nPASS  the statement shows whose account it is\nPASS  ...its code\nPASS  ...its terms\nPASS  ...and the credit limit\nPASS  a remittance shows no credit limit\nPASS  a labelled row does not repeat its own label  -- Acme Trading VAT no. 4123456789 STATEMENT August 2026 ACCOUNT Khumalo Supplies Precious 155 Industrial Road Durban 3957 4111222333 Account CUST-003 Terms 30 days Credit limit R50 000.00 Opening balanc\n\n-- the lines --\nPASS  a document line shows its date and number\nPASS  ...its reference\nPASS  a debit and a credit are in their own columns\nPASS  a settled line leaves the Owing column blank\nPASS  ...but an open one shows what is still owed\nPASS  an activity statement shows the running balance instead\n\n-- structure, storage and validation --\nPASS  the shipped design passes the validator  -- []\nPASS  a statement without the account is refused\nPASS  a statement without the letterhead is refused\nPASS  a statement without the title is refused\nPASS  it validates structurally  -- []\nPASS  the design survives being stored and read back\nPASS  ...including which section a table walks\nPASS  ...and the columns that belong to it\nPASS  the visual designer is offered for it\n**FAIL**  the markup default matches the block design  -- regenerate defaults/statement.ts\nPASS  each block's canvas markup appears verbatim in the printed page\nPASS  it survives the sanitiser with its structure intact\nPASS  statement has a heading and a label for its figure\nPASS  supplier-statement has a heading and a label for its figure\nPASS  remittance has a heading and a label for its figure\n\n-- the emailed copy says the same things --\nPASS  the PDF names the figure as the design does  -- R2 150.00Closing balanceR2 150.00Amount dueR1 000.00Please settle the amount due by the date shown. Contact us if any item on this statement is queried.Printed \nPASS  ...and a remittance says Amount paid\nPASS  the statement PDF carries the age ladder\nPASS  a remittance PDF has no ladder at all  -- 150.002026-08-18RCT000091Thank youR500.00Closing balanceR2 150.00Amount paidR2 150.00This advice confirms a payment already made. No action is required.Printed \nPASS  the movements are on both\n\n1 FAILED"
+        },
+        {
+          "name": "statement-periods",
+          "ok": true,
+          "ms": 254,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "statement-runs",
           "ok": true,
-          "ms": 4418,
+          "ms": 4598,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "storefront",
+          "name": "statements",
           "ok": true,
-          "ms": 1437,
+          "ms": 415,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "stationery",
+          "ok": true,
+          "ms": 245,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stationery-barcode",
+          "ok": true,
+          "ms": 266,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stationery-blocks",
+          "ok": true,
+          "ms": 283,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stationery-columns",
+          "ok": true,
+          "ms": 288,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stationery-copy",
+          "ok": false,
+          "ms": 220,
+          "failedAssertions": 1,
+          "exclusive": false,
+          "output": "-- an invoice copied to a delivery note --\n\nPASS  the copy is allowed\nPASS  the VAT summary did not come across\nPASS  nor did the banking details\nPASS  but the items table did\nPASS  and the letterhead did\nPASS  the shop is TOLD what was dropped  -- VAT breakdown, Banking details, your own words naming {doc.paymentUrl}, your own words naming {doc.footNote}\nPASS  ...naming the VAT summary and the banking details  -- VAT breakdown | Banking details | your own words naming {doc.paymentUrl} | your own words naming {doc.footNote}\nPASS  ...and the words that named a token this document lacks  -- VAT breakdown | Banking details | your own words naming {doc.paymentUrl} | your own words naming {doc.footNote}\nPASS  ...in words, not block kinds  -- VAT breakdown | Banking details | your own words naming {doc.paymentUrl} | your own words naming {doc.footNote}\nPASS  the table kept the description\nPASS  and the quantity\nPASS  but NO price column survived  -- line.description, line.qty\nPASS  a delivery note prints no total\n**FAIL**  ...no VAT\nPASS  ...and no unit price\nPASS  ...while a real token still resolves  -- or the check proves nothing\nPASS  ...and the line description does print\nPASS  the copied delivery note would actually save\n\n-- a delivery note copied to an invoice --\n\nPASS  the copy is allowed\nPASS  every block an invoice cannot do without is present  -- none missing\nPASS  the copied invoice would pass the legal check\nPASS  the shop is told what was added  -- VAT breakdown, Totals\nPASS  every block has its own id\n\n-- duplicated onto its own document --\n\nPASS  a duplicate is allowed\nPASS  it keeps every block  -- 17 vs 17\nPASS  nothing is reported as dropped\nPASS  nothing is reported as added\nPASS  and it says so plainly  -- Copied to Invoice. Everything carried across.\nPASS  the design is unchanged  -- a duplicate that quietly edits the design is not a duplicate\n\n-- across media --\n\nPASS  a page cannot become a slip\nPASS  ...and says why in plain words  -- A page design cannot become a till slip — a slip has no columns or positions to put things in.\nPASS  the slip default is a different shape  -- a slip line has no band, x, y or width\n\n-- what it says --\n\nPASS  it names the document\nPASS  it names what went\nPASS  it is one readable sentence set  -- Copied to Delivery note. 4 blocks were left behind: VAT breakdown, Banking details, your own words naming {doc.paymentUrl}, your own words naming {doc.footNote} — a delivery note has no place for them. Deliver to was added, because a delivery note cannot print without it.\n     Copied to Delivery note. 4 blocks were left behind: VAT breakdown, Banking details, your own words naming {doc.paymentUrl}, your own words naming {doc.footNote} — a delivery note has no place for them. Deliver to was added, because a delivery note cannot print without it.\n\n1 copy check(s) failed."
+        },
+        {
+          "name": "stationery-pdf",
+          "ok": true,
+          "ms": 444,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stationery-pictures",
+          "ok": true,
+          "ms": 249,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stationery-qr",
+          "ok": true,
+          "ms": 279,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stationery-store",
+          "ok": true,
+          "ms": 412,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stock-holds",
+          "ok": true,
+          "ms": 870,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "stock-intel",
+          "ok": true,
+          "ms": 641,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "stock-takes",
+          "ok": true,
+          "ms": 2276,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "stock-warning",
+          "ok": true,
+          "ms": 203,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "store-branches",
+          "ok": true,
+          "ms": 348,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "store-info",
+          "ok": true,
+          "ms": 265,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "store-transfer-drift",
+          "ok": true,
+          "ms": 581,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "storefront",
+          "ok": false,
+          "ms": 520,
+          "failedAssertions": 2,
+          "exclusive": false,
+          "output": "— The store link —\nPASS  the same store always mints the same link\nPASS  it resolves back to the store\nPASS  a store without the Online Store module resolves to nothing\nPASS  and resolves again once the module is back\nPASS  a forged token resolves to nothing\nPASS  an empty token resolves to nothing\n\n— A closed shop serves nothing —\nPASS  there is no context for a closed shop\nPASS  and an order cannot be placed at one\n**FAIL**  the shop opens  -- No departments are set to show online, so the store would be empty. Tick “Show in online store” on a department first.\n**FAIL**  an open shop has a context"
+        },
+        {
+          "name": "storefront-collections",
+          "ok": true,
+          "ms": 556,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "storefront-menus",
+          "ok": true,
+          "ms": 365,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "storefront-theme",
+          "ok": true,
+          "ms": 203,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "supplier-price-import",
+          "ok": true,
+          "ms": 535,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "supplier-prices",
+          "ok": true,
+          "ms": 618,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
           "name": "supplier-returns",
           "ok": true,
-          "ms": 932,
+          "ms": 1079,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "tab-routing",
+          "ok": true,
+          "ms": 369,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "table-autosave",
+          "ok": true,
+          "ms": 197,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "table-transfer",
+          "ok": false,
+          "ms": 343,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "── A transfer moves the pointer, not the document ──────────\n\nError: Unknown column 'batch_no' in 'INSERT INTO'\n    at <anonymous> (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\site\\salesDocuments.ts:1168:34)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async siteTransaction (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\siteDb.ts:316:20)\n    at async makeTab (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-table-transfer.ts:48:17)\n    at async main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-table-transfer.ts:80:15) {\n  code: 'ER_BAD_FIELD_ERROR',\n  errno: 1054,\n  sqlState: '42S22',\n  sqlMessage: \"Unknown column 'batch_no' in 'INSERT INTO'\",\n  sql: 'INSERT INTO sales_document_lines\\n' +\n    '           (document_id, line_number, product_id, product_code, description, product_type,\\n' +\n    '            department_id, sales_rep_id, source_line_id, sales_rep_user_id,\\n' +\n    '            qty, unit_price_incl, discount_pct, discount_incl,\\n' +\n    '            vat_rate_pct, line_total_incl, line_total_excl, line_vat, unit_cost_excl,\\n' +\n    '            special_id, discount_code_id, gift_card_code, batch_no, serial_id, line_note, ordered_at)\\n' +\n    '         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'\n}"
+        },
+        {
+          "name": "tax-identity",
+          "ok": true,
+          "ms": 281,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "template-fields",
+          "ok": true,
+          "ms": 213,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "tender-offers",
+          "ok": true,
+          "ms": 194,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "tickets",
+          "ok": true,
+          "ms": 477,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "till-codes",
+          "ok": true,
+          "ms": 887,
+          "failedAssertions": 0,
+          "exclusive": true
+        },
+        {
+          "name": "till-location",
+          "ok": true,
+          "ms": 2258,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
           "name": "timesheets",
           "ok": true,
-          "ms": 454,
+          "ms": 389,
           "failedAssertions": 0,
           "exclusive": false
+        },
+        {
+          "name": "tip-math",
+          "ok": true,
+          "ms": 192,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "tips",
+          "ok": false,
+          "ms": 720,
+          "failedAssertions": 0,
+          "exclusive": false,
+          "output": "(swept 1 document(s) from an earlier run)\nPASS  a card over-tender becomes a tip\nPASS  *** and leaves NOTHING for change to allocate ***  -- 0\nPASS  *** a cash over-tender stays CHANGE ***\nPASS    with the whole excess still to give back\nPASS  *** a declared cash tip takes R10 and leaves R40 change ***  -- {\"ok\":true,\"tips\":[{\"tenderTypeId\":1,\"amount\":10,\"source\":\"declared\"}],\"changeRemaining\":40}\nPASS    and is recorded as declared\nPASS  *** tips + change always equals the excess ***  -- 0 combination(s) failed\nPASS  *** a strict card over-tender is REFUSED, not pocketed ***\nPASS    and the message says how to fix it  -- Card was paid over by 20.00, and it cannot give change or take a tip. Correct the amount, or turn on tips for Card.\nPASS  *** a service charge does not compete for the change ***  -- 20\nPASS    and is recorded as a service tip\nPASS  both tips are written  -- 2\nPASS  attributed to the person who served it\nPASS  with the original owner stamped\nPASS  a shift with no tips reads empty\nPASS  the shift now sees both tips  -- 2\nPASS  *** only the CASH tip is expected in the drawer ***  -- 20 (cash 20 + card 35 = 55 if the flag were ignored)\nPASS  *** with tables-only ON, a counter sale earns no service charge ***\nPASS    but a table does  -- 60\nPASS  with it OFF, a counter sale earns one too\nPASS  reassigning with no reason is REFUSED  -- Say why this tip is being moved.\nPASS  a tip moves to the pool\nPASS  the pool is a null owner\nPASS  *** and the trail names who it came from and who moved it ***  -- {\"user_id\":null,\"original_user_id\":1,\"reassigned_by\":7,\"reassigned_by_name\":\"Manager Mo\",\"reassign_reason\":\"Tips test — moved to the pool\"}\nPASS  with the reason kept\nPASS  *** moved twice, the original owner is still the FIRST one ***  -- {\"user_id\":2,\"original_user_id\":1}\nPASS  the owed report returns rows  -- 2\nPASS  and the amounts are real numbers  -- [{\"userId\":1,\"userName\":\"Ruth\",\"total\":35,\"count\":1,\"byTender\":{\"cash\":0,\"card\":35,\"eft\":0,\"account\":0,\"other\":0,\"inDrawer\":0}},{\"userId\":2,\"userName\":\"Second Person\",\"total\":20,\"count\":1,\"byTender\":{\"cash\":20,\"card\":0,\"eft\":0,\"account\":0,\"other\":0,\"inDrawer\":20}}]\nPASS  *** removing a forced service charge is recorded with who did it ***  -- {\"amount\":\"60.0000\",\"user_name\":\"Manager Mo\",\"reason\":\"Tips test — customer refused\"}\nPASS  a tipped sale finalises\nPASS  *** and hands back R40, not R50 ***  -- 40\nPASS  the tip row is written by the finalise  -- 10.0000\nPASS    as declared\nPASS    banked into the shift that took it\nPASS  the tender records what was HANDED OVER  -- 100.0000\nPASS  *** and change_given is R40 — the tip is NOT given back ***  -- 40.0000\nPASS  *** the INVOICE is still R50 — no VAT on the tip ***  -- 50.0000\nPASS    and it still balances  -- 43.4800 + 6.5200\nPASS  *** the expected drawer is R160 — the tip counted exactly once ***  -- 160 (float 100 + 100 taken − 40 change)\nPASS    of which R10 is a tip  -- 10\nPASS  an offline sale with a tip posts\nPASS  *** the R50 card excess becomes a TIP at sync, not change ***  -- tip = 50.0000\nPASS    recorded as an over-tender  -- over_tender\nPASS  *** and NO change is recorded against the card ***  -- change_given = 0.0000\nPASS    with the full amount handed over\nPASS    the invoice is still R100  -- 100.0000\nPASS  *** a sale queued BEFORE tips existed still posts ***\nPASS    with no tip invented for it  -- 0\nPASS  the waiter is owed the sum of their tips  -- R50 over 2 tips\nPASS  and the pool is listed separately  -- R45\nnode:internal/process/promises:394\r\n    triggerUncaughtException(err, true /* fromPromise */);\r\n    ^\r\n\r\nError: Cannot add or update a child row: a foreign key constraint fails (`ody10000_master`.`tip_payouts`, CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL)\r\n    at <anonymous> (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\site\\tips.ts:520:28)\r\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\r\n    at async siteTransaction (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\src\\lib\\siteDb.ts:316:20)\r\n    at async main (C:\\Users\\tiaan\\Documents\\Github\\OdysseyAI\\scripts\\test-tips.ts:695:18) {\r\n  code: 'ER_NO_REFERENCED_ROW_2',\r\n  errno: 1452,\r\n  sqlState: '23000',\r\n  sqlMessage: 'Cannot add or update a child row: a foreign key constraint fails (`ody10000_master`.`tip_payouts`, CONSTRAINT `fk_payout_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL)',\r\n  sql: 'INSERT INTO tip_payouts\\n' +\r\n    '         (user_id, user_name, amount, method, from_pool, note, paid_by, paid_by_name)\\n' +\r\n    '       VALUES (?,?,?,?,?,?,?,?)'\r\n}\r\n\r\nNode.js v24.16.0"
+        },
+        {
+          "name": "totp",
+          "ok": true,
+          "ms": 191,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "trading-hours",
+          "ok": true,
+          "ms": 211,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "training-mode",
+          "ok": false,
+          "ms": 2448,
+          "failedAssertions": 2,
+          "exclusive": true,
+          "output": "── baseline taken ──\n  stock 100, invoice sequence at 834294\nPASS  *** training mode started ***  -- session 1\nPASS    isTrainingActive now reports true\nPASS    a second session is refused while one is open  -- Training mode is already switched on for this store.\nPASS    the open session carries a watermark  -- 65 tables marked\nPASS    the watermark covers sales_documents and stock_movements\n\n── trading inside training ──\nPASS  cash sale drafted\nPASS  cash sale finalised  -- INV834294\nPASS  account sale drafted\nPASS  account sale finalised  -- INV834295\nPASS  stock moved during training  -- 100 -> 93\nPASS  the sequence advanced during training  -- 834294 -> 834296\nPASS  the screen reports training active\nPASS  the screen counts pending rows  -- 19 rows\nPASS    and names sales_documents among them  -- {\"table\":\"sales_documents\",\"rows\":2}\nPASS    and names stock_movements among them  -- {\"table\":\"stock_movements\",\"rows\":2}\nPASS  the census shows training actually wrote rows  -- sales_documents: 100165 -> 100167, sales_document_lines: 442021 -> 442023, sales_tenders: 100122 -> 100124, document_audit: 110 -> 112, stock_movements: 464881 -> 464883, journal_batches: 950 -> 951, journal_lines: 3775 -> 3780, customer_transactions: 20809 -> 20810, activity_log: 1913 -> 1915\n  grew: sales_documents: 100165 -> 100167, sales_document_lines: 442021 -> 442023, sales_tenders: 100122 -> 100124, document_audit: 110 -> 112, stock_movements: 464881 -> 464883, journal_batches: 950 -> 951, journal_lines: 3775 -> 3780, customer_transactions: 20809 -> 20810, activity_log: 1913 -> 1915\n\n── switching off ──\nPASS  *** training mode stopped ***  -- 20 rows removed\nPASS    it removed something  -- 20\nPASS    isTrainingActive now reports false\n\n── proving the store is back where it started ──\n**FAIL**  *** every table is back to its baseline count ***  -- sales_documents: 100165 -> 100166, sales_document_lines: 442021 -> 442022, sales_tenders: 100122 -> 100123, document_audit: 110 -> 111, journal_batches: 950 -> 951, journal_lines: 3775 -> 3778, customer_transactions: 20809 -> 20810, activity_log: 1913 -> 1914\nPASS  *** stock_on_hand is back to what it was ***  -- 100 -> 100\n**FAIL**  *** the invoice sequence was rewound ***  -- 834294 -> during 834296 -> 834295\nPASS  *** master data created before training survived ***\nPASS    the fixture customer survived too\nPASS  *** the training sale is GONE, not cancelled ***\nPASS  *** stock still reconciles after the purge ***  -- []\nPASS  *** customer balances still reconcile ***  -- []\nPASS  *** the training customer is back to a zero balance ***  -- balance 0.0000\nPASS  *** supplier balances still reconcile ***  -- []\nPASS  *** the invoice run has no new gaps ***  -- missing 737169 -> 737169\nPASS  *** the session log survived the purge ***\nPASS    and is marked ended\nPASS    and records what it removed\n\n2 FAILURE(S)"
         },
         {
           "name": "transfers",
           "ok": true,
-          "ms": 1327,
+          "ms": 1440,
           "failedAssertions": 0,
           "exclusive": true
         },
         {
-          "name": "users-pins",
+          "name": "two-factor",
           "ok": true,
-          "ms": 1351,
+          "ms": 524,
           "failedAssertions": 0,
           "exclusive": false
         },
         {
-          "name": "void",
+          "name": "unlock-code",
           "ok": true,
-          "ms": 1734,
+          "ms": 216,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "unlock-exchange",
+          "ok": true,
+          "ms": 213,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "user-sessions",
+          "ok": true,
+          "ms": 262,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "users-pins",
+          "ok": true,
+          "ms": 1947,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "variant-tiles",
+          "ok": true,
+          "ms": 194,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "variant-till",
+          "ok": true,
+          "ms": 1817,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "variants",
+          "ok": true,
+          "ms": 758,
           "failedAssertions": 0,
           "exclusive": true
+        },
+        {
+          "name": "void",
+          "ok": false,
+          "ms": 2106,
+          "failedAssertions": 2,
+          "exclusive": true,
+          "output": "PASS  account sale posted  -- INV834298\nPASS    customer owes 575  -- 575\nPASS    stock dropped to 95  -- 95\nPASS  *** voided ***\nPASS  *** stock came back to 100 ***  -- 100\nPASS  *** AND the balance came back to ZERO ***  -- 0\nPASS  *** reconcileBalances zero drift ***\n**FAIL**    Σ movements still equals stock_on_hand\nPASS    the ledger shows the invoice AND its reversal  -- invoice:575 journal:-575\nPASS    the reversal links back\nPASS    and nothing is left outstanding  -- 0,0\nPASS    the document is cancelled but KEEPS its number  -- cancelled INV834298\nPASS    with a stated reason  -- Wrong item rung up — Rang up on the wrong account\nPASS  a second account sale posted\nPASS  *** a sale with an allocated payment REFUSES to void ***  -- INV834299 cannot be voided: That document has payments allocated against it. Unallocate them first.\nPASS    and the sale is still finalised, stock still out  -- 98\nPASS    the balance is untouched by the refusal  -- 130\nPASS  *** a cash sale voids cleanly ***\nPASS    and no ledger entry was touched\nPASS    stock back  -- 98\nPASS  a serial phone sold\nPASS    one serial is marked sold\nPASS  *** voiding returns the SERIAL to stock ***\nPASS    both units sellable again  -- 2\nPASS    the serial no longer points at the voided invoice\nPASS  *** and reconcileSerials is clean ***  -- []\nPASS  voiding twice refused\nPASS  a reason is required\nPASS  a numbered transaction posts\nPASS  *** the SAME number twice is REFUSED ***  -- DUP12958929 is already on this account as invoice #21081. Use a different number, or reverse the original.\nPASS    and it names the clashing document\nPASS    a different TYPE with that number is allowed\nPASS  a partial credit of 3 posts\nPASS  *** creditableLines reports the REMAINDER, not the original ***  -- 7\nPASS  *** crediting the whole remainder posts ***  -- CRN003073\nPASS    all 10 are back on the shelf  -- 98\nPASS  *** and nothing is left creditable ***\nPASS    a further credit is refused\n**FAIL**  *** reconcileStock clean at the end ***\nPASS  *** reconcileBalances clean at the end ***\nPASS  *** reconcileSerials clean at the end ***\n\n2 FAILURE(S)"
+        },
+        {
+          "name": "voucher-order",
+          "ok": true,
+          "ms": 208,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "webhooks",
+          "ok": true,
+          "ms": 722,
+          "failedAssertions": 0,
+          "exclusive": false
+        },
+        {
+          "name": "window-session",
+          "ok": true,
+          "ms": 221,
+          "failedAssertions": 0,
+          "exclusive": false
         }
       ]
     },
     {
       "gate": "smoke",
       "ok": true,
-      "checks": [
-        {
-          "name": "route crawl",
-          "ok": true,
-          "ms": 164516
-        }
-      ]
+      "skipped": true,
+      "checks": []
     }
   ],
-  "finishedAt": "2026-08-08T05:43:11.728Z",
-  "ms": 222272
+  "finishedAt": "2026-08-31T21:49:20.659Z",
+  "ms": 196056
 }

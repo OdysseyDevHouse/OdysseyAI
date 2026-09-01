@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  ButtonLink,
   Callout,
   Card,
   CardHeader,
@@ -211,9 +212,19 @@ export default function CostScreen({
     <>
       <TableToolbar
         actions={
-          canRun ? (
-            <div className="flex items-center gap-2">
-              {selected && !locked && (
+          /* Pay rules sits OUTSIDE the `canRun` branch below, because it is not
+             a period action: the multipliers are what every figure on this
+             screen is computed from, and somebody who cannot open or lock a
+             period can still be the person who notices an overtime rate looks
+             wrong. Ghost, so the period buttons keep the emphasis. */
+          <div className="flex items-center gap-2">
+            <ButtonLink href="/staff/pay-rules" variant="ghost">
+              <Icons.Percent size={15} />
+              Pay rules
+            </ButtonLink>
+            {canRun && (
+              <>
+                {selected && !locked && (
                 <>
                   <Button
                     variant="secondary"
@@ -244,12 +255,13 @@ export default function CostScreen({
                   Reopen
                 </Button>
               )}
-              <Button variant="secondary" onClick={() => setOpening(true)}>
-                <Icons.Plus size={15} />
-                Open a period
-              </Button>
-            </div>
-          ) : undefined
+                <Button variant="secondary" onClick={() => setOpening(true)}>
+                  <Icons.Plus size={15} />
+                  Open a period
+                </Button>
+              </>
+            )}
+          </div>
         }
       >
         {periods.length > 0 && (

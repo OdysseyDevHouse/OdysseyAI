@@ -317,9 +317,18 @@ export default function PosEntry({
      is "not asked yet" — see the state above for why that is not `null`. */
   if (licence === undefined) return null
 
+  /* Which till this machine IS. Read here rather than at the PosShell call
+     below because the refusal screen names the product as well — see the long
+     note on the mode at that call for what it is and why it is resolved in this
+     component at all. */
+  const posMode = serial
+    ? (terminals.find((t) => t.deviceId === serial)?.posMode ?? 'retail')
+    : 'retail'
+
   if (licence.status === 'blocked') {
     return (
       <PosNotLicensed
+        modeName={POS_MODE_WORDMARKS[posMode]}
         reason={licence.reason}
         message={licence.message}
         offer={licence.offer}
@@ -351,10 +360,15 @@ export default function PosEntry({
    * A machine matching no terminal gets 'retail' — the mode that trades. The
    * same answer `toPosMode` gives an unrecognised value, and the column
    * default, so all three agree.
+   *
+   * ── WHY IT IS DECLARED FURTHER UP ───────────────────────────────────────
+   *
+   * The refusal screen above names the product too, and a hospitality till that
+   * cannot get a licence should not be told "Odyssey Retail" on its way out.
+   * The value is a pure read of two things settled long before either branch
+   * (`serial`, and the server's `terminals`), so hoisting it changes nothing
+   * about WHEN it is right — only about how much of this component can see it.
    */
-  const posMode = serial
-    ? (terminals.find((t) => t.deviceId === serial)?.posMode ?? 'retail')
-    : 'retail'
 
   return (
     <PosShell

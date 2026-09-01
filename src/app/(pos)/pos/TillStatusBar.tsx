@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Image from 'next/image'
 import {
+  BrandLockup,
   CHIP_BASE,
   ClockChip as Clock,
   Icons,
@@ -229,35 +229,17 @@ export function TillStatusBar({
        * screen twice, a hand's width apart.
        */}
       {bare ? null : screenTitle === null ? (
-        <span className="flex items-center gap-2.5">
-          {/* Decorative beside the wordmark text, so no alt of its own. */}
-          <Image
-            src="/logo-icon.png"
-            alt=""
-            aria-hidden
-            width={318}
-            height={278}
-            unoptimized
-            className="h-8 w-auto object-contain"
-          />
-          {/* Set in the LOGO's own face, not the UI stack — it is a wordmark
-              sitting directly against the logo mark, and the two have to look
-              like one lockup rather than an image with a caption.
+        /* The kit's lockup — the SAME component the back office rail draws (see
+           components/ui/BrandLockup), because this is the same thing: the
+           product's name beside the mark in the top-left corner, not a screen
+           title. The two front doors of the product must be set identically, so
+           the arrangement is the kit's and not this file's.
 
-              `.wordmark-lockup` at text-xl — the SAME treatment as the back
-              office rail (see Sidebar.tsx), because this is the same thing: the
-              product's name beside the mark in the top-left corner, not a screen
-              title. The two front doors of the product must be set identically,
-              so the class and the size are the rail's, not this file's.
-
-              The second word carries the brand blue at 700 against the name's
-              800, exactly as the rail sets "AI" — the colour is what separates
-              the two halves of the name, and leaving both at one weight made
-              the blue read as an accident of markup rather than a second word. */}
-          <h1 className="wordmark-lockup text-xl leading-none text-ink">
-            Odyssey <span className="font-bold text-brand">{modeName}</span>
-          </h1>
-        </span>
+           The mode rides on the SUBLINE, where the printed artwork puts its
+           qualifier — it used to be a second, blue word on the name's own line,
+           which made "Odyssey Hospitality" a different shape from the logo the
+           shop knows off its own invoices. */
+        <BrandLockup as="h1" sub={modeName} />
       ) : (
         <h1 className="wordmark text-[20px] leading-none text-ink">{screenTitle}</h1>
       )}

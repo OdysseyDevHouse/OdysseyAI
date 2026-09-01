@@ -224,7 +224,12 @@ export default function StoreInfoClient({
           (VAT, HST) rather than your number, so pointing the search there would
           answer a different question. */}
       <Card id="business-identity">
+        {/* Each card leads with its own glyph. Five headings of identical
+            weight gave the eye nowhere to land on a screen this long, and the
+            icon is what makes one findable by shape when somebody is scrolling
+            back to the address rather than reading from the top. */}
         <CardHeader
+          icon={<Icons.Building2 size={18} />}
           title="Who this business is"
           description="The names and numbers that print on every invoice, statement and order you send out."
         />
@@ -272,6 +277,7 @@ export default function StoreInfoClient({
 
       <Card>
         <CardHeader
+          icon={<Icons.Mail size={18} />}
           title="How you are reached"
           description="Where a customer or supplier replies when they have a question about a document."
         />
@@ -293,6 +299,7 @@ export default function StoreInfoClient({
 
       <Card>
         <CardHeader
+          icon={<Icons.MapPin size={18} />}
           title="Where you are"
           description="Your trading address, as it should appear on printed documents."
         />
@@ -330,6 +337,7 @@ export default function StoreInfoClient({
           database and works offline, which the number above does not. */}
       <Card>
         <CardHeader
+          icon={<Icons.Percent size={18} />}
           title="What your tax is called"
           description="The word this country uses. It appears on every screen, document, slip and report."
         />
@@ -369,6 +377,7 @@ export default function StoreInfoClient({
 
       <Card>
         <CardHeader
+          icon={<Icons.Picture size={18} />}
           title="Your logo"
           description="Printed at the top of your documents, and shown on the till's sign-in screen."
         />

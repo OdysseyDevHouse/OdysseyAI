@@ -19,6 +19,7 @@ import {
   Modal,
   NumberInput,
   SettingRow,
+  SortableList,
   Switch,
   useToast,
 } from '@/components/ui'
@@ -37,9 +38,11 @@ import {
  * because the distinction is the thing a store owner needs to understand: one
  * group changes what the till does, the other changes how the button looks.
  *
- * Up/down buttons rather than drag-and-drop. @dnd-kit is installed but unused,
- * and a list of six rows reordered twice a year does not justify the dependency
- * or the keyboard-accessibility work drag would need to be done properly.
+ * Dragged to reorder, through the kit's <SortableList>. It used to be up/down
+ * buttons on the argument that a list of six rows reordered twice a year did
+ * not justify the keyboard work drag needs to be done properly — that work is
+ * done once in the kit component now, which carries the keyboard sensor, so
+ * the arrows bought nothing that the handle does not.
  */
 export default function TenderTypesClient({
   tenders,
@@ -71,11 +74,10 @@ export default function TenderTypesClient({
     })
   }
 
-  function move(index: number, direction: -1 | 1) {
-    const next = [...tenders]
-    const target = index + direction
-    if (target < 0 || target >= next.length) return
-    ;[next[index], next[target]] = [next[target], next[index]]
+  /* Dragged, not nudged. The order these appear in IS the order of the buttons
+     at the till, so seeing a row move to where you dropped it is the whole
+     feedback loop — a pair of arrows made you click four times and count. */
+  function reorder(next: TenderType[]) {
     run(() => reorderTenderTypesAction(next.map((t) => t.id)))
   }
 
@@ -93,10 +95,17 @@ export default function TenderTypesClient({
           }
         />
 
-        <div>
-          {tenders.map((tender, index) => (
+        <SortableList
+          items={tenders}
+          getId={(t) => t.id}
+          onReorder={reorder}
+          disabled={pending}
+        >
+          {(tender, handle) => (
             <SettingRow
-              key={tender.id}
+              /* The grip is the row's leading edge — the thing you grab — and
+                 sits OUTSIDE the tinted tile, which is sized for one glyph. */
+              leading={handle}
               icon={<Icons.CreditCard size={16} />}
               label={tender.name}
               description={describe(tender)}
@@ -104,28 +113,8 @@ export default function TenderTypesClient({
               <div className="flex items-center gap-1.5">
                 {!tender.isActive && <Badge tone="neutral">Off</Badge>}
                 {tender.isSystem && <Badge tone="brand">Built-in</Badge>}
-                <Button
-                  variant="bare"
-                  size="sm"
-                  iconOnly
-                  aria-label={`Move ${tender.name} up`}
-                  disabled={index === 0 || pending}
-                  onClick={() => move(index, -1)}
-                >
-                  <Icons.ChevronUp size={15} />
-                </Button>
-                <Button
-                  variant="bare"
-                  size="sm"
-                  iconOnly
-                  aria-label={`Move ${tender.name} down`}
-                  disabled={index === tenders.length - 1 || pending}
-                  onClick={() => move(index, 1)}
-                >
-                  <Icons.ChevronDown size={15} />
-                </Button>
-                {/* Reorder stays as bare arrows — it is THE act this list is
-                    for. Everything else folds into one menu per row. */}
+                {/* Reordering is the handle on the left now. Everything else
+                    folds into one menu per row. */}
                 <Menu label="More" variant="ghost">
                   <MenuItem onClick={() => setEditing(tender)}>
                     <Icons.Pencil size={15} />
@@ -142,8 +131,8 @@ export default function TenderTypesClient({
                 </Menu>
               </div>
             </SettingRow>
-          ))}
-        </div>
+          )}
+        </SortableList>
       </Card>
 
       <TenderModal

@@ -7,6 +7,7 @@ import { buildTopupForm } from '@/lib/payfast/topup'
 import { createAiTopupToken } from '@/lib/aiTopupToken'
 import { startTopup } from '@/lib/aiCredits/ledger'
 import { isValidTopupAmount, localToMicros } from '@/lib/aiCredits/pricing'
+import * as creditsPortal from '@/lib/aiCredits/creditsPortal'
 import type { CheckoutForm } from '@/lib/payfast/checkout'
 
 /**
@@ -64,14 +65,27 @@ export async function startTopupAction(
   }
   const chosen = requested
 
+  /* The pending row, from the portal on a desktop install and from SQL
+     otherwise. Only the ROW moves: the form below is signed with the platform's
+     merchant credentials, which stay on this server either way.
+
+     The portal re-derives the credit from the amount and the account's
+     currency, so `amountMicros` is not sent and cannot be chosen. A refusal is
+     shown to the person; null falls through to the query. */
+  const viaPortal = await creditsPortal.startTopup(chosen)
+  if (viaPortal && !viaPortal.ok) return { ok: false, error: viaPortal.error }
+
   const amountMicros = localToMicros(chosen, account.currency)
-  const reference = await startTopup({
-    accountId: account.id,
-    siteId: ctx.siteId,
-    amountMicros,
-    amountPay: chosen,
-    payCurrency: account.currency,
-  })
+  const reference =
+    viaPortal?.ok
+      ? viaPortal.intent.reference
+      : await startTopup({
+          accountId: account.id,
+          siteId: ctx.siteId,
+          amountMicros,
+          amountPay: chosen,
+          payCurrency: account.currency,
+        })
 
   const config = platformPayFast()
   const token = createAiTopupToken(reference)

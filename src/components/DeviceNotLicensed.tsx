@@ -25,8 +25,13 @@ import { deviceTitleFor, type DeviceState, type SelfRegisterActionResult } from 
  *
  * What legitimately differs is the wordmark above the card and WHICH ACTION the
  * button calls — the two windows admit on different permissions, so each brings
- * its own. `PosNotLicensed` and `InvoicingNotLicensed` are the two lockups;
- * everything below is here.
+ * its own. `PosNotLicensed` and `InvoicingNotLicensed` supply those; everything
+ * below is here.
+ *
+ * Both now pass the SAME `BrandLockup` and differ only in the module on its
+ * subline, which is the shape the difference should have had all along: the
+ * till used to hand over `logo-full.png`, whose raster reads "POINT OF SALE",
+ * so a restaurant was refused a licence under a product it does not run.
  *
  * ── THE SCREEN HAS TWO FACES ───────────────────────────────────────────────
  *

@@ -1,9 +1,9 @@
 import { tileClass } from './tiles'
 
 /**
- * RowTile — the leading identity tile on a list row: a coloured square with
+ * RowTile — the leading identity tile on a list row: a coloured disc with
  * the record's initials, so a row is findable by shape rather than by reading.
- * Worth its 26px on any list of products or people (see odyssey-craft).
+ * Worth its 30px on any list of products or people (see odyssey-craft).
  *
  * Pass the record's stored swatch token so the colour is stable per record;
  * with no token the colour is derived from the label, which is still stable
@@ -12,14 +12,14 @@ import { tileClass } from './tiles'
 /**
  * `lg` is the same tile at page-heading scale.
  *
- * A size rather than a className override at the call site: the 26px default is
+ * A size rather than a className override at the call site: the 30px default is
  * tuned for a table row, and a page header that scaled it with a utility would
  * be the second place deciding how big an identity tile is. Both steps keep the
  * initials optically centred, which is what a bare `size-*` override loses.
  */
 const SIZE = {
-  default: 'size-[26px] rounded-control text-[11px]',
-  lg: 'size-11 rounded-card text-sm',
+  default: 'size-[34px] rounded-full text-xs',
+  lg: 'size-12 rounded-full text-base',
 } as const
 
 export function RowTile({

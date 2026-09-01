@@ -42,7 +42,7 @@ export default async function MenuAreasPage() {
   return (
     <>
       <PageHeader
-        title="Menu & modules"
+        title="Side menu customization"
         subtitle="Switch off the parts of the system this shop does not use, so they stop appearing in the menu"
       />
       <PageBody>

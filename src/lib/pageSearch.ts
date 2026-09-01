@@ -10,7 +10,6 @@ import { SETUP_GROUPS, DEV_ONLY_ROUTES } from '@/app/(app)/setup/catalogue'
 import { settingsTabsFor } from '@/app/(app)/settings/catalogue'
 import { ACCOUNTING_GROUPS } from '@/app/(app)/accounting/catalogue'
 import { ONLINE_STORE_GROUPS } from '@/app/(app)/online-store/catalogue'
-import { ONLINE_STORE_SETUP_GROUPS } from '@/app/(app)/online-store/settings/catalogue'
 import { JOBS_SETUP_GROUPS } from '@/app/(app)/jobs/setup/catalogue'
 import { visibleSettings, settingHref, settingScreenLabel } from './settingSearch'
 import type { HubIconName } from './hub'
@@ -95,11 +94,13 @@ const CATALOGUE: Record<string, { description: string; icon: HubIconName; keywor
          catalogue when each section grew a Setup row of its own, and the
          palette has to keep reaching them.
 
-         Loyalty is NOT among them any more: its three settings screens are
-         menu rows in their own right, so they arrive through NAV below and
-         carry their own description and keywords there. A catalogue entry as
-         well would be the second front door the nav test forbids. */
-      ...ONLINE_STORE_SETUP_GROUPS,
+         Two are NOT among them any more. Loyalty's three settings screens are
+         menu rows in their own right, so they arrive through NAV below with
+         their own descriptions. The Online Store's four moved into
+         ONLINE_STORE_GROUPS above, into that hub's "How the shop runs" group —
+         its separate Setup hub is gone, along with the second menu row that
+         led to it. Either as a catalogue entry as well would be the second
+         front door the nav test forbids. */
       ...JOBS_SETUP_GROUPS,
     ]
       .flatMap((group) => group.items)
@@ -131,7 +132,6 @@ const ANCHORED_TILES = [
   ...SETUP_GROUPS,
   ...ACCOUNTING_GROUPS,
   ...ONLINE_STORE_GROUPS,
-  ...ONLINE_STORE_SETUP_GROUPS,
   ...JOBS_SETUP_GROUPS,
 ]
   .flatMap((group) => group.items)
@@ -207,6 +207,22 @@ CATALOGUE['/reports/schedules'] = {
   description: 'Reports that email themselves — to whom, and how often.',
   icon: 'Mail',
   keywords: 'scheduled email me automatic recurring report delivery',
+}
+
+/* Leave types and Commission rules, for the same reason as everything above:
+   their tiles left the setup catalogue — each is reached from the screen it
+   belongs to, Leave and Commission respectively — and the tile was the only
+   thing describing them. Both ROUTES are unchanged. */
+CATALOGUE['/staff/leave-types'] = {
+  description: 'Annual, sick and family leave — how many days each grants, and how they arrive.',
+  icon: 'Clock',
+  keywords:
+    'leave days annual sick family maternity unpaid entitlement accrual bcea holiday allowance',
+}
+CATALOGUE['/commission/rules'] = {
+  description: 'Who earns commission, on what they sell, and at what rate.',
+  icon: 'Percent',
+  keywords: 'commission rates rules percentage sales rep earnings targets',
 }
 
 /* Roles & permissions, same story again: its tile left the setup catalogue —

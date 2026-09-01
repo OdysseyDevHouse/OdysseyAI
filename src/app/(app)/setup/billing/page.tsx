@@ -10,6 +10,8 @@ import {
 } from '@/lib/control/modules'
 import { nextBillingDate, safeBillingDay } from '@/lib/billing/period'
 import { subscriptionForAccount, paymentsForAccount } from '@/lib/control/subscriptions'
+import * as billingPortal from '@/lib/control/billingPortal'
+import * as creditsPortal from '@/lib/aiCredits/creditsPortal'
 import { platformPayFastStatus } from '@/lib/payfast/platformConfig'
 import { balanceMicros, recentEntries, type LedgerEntry } from '@/lib/aiCredits/ledger'
 import {
@@ -49,7 +51,27 @@ export default async function BillingPage() {
   const site = await requireSite()
   const session = await requireSession()
 
-  const account = await accountForSite(site.id)
+  /* ── WHERE THE BILLING FACTS COME FROM ────────────────────────────────────
+     One signed HTTPS call on a shop's machine, the control database directly
+     everywhere else. `summary()` returns null when there is no portal key, when
+     the line is down, or when the answer was not an answer — see
+     billingPortal.ts — and every branch below then reads SQL exactly as it
+     always did.
+
+     Both paths must produce the same values. The portal answers for the whole
+     ACCOUNT, because a site key identifies a shop and not a person; the
+     narrowing to what this USER may see happens below, on both paths equally.
+     Doing it any other way would mean sending a user id to the portal and
+     asking it to be believed, which is not a permission check. */
+  /* Both portal reads together: they are two cards on one screen and there is
+     no reason to pay for them one after the other. Each degrades on its own —
+     a wallet the portal cannot answer still leaves the modules grid live. */
+  const [viaPortal, viaWallet] = await Promise.all([
+    billingPortal.summary(),
+    creditsPortal.fetchWallet(25),
+  ])
+
+  const account = viaPortal ? viaPortal.account : await accountForSite(site.id)
 
   /* Every store on the account, intersected with the stores this user may
      actually open.
@@ -59,7 +81,11 @@ export default async function BillingPage() {
      other nine here — names, codes and all — which is the same leak the linked
      stores picker guards against. */
   const [accountSites, permitted] = await Promise.all([
-    account ? sitesForAccount(account.id) : Promise.resolve([]),
+    viaPortal
+      ? Promise.resolve(viaPortal.sites)
+      : account
+        ? sitesForAccount(account.id)
+        : Promise.resolve([]),
     listSitesForUser(session.userId),
   ])
   const permittedIds = new Set(permitted.map((s) => s.id))
@@ -73,15 +99,42 @@ export default async function BillingPage() {
   const hiddenStoreCount = account ? accountSites.length - visibleSites.length : 0
 
   const visibleIds = visibleSites.map((s) => s.siteId)
+  const visibleIdSet = new Set(visibleIds)
+
+  /* The portal answered for every store on the account; the SQL path was asked
+     only about the visible ones. Filtering here rather than at either source is
+     what makes the two transports interchangeable — a row for a store this user
+     may not open must not reach the grid on EITHER path. */
   const [holdings, prices, devices, subscription, payments, aiBalance, aiEntries] =
     await Promise.all([
-      holdingsForSites(visibleIds),
-      currentPrices(),
-      deviceOrdersFor(visibleIds),
-      account ? subscriptionForAccount(account.id) : Promise.resolve(null),
-      account ? paymentsForAccount(account.id, 12) : Promise.resolve([]),
-      account ? balanceMicros(account.id) : Promise.resolve(0),
-      account ? recentEntries(account.id, 25) : Promise.resolve([]),
+      viaPortal
+        ? Promise.resolve(viaPortal.holdings.filter((h) => visibleIdSet.has(h.siteId)))
+        : holdingsForSites(visibleIds),
+      viaPortal ? Promise.resolve(viaPortal.prices) : currentPrices(),
+      viaPortal
+        ? Promise.resolve(viaPortal.devices.filter((d) => visibleIdSet.has(d.siteId)))
+        : deviceOrdersFor(visibleIds),
+      viaPortal
+        ? Promise.resolve(viaPortal.subscription)
+        : account
+          ? subscriptionForAccount(account.id)
+          : Promise.resolve(null),
+      viaPortal
+        ? Promise.resolve(viaPortal.payments)
+        : account
+          ? paymentsForAccount(account.id, 12)
+          : Promise.resolve([]),
+      /* The wallet comes from the portal alongside everything else, or from
+         SQL. `createdAt` crosses the wire as a string and is rehydrated here so
+         the card cannot tell which transport answered it. */
+      viaWallet ? Promise.resolve(viaWallet.balanceMicros) : account ? balanceMicros(account.id) : Promise.resolve(0),
+      viaWallet
+        ? Promise.resolve(
+            viaWallet.entries.map((e) => ({ ...e, createdAt: new Date(e.createdAt) })),
+          )
+        : account
+          ? recentEntries(account.id, 25)
+          : Promise.resolve([]),
     ])
 
   /* Only the stores this user may open. A usage row for one of the others shows

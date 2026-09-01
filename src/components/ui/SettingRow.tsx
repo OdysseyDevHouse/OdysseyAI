@@ -15,6 +15,7 @@ import type { ReactNode } from 'react'
  */
 export function SettingRow({
   icon,
+  leading,
   label,
   description,
   children,
@@ -22,6 +23,15 @@ export function SettingRow({
 }: {
   /** Small glyph in the tinted tile. Use an icon from '@/components/ui/icons'. */
   icon?: ReactNode
+  /**
+   * Something before the icon tile, outside it — today a `<SortableList>` drag
+   * handle, which is the row's leading edge and must not sit inside the tint.
+   *
+   * Its own slot rather than folded into `icon` because that one is a fixed
+   * 36px disc: two things in it are two things crushed into one glyph's worth
+   * of room, which is exactly what a handle passed as `icon` looked like.
+   */
+  leading?: ReactNode
   label: string
   description?: string
   /** The control itself — Switch, NumberInput, Select, … */
@@ -34,6 +44,11 @@ export function SettingRow({
 }) {
   return (
     <div className="flex items-center gap-4 border-b border-border px-6 py-4 last:border-b-0">
+      {/* BEFORE the icon tile and outside it. The tile is a fixed 36px disc
+          sized for one glyph, so anything sharing it gets crushed — putting a
+          drag handle in `icon` drew the grip on top of the tint. */}
+      {leading && <span className="-mr-2 flex shrink-0 items-center">{leading}</span>}
+
       {icon && (
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
           {icon}
