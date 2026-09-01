@@ -87,6 +87,23 @@ async function main() {
   await entitlementsForSite(siteId).catch(() => null)
   report('a second page load')
 
+  /* ── THE SESSION CHECK ────────────────────────────────────────────────────
+   *
+   * requireSession() runs this on every guarded request, ahead of both reads
+   * above. It cannot be called here — it wants a real cookie — so this asks the
+   * same question its `session.sid && …` guard asks.
+   *
+   * A desktop sign-in mints NO sid, so the guard short-circuits and the query
+   * never happens. Proving that costs one call with a sid to show the query is
+   * real, and the count above (0) to show it is not being made. */
+  const { sessionIsCurrent } = await import('../src/lib/control/sessions')
+  await sessionIsCurrent(1, 'probe-not-a-real-sid').catch(() => false)
+  report('sessionIsCurrent, IF a session carried a sid')
+  console.log(
+    '    ↑ desktop sign-ins mint no sid, so requireSession never reaches this.\n' +
+      '      See auth.ts: `enrols`, and the sid-less token in trySignInOffline.',
+  )
+
   process.exit(0)
 }
 

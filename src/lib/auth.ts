@@ -297,7 +297,6 @@ async function trySignInOffline(
       return { ok: false, error: 'Incorrect email or password.' }
     }
 
-    const sid = randomUUID()
     const token = await createSessionToken({
       userId: localUser.controlUserId,
       email: normalisedEmail,
@@ -306,7 +305,16 @@ async function trySignInOffline(
       /* Never forced offline: the change-password screen writes to the control
          database, so sending them there would be sending them to a wall. */
       mustChangePassword: false,
-      sid,
+      /* NO `sid`, matching the "no claimSession" above rather than merely
+         intending to. It used to mint one anyway, and a sid with no registry
+         row is worse than none: requireSession's check is gated on the token
+         HAVING a sid, so every guarded request then queried cp2_user_sessions —
+         over the line this whole sign-in path exists because it is down — only
+         to be told "no row, allow it". A round trip per click to learn nothing.
+
+         Omitting it is the existing mechanism for exactly this: localSignIn and
+         the till's PIN unlock both do the same, and session.ts documents an
+         absent sid as "not enrolled, never evicted". */
     })
     await setSessionCookie(token)
 
