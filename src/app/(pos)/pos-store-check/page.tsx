@@ -7,6 +7,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  DataTable,
   EmptyState,
   Icons,
   PageBody,
@@ -21,6 +22,11 @@ import {
   runStoreConformance,
   type ConformanceReport,
 } from '@/lib/posOffline/storeConformance'
+import {
+  runStoreBenchmark,
+  type BenchmarkReport,
+  type Measurement,
+} from '@/lib/posOffline/storeBenchmark'
 
 /**
  * Proves this machine's store keeps the contract.
@@ -48,6 +54,8 @@ export default function PosStoreCheckPage() {
   const toast = useToast()
   const [report, setReport] = useState<ConformanceReport | null>(null)
   const [running, setRunning] = useState(false)
+  const [bench, setBench] = useState<BenchmarkReport | null>(null)
+  const [measuring, setMeasuring] = useState(false)
 
   async function run() {
     setRunning(true)
@@ -67,15 +75,33 @@ export default function PosStoreCheckPage() {
     }
   }
 
+  async function measure() {
+    setMeasuring(true)
+    try {
+      const { store, label } = chosenStore()
+      setBench(await runStoreBenchmark(store, label))
+      toast.success('Measured.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'The store could not be measured.')
+    } finally {
+      setMeasuring(false)
+    }
+  }
+
   return (
     <>
       <PageHeader
         title="Till store check"
         subtitle="Runs the storage contract against this machine, on a throwaway database"
         action={
-          <Button onClick={run} disabled={running}>
-            {running ? 'Running…' : 'Run the checks'}
-          </Button>
+          <span className="flex gap-2">
+            <Button variant="secondary" onClick={measure} disabled={measuring}>
+              {measuring ? 'Measuring…' : 'Measure'}
+            </Button>
+            <Button onClick={run} disabled={running}>
+              {running ? 'Running…' : 'Run the checks'}
+            </Button>
+          </span>
         }
       />
       <PageBody>
@@ -121,6 +147,39 @@ export default function PosStoreCheckPage() {
             )}
           </CardBody>
         </Card>
+
+        {bench ? (
+          <Card>
+            <CardHeader
+              title={`${bench.engine} — timings`}
+              description={`A shop of ${bench.catalogSize} products. Per-operation is the figure a cashier feels.`}
+            />
+            <CardBody>
+              <DataTable
+                columns={[
+                  { key: 'name', header: 'Operation', cell: (m: Measurement) => m.name },
+                  { key: 'detail', header: 'What it is', cell: (m: Measurement) => m.detail },
+                  {
+                    key: 'perOp',
+                    header: 'Per op',
+                    numeric: true,
+                    cell: (m: Measurement) => `${m.perOpMs} ms`,
+                    sortValue: (m: Measurement) => m.perOpMs,
+                  },
+                  {
+                    key: 'total',
+                    header: 'Total',
+                    numeric: true,
+                    cell: (m: Measurement) => `${m.totalMs} ms / ${m.iterations}`,
+                    sortValue: (m: Measurement) => m.totalMs,
+                  },
+                ]}
+                rows={bench.measurements}
+                getRowKey={(m: Measurement) => m.name}
+              />
+            </CardBody>
+          </Card>
+        ) : null}
       </PageBody>
     </>
   )
