@@ -4,8 +4,6 @@ import type { TillProduct } from '../site/tillSearch'
 import type { KvRow, LocalDraft, LocalParkedSale } from './db'
 import type { OutboxReturn, OutboxSale } from './types'
 import { Capacitor } from '@capacitor/core'
-import { dexieStore } from './dexieStore'
-import { sqliteStore } from './sqliteStore'
 
 /**
  * Where a till keeps its own data.
@@ -196,7 +194,7 @@ export interface PosStore {
  * worse, two OUTBOXES. Any future implementation inherits that rule.
  */
 export function posStore(siteId: number): PosStore {
-  return useSqlite() ? sqliteStore(siteId) : dexieStore(siteId)
+  return lazyStore(siteId)
 }
 
 /** What the active store is called, for a diagnostics screen to report. */
@@ -232,6 +230,55 @@ function useSqlite(): boolean {
     sqliteDecision = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('CapacitorSQLite')
   }
   return sqliteDecision
+}
+
+/**
+ * The engine module, fetched once, only the one this machine needs.
+ *
+ * Two implementations exist and every client would otherwise download both:
+ * an Android till parsing Dexie it will never call, and a Chrome till doing
+ * the same for the SQLite adapter and its plugin. On the hardware this runs on
+ * that is not free — a production bundle measured 0.85MB against 5.44MB in
+ * development, and the difference was plainly felt on a Sunmi.
+ */
+let enginePromise: Promise<(siteId: number) => PosStore> | null = null
+
+function engine(): Promise<(siteId: number) => PosStore> {
+  if (!enginePromise) {
+    enginePromise = useSqlite()
+      ? import('./sqliteStore').then((m) => m.sqliteStore)
+      : import('./dexieStore').then((m) => m.dexieStore)
+  }
+  return enginePromise
+}
+
+/**
+ * A store that resolves its engine on first use.
+ *
+ * ── WHY A PROXY, WHICH IS NOT THIS CODEBASE'S HABIT ──────────────────────
+ *
+ * `posStore` is called synchronously in twenty-eight places and returns
+ * something whose methods are then awaited. Making it async to allow a dynamic
+ * import would rewrite every one of those call sites for a loading concern
+ * they have no interest in.
+ *
+ * This is safe here for a reason particular to `PosStore`: it is ALL methods
+ * and they ALL return promises. So forwarding any property access to a
+ * function that awaits the module and calls through cannot be wrong — there is
+ * no field to read, and no synchronous return to lose. Were a plain value ever
+ * added to the interface, this would break, which is why the interface should
+ * stay methods-only.
+ */
+function lazyStore(siteId: number): PosStore {
+  return new Proxy({} as PosStore, {
+    get(_target, property: string | symbol) {
+      return (...args: unknown[]) =>
+        engine().then((make) => {
+          const store = make(siteId) as unknown as Record<string | symbol, (...a: unknown[]) => unknown>
+          return store[property](...args)
+        })
+    },
+  })
 }
 
 /**
