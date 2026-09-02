@@ -1,6 +1,7 @@
 'use client'
 
-import { posDb, kvGet, kvPut, KV } from './db'
+import { KV } from './db'
+import { kvGet, kvPut, posStore } from './store'
 import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
 import { parseVariableBarcode } from '../barcodes'
@@ -252,23 +253,18 @@ export async function refreshCatalog(
     return { ok: false, error: 'The server sent something that was not a catalog.', status: 200 }
   }
 
-  const db = posDb(siteId)
+  const store = posStore(siteId)
   // The server's own verdict wins over our delta request: see reloadProducts.
   const full = !body.delta || body.reloadProducts || body.schema !== SCHEMA
 
-  await db.transaction('rw', db.products, db.kv, async () => {
-    if (full) {
-      await db.products.clear()
-      await db.products.bulkPut(body.products)
-    } else {
-      if (body.products.length > 0) await db.products.bulkPut(body.products)
-      if (body.deletedIds.length > 0) await db.products.bulkDelete(body.deletedIds)
-    }
-
+  await posStore(siteId).applyCatalog({
+    full,
+    products: body.products,
+    deletedIds: body.deletedIds,
     /* Everything below is read whole on every load and never queried by field, so
        it rides in `kv` as single documents — an indexed table would buy nothing and
        cost a migration each time one of these shapes changed. */
-    await db.kv.bulkPut([
+    kv: [
       { key: KV.departments, value: body.departments },
       { key: KV.tenders, value: body.tenders },
       { key: KV.specials, value: body.specials },
@@ -301,10 +297,10 @@ export async function refreshCatalog(
          The picker then captions its rows generically, which is the right
          behaviour for a shop that has no groups anyway. */
       { key: KV.variantAxes, value: body.variantAxes ?? {} },
-    ])
+    ],
   })
 
-  const productCount = await db.products.count()
+  const productCount = await posStore(siteId).productCount()
   const now = new Date().toISOString()
 
   await kvPut(siteId, KV.catalogMeta, {
@@ -402,7 +398,7 @@ export function catalogAgeHours(meta: CatalogMeta | null): number | null {
 export async function findByCode(siteId: number, code: string): Promise<TillProduct | null> {
   const term = code.trim()
   if (!term) return null
-  const db = posDb(siteId)
+  const store = posStore(siteId)
 
   /*
    * A GS1 element string, carrying the LOT (234). Mirrors resolveScan's branch
@@ -418,9 +414,9 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
     const settingsForGs1 = await storedSettings(siteId)
     for (const candidate of gtinCandidates(gs1.gtin)) {
       const hit =
-        (await db.products.where('barcode').equals(candidate).first()) ??
-        (await db.products.where('code').equals(candidate).first()) ??
-        (await db.products.where('barcodes').equals(candidate).first().catch(() => undefined)) ??
+        (await store.productByBarcode(candidate)) ??
+        (await store.productByCode(candidate)) ??
+        (await store.productByAlias(candidate)) ??
         null
       if (!hit) continue
       const capture = lotCaptureFor(settingsForGs1 as Record<string, string | null>)
@@ -435,10 +431,10 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
     }
   }
   const exact =
-    (await db.products.where('barcode').equals(term).first()) ??
-    (await db.products.where('code').equals(term).first()) ??
+    (await store.productByBarcode(term)) ??
+    (await store.productByCode(term)) ??
     // The alias barcodes (143) — the multiEntry index version 4 added.
-    (await db.products.where('barcodes').equals(term).first().catch(() => undefined)) ??
+    (await store.productByAlias(term)) ??
     null
   if (exact) return exact
 
@@ -451,9 +447,9 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
   if (!variable) return null
 
   const byPlu =
-    (await db.products.where('code').equals(variable.plu).first()) ??
-    (await db.products.where('barcode').equals(variable.plu).first()) ??
-    (await db.products.where('barcodes').equals(variable.plu).first().catch(() => undefined)) ??
+    (await store.productByCode(variable.plu)) ??
+    (await store.productByBarcode(variable.plu)) ??
+    (await store.productByAlias(variable.plu)) ??
     null
   if (!byPlu) return null
 
@@ -480,20 +476,13 @@ export async function searchOffline(
 ): Promise<TillProduct[]> {
   const needle = term.trim().toLowerCase()
   if (needle.length < 2) return []
-  const db = posDb(siteId)
+  const store = posStore(siteId)
 
-  const byCode = await db.products
-    .where('code')
-    .startsWithIgnoreCase(needle)
-    .limit(limit)
-    .toArray()
+  const byCode = await store.productsByCodePrefix(needle, limit)
   if (byCode.length >= limit) return byCode
 
   const seen = new Set(byCode.map((p) => p.id))
-  const byName = await db.products
-    .filter((p) => !seen.has(p.id) && p.description.toLowerCase().includes(needle))
-    .limit(limit - byCode.length)
-    .toArray()
+  const byName = await store.productsByDescription(needle, limit - byCode.length, seen)
 
   return [...byCode, ...byName]
 }
@@ -570,7 +559,7 @@ export async function browseOffline(
   limit = 200,
 ): Promise<TillProduct[]> {
   const scope = await departmentSubtree(siteId, departmentId)
-  const rows = await posDb(siteId).products.where('departmentId').anyOf(scope).toArray()
+  const rows = await posStore(siteId).productsByDepartments(scope)
   /* Members of a variant group are held but not drawn — the group's own tile
      stands for them, and the picker behind it is where they appear. Filtered
      BEFORE the limit so a department of shirts is not cut to 200 rows that are
@@ -601,10 +590,8 @@ export async function variantChildren(
   siteId: number,
   parentId: number,
 ): Promise<TillProduct[]> {
-  const rows = await posDb(siteId)
-    .products.where('parentId')
-    .equals(parentId)
-    .toArray()
+  const rows = await posStore(siteId)
+    .productsByParent(parentId)
     .catch(() => [] as TillProduct[])
   return rows.sort(variantOrder)
 }
@@ -749,15 +736,15 @@ export async function decrementStock(
   siteId: number,
   lines: readonly { productId: number | null; qty: number }[],
 ): Promise<void> {
-  const db = posDb(siteId)
-  await db.transaction('rw', db.products, async () => {
-    for (const line of lines) {
-      if (line.productId == null) continue
-      const product = await db.products.get(line.productId)
-      if (!product) continue
-      await db.products.put({ ...product, stockOnHand: product.stockOnHand - line.qty })
-    }
-  })
+  /* Deltas, not totals: the store reads and writes each row inside one
+     transaction, so a sale landing mid-flight cannot be lost between our
+     read and our write. Lines with no product are dropped here rather than
+     in the store, which has no idea what a sale line is. */
+  await posStore(siteId).adjustStock(
+    lines
+      .filter((line) => line.productId != null)
+      .map((line) => ({ productId: line.productId as number, qty: line.qty })),
+  )
 }
 
 /**

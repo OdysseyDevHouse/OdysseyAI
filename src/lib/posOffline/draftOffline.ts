@@ -1,6 +1,7 @@
 'use client'
 
-import { posDb, type LocalDraft } from './db'
+import type { LocalDraft } from './db'
+import { posStore } from './store'
 
 /**
  * The basket on screen, kept where a power cut cannot reach it.
@@ -101,7 +102,7 @@ export type DraftInput = {
 export async function saveDraft(siteId: number, input: DraftInput): Promise<void> {
   try {
     if (input.lines.length === 0) {
-      await posDb(siteId).drafts.delete(DRAFT_KEY)
+      await posStore(siteId).draftDelete(DRAFT_KEY)
       return
     }
     const row: LocalDraft = {
@@ -119,7 +120,7 @@ export async function saveDraft(siteId: number, input: DraftInput): Promise<void
       itemCount: input.lines.length,
       totalIncl: input.totalIncl,
     }
-    await posDb(siteId).drafts.put(row)
+    await posStore(siteId).draftPut(row)
   } catch {
     // Storage full, blocked, or unavailable. The sale continues without cover.
   }
@@ -135,7 +136,7 @@ export async function saveDraft(siteId: number, input: DraftInput): Promise<void
  */
 export async function readDraft(siteId: number): Promise<LocalDraft | null> {
   try {
-    return (await posDb(siteId).drafts.get(DRAFT_KEY)) ?? null
+    return (await posStore(siteId).draftGet(DRAFT_KEY)) ?? null
   } catch {
     return null
   }
@@ -150,7 +151,7 @@ export async function readDraft(siteId: number): Promise<LocalDraft | null> {
  */
 export async function clearDraft(siteId: number): Promise<void> {
   try {
-    await posDb(siteId).drafts.delete(DRAFT_KEY)
+    await posStore(siteId).draftDelete(DRAFT_KEY)
   } catch {
     // Nothing to do: the next write replaces it, and a stale draft is offered
     // with its own timestamp so a cashier can see it is not theirs.

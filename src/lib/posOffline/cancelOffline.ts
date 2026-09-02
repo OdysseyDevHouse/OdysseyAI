@@ -1,6 +1,6 @@
 'use client'
 
-import { posDb } from './db'
+import { posStore } from './store'
 import { releaseLocalNumber } from './saleNumber'
 import { numberValueOf } from '../numberFormat'
 import type { CancelledSale, OutboxSale } from './types'
@@ -58,8 +58,8 @@ export async function cancelOfflineSale(
   reason: string,
   operator: { userId: number; name: string },
 ): Promise<CancelResult | null> {
-  const db = posDb(siteId)
-  const sale = await db.outbox.get(saleUid)
+  const store = posStore(siteId)
+  const sale = await store.outboxGet(saleUid)
 
   // Already gone, already synced, or already cancelled: all three mean "not
   // cancellable", and a synced sale needs voidDocument rather than this.
@@ -90,7 +90,7 @@ export async function cancelOfflineSale(
     cancelledByName: operator.name,
     lastError: null,
   }
-  await db.outbox.put(next)
+  await store.outboxPut(next)
 
   return { rewound, documentNumber: sale.documentNumber }
 }
@@ -106,12 +106,7 @@ export async function pendingCancellations(
   siteId: number,
   limit = 25,
 ): Promise<CancelledSale[]> {
-  const rows = await posDb(siteId)
-    .outbox.where('status')
-    .equals('cancelled')
-    .filter((row) => row.syncedAt === null)
-    .limit(limit)
-    .toArray()
+  const rows = await posStore(siteId).outboxCancelledUnsynced(limit)
 
   return rows.map((row) => ({
     saleUid: row.saleUid,
@@ -139,14 +134,14 @@ export async function pendingCancellations(
 
 /** Marks a cancellation as delivered. Keeps the row — the server now has it too. */
 export async function markCancellationSynced(siteId: number, saleUid: string): Promise<void> {
-  const db = posDb(siteId)
-  const row = await db.outbox.get(saleUid)
+  const store = posStore(siteId)
+  const row = await store.outboxGet(saleUid)
   if (!row) return
-  await db.outbox.put({ ...row, syncedAt: new Date().toISOString() })
+  await store.outboxPut({ ...row, syncedAt: new Date().toISOString() })
 }
 
 /** Everything in the queue, for the outbox screen. Newest first. */
 export async function outboxEntries(siteId: number): Promise<OutboxSale[]> {
-  const rows = await posDb(siteId).outbox.orderBy('takenAt').reverse().toArray()
+  const rows = await posStore(siteId).outboxRecent()
   return rows
 }
