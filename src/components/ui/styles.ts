@@ -303,10 +303,27 @@ export const TABLE_HEAD_STICKY =
 export const TABLE_HEAD_STICKY_INSET = TABLE_HEAD_STICKY
 
 /* Sentence case, regular weight: a heading labels its column, it does not
-   compete with the values under it. align-top so a heading that wraps to two
-   lines sits above its column rather than floating in the middle of it. */
+   compete with the values under it. align-top so a captioned heading sits above
+   its column rather than floating in the middle of it.
+
+   ── A HEADING NEVER WRAPS ────────────────────────────────────────────────
+
+   `whitespace-nowrap` because a wrapped heading is the table getting the
+   trade backwards. Auto table layout hands width to whichever column asks for
+   most, so a narrow one is squeezed until its heading breaks — "Max disc. %"
+   stacked three lines high while a Description column beside it sat on
+   slack it was not using. That costs a header three rows of height on every
+   screen to save a few pixels on one column.
+
+   Nowrap makes the heading a MINIMUM the column cannot be squeezed below.
+   Auto layout still distributes what is left over exactly as before, so a
+   wide text column keeps its room and only the cramped columns widen — to
+   precisely the width of their own label, and no further.
+
+   Wrapping a long VALUE is untouched: this is on the <th>, and `TABLE_TD`
+   sets no such rule. */
 export const TABLE_TH =
-  'px-4 pt-3 pb-2.5 text-left align-top text-[13px] font-normal leading-tight text-muted'
+  'px-4 pt-3 pb-2.5 text-left align-top text-[13px] font-normal leading-tight whitespace-nowrap text-muted'
 
 /**
  * A second line under a column heading, saying what the column MEANS.
@@ -323,8 +340,16 @@ export const TABLE_TH =
  *
  * Use it sparingly. Captions on every column is a table explaining itself
  * instead of a table, and the ones that need saying stop standing out.
+ *
+ * `whitespace-normal` puts back the wrapping `TABLE_TH` switches off. The
+ * no-wrap rule there is about the LABEL — a short name that should set the
+ * column's minimum width. A caption is a phrase, and held on one line it would
+ * make its column as wide as a sentence, which is the very squeeze the nowrap
+ * was added to stop. The caption is `block`, so it takes its own line either
+ * way and wrapping it costs the heading above nothing.
  */
-export const TABLE_TH_CAPTION = 'mt-0.5 block text-[11px] font-normal leading-tight text-faint'
+export const TABLE_TH_CAPTION =
+  'mt-0.5 block whitespace-normal text-[11px] font-normal leading-tight text-faint'
 
 /* 36px rows. Tight on purpose: the chrome around a table (toolbar, stat strip,
    page gutter) is what gets the breathing room, because it is touched once per

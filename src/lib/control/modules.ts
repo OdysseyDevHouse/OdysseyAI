@@ -361,7 +361,14 @@ async function recordLease(siteId: number, e: ModuleEntitlements): Promise<void>
   if (!keepsLease()) return
   try {
     const { writeLease } = await import('@/lib/licence/lease')
-    const { deviceSerialForLease, licenceStatusForLease } = await import('@/lib/licence/leaseSubject')
+    const { deviceSerialForLease, licenceStatusForLease, deviceFactsForLease } = await import(
+      '@/lib/licence/leaseSubject'
+    )
+    /* The facts as well as the verdict. The verdict says which refusal this was
+       and cannot age; the facts are what an offline machine re-judges against
+       today's date, so a device stops on the day it was sold to stop rather
+       than at the next seven-day boundary. See deviceLicenceState. */
+    const facts = await deviceFactsForLease(siteId)
     await writeLease({
       siteId,
       deviceSerial: await deviceSerialForLease(siteId),
@@ -369,6 +376,7 @@ async function recordLease(siteId: number, e: ModuleEntitlements): Promise<void>
       held: e.held,
       endingOn: e.endingOn,
       accountStatus: e.accountStatus,
+      ...facts,
     })
   } catch {
     /* Never let bookkeeping break a request that already succeeded. A missed

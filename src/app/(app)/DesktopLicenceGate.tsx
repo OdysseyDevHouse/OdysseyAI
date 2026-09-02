@@ -59,10 +59,21 @@ export default function DesktopLicenceGate({ children }: { children: React.React
         if (!cancelled) setLicence(state)
       })
       .catch(() => {
-        /* Cannot reach the control database. Trade on — the same trade every
-           other licence check in this app makes, and for the same reason: a shop
-           stopped by a licence server hiccup is a far worse failure than a few
-           minutes of unverified use. */
+        /* ── STILL FAILS OPEN, AND IT IS NO LONGER THE THING THAT DECIDES ────
+         *
+         * Reaching here now means the action itself could not run at all — the
+         * site database is down, or the request never landed. It no longer
+         * means "we could not check the licence": checkDeviceAction answers
+         * from this machine's own lease when there is no line, so a device that
+         * is inactive, unpaid or past its date comes back as a REFUSAL rather
+         * than as a throw.
+         *
+         * So this stays open for the same reason as before — a shop stopped by
+         * a hiccup is worse than a few minutes of unverified use — but the hole
+         * it used to leave is closed elsewhere. An expired machine that unplugs
+         * its network is now refused by the lease, and lockState() on the
+         * SERVER blocks it above the chrome regardless of what this component
+         * concludes. This is the softer of two gates, not the only one. */
         if (!cancelled) {
           setLicence({ status: 'licensed', terminalId: null, name: '', trialEndsOn: null })
         }

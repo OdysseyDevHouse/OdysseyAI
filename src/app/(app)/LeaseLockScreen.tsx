@@ -32,6 +32,66 @@ export type LeaseLockProps = {
   licenceStatus: string
   challenge: string | null
   deviceSerial: string | null
+  /**
+   * WHY this machine stopped, which decides which of two conversations the
+   * reader is about to have.
+   *
+   *   'device-licence'  this till's own licence is retired, unpaid or past its
+   *                     date — known for certain, from the machine's own copy,
+   *                     judged against today. The remedy is to renew it.
+   *   'lease-expired'   the licence may be perfectly fine; the machine has not
+   *                     been able to CONFIRM it for a week. The remedy is
+   *                     usually a network cable.
+   *
+   * Optional so a caller that predates the distinction still renders the
+   * staleness message it always did.
+   */
+  reason?: 'device-licence' | 'lease-expired'
+  /** Which refusal, when `reason` is 'device-licence'. */
+  deviceReason?: 'inactive' | 'unpaid' | 'expired'
+}
+
+/**
+ * What stopped this machine, in a sentence a cashier can act on.
+ *
+ * ── TWO FAMILIES OF ANSWER, AND MIXING THEM SENDS PEOPLE TO THE WRONG PLACE ─
+ *
+ * A device whose licence has lapsed is a CERTAINTY — the machine holds the
+ * status, the paid flag and the date, and judged them against today. Telling
+ * that reader "this machine has not been able to reach us for 3 days" would
+ * send them to check a router that is working perfectly, when the answer is
+ * that the till needs renewing.
+ *
+ * A machine that is merely out of contact is the opposite: nothing is known to
+ * be wrong, and the honest sentence says so.
+ */
+function explainDevice(
+  deviceReason: 'inactive' | 'unpaid' | 'expired' | undefined,
+): { headline: string; detail: string } {
+  switch (deviceReason) {
+    case 'inactive':
+      return {
+        headline: 'This machine has been retired',
+        detail:
+          'It has been marked as retired or returned in the control panel, so it can no longer ' +
+          'be used to trade. Nothing on it has been lost.',
+      }
+    case 'expired':
+      return {
+        headline: 'This till’s licence has run out',
+        detail:
+          'The evaluation period for this machine has ended. Renewing it will bring this till ' +
+          'straight back — the shop’s data is untouched.',
+      }
+    case 'unpaid':
+    default:
+      return {
+        headline: 'This till is not licensed',
+        detail:
+          'This machine is not on a paid licence and has no evaluation period left. Nothing on ' +
+          'it has been lost.',
+      }
+  }
 }
 
 /** What the last successful check said, in a sentence a cashier can act on. */
@@ -71,12 +131,20 @@ export default function LeaseLockScreen({
   licenceStatus,
   challenge,
   deviceSerial,
+  reason,
+  deviceReason,
 }: LeaseLockProps) {
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { headline, detail } = explain(licenceStatus, daysSilent)
+  /* A known device refusal is the more specific answer and wins. Falling back
+     to the staleness wording keeps every existing caller — and any lock reached
+     before the device facts were recorded — rendering what it always did. */
+  const { headline, detail } =
+    reason === 'device-licence'
+      ? explainDevice(deviceReason)
+      : explain(licenceStatus, daysSilent)
 
   async function submit() {
     if (!code.trim() || busy) return

@@ -3,6 +3,7 @@ import { cache } from 'react'
 import { readLease, leaseState, daysRemaining, daysSinceCheck } from './lease'
 import { challengeFor } from './unlockCode'
 import { leaseUnlockSecret } from './lease'
+import { deviceLicenceState, type Lease } from './leaseRules'
 
 /**
  * Whether this machine may trade, decided on the SERVER.
@@ -35,15 +36,29 @@ export type LockState =
   /** Trade normally. */
   | { locked: false; warnDaysLeft: number | null }
   /**
-   * Out of lease. The machine shows the lock screen and nothing else.
+   * Stopped. The machine shows the lock screen and nothing else.
    *
    * Carries everything the screen needs to explain itself and to start an
    * unlock, because that screen must work with no network at all — it cannot
    * go back and ask for any of this.
+   *
+   * ── TWO REASONS, KEPT APART ─────────────────────────────────────────────
+   *
+   *   'device-licence'  this till's own licence is inactive, unpaid or past its
+   *                     date. Judged from the local copy against today, so it
+   *                     fires on the correct day with no line at all.
+   *   'lease-expired'   the licence may well be fine; we have not been able to
+   *                     CONFIRM it for seven days.
+   *
+   * They send the reader to two different conversations — one is "renew this
+   * till", the other is "check your internet" — and a screen that cannot tell
+   * them apart sends every customer to the wrong one.
    */
   | {
       locked: true
-      reason: 'lease-expired'
+      reason: 'device-licence' | 'lease-expired'
+      /** Which refusal, when `reason` is 'device-licence'. */
+      deviceReason?: 'inactive' | 'unpaid' | 'expired'
       daysSilent: number
       licenceStatus: string
       challenge: string | null
@@ -80,27 +95,38 @@ export const lockState = cache(async (siteId: number): Promise<LockState> => {
        to be dishonest about. */
     if (state.status === 'none') return OPEN
 
+    /* ── THE DEVICE'S OWN LICENCE, JUDGED BEFORE THE STALENESS RULE ──────────
+     *
+     * Two independent reasons to stop, and this is the one that fires on a date
+     * the machine already knows. A device that expires tomorrow must stop
+     * tomorrow, with or without a line — the local copy carries status, is_paid
+     * and expiry_date precisely so that decision needs nobody.
+     *
+     * FIRST, because it is the more specific answer. A machine that is both
+     * expired and out of contact should say "this till's licence ran out" — the
+     * thing the shop can act on — rather than "we have not been able to verify
+     * for a week", which sends them to look at their router.
+     *
+     * `ok: null` means the lease has no device facts recorded: written before
+     * this machine claimed a licence, or before migration 244. Not a refusal,
+     * and deliberately falls through to the staleness rule below, which is
+     * exactly how it behaved before this existed. */
+    const device = deviceLicenceState(lease)
+    if (device.ok === false) {
+      return {
+        locked: true,
+        reason: 'device-licence',
+        deviceReason: device.reason,
+        daysSilent: daysSinceCheck(state.lease),
+        licenceStatus: state.lease.licenceStatus,
+        challenge: await challengeOrNull(siteId, state.lease),
+        deviceSerial: state.lease.deviceSerial,
+      }
+    }
+
     if (state.status === 'current') {
       const left = daysRemaining(state.lease)
       return { locked: false, warnDaysLeft: left <= 2 ? left : null }
-    }
-
-    /* Expired. Build the challenge here, while a database is still reachable —
-       the lock screen itself may be the last thing this machine can render. */
-    let challenge: string | null = null
-    try {
-      const secret = await leaseUnlockSecret(siteId)
-      if (secret) {
-        challenge = challengeFor(secret, {
-          siteId,
-          deviceSerial: state.lease.deviceSerial,
-          unlockCounter: state.lease.unlockCounter,
-        })
-      }
-    } catch {
-      /* No secret, or it will not decrypt. The screen then shows the device
-         number alone and support falls back to re-registering the machine —
-         degraded, but not a dead end. */
     }
 
     return {
@@ -108,7 +134,7 @@ export const lockState = cache(async (siteId: number): Promise<LockState> => {
       reason: 'lease-expired',
       daysSilent: daysSinceCheck(state.lease),
       licenceStatus: state.lease.licenceStatus,
-      challenge,
+      challenge: await challengeOrNull(siteId, state.lease),
       deviceSerial: state.lease.deviceSerial,
     }
   } catch {
@@ -119,3 +145,32 @@ export const lockState = cache(async (siteId: number): Promise<LockState> => {
     return OPEN
   }
 })
+
+/**
+ * The unlock challenge for a locked machine, or null.
+ *
+ * Built while a database is still reachable, because the lock screen itself may
+ * be the last thing this machine can render — and it must carry everything the
+ * telephone call needs without going back for more.
+ *
+ * Shared by both lock reasons deliberately. A device whose licence lapsed and a
+ * machine that has been silent for a week are different conversations, but the
+ * remedy support offers is the same one: a code read down the phone. A lock
+ * that could not offer it would be a dead end.
+ */
+async function challengeOrNull(siteId: number, lease: Lease): Promise<string | null> {
+  try {
+    const secret = await leaseUnlockSecret(siteId)
+    if (!secret) return null
+    return challengeFor(secret, {
+      siteId,
+      deviceSerial: lease.deviceSerial,
+      unlockCounter: lease.unlockCounter,
+    })
+  } catch {
+    /* No secret, or it will not decrypt. The screen then shows the device
+       number alone and support falls back to re-registering the machine —
+       degraded, but not a dead end. */
+    return null
+  }
+}

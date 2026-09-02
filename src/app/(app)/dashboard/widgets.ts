@@ -27,6 +27,9 @@ export type WidgetId =
   | 'saleCount'
   | 'avgSaleValue'
   | 'avgItemsPerSale'
+  /* The rates band under the KPI tiles — one widget, not four. See
+     SecondaryStrip for why these four do not get a tile each. */
+  | 'rates'
   | 'perHour'
   | 'perDay'
   | 'countPerDay'
@@ -189,12 +192,23 @@ const KPI_WIDGETS: WidgetDef[] = KPI_IDS.map((id, i) => ({
 const KPI_ROWS_H = Math.ceil(KPI_IDS.length / KPI_PER_ROW) * KPI_H
 
 /**
+ * The rates band under the tiles — full width, two rows.
+ *
+ * Two rows (100px) is what the band needs at its four-column shape: a cell is
+ * label-and-figure on one line with the divisor under it, about 62px of
+ * content, and the widget has no header to pay for. It is a floor as well as a
+ * default — dragged shorter the band would clip its own hint line, which is
+ * the half that says what each rate was divided by.
+ */
+const RATES_H = 2
+
+/**
  * Where the rest of the dashboard starts.
  *
- * The tiles fill their row exactly, so nothing sits beside them and this is
- * simply the bottom of the block.
+ * The tiles fill their row exactly and the rates band fills the row under
+ * them, so this is simply the bottom of the whole headline block.
  */
-const KPI_BLOCK_H = KPI_ROWS_H
+const KPI_BLOCK_H = KPI_ROWS_H + RATES_H
 
 /* Named fractions of the grid, so a layout reads as "half" rather than as a
    number whose meaning depends on GRID_COLS. All exact at sixty columns. */
@@ -213,6 +227,20 @@ const FIFTH = GRID_COLS / 5
  */
 export const WIDGETS: WidgetDef[] = [
   ...KPI_WIDGETS,
+  {
+    /*
+     * The rates band, directly under the tiles it divides.
+     *
+     * Full width and headerless — see SecondaryStrip. Its position is the
+     * point: "R33 548 a day" is a comment on the turnover tile above it, and
+     * the two have to be readable in one glance or the band is just four more
+     * numbers. It is still a widget, so a shop that only wants period totals
+     * can switch it off.
+     */
+    id: 'rates',
+    title: 'Rates',
+    default: { x: 0, y: KPI_ROWS_H, w: GRID_COLS, h: RATES_H, minW: HALF, minH: RATES_H },
+  },
   /*
    * ── THE ROWS BELOW THE KPIs ─────────────────────────────────────────────
    *
@@ -236,16 +264,22 @@ export const WIDGETS: WidgetDef[] = [
    * than as one tall box competing with a chart.
    */
   {
+    /* SIX rows, where every other chart takes five.
+       These two now carry furniture the others do not: the bar chart has a
+       legend above it (two fills and the average rule) and both have a
+       takeaway line below. At five rows that came straight out of the plot,
+       leaving the bars about 120px to draw in. The extra row is the furniture's
+       height, so the chart itself is no smaller than it was. */
     id: 'perDay',
     title: 'Turnover per day',
-    default: { x: 0, y: KPI_BLOCK_H, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H, w: HALF, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     /* Beside the daily trend rather than full width below it: the two are the
        same question at two scales — which days, and which hours of a day. */
     id: 'perHour',
     title: 'Sales per hour',
-    default: { x: HALF, y: KPI_BLOCK_H, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: HALF, y: KPI_BLOCK_H, w: HALF, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     /* The sale-count series was already in the payload and plotted nowhere.
@@ -253,7 +287,7 @@ export const WIDGETS: WidgetDef[] = [
        implies the two lines share a scale, and these do not. */
     id: 'countPerDay',
     title: 'Sales per day',
-    default: { x: 0, y: KPI_BLOCK_H + 5, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 6, w: HALF, h: 5, minW: QUARTER, minH: 5 },
   },
   {
     /* DOUBLE height, and the only widget that is. The product ranking is the
@@ -262,12 +296,12 @@ export const WIDGETS: WidgetDef[] = [
        the right of both the count chart and the department ranking. */
     id: 'topProducts',
     title: 'Top products',
-    default: { x: HALF, y: KPI_BLOCK_H + 5, w: HALF, h: 10, minW: QUARTER, minH: 5 },
+    default: { x: HALF, y: KPI_BLOCK_H + 6, w: HALF, h: 10, minW: QUARTER, minH: 5 },
   },
   {
     id: 'topDepartments',
     title: 'Top departments',
-    default: { x: 0, y: KPI_BLOCK_H + 10, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 11, w: HALF, h: 5, minW: QUARTER, minH: 5 },
   },
   {
     /*
@@ -279,20 +313,20 @@ export const WIDGETS: WidgetDef[] = [
      */
     id: 'attention',
     title: 'Needs attention',
-    default: { x: 0, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
+    default: { x: 0, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
     scope: 'asAt',
   },
   {
     id: 'reorder',
     title: 'Reorder',
-    default: { x: QUARTER, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
+    default: { x: QUARTER, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'purchasing.view',
   },
   {
     id: 'pipeline',
     title: 'Pipeline',
-    default: { x: HALF, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 3 },
+    default: { x: HALF, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 3 },
     scope: 'asAt',
     capability: 'sales.view',
   },
@@ -303,19 +337,19 @@ export const WIDGETS: WidgetDef[] = [
        total showed fine. minH keeps that floor. */
     id: 'tenderTypes',
     title: 'Tender mix',
-    default: { x: THREE_QUARTERS, y: KPI_BLOCK_H + 15, w: QUARTER, h: 7, minW: QUARTER, minH: 6 },
+    default: { x: THREE_QUARTERS, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 6 },
   },
   {
     id: 'topCashiers',
     title: 'Top cashiers',
-    default: { x: 0, y: KPI_BLOCK_H + 22, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 23, w: HALF, h: 5, minW: QUARTER, minH: 5 },
   },
   {
     /* Beside the cashier ranking, because both answer "who is doing what" —
        one by turnover, one by what they had to undo. */
     id: 'voidsAndReturns',
     title: 'Voids and returns',
-    default: { x: HALF, y: KPI_BLOCK_H + 22, w: HALF, h: 5, minW: QUARTER, minH: 4 },
+    default: { x: HALF, y: KPI_BLOCK_H + 23, w: HALF, h: 5, minW: QUARTER, minH: 4 },
     capability: 'reports.view',
   },
   {
@@ -329,14 +363,14 @@ export const WIDGETS: WidgetDef[] = [
      */
     id: 'creditorsAgeing',
     title: 'Creditors ageing',
-    default: { x: 0, y: KPI_BLOCK_H + 27, w: HALF, h: 4, minW: HALF, minH: 3 },
+    default: { x: 0, y: KPI_BLOCK_H + 28, w: HALF, h: 4, minW: HALF, minH: 3 },
     scope: 'asAt',
     capability: 'suppliers.view',
   },
   {
     id: 'debtorsAgeing',
     title: 'Debtors ageing',
-    default: { x: HALF, y: KPI_BLOCK_H + 27, w: HALF, h: 4, minW: HALF, minH: 3 },
+    default: { x: HALF, y: KPI_BLOCK_H + 28, w: HALF, h: 4, minW: HALF, minH: 3 },
     scope: 'asAt',
     capability: 'customers.view',
   },
@@ -345,7 +379,7 @@ export const WIDGETS: WidgetDef[] = [
        owed, and what there is to pay it with. */
     id: 'cashPosition',
     title: 'Cash position',
-    default: { x: 0, y: KPI_BLOCK_H + 31, w: HALF, h: 4, minW: QUARTER, minH: 3 },
+    default: { x: 0, y: KPI_BLOCK_H + 32, w: HALF, h: 4, minW: QUARTER, minH: 3 },
     scope: 'asAt',
     capability: 'cashbook.view',
   },
@@ -369,7 +403,7 @@ export const WIDGETS: WidgetDef[] = [
   {
     id: 'jobsOpen',
     title: 'Open jobs',
-    default: { x: 0, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: 0, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -387,7 +421,7 @@ export const WIDGETS: WidgetDef[] = [
      */
     id: 'jobsUnassigned',
     title: 'Nobody assigned',
-    default: { x: FIFTH, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -395,7 +429,7 @@ export const WIDGETS: WidgetDef[] = [
   {
     id: 'jobsInProgress',
     title: 'Work under way',
-    default: { x: FIFTH * 2, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH * 2, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -403,7 +437,7 @@ export const WIDGETS: WidgetDef[] = [
   {
     id: 'jobsAwaitingParts',
     title: 'Waiting on parts',
-    default: { x: FIFTH * 3, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH * 3, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -419,7 +453,7 @@ export const WIDGETS: WidgetDef[] = [
      */
     id: 'jobsNotInvoiced',
     title: 'Done, not billed',
-    default: { x: FIFTH * 4, y: KPI_BLOCK_H + 35, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH * 4, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.invoice',
     module: 'job_cards',
@@ -427,7 +461,7 @@ export const WIDGETS: WidgetDef[] = [
   {
     id: 'jobsByStatus',
     title: 'Jobs by stage',
-    default: { x: 0, y: KPI_BLOCK_H + 35 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
+    default: { x: 0, y: KPI_BLOCK_H + 36 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -435,7 +469,7 @@ export const WIDGETS: WidgetDef[] = [
   {
     id: 'jobsByTechnician',
     title: 'Jobs by technician',
-    default: { x: HALF, y: KPI_BLOCK_H + 35 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
+    default: { x: HALF, y: KPI_BLOCK_H + 36 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -478,8 +512,14 @@ export const ALL_WIDGET_IDS: WidgetId[] = WIDGETS.map((w) => w.id)
    three-and-three to all six on one row, and the as-at panels became a band of
    quarters below the trading figures instead of a tall box above them. A v6
    layout would keep every one of those old positions, which is the entire
-   thing this version changes. */
-export const STORAGE_KEY = 'odyssey-sales-dashboard-v7'
+   thing this version changes.
+   v8: the rates band was added under the KPI tiles, which pushed every widget
+   below it down two rows. Adding a widget alone would NOT need a bump —
+   loadPrefs drops a new id into its default slot — but a new FULL-WIDTH band
+   landing in a saved layout that still has the turnover chart at that y would
+   have the grid shove the charts aside to make room, and an arrangement
+   rearranged by collision is worse than one that was never tuned. */
+export const STORAGE_KEY = 'odyssey-sales-dashboard-v8'
 
 export type DashboardPrefs = {
   layout: LayoutItem[]

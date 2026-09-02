@@ -238,6 +238,20 @@ export function isControlUnreachable(err: unknown): boolean {
   if (isStoreDetailsUnavailable(err)) return true
   let cur: unknown = err
   for (let depth = 0; cur && depth < 5; depth++) {
+    /* ── A DESKTOP BUILD REFUSING ITS OWN SOCKET COUNTS AS UNREACHABLE ──────
+     *
+     * ControlDbUnavailableOnDesktop is thrown by pool() rather than raised by a
+     * network stack, so it carries no errno and the code walk below never sees
+     * it. It belongs here all the same: to the person reading the screen it is
+     * the SAME situation as a dead line — something this machine needed from us
+     * is out of reach, the shop's own data is fine, and the remedy is a
+     * connection.
+     *
+     * The distinction that does matter is kept elsewhere. A raw ECONNREFUSED
+     * means the line is down; this means the answer must come from the POS API
+     * and no route served it. Both send the owner to the same screen, and both
+     * leave a named error in the log for whoever has to fix the route. */
+    if ((cur as { name?: unknown }).name === 'ControlDbUnavailableOnDesktop') return true
     const code = (cur as { code?: unknown }).code
     if (typeof code === 'string' && OFFLINE_CODES.has(code)) return true
     cur = (cur as { cause?: unknown }).cause

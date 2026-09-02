@@ -13,10 +13,16 @@ import { useEffect, useRef, useState } from 'react'
  * It carries no axis and no scale on purpose: a sparkline answers "which way,
  * and how steadily", never "how much". The number it sits under answers that.
  *
- * The line is drawn lit — a marker at each reading and a halo of the line's own
- * colour underneath. The halo is what carries it on the dark surface, where a
- * 1.5px stroke otherwise disappears into the card; `--chart-glow` drops it to a
+ * The line is drawn lit — a halo of the line's own colour underneath, and no
+ * markers. The halo is what carries it on the dark surface, where a 1.5px
+ * stroke otherwise disappears into the card; `--chart-glow` drops it to a
  * whisper in light mode, where the same halo would read as a smudge.
+ *
+ * It draws a bare line because that is all a sparkline is for. Markers at each
+ * reading were tried and removed: at a month of daily readings in a tile this
+ * narrow they crowd into a dotted band, and even spaced out they invite the
+ * reader to look up individual values off a chart that deliberately has no
+ * scale to read them against.
  */
 
 /** Room for a marker and its halo, so neither is clipped by the viewBox. */
@@ -104,12 +110,6 @@ export function Sparkline({
   const coords = points.map((v, i) => [INSET + i * stepX, y(v)] as const)
   const line = smoothPath(coords)
 
-  /* Markers only when they can be told apart. At a month's worth of readings in
-     a tile this narrow they would run into one another and read as a thick
-     line, which is worse than no markers at all — so past that density the
-     line carries the trend on its own. */
-  const showDots = stepX >= 9
-
   return (
     /* maxHeight is what makes `height` a ceiling: in a tile that has run out of
        room the box shrinks with its parent instead of overflowing it. Against a
@@ -143,8 +143,6 @@ export function Sparkline({
             strokeLinejoin="round"
             strokeLinecap="round"
           />
-          {showDots &&
-            coords.map(([cx, cy], i) => <circle key={i} cx={cx} cy={cy} r={2} fill={color} />)}
         </svg>
       )}
     </div>

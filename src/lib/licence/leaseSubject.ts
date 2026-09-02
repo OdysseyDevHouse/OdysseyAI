@@ -77,3 +77,40 @@ export async function licenceStatusForLease(
   const licence = await licenceForSerial(siteId, serial)
   return licence.ok ? 'licensed' : licence.reason
 }
+
+/**
+ * The device's own licence facts, for the lease to hold.
+ *
+ * ── WHY THIS IS SEPARATE FROM licenceStatusForLease ─────────────────────────
+ *
+ * That one records what the control panel CONCLUDED; this records what it
+ * concluded FROM. Both go onto the same row and neither replaces the other: the
+ * verdict is what a locked screen reads to say which refusal this was, and the
+ * facts are what deviceLicenceState re-judges against today's date when there
+ * is no line to ask down.
+ *
+ * Null on a machine that has not identified itself, or whose serial resolves to
+ * no row. writeLease COALESCEs, so null LEAVES WHAT WAS ALREADY KNOWN rather
+ * than clearing it — a machine that could not resolve its device this minute
+ * must not thereby forget the expiry date it was told yesterday.
+ */
+export async function deviceFactsForLease(siteId: number): Promise<{
+  deviceStatus: string | null
+  deviceIsPaid: boolean | null
+  deviceExpiryDate: string | null
+}> {
+  const none = { deviceStatus: null, deviceIsPaid: null, deviceExpiryDate: null }
+
+  const serial = await deviceSerialForLease(siteId)
+  if (!serial) return none
+
+  const { deviceFactsForSerial } = await import('@/lib/control/devices')
+  const facts = await deviceFactsForSerial(siteId, serial)
+  if (!facts) return none
+
+  return {
+    deviceStatus: facts.status,
+    deviceIsPaid: facts.isPaid,
+    deviceExpiryDate: facts.expiryDate,
+  }
+}

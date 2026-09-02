@@ -76,6 +76,101 @@ export type Lease = {
   expiresAt: Date
   unlockCounter: number
   lastUnlockAt: Date | null
+
+  /* ── THE DEVICE'S OWN LICENCE, AS FACTS RATHER THAN A VERDICT ─────────────
+   *
+   * `licenceStatus` above is what the control panel CONCLUDED at the last
+   * check, and a conclusion cannot age: a device expiring tomorrow is recorded
+   * 'licensed' today, truthfully, and still reads 'licensed' next week.
+   *
+   * These three are the inputs that conclusion was drawn from, so the machine
+   * can draw it again against today's date with no line at all. See
+   * deviceLicenceState below, and migration 244.
+   *
+   * All three null on a lease written before any device claimed a spot — which
+   * is not a refusal and must not be read as one. */
+  deviceStatus: string | null
+  deviceIsPaid: boolean | null
+  /** `YYYY-MM-DD`. A date, not a timestamp: the rule is inclusive of the day. */
+  deviceExpiryDate: string | null
+}
+
+/**
+ * Why a machine may not trade, decided from its own local copy.
+ *
+ * Deliberately the same vocabulary as LicenceRefusal in control/devices.ts —
+ * these are the same refusals, reached without asking anybody.
+ */
+export type DeviceLicenceState =
+  /** Trade. `trialEndsOn` is set only for an unpaid device inside its period. */
+  | { ok: true; trialEndsOn: string | null }
+  /** Retired or returned in the control panel. */
+  | { ok: false; reason: 'inactive' }
+  /** Unpaid with no evaluation period at all. */
+  | { ok: false; reason: 'unpaid' }
+  /** Unpaid and the evaluation period has passed. */
+  | { ok: false; reason: 'expired' }
+  /**
+   * Nothing recorded to judge. NOT a refusal — a lease can be written before a
+   * device has claimed a licence, and the device gate is what deals with an
+   * unlicensed machine. Locking here would refuse a machine nobody refused.
+   */
+  | { ok: null }
+
+/**
+ * Is this machine's DEVICE licence still good, according to its local copy?
+ *
+ * ── THE LOCAL COPY IS THE AUTHORITY, NOT A FALLBACK ─────────────────────────
+ *
+ * This is the rule that runs every time, online or off. A successful check
+ * REFRESHES the copy; it does not replace this decision with a different one.
+ * That is what makes an unplugged machine behave the same as a connected one:
+ * a device expiring tomorrow stops working tomorrow, because the date it was
+ * sold against is written down here rather than inferred from a conversation.
+ *
+ * ── THE RULE, IN ORDER ──────────────────────────────────────────────────────
+ *
+ *   1. status must be 'active'   — 'inactive' and 'returned' block outright
+ *   2. paid devices are done     — expiry_date describes an evaluation period,
+ *                                  not a subscription, so it is irrelevant
+ *   3. unpaid: the date decides  — inclusive, so a licence dated today lasts
+ *                                  until today is over
+ *
+ * A byte-for-byte port of entitlement() in control/devices.ts, and it has to
+ * stay one: that function decides when the control panel is reachable and this
+ * one when it is not, and a shop must not get two different answers depending
+ * on its line. Both are pinned by the same table of cases in the tests.
+ *
+ * ── WHY `now` IS A PARAMETER ────────────────────────────────────────────────
+ *
+ * Same reason as everything else in this file: one decision uses one instant.
+ * Sampling the clock inside would let a caller comparing several leases land
+ * either side of midnight between them.
+ */
+export function deviceLicenceState(
+  lease: Lease | null,
+  now: Date = new Date(),
+): DeviceLicenceState {
+  if (!lease) return { ok: null }
+
+  /* Nothing recorded — a lease from before the device claimed a spot, or one
+     written by a build that predates migration 244. Not a refusal. */
+  if (lease.deviceStatus === null && lease.deviceIsPaid === null) return { ok: null }
+
+  if (lease.deviceStatus !== 'active') return { ok: false, reason: 'inactive' }
+
+  if (lease.deviceIsPaid === true) return { ok: true, trialEndsOn: null }
+
+  const expiry = lease.deviceExpiryDate
+  if (!expiry) return { ok: false, reason: 'unpaid' }
+
+  /* The APP SERVER's date, exactly as entitlement() takes it. Comparing against
+     a database clock while every other date here comes from the app produces a
+     licence that lapses an hour early — a support call nobody can reproduce. */
+  const today = now.toISOString().slice(0, 10)
+  if (expiry < today) return { ok: false, reason: 'expired' }
+
+  return { ok: true, trialEndsOn: expiry }
 }
 
 export type LeaseState =

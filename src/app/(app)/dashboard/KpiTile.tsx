@@ -205,20 +205,35 @@ export function KpiTile({
   const delta = deltaFor(def.metric(kpis), compareKpis ? def.metric(compareKpis) : null)
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-card border border-border bg-surface px-4 pt-4 shadow-card">
-      <div className="flex items-start justify-between gap-2">
-        <div className="text-xs font-medium text-muted">{def.label}</div>
-        <span
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill"
-          /* A tint of the tile's own ramp colour. Written inline because the
-             colour is data-driven (one of six), and Tailwind cannot emit a
-             class it never sees in the source. */
-          style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
-          aria-hidden
-        >
-          {def.icon}
-        </span>
-      </div>
+    /*
+     * FLAT, and deliberately so.
+     *
+     * These tiles used to be six shadowed cards, each with a coloured icon
+     * medallion — six objects competing for attention at the top of a screen
+     * whose whole job is to be glanced at. A headline strip reads best as ONE
+     * band cut into cells: the figures line up, the eye runs along them without
+     * stepping over a shadow at every gap, and nothing in the strip claims to
+     * be more important than the number beside it.
+     *
+     * So: no shadow and no medallion — a hairline border, a flat surface, and
+     * the figure doing the work. The tiles sit in the widget grid, which puts a
+     * fixed gutter between every cell, so they cannot literally join into one
+     * seamless band; what makes them read as a strip instead is that they now
+     * carry no weight of their own. Six flat outlines in a row scan as one
+     * divided band, where six drop-shadowed cards scanned as six objects.
+     *
+     * Drawn per tile rather than by a container, which is what keeps this
+     * compatible with the grid: a tile the user drags out of the row still
+     * stands up on its own, because nothing about its appearance depends on
+     * which neighbours it happens to have.
+     *
+     * The icon is gone rather than moved. It was decoration: six different
+     * glyphs in six different colours said only "these are six things", which
+     * the six labels already said, and the colour carried no meaning at all
+     * because a KPI tile has no state to be in.
+     */
+    <div className="flex h-full flex-col overflow-hidden rounded-card border border-border bg-surface px-4 pt-3.5">
+      <div className="text-xs font-medium text-muted">{def.label}</div>
 
       {/* NOT truncated.
           Truncating here is what produced "R2 658 …" on a dashboard whose only
@@ -227,7 +242,7 @@ export function KpiTile({
           seven-digit turnover fits at a smaller type size and stays readable.
           Nothing here is ever cut off. */}
       <div
-        className={`numeric mt-1.5 font-semibold leading-tight text-ink ${valueSize(
+        className={`numeric mt-1 font-semibold leading-tight tracking-tight text-ink ${valueSize(
           def.value(kpis),
         )} ${loading ? 'opacity-40' : ''}`}
       >
@@ -238,7 +253,7 @@ export function KpiTile({
           2026" clipped to "vs same …" tells the reader nothing, and the tile
           has room for a second line. `title` still carries the full text for a
           narrow viewport. */}
-      <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-xs">
+      <div className="mt-1.5 flex flex-wrap items-baseline gap-x-1.5 text-xs">
         {delta.kind === 'none' ? (
           <span className="text-muted">No comparison data</span>
         ) : (
@@ -251,7 +266,7 @@ export function KpiTile({
               {delta.up ? <Icons.SortAsc size={12} /> : <Icons.SortDesc size={12} />}
               {delta.kind === 'new' ? 'new' : delta.text}
             </span>
-            <span className="text-muted" title={compareLabel}>
+            <span className="truncate text-muted" title={compareLabel}>
               {compareLabel}
             </span>
           </>
@@ -269,13 +284,13 @@ export function KpiTile({
           user's — a comparison label that wraps to a second line, or a layout
           saved at a shorter height, takes it out of the chart. Giving up chart
           height is much better than the card clipping it. */}
-      <div className="mt-auto min-h-0 shrink pt-3 pb-3">
-        {/* A CEILING, not a size. At the default three-row tile there is no
-            76px to be had and the chart settles at about 32 — a proper
-            sparkline on a tile this wide. What it buys is the tile the user
-            drags taller: the chart grows into the room instead of leaving a
-            dead band across the middle of the card, and stops at 76 rather than
-            becoming a full chart with no axis. */}
+      <div className="mt-auto min-h-0 shrink pt-2.5 pb-3">
+        {/* A CEILING, not a size. At the default tile there is no 76px to be
+            had and the chart settles low — a proper sparkline on a tile this
+            wide. What it buys is the tile the user drags taller: the chart
+            grows into the room instead of leaving a dead band across the middle
+            of the card, and stops at 76 rather than becoming a full chart with
+            no axis. */}
         <Sparkline values={series} color={color} height={76} />
       </div>
     </div>

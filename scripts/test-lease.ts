@@ -46,6 +46,12 @@ function lease(over: Partial<Lease> = {}): Lease {
     expiresAt: new Date(NOW.getTime() + LEASE_DAYS * day),
     unlockCounter: 0,
     lastUnlockAt: null,
+    /* Device facts (244). Null = nothing recorded, which deviceLicenceState
+       reads as "nothing to enforce" — so these fixtures keep testing the
+       staleness rule they were written for. */
+    deviceStatus: null,
+    deviceIsPaid: null,
+    deviceExpiryDate: null,
     ...over,
   }
 }

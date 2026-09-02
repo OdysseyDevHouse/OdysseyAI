@@ -3,6 +3,20 @@ import mysql from 'mysql2/promise'
 import type { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise'
 import { query, queryOne } from './db'
 import { decryptSecret } from './crypto/secrets'
+import { siteDatabaseFor } from './control/siteDatabasesPortal'
+
+/**
+ * Is this a machine that should ask the portal before the control database?
+ *
+ * Desktop only. A cloud install and the web build reach cp2_site_databases over
+ * the same network as everything else they need, so a signed HTTPS round trip
+ * in front of every site pool would be a slower way to reach the same row — and
+ * the portal answers only for the ONE site whose key the machine holds, which
+ * is exactly wrong for a server serving many.
+ */
+function isPortalCandidate(): boolean {
+  return process.env.APP_MODE === 'desktop'
+}
 
 /**
  * Reads a stored database password.
@@ -211,19 +225,48 @@ export async function sitePool(siteId: number, purpose: SitePurpose): Promise<Po
    * way in. */
   const given = givenConnection(siteId, purpose)
 
-  const row = given
-    ? null
-    : await queryOne<SiteDbRow>(
-        `${SELECT_DB} WHERE site_id = ? AND purpose = ? AND status = 'active' LIMIT 1`,
-        [siteId, purpose],
-      )
-  if (!given && !row) {
+  /* ── AND THE ONE THE PORTAL CAN DESCRIBE, BEFORE READING cp2_site_databases ─
+   *
+   * givenConnection covers the `master` purpose and stops there, deliberately:
+   * Setup provisioned ONE database on this machine and a hybrid site's in-store
+   * box is a different record with a different lifecycle. So every non-master
+   * lookup fell through to the query below — a direct read of the control
+   * database on port 3306, and the last one an adopted install still made in
+   * normal operation.
+   *
+   * Asked over the portal instead, where there is a key to ask with. Null means
+   * no key, no line, or an answer that was not one, and the query below then
+   * runs exactly as it always did — which on a cloud install is the ordinary
+   * path and the right one.
+   *
+   * Not consulted when `given` already answered: that is a value this machine
+   * was handed at provisioning time and it must not be second-guessed by a
+   * network call on the hot path of every site query. */
+  const viaPortal =
+    given || !isPortalCandidate()
+      ? null
+      : await siteDatabaseFor(purpose).catch(() => null)
+
+  const row =
+    given || viaPortal
+      ? null
+      : await queryOne<SiteDbRow>(
+          `${SELECT_DB} WHERE site_id = ? AND purpose = ? AND status = 'active' LIMIT 1`,
+          [siteId, purpose],
+        )
+  if (!given && !viaPortal && !row) {
     throw new SiteDbError(`No active "${purpose}" database configured for site ${siteId}.`)
   }
 
+  /* The portal's password arrived opened — it travels `pos:v1:` sealed to this
+     build's payload key rather than ENCRYPTION_KEY-sealed, and
+     siteDatabasesPortal has already unwrapped it. A row it could not open is
+     dropped there rather than surfaced here with an empty credential. */
   const password = given
     ? { ok: true as const, value: String(process.env.ODYSSEY_SITE_DB_PASSWORD) }
-    : readPassword(row!.db_password_enc)
+    : viaPortal
+      ? { ok: true as const, value: viaPortal.password ?? '' }
+      : readPassword(row!.db_password_enc)
   if (!password.ok) {
     throw new SiteDbError(
       `Stored credentials for site ${siteId} "${purpose}" could not be decrypted — ` +
@@ -232,11 +275,11 @@ export async function sitePool(siteId: number, purpose: SitePurpose): Promise<Po
   }
 
   const pool = mysql.createPool({
-    host: given ? given.host : resolveHost(row!.server_host),
-    port: given ? given.port : row!.server_port || 3306,
-    user: given ? given.username || '' : row!.db_username || '',
+    host: given ? given.host : viaPortal ? resolveHost(viaPortal.host) : resolveHost(row!.server_host),
+    port: given ? given.port : viaPortal ? viaPortal.port : row!.server_port || 3306,
+    user: given ? given.username || '' : viaPortal ? viaPortal.username || '' : row!.db_username || '',
     password: password.value,
-    database: given ? given.databaseName : row!.database_name,
+    database: given ? given.databaseName : viaPortal ? viaPortal.databaseName : row!.database_name,
     connectionLimit: Number(process.env.SITE_DB_CONNECTION_LIMIT || 5),
     waitForConnections: true,
     /*

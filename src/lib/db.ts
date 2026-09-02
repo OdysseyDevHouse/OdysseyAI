@@ -105,7 +105,62 @@ export function invalidateControlPool(): void {
   void existing.end().catch(() => {})
 }
 
+/**
+ * Thrown instead of opening a control-database socket on a desktop install.
+ *
+ * Its own class so a caller can tell "this build does not do that" apart from
+ * "the database refused us" — the two need opposite responses, and a bare
+ * Error would make them indistinguishable at the catch site.
+ */
+export class ControlDbUnavailableOnDesktop extends Error {
+  constructor(detail?: string) {
+    super(
+      'This build does not connect to the control database. ' +
+        'The answer must come from the POS API' +
+        (detail ? ` (${detail})` : '') +
+        '.',
+    )
+    this.name = 'ControlDbUnavailableOnDesktop'
+  }
+}
+
+/**
+ * Does this build reach the control database at all?
+ *
+ * ── WHY A REFUSAL RATHER THAN A FALLBACK ────────────────────────────────────
+ *
+ * A packaged Electron install has no business opening a socket to
+ * odyssey_tickets, for two reasons that point the same way.
+ *
+ * It cannot: the control database accepts connections from our own servers, not
+ * from a shop's ADSL line. Every such call was already failing in the field —
+ * silently, because the callers catch and degrade, so the machine simply never
+ * renewed its lease and counted down to a lock screen with nothing visibly
+ * wrong. That is the failure lib/control/portalApi.ts exists to end.
+ *
+ * And it must not: reaching that database means the installer has to CARRY the
+ * credentials for it, and an asar unpacks in seconds. DB_HOST, DB_USER,
+ * DB_PASSWORD and ENCRYPTION_KEY baked into every download are the keys to
+ * every shop on the platform. Removing the last caller is what lets those keys
+ * come out of the build — see scripts/make-build-defaults.mjs.
+ *
+ * ── WHY HERE, AND NOT AT EACH CALL SITE ─────────────────────────────────────
+ *
+ * There are more than twenty of them, and the ones that matter are the ones
+ * nobody remembered. A guard on each is a list that goes stale the first time
+ * somebody adds a query; a guard on the one function that opens the socket
+ * cannot be bypassed by code that has not been written yet.
+ *
+ * It is deliberately LOUD. A desktop caller that reaches here has a missing
+ * portal route, and the throw is what makes that visible in testing instead of
+ * arriving as a silent degradation at a customer's counter.
+ */
+function reachesControlDb(): boolean {
+  return process.env.APP_MODE !== 'desktop'
+}
+
 export function pool(): Pool {
+  if (!reachesControlDb()) throw new ControlDbUnavailableOnDesktop()
   if (!globalForDb.odysseyControlPool) globalForDb.odysseyControlPool = createPool()
   return globalForDb.odysseyControlPool
 }

@@ -132,6 +132,25 @@ export async function licenceForSerial(siteId: number, serial: string): Promise<
   const viaPortal = await portal.licenceForSerial(trimmed)
   if (viaPortal) return viaPortal
 
+  /* ── AND FROM THE MACHINE'S OWN COPY WHEN IT CANNOT ─────────────────────
+   *
+   * A desktop install has no second transport: the query below refuses to open
+   * a socket at all (see pool() in lib/db.ts), so without this the till would
+   * get an exception where it asked a question it can perfectly well answer.
+   *
+   * The lease carries this device's status, is_paid and expiry_date, written at
+   * the last successful check, and deviceLicenceState re-judges them against
+   * TODAY. That is the whole design: the local copy is the authority, and the
+   * portal refreshes it rather than replacing the decision.
+   *
+   * `ok: null` — nothing recorded — deliberately falls through rather than
+   * answering. A machine that has never checked in has nothing to judge, and
+   * inventing a refusal would stop a shop that was never refused. On desktop
+   * the query below then throws, which the caller shows as "cannot reach us"
+   * — the honest answer for a machine with no local copy and no line. */
+  const fromLease = await leasedLicenceForSerial(siteId, trimmed)
+  if (fromLease) return fromLease
+
   const row = await queryOne<Row>(
     `${SELECT_DEVICE} WHERE site_id = ? AND serial_number = ? LIMIT 1`,
     [siteId, trimmed],
@@ -147,6 +166,106 @@ export async function licenceForSerial(siteId: number, serial: string): Promise<
     terminalId: row.terminal_id ? Number(row.terminal_id) : null,
     name: String(row.device_name ?? ''),
     trialEndsOn: verdict.trialEndsOn,
+  }
+}
+
+/**
+ * This device's licence, decided from the lease this machine already holds.
+ *
+ * ── WHY IT ONLY ANSWERS FOR THIS MACHINE ────────────────────────────────────
+ *
+ * The lease is per MACHINE — one row, carrying the serial it was written for.
+ * So it can answer "may I trade" and nothing else: asked about another till's
+ * serial it returns null and lets the caller go on, because answering from a
+ * lease that describes a different device would hand one till another's
+ * entitlement. The serial check below is what makes that impossible.
+ *
+ * ── AND WHY IT RETURNS null RATHER THAN A REFUSAL ───────────────────────────
+ *
+ * Three situations produce null and all mean "I cannot say", never "no": a
+ * cloud install with no lease at all, a lease for a different machine, and a
+ * lease with no device facts recorded. A refusal invented from any of them
+ * would lock a shop that nobody actually refused.
+ *
+ * `deviceRowId` is 0 because the lease does not carry it and nothing offline
+ * needs it — it addresses a cp2_devices row, and the only caller that uses it
+ * is the heartbeat, which cannot run without a line anyway. `touchDevice`
+ * already treats a failed write as unremarkable.
+ */
+async function leasedLicenceForSerial(
+  siteId: number,
+  serial: string,
+): Promise<DeviceLicence | null> {
+  try {
+    const { readLease } = await import('@/lib/licence/lease')
+    const { deviceLicenceState } = await import('@/lib/licence/leaseRules')
+
+    const lease = await readLease(siteId)
+    if (!lease) return null
+    /* A lease written for another machine says nothing about this one. */
+    if (!lease.deviceSerial || lease.deviceSerial !== serial) return null
+
+    const state = deviceLicenceState(lease)
+    if (state.ok === null) return null
+    if (state.ok === false) return { ok: false, reason: state.reason }
+
+    return {
+      ok: true,
+      deviceRowId: 0,
+      terminalId: null,
+      name: '',
+      trialEndsOn: state.trialEndsOn,
+    }
+  } catch {
+    /* No lease table, or a site database mid-upgrade. Nothing to say. */
+    return null
+  }
+}
+
+/**
+ * The three raw facts a machine needs to judge its OWN licence offline.
+ *
+ * ── WHY THE FACTS AND NOT THE VERDICT ───────────────────────────────────────
+ *
+ * licenceForSerial answers "may this device trade RIGHT NOW", which is what
+ * every online caller wants and is useless to store: a verdict cannot age, so a
+ * device expiring tomorrow is recorded 'licensed' today and still reads
+ * 'licensed' next week. An unplugged machine would then trade past its own
+ * expiry date and be caught days late by the seven-day staleness rule.
+ *
+ * So the lease stores the INPUTS, and deviceLicenceState in leaseRules.ts
+ * re-runs the same rule against today's date with no line at all. This is the
+ * function that fetches them. See migration 244.
+ *
+ * ── IT REUSES listLicences DELIBERATELY ─────────────────────────────────────
+ *
+ * That call already returns status, isPaid and expiryDate for every spot, over
+ * the portal AND over SQL, so there is no third code path to keep in step — and
+ * on a desktop install it is one HTTPS round trip that the tills screen has
+ * already made. A second endpoint answering the same question is how the two
+ * drift.
+ *
+ * Null when there is nothing to record: no serial, or no row carrying it. NOT a
+ * refusal — an unregistered machine is the device gate's business, and writing
+ * a refusal into the lease would lock a machine nobody actually refused.
+ */
+export async function deviceFactsForSerial(
+  siteId: number,
+  serial: string,
+): Promise<{ status: string; isPaid: boolean; expiryDate: string | null } | null> {
+  const trimmed = serial.trim()
+  if (!trimmed) return null
+
+  try {
+    const spots = await listLicences(siteId)
+    const mine = spots.find((s) => s.serial === trimmed)
+    if (!mine) return null
+    return { status: mine.status, isPaid: mine.isPaid, expiryDate: mine.expiryDate }
+  } catch {
+    /* Unreachable, or refused. The caller writes no device facts and the lease
+       keeps the ones it already had — which is the whole point of holding them
+       locally. See the COALESCE in writeLease. */
+    return null
   }
 }
 

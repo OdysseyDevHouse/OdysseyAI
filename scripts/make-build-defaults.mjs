@@ -37,12 +37,41 @@ const KEYS = [
   'POS_API_URL',
   'POS_API_CLIENT_ID',
   'POS_API_CLIENT_SECRET',
+  /* Not for authenticating the call — for opening its ANSWER. Every credential
+     the portal returns travels in a `pos:v1:` envelope sealed to this key. */
   'POS_API_PAYLOAD_KEY',
-  'DB_HOST',
-  'DB_PORT',
-  'DB_USER',
-  'DB_PASSWORD',
-  'DB_NAME',
+  /* ── NO DB_* ANY MORE ──────────────────────────────────────────────────────
+   *
+   * DB_HOST, DB_PORT, DB_USER, DB_PASSWORD and DB_NAME used to be baked here so
+   * a packaged install could open a MySQL socket to odyssey_tickets. They are
+   * gone, and the removal is the point of the whole exercise:
+   *
+   *   · An asar unpacks in seconds. Those five values are the keys to the
+   *     CONTROL database — every shop on the platform, not just the one that
+   *     downloaded the installer.
+   *   · Nothing used them. The connection only ever worked from a whitelisted
+   *     network, so on a shop's line every such read failed silently and the
+   *     machine degraded instead. The portal clients under lib/control/ answer
+   *     the same questions over signed HTTPS.
+   *
+   * pool() in src/lib/db.ts now refuses to open that socket on desktop at all,
+   * so a call site that is added later fails loudly in testing rather than
+   * quietly shipping a credential requirement back into the build.
+   *
+   * Verified before removal, on a full session with the line up and with it
+   * down: zero statements to the ticketing database either way.
+   *
+   * ── AND WHY THESE TWO STAY ────────────────────────────────────────────────
+   *
+   * Neither is a connection to anything.
+   *
+   *   SESSION_SECRET  signs this install's own session cookies.
+   *   ENCRYPTION_KEY  opens the `enc:v1:` credentials this machine legitimately
+   *                   holds — its own site database password among them.
+   *
+   * Extracting them buys an attacker access to the machine they are already
+   * sitting at. Extracting DB_PASSWORD bought them everybody else's shop, which
+   * is the difference that mattered. */
   'SESSION_SECRET',
   'ENCRYPTION_KEY',
 ]
@@ -76,7 +105,10 @@ if (!process.env.ODYSSEY_UPDATE_URL) {
 }
 
 console.log(`buildDefaults: wrote ${KEYS.length} keys to electron/buildDefaults.json`)
-console.log(`  DB_HOST=${defaults.DB_HOST}  DB_NAME=${defaults.DB_NAME}  (secrets not shown)`)
+/* The portal URL, because that is the one value a builder gets wrong and the
+   one whose being wrong is invisible until a shop cannot renew its licence.
+   No DB_HOST any more — this build carries no database connection at all. */
+console.log(`  POS_API_URL=${defaults.POS_API_URL}  (secrets not shown)`)
 
 mkdirSync(dirname(APP_PKG), { recursive: true })
 copyFileSync(join(ROOT, 'package.json'), APP_PKG)

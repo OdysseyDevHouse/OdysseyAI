@@ -1,0 +1,66 @@
+-- The device's own licence facts, kept where an offline machine can read them.
+--
+-- ── THE FAILURE THIS CLOSES ─────────────────────────────────────────────────
+--
+-- `licence_status` stores a VERDICT — 'licensed', 'expired', 'inactive' — as it
+-- stood at the last successful check. A verdict cannot age. A device whose
+-- licence expires tomorrow is recorded 'licensed' today, truthfully, and is
+-- still recorded 'licensed' next week, untruthfully, because nothing on the
+-- machine knows what date it was measuring against.
+--
+-- So an unplugged machine kept trading past its own expiry date and was caught
+-- only by the seven-day staleness rule — days late, and by the wrong rule. A
+-- shop that unplugged the network the day before expiry bought itself a week.
+--
+-- ── SO THE LEASE CARRIES THE INPUTS, NOT THE ANSWER ─────────────────────────
+--
+-- These three are exactly the inputs to entitlement() in
+-- src/lib/control/devices.ts:
+--
+--   status is not 'active'            -> blocked, whatever else is true
+--   is_paid = 1                       -> allowed, expiry irrelevant
+--   is_paid = 0, expiry_date past     -> blocked
+--   is_paid = 0, expiry_date today or later -> allowed
+--   is_paid = 0, no expiry_date       -> blocked
+--
+-- Holding the inputs rather than the answer means the machine re-runs that rule
+-- against TODAY'S date on every check, with or without a line. The licence then
+-- lapses on the day it was sold to lapse, which is the whole point.
+--
+-- `licence_status` stays. It is still what the locked screen reads to say WHICH
+-- refusal this was, and it is still the honest record of what the control panel
+-- last said. It simply stops being the thing that decides.
+--
+-- ── AND THE SEVEN DAYS GOES BACK TO MEANING ONE THING ───────────────────────
+--
+-- `expires_at` is now purely the staleness backstop: "this machine has not been
+-- able to verify with us for a week." That is a different conversation from
+-- "this device's licence ran out", and conflating them is what made the bug
+-- above hard to see. Two rules, two dates, two messages.
+--
+-- ── NULLABLE, BECAUSE A LEASE CAN PREDATE A DEVICE ──────────────────────────
+--
+-- device_serial is already nullable for the same reason: a machine writes a
+-- lease as soon as it reads entitlements, which can happen before it has
+-- claimed a licence spot. NULL here means "no device licence was resolved",
+-- which the evaluator treats as nothing to enforce rather than as a refusal —
+-- the device gate is what deals with an unlicensed machine, and inventing a
+-- refusal here would lock a machine that was never actually refused.
+ALTER TABLE licence_lease
+  -- Mirrors cp2_devices.status: active | inactive | returned. Anything other
+  -- than 'active' blocks, so a device retired or returned in the control panel
+  -- stops working on this machine at the next check rather than at the next
+  -- seven-day boundary.
+  ADD COLUMN IF NOT EXISTS device_status VARCHAR(16) NULL AFTER device_serial,
+
+  -- Mirrors cp2_devices.is_paid. A paid device ignores expiry_date entirely —
+  -- that column carries the end of an evaluation period, not a subscription.
+  ADD COLUMN IF NOT EXISTS device_is_paid TINYINT(1) NULL AFTER device_status,
+
+  -- Mirrors cp2_devices.expiry_date. A DATE, not a DATETIME: the rule is
+  -- inclusive of the whole day, so a licence dated today has not run out until
+  -- today is over, and a time component would make that a comparison nobody
+  -- intended. Compared against the APP SERVER's date, as entitlement() does, so
+  -- a machine and its database disagreeing about midnight cannot expire a
+  -- licence an hour early.
+  ADD COLUMN IF NOT EXISTS device_expiry_date DATE NULL AFTER device_is_paid;

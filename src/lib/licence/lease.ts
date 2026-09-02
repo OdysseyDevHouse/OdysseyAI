@@ -109,6 +109,28 @@ function rowToLease(row: Row): Lease {
     expiresAt: toDate(row.expires_at) ?? new Date(0),
     unlockCounter: Number(row.unlock_counter ?? 0),
     lastUnlockAt: toDate(row.last_unlock_at),
+
+    /* ── THE DEVICE'S OWN FACTS, FOR deviceLicenceState ──────────────────────
+     *
+     * Null-preserving, and that matters: null means "nothing was recorded", not
+     * "inactive" or "unpaid". A lease written before a device claimed a spot
+     * has all three null, and the evaluator reads that as nothing to enforce
+     * rather than as a refusal — see deviceLicenceState.
+     *
+     * The date is sliced to YYYY-MM-DD rather than passed through toDate. A
+     * DATE column comes back as a driver Date at UTC midnight, and formatting
+     * it with local getters would move it a day in either direction depending
+     * on the machine's offset — which on this column is the difference between
+     * a licence that lapses tonight and one that lapsed last night. */
+    deviceStatus: row.device_status ? String(row.device_status) : null,
+    deviceIsPaid: row.device_is_paid === null || row.device_is_paid === undefined
+      ? null
+      : Number(row.device_is_paid) === 1,
+    deviceExpiryDate: row.device_expiry_date
+      ? String(row.device_expiry_date instanceof Date
+          ? row.device_expiry_date.toISOString()
+          : row.device_expiry_date).slice(0, 10)
+      : null,
   }
 }
 
@@ -149,6 +171,19 @@ export type LeaseWrite = {
   accountStatus: AccountStatus | null
   /** Planted on first contact only; a later write without one keeps it. */
   unlockSecret?: string
+
+  /* ── WHAT THE DEVICE ROW SAID, SO THE MACHINE CAN RE-DECIDE OFFLINE ───────
+   *
+   * Optional, because two callers write a lease and only one of them knows
+   * about devices: modules.ts writes it off the back of an entitlements read,
+   * and leaseSubject supplies these. A write that omits them LEAVES THE STORED
+   * VALUES ALONE rather than clearing them — see the COALESCE in the SQL —
+   * because a machine that could not resolve its device this minute must not
+   * thereby forget the expiry date it was told yesterday. */
+  deviceStatus?: string | null
+  deviceIsPaid?: boolean | null
+  /** `YYYY-MM-DD`, as cp2_devices stores it. */
+  deviceExpiryDate?: string | null
 }
 
 /**
@@ -171,8 +206,9 @@ export async function writeLease(w: LeaseWrite, now: Date = new Date()): Promise
       w.siteId,
       `INSERT INTO licence_lease
          (id, site_id, device_serial, licence_status, modules_json, ending_on_json,
-          account_status, checked_at, expires_at, unlock_secret_enc)
-       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          account_status, checked_at, expires_at, unlock_secret_enc,
+          device_status, device_is_paid, device_expiry_date)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          site_id = VALUES(site_id),
          device_serial = VALUES(device_serial),
@@ -182,11 +218,23 @@ export async function writeLease(w: LeaseWrite, now: Date = new Date()): Promise
          account_status = VALUES(account_status),
          checked_at = VALUES(checked_at),
          expires_at = VALUES(expires_at),
-         unlock_secret_enc = COALESCE(VALUES(unlock_secret_enc), unlock_secret_enc)`,
+         unlock_secret_enc = COALESCE(VALUES(unlock_secret_enc), unlock_secret_enc),
+         device_status = COALESCE(VALUES(device_status), device_status),
+         device_is_paid = COALESCE(VALUES(device_is_paid), device_is_paid),
+         device_expiry_date = COALESCE(VALUES(device_expiry_date), device_expiry_date)`,
       /* COALESCE above keeps a secret already planted: the machine is told its
          unlock secret once, at first contact, and a later check that does not
          carry one must not erase it — that would strand a locked machine with
-         no way to be released. */
+         no way to be released.
+
+         The three device columns are COALESCEd for a related but distinct
+         reason. modules.ts writes a lease off the back of an entitlements read
+         and does not always know the device — a background refresh with no
+         request cookie, for instance. Overwriting with NULL there would erase
+         the expiry date this machine is meant to enforce OFFLINE, which is
+         precisely the state it needs it in. So a write that does not know
+         leaves what was known. A device genuinely deregistered comes back as
+         status 'inactive', not as an absent value. */
       [
         w.siteId,
         w.deviceSerial,
@@ -197,6 +245,9 @@ export async function writeLease(w: LeaseWrite, now: Date = new Date()): Promise
         now,
         leaseExpiryFrom(now),
         secretEnc,
+        w.deviceStatus ?? null,
+        w.deviceIsPaid === null || w.deviceIsPaid === undefined ? null : w.deviceIsPaid ? 1 : 0,
+        w.deviceExpiryDate ?? null,
       ],
       await leasePurpose(w.siteId),
     )

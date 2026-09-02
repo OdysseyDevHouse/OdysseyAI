@@ -197,11 +197,33 @@ function resolveEnv() {
      * and that is a product question rather than a plumbing one.
      */
     const d = resolveBuildDefaults()
-    set('DB_HOST', d.DB_HOST)
-    set('DB_PORT', d.DB_PORT)
-    set('DB_USER', d.DB_USER)
-    set('DB_PASSWORD', d.DB_PASSWORD)
-    set('DB_NAME', d.DB_NAME)
+    /* ── NO DB_* HERE ANY MORE, AND THAT IS THE POINT ─────────────────────
+     *
+     * This branch used to point the CONTROL connection at our servers on port
+     * 3306, using credentials baked into the installer. Two things were wrong
+     * with it and they compounded:
+     *
+     *   · it did not work. The control database accepts connections from our
+     *     own network, not from a shop's ADSL line, so every one of those reads
+     *     failed — silently, because the callers catch and degrade. A machine
+     *     simply never renewed its lease and counted down to a lock screen with
+     *     nothing visibly wrong.
+     *   · it meant every installer CARRIED those credentials, and an asar
+     *     unpacks in seconds. DB_HOST, DB_USER and DB_PASSWORD for
+     *     odyssey_tickets are the keys to every shop on the platform.
+     *
+     * Both are closed by the portal: lib/control/portalApi.ts and its clients
+     * answer the same questions over signed HTTPS, and pool() in lib/db.ts now
+     * refuses to open the socket at all on desktop. Measured on a full session
+     * — sign in, load a page, check the licence, trade, hybrid lookup — with
+     * the line up and with it down: zero statements to the ticketing database
+     * either way.
+     *
+     * ENCRYPTION_KEY and SESSION_SECRET stay. They are not a connection: the
+     * first decrypts credentials this machine legitimately holds and the second
+     * signs its own session cookies. Neither opens a door to anybody else's
+     * shop, and removing them would stop the app rather than protect anything.
+     */
     set('SESSION_SECRET', d.SESSION_SECRET)
     set('ENCRYPTION_KEY', d.ENCRYPTION_KEY)
     set('BACKUP_DIR', path.join(app.getPath('userData'), 'backups'))
@@ -256,13 +278,25 @@ function resolveEnv() {
        locally. The adopted branch is the one with a site database and no
        control panel to describe it. */
   } else {
-    // Cloud: our servers, our shared secrets, baked at build time.
+    /* ── CLOUD: OUR SHARED SECRETS, BUT NOT A DATABASE CONNECTION ───────────
+     *
+     * A cloud SITE is reached in a browser — opensHere() in
+     * lib/desktopBackOffice.ts refuses to open one in the packaged back office
+     * at all, and says so on screen. So this branch is not "the desktop app
+     * talking to a cloud shop"; it is the state an install is in before it has
+     * adopted anything: Odyssey Database Setup, which authenticates against the
+     * control PANEL over HTTPS and never opens a MySQL socket, and a fresh
+     * Back Office that has not yet found its site.jsonpartial.
+     *
+     * Neither needs DB_*. Setup uses electron/posApi.js; the back office uses
+     * the portal clients under lib/control/. Baking a control-database
+     * credential for a connection nothing makes was pure exposure — anyone with
+     * an installer could unpack the asar and read the keys to every shop on the
+     * platform.
+     *
+     * A machine that reaches for the control database anyway now gets a named
+     * refusal from pool(), not a socket. See lib/db.ts. */
     const d = resolveBuildDefaults()
-    set('DB_HOST', cfg.dbHost || d.DB_HOST)
-    set('DB_PORT', cfg.dbPort || d.DB_PORT)
-    set('DB_USER', cfg.dbUser || d.DB_USER)
-    set('DB_PASSWORD', unseal(cfg.dbPasswordSealed) || d.DB_PASSWORD)
-    set('DB_NAME', cfg.controlDbName || d.DB_NAME)
     set('SESSION_SECRET', d.SESSION_SECRET)
     set('ENCRYPTION_KEY', d.ENCRYPTION_KEY)
   }
@@ -297,6 +331,20 @@ function resolveEnv() {
   set('POS_API_URL', portalDefaults.POS_API_URL)
   set('POS_API_CLIENT_ID', portalDefaults.POS_API_CLIENT_ID)
   set('POS_API_CLIENT_SECRET', portalDefaults.POS_API_CLIENT_SECRET)
+  /* ── AND THE KEY THAT OPENS WHAT THE PORTAL SENDS BACK ────────────────────
+   *
+   * The three above authenticate the call; this one decrypts its ANSWER. The
+   * portal seals every credential it returns in a `pos:v1:` envelope keyed to
+   * the calling build — see electron/posApi.js, which has always read it from
+   * buildDefaults because the main process needed it to provision a machine.
+   *
+   * The Next server needs it for the same reason and did not have it: the
+   * portal's /site-databases answer carries the in-store box's password sealed
+   * this way, and lib/control/payloadEnvelope.ts cannot open it without this.
+   * The same silent shape as the three above — the call would succeed, the
+   * envelope would refuse to open, and the caller would fall back to the MySQL
+   * socket this whole surface exists to retire. */
+  set('POS_API_PAYLOAD_KEY', portalDefaults.POS_API_PAYLOAD_KEY)
 
   /* ── THE ROLE, WHERE THE NEXT SERVER CAN SEE IT ───────────────────────────
    *

@@ -37,6 +37,12 @@ function machine(over = {}) {
     hasUnlockSecret: true,
     unlockCount: 0,
     lastUnlockAt: null,
+    /* Device facts (244). Null = nothing recorded, which deviceLicenceState
+       reads as "nothing to enforce" — so these fixtures keep testing the
+       staleness rule they were written for. */
+    deviceStatus: null,
+    deviceIsPaid: null,
+    deviceExpiryDate: null,
     ...over,
   }
 }
@@ -53,6 +59,12 @@ function lease(over: Partial<Lease> = {}): Lease {
     expiresAt: new Date(now + 6 * DAY),
     unlockCounter: 0,
     lastUnlockAt: null,
+    /* Device facts (244). Null = nothing recorded, which deviceLicenceState
+       reads as "nothing to enforce" — so these fixtures keep testing the
+       staleness rule they were written for. */
+    deviceStatus: null,
+    deviceIsPaid: null,
+    deviceExpiryDate: null,
     ...over,
   }
 }

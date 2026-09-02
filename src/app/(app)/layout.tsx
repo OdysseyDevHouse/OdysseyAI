@@ -130,6 +130,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           licenceStatus={lock.licenceStatus}
           challenge={lock.challenge}
           deviceSerial={lock.deviceSerial}
+          /* Which of the two locks this is. A device whose licence lapsed and a
+             machine that has merely been out of contact need opposite remedies
+             — renew the till, or plug the network back in — and the screen can
+             only say the right one if it is told which happened. */
+          reason={lock.reason}
+          deviceReason={lock.deviceReason}
         />
       </ToastProvider>
     )

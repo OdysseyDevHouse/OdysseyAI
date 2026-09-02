@@ -53,6 +53,7 @@ import {
 import { widgetBody as bodyFor, widgetNote as noteFor } from './WidgetBody'
 import { WidgetPanel } from './WidgetPanel'
 import { DetailModal } from './DetailModal'
+import { SecondaryStrip } from './SecondaryStrip'
 
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
@@ -479,6 +480,29 @@ export function SalesDashboard({
                 )
               }
 
+              /*
+               * The rates band, like the KPI tiles, brings its own chrome and
+               * takes no CardHeader.
+               *
+               * A header would defeat the widget: the band's whole job is to sit
+               * tight under the tiles as a continuation of the headline block,
+               * and a title bar reading "Rates" above four cells that are
+               * already labelled would both repeat itself and cost the row the
+               * ~40px that lets it stay two grid rows tall.
+               */
+              if (w.id === 'rates') {
+                return (
+                  <div
+                    key={w.id}
+                    className={
+                      editing ? 'widget-drag cursor-move rounded-card ring-1 ring-brand' : ''
+                    }
+                  >
+                    <SecondaryStrip data={data} loading={loading} />
+                  </div>
+                )
+              }
+
               const dimension = DETAIL_FOR[w.id]
               return (
                 <div key={w.id}>
@@ -533,7 +557,14 @@ export function SalesDashboard({
                       }
                     />
                     <div
-                      className={`min-h-0 flex-1 ${
+                      /* A flex COLUMN, not a plain block. A chart body that
+                         carries a takeaway line under it stacks two children —
+                         the chart taking what is left, the sentence keeping its
+                         own height — and `flex-1` on that chart only resolves
+                         against a flex parent with a definite height. As a
+                         block it measured the chart at full height and drew the
+                         sentence straight over the x-axis labels. */
+                      className={`flex min-h-0 flex-1 flex-col ${
                         SCROLLS.includes(w.id) ? 'overflow-auto' : 'overflow-hidden p-4'
                       }`}
                     >
