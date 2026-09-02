@@ -13,7 +13,9 @@ import {
   PageHeader,
   useToast,
 } from '@/components/ui'
-import { activeEngineName, posStore } from '@/lib/posOffline/store'
+import { dexieStore } from '@/lib/posOffline/dexieStore'
+import { sqliteStore } from '@/lib/posOffline/sqliteStore'
+import { activeEngineName, posStore, type PosStore } from '@/lib/posOffline/store'
 import {
   CONFORMANCE_SITE_ID,
   runStoreConformance,
@@ -50,7 +52,8 @@ export default function PosStoreCheckPage() {
   async function run() {
     setRunning(true)
     try {
-      const result = await runStoreConformance(posStore(CONFORMANCE_SITE_ID), activeEngineName())
+      const { store, label } = chosenStore()
+      const result = await runStoreConformance(store, label)
       setReport(result)
       if (result.failed === 0) toast.success(`All ${result.passed} checks passed.`)
       else toast.error(`${result.failed} of ${result.passed + result.failed} checks failed.`)
@@ -121,4 +124,28 @@ export default function PosStoreCheckPage() {
       </PageBody>
     </>
   )
+}
+
+/**
+ * Which store to exercise: the one this machine uses, or a named one.
+ *
+ * `?engine=dexie` and `?engine=sqlite` exist so BOTH implementations can be
+ * put through the same cases on one machine. That matters on Android, where
+ * the till uses SQLite and nothing would otherwise re-check that the Dexie
+ * path still works after a change to the shared code above it — the two are
+ * meant to be interchangeable, and a claim like that is worth testing rather
+ * than assuming.
+ *
+ * Read from the URL at press time rather than through `useSearchParams`, which
+ * would drag a Suspense boundary into a page that is a button and a list.
+ */
+function chosenStore(): { store: PosStore; label: string } {
+  const asked =
+    typeof window === 'undefined'
+      ? ''
+      : (new URLSearchParams(window.location.search).get('engine') ?? '').toLowerCase()
+
+  if (asked === 'dexie') return { store: dexieStore(CONFORMANCE_SITE_ID), label: 'Dexie / IndexedDB (forced)' }
+  if (asked === 'sqlite') return { store: sqliteStore(CONFORMANCE_SITE_ID), label: 'SQLite (forced)' }
+  return { store: posStore(CONFORMANCE_SITE_ID), label: activeEngineName() }
 }
