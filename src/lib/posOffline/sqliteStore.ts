@@ -183,34 +183,96 @@ const firstDoc = <T>(res: { values?: unknown[] }): T | undefined => {
   return rows.length > 0 ? docOf<T>(rows[0]) : undefined
 }
 
-/** The statements that write one product row and its aliases. */
-function productWrites(p: TillProduct): { statement: string; values: unknown[] }[] {
-  const aliases = Array.isArray((p as unknown as { barcodes?: unknown }).barcodes)
-    ? ((p as unknown as { barcodes: unknown[] }).barcodes as unknown[])
-    : []
+/**
+ * How many rows go into one INSERT.
+ *
+ * Every statement crosses the JavaScript/native bridge, and that crossing —
+ * not the disk — is what made a 2,000-product catalog take 17.9 seconds when
+ * each product was written on its own. Batching turns thousands of crossings
+ * into dozens.
+ *
+ * 100 rather than as-many-as-possible: a product carries 8 columns, so 100
+ * rows is 800 bound variables, comfortably under the 999 that older builds of
+ * SQLite cap a statement at. Android ships whichever build it ships, and a
+ * till that fails to sync on one device and not another would be a miserable
+ * thing to diagnose.
+ */
+const CHUNK_ROWS = 100
+
+function chunk<T>(rows: readonly T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size))
+  return out
+}
+
+const PRODUCT_COLUMNS =
+  'id, code, barcode, department_id, parent_id, description, stock_on_hand, doc'
+
+function productValues(p: TillProduct): unknown[] {
   return [
-    {
-      statement:
-        'INSERT OR REPLACE INTO products (id, code, barcode, department_id, parent_id, description, stock_on_hand, doc) VALUES (?,?,?,?,?,?,?,?)',
-      values: [
-        p.id,
-        p.code ?? null,
-        p.barcode ?? null,
-        p.departmentId ?? null,
-        p.parentId ?? null,
-        p.description ?? null,
-        p.stockOnHand ?? null,
-        JSON.stringify(p),
-      ],
-    },
-    { statement: 'DELETE FROM product_aliases WHERE product_id = ?', values: [p.id] },
-    ...aliases.map((code) => ({
-      statement: 'INSERT INTO product_aliases (product_id, barcode) VALUES (?,?)',
-      values: [p.id, String(code)],
-    })),
+    p.id,
+    p.code ?? null,
+    p.barcode ?? null,
+    p.departmentId ?? null,
+    p.parentId ?? null,
+    p.description ?? null,
+    p.stockOnHand ?? null,
+    JSON.stringify(p),
   ]
 }
 
+function aliasesOf(p: TillProduct): string[] {
+  const raw = (p as unknown as { barcodes?: unknown }).barcodes
+  return Array.isArray(raw) ? raw.map((c) => String(c)) : []
+}
+
+/**
+ * The statements that store these products and their alias barcodes.
+ *
+ * `replaceAliases` says whether each product needs its old aliases cleared
+ * first. On a FULL load it is false and must be: the alias table was emptied
+ * two statements earlier, so a DELETE per product is thousands of round trips
+ * that can only ever delete nothing. On a delta it is true, because a product
+ * may have lost a barcode.
+ */
+function productStatements(
+  products: readonly TillProduct[],
+  { replaceAliases }: { replaceAliases: boolean },
+): { statement: string; values: unknown[] }[] {
+  const set: { statement: string; values: unknown[] }[] = []
+  if (products.length === 0) return set
+
+  if (replaceAliases) {
+    for (const group of chunk(products, CHUNK_ROWS)) {
+      set.push({
+        statement: `DELETE FROM product_aliases WHERE product_id IN (${group.map(() => '?').join(',')})`,
+        values: group.map((p) => p.id),
+      })
+    }
+  }
+
+  for (const group of chunk(products, CHUNK_ROWS)) {
+    set.push({
+      statement: `INSERT OR REPLACE INTO products (${PRODUCT_COLUMNS}) VALUES ${group
+        .map(() => '(?,?,?,?,?,?,?,?)')
+        .join(',')}`,
+      values: group.flatMap(productValues),
+    })
+  }
+
+  const aliasRows: { id: number; code: string }[] = []
+  for (const p of products) for (const code of aliasesOf(p)) aliasRows.push({ id: p.id, code })
+  for (const group of chunk(aliasRows, CHUNK_ROWS)) {
+    set.push({
+      statement: `INSERT INTO product_aliases (product_id, barcode) VALUES ${group
+        .map(() => '(?,?)')
+        .join(',')}`,
+      values: group.flatMap((r) => [r.id, r.code]),
+    })
+  }
+
+  return set
+}
 /* ── The store ───────────────────────────────────────────────────────────── */
 
 export function sqliteStore(siteId: number): PosStore {
@@ -230,7 +292,9 @@ export function sqliteStore(siteId: number): PosStore {
           set.push({ statement: 'DELETE FROM product_aliases WHERE product_id = ?', values: [id] })
         }
       }
-      for (const p of products) set.push(...productWrites(p))
+      /* On a full load the alias table was just emptied, so per-product
+         alias deletes would be thousands of statements deleting nothing. */
+      set.push(...productStatements(products, { replaceAliases: !full }))
       for (const row of kv) {
         set.push({
           statement: 'INSERT OR REPLACE INTO kv (key, value) VALUES (?,?)',
@@ -324,7 +388,9 @@ export function sqliteStore(siteId: number): PosStore {
           const product = firstDoc<TillProduct>(res)
           if (!product) continue
           const next = { ...product, stockOnHand: product.stockOnHand - delta.qty }
-          for (const w of productWrites(next)) await d.run(w.statement, w.values, false)
+          for (const w of productStatements([next], { replaceAliases: true })) {
+            await d.run(w.statement, w.values, false)
+          }
         }
         await d.commitTransaction()
       } catch (err) {
