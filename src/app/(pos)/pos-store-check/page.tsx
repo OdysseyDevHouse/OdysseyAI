@@ -13,7 +13,7 @@ import {
   PageHeader,
   useToast,
 } from '@/components/ui'
-import { posStore } from '@/lib/posOffline/store'
+import { activeEngineName, posStore } from '@/lib/posOffline/store'
 import {
   CONFORMANCE_SITE_ID,
   runStoreConformance,
@@ -50,7 +50,7 @@ export default function PosStoreCheckPage() {
   async function run() {
     setRunning(true)
     try {
-      const result = await runStoreConformance(posStore(CONFORMANCE_SITE_ID), engineName())
+      const result = await runStoreConformance(posStore(CONFORMANCE_SITE_ID), activeEngineName())
       setReport(result)
       if (result.failed === 0) toast.success(`All ${result.passed} checks passed.`)
       else toast.error(`${result.failed} of ${result.passed + result.failed} checks failed.`)
@@ -121,15 +121,4 @@ export default function PosStoreCheckPage() {
       </PageBody>
     </>
   )
-}
-
-/**
- * What to call the engine in the report.
- *
- * Read from the store rather than from the platform, once there is more than one
- * to read: a report that says "SQLite" because it is running on Android would be
- * wrong on the day the SQLite store fails to open and the till falls back.
- */
-function engineName(): string {
-  return 'Dexie / IndexedDB'
 }

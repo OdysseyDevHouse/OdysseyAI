@@ -3,7 +3,9 @@
 import type { TillProduct } from '../site/tillSearch'
 import type { KvRow, LocalDraft, LocalParkedSale } from './db'
 import type { OutboxReturn, OutboxSale } from './types'
+import { Capacitor } from '@capacitor/core'
 import { dexieStore } from './dexieStore'
+import { sqliteStore } from './sqliteStore'
 
 /**
  * Where a till keeps its own data.
@@ -194,7 +196,42 @@ export interface PosStore {
  * worse, two OUTBOXES. Any future implementation inherits that rule.
  */
 export function posStore(siteId: number): PosStore {
-  return dexieStore(siteId)
+  return useSqlite() ? sqliteStore(siteId) : dexieStore(siteId)
+}
+
+/** What the active store is called, for a diagnostics screen to report. */
+export function activeEngineName(): string {
+  return useSqlite() ? 'SQLite (native)' : 'Dexie / IndexedDB'
+}
+
+let sqliteDecision: boolean | null = null
+
+/**
+ * Whether this machine uses SQLite. Decided once and held.
+ *
+ * ── WHAT IS BEING ASKED, AND WHAT IS NOT ─────────────────────────────────
+ *
+ * "Am I inside the native shell, with the SQLite plugin registered." Both
+ * facts come from the Capacitor runtime, which knows; neither is inferred
+ * from the user agent, which would be a guess — the same bundle is served to
+ * Chrome against the same site, and an Android WebView announces itself as
+ * Linux besides.
+ *
+ * ── AND THERE IS DELIBERATELY NO FALLBACK ────────────────────────────────
+ *
+ * If the plugin is there but the database will not open, this still says
+ * SQLite and the store reports the failure through `storageWorks()`, which
+ * the till already turns into "this machine cannot trade offline". Quietly
+ * dropping back to Dexie would be worse than the error: the whole reason for
+ * this store is that IndexedDB may be evicted on Android, so a silent
+ * fallback would put real sales in exactly the place judged unsafe, and say
+ * nothing.
+ */
+function useSqlite(): boolean {
+  if (sqliteDecision === null) {
+    sqliteDecision = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('CapacitorSQLite')
+  }
+  return sqliteDecision
 }
 
 /**
