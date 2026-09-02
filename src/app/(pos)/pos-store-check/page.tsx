@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Badge,
   Button,
@@ -56,6 +56,7 @@ export default function PosStoreCheckPage() {
   const [running, setRunning] = useState(false)
   const [bench, setBench] = useState<BenchmarkReport | null>(null)
   const [measuring, setMeasuring] = useState(false)
+  const [survivor, setSurvivor] = useState<string | null | undefined>(undefined)
 
   async function run() {
     setRunning(true)
@@ -85,6 +86,44 @@ export default function PosStoreCheckPage() {
       toast.error(err instanceof Error ? err.message : 'The store could not be measured.')
     } finally {
       setMeasuring(false)
+    }
+  }
+
+  /* Read on mount, so arriving after an app kill immediately answers the
+     only question that matters: is the sale still there. */
+  useEffect(() => {
+    let live = true
+    chosenStore()
+      .store.outboxGet(SURVIVAL_UID)
+      .then((row) => {
+        if (live) setSurvivor(row ? String(row.takenAt) : null)
+      })
+      .catch(() => {
+        if (live) setSurvivor(null)
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  async function writeSurvivor() {
+    try {
+      const { store } = chosenStore()
+      const takenAt = new Date().toISOString()
+      await store.outboxPut({
+        saleUid: SURVIVAL_UID,
+        status: 'pending',
+        attempts: 0,
+        lastError: null,
+        syncedAt: null,
+        takenAt,
+        lines: [],
+        tenders: [],
+      } as unknown as Parameters<PosStore['outboxPut']>[0])
+      setSurvivor(takenAt)
+      toast.success('Marker written. Now kill the app and come back.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not write the marker.')
     }
   }
 
@@ -148,6 +187,33 @@ export default function PosStoreCheckPage() {
           </CardBody>
         </Card>
 
+        <Card>
+          <CardHeader
+            title="Survives being killed"
+            description="A pending outbox row is a sale that happened. Write one, kill the app, come back: it must still be here."
+            action={
+              <Button variant="secondary" onClick={writeSurvivor}>
+                Write a marker
+              </Button>
+            }
+          />
+          <CardBody>
+            {survivor === undefined ? (
+              <span className="text-muted">Looking…</span>
+            ) : survivor === null ? (
+              <span className="flex items-center gap-2">
+                <Badge tone="neutral">none</Badge>
+                <span className="text-muted">No marker stored on this machine.</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Badge tone="success">present</Badge>
+                <span className="text-ink">Written {survivor}</span>
+              </span>
+            )}
+          </CardBody>
+        </Card>
+
         {bench ? (
           <Card>
             <CardHeader
@@ -184,6 +250,15 @@ export default function PosStoreCheckPage() {
     </>
   )
 }
+
+/**
+ * The marker row.
+ *
+ * It lives in the throwaway database like everything else on this page, and
+ * it is deliberately shaped as a PENDING outbox row — the exact thing the
+ * whole SQLite change exists to protect. Anything else would prove less.
+ */
+const SURVIVAL_UID = 'survival-marker'
 
 /**
  * Which store to exercise: the one this machine uses, or a named one.
