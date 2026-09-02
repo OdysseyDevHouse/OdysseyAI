@@ -124,16 +124,38 @@ async function connect(siteId: number): Promise<SQLiteDBConnection> {
 
   const opening = (async () => {
     const name = dbName(siteId)
-    /* A connection may survive a reload of the page that made it, so adopt one
-       rather than failing on "already exists" — which would leave a till unable
-       to open its own database after a refresh. */
-    const already = await sqlite.isConnection(name, false)
-    const db = already.result
+    /*
+     * ── THE JS AND NATIVE REGISTRIES CAN DISAGREE ──────────────────────────
+     *
+     * The plugin keeps a map of open connections on BOTH sides. A page reload
+     * empties the JavaScript one while the native one still holds the
+     * connection, so a plain createConnection then fails with "Connection
+     * <name> already exists" and the till cannot open its own database until
+     * the app is killed. A failed open leaves the same orphan.
+     *
+     * checkConnectionsConsistency is the plugin's own reconciliation: it closes
+     * native connections JavaScript no longer knows about. Run it first, then
+     * adopt whatever genuinely survives and create only when nothing does.
+     */
+    await sqlite.checkConnectionsConsistency().catch(() => undefined)
+    const existingConn = await sqlite
+      .isConnection(name, false)
+      .then((r) => Boolean(r.result))
+      .catch(() => false)
+    const db = existingConn
       ? await sqlite.retrieveConnection(name, false)
       : await sqlite.createConnection(name, false, 'no-encryption', 1, false)
     await db.open()
-    await db.execute('PRAGMA journal_mode=WAL;')
-    await db.execute('PRAGMA synchronous=FULL;')
+    /* `query`, not `execute`. PRAGMA journal_mode RETURNS the resulting mode,
+       and the plugin routes execute() to Android execSQL, which refuses any
+       row-returning statement with "Queries can be performed using
+       SQLiteDatabase query or rawQuery methods only". synchronous returns
+       nothing, so it stays on execute. */
+    await db.query('PRAGMA journal_mode=WAL;')
+    /* transaction:false — execute() wraps its statements in a transaction by
+       default, and SQLite refuses to change the safety level inside one:
+       "Safety level may not be changed inside a transaction". */
+    await db.execute('PRAGMA synchronous=FULL;', false)
     await db.execute(SCHEMA)
     return db
   })()
