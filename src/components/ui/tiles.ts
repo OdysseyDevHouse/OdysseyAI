@@ -378,3 +378,26 @@ export function longestSwatchToken(): string {
     ...PICTURE_TILE_GRADIENTS.map((s) => s.token),
   ].reduce((a, b) => (b.length > a.length ? b : a))
 }
+
+/**
+ * Every token any picker can produce, as one set.
+ *
+ * The token-only counterpart to `isStorableSwatch`, for the columns that hold a
+ * token and never a hex string — a quick key's colour, say. Kept separate
+ * rather than adding a flag, because the two callers want genuinely different
+ * things: a department's colour column carries legacy hex that must keep
+ * working, and a quick key's has never held one, so accepting hex there would
+ * store a value the till's `tileClass` would have to guess at.
+ *
+ * Derived, for the reason given on `isStorableSwatch`: this exact check was
+ * written out by hand in quickKeys.ts over TILE_SWATCHES and TILE_GRADIENTS,
+ * and when the inspector moved to the shared SwatchPicker — which offers
+ * CATEGORY_SWATCHES — every colour on screen became one the server refused.
+ */
+export const ALL_SWATCH_TOKENS: ReadonlySet<string> = new Set<string>([
+  ...CATEGORY_SWATCHES.map((s) => s.token),
+  ...TILE_SWATCHES.map((s) => s.token),
+  ...TILE_GRADIENTS.map((s) => s.token),
+  ...PICTURE_TILE_GRADIENTS.map((s) => s.token),
+  TILE_NONE.token,
+])

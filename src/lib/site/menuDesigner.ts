@@ -1,4 +1,5 @@
 import 'server-only'
+import { isStorableSwatch } from '@/components/ui/tiles'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteExecute, siteTransaction } from '../siteDb'
 import { listDepartments, descendantIds, type Department } from './departments'
@@ -373,9 +374,15 @@ export async function updateProductTile(
 
   if (patch.imageColor !== undefined) {
     const token = patch.imageColor?.trim() || null
-    // Same allowance patchDepartment() makes: rows written before the palette
-    // became tokens still hold a hex string.
-    if (token && !/^(tile-([1-7]|none)|grad-[a-z]+|#[0-9a-fA-F]{6})$/.test(token)) {
+    /* Asked of the palettes, not spelled out here. Hex is still allowed for the
+       reason patchDepartment allows it: rows written before the palette became
+       tokens still hold one, and tileClass still renders it.
+
+       The literal this replaces named 'tile-1…7' and 'grad-*', which was the
+       palette when it was written. TillTilePanel now draws CATEGORY_SWATCHES,
+       so all twenty colours it offers were ones this refused — the same fault
+       that had already shipped on departments and on quick keys. */
+    if (token && !isStorableSwatch(token)) {
       return { ok: false, error: 'That is not a colour this app can store.' }
     }
     sets.push('image_color = ?')

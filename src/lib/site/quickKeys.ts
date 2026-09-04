@@ -2,7 +2,7 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { isCapability } from './permissions'
-import { TILE_SWATCHES, TILE_GRADIENTS, TILE_NONE } from '../../components/ui/tiles'
+import { ALL_SWATCH_TOKENS } from '../../components/ui/tiles'
 import {
   quickKeySig,
   quickKeyCapability,
@@ -109,12 +109,26 @@ export async function listAllQuickKeys(siteId: number): Promise<QuickKeyRow[]> {
 
 /* ── Validation ──────────────────────────────────────────────────────────── */
 
-const VALID_TOKENS = new Set<string>([
-  ...TILE_SWATCHES.map((t) => t.token),
-  ...TILE_GRADIENTS.map((t) => t.token),
-  TILE_NONE.token,
-  '',
-])
+/**
+ * The colours a key may wear.
+ *
+ * ── ASKED OF THE PALETTES, NOT LISTED HERE ────────────────────────────────
+ *
+ * This used to name TILE_SWATCHES and TILE_GRADIENTS explicitly, which was
+ * right when the inspector drew those. It now draws the shared <SwatchPicker>,
+ * whose palette is CATEGORY_SWATCHES — so every one of the twenty colours on
+ * screen was a colour the server refused, and the only thing that saved was the
+ * "None" button. The set said what the picker USED to offer, and nothing links
+ * the two but a person remembering.
+ *
+ * ALL_SWATCH_TOKENS is derived from the palettes themselves, so adding a swatch
+ * makes it selectable and storable together. See the note there.
+ *
+ * The empty string stays, and is not a palette entry: it is what a row written
+ * before there was a colour holds, and what `icon` uses for "not chosen". Only
+ * `tile-none` means somebody deliberately chose no colour.
+ */
+const VALID_TOKENS = new Set<string>([...ALL_SWATCH_TOKENS, ''])
 
 export type QuickKeyInput = {
   section?: QuickKeySection
