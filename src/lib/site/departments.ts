@@ -1,4 +1,5 @@
 import 'server-only'
+import { isStorableSwatch } from '@/components/ui/tiles'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute } from '../siteDb'
 
@@ -168,8 +169,12 @@ export function validateDepartment(input: DepartmentInput): string | null {
   if (!input.name?.trim()) return 'A department name is required.'
   if (input.name.trim().length > 120) return 'Name must be 120 characters or fewer.'
   if (input.code && input.code.trim().length > 32) return 'Code must be 32 characters or fewer.'
-  if (input.color && !/^#[0-9a-fA-F]{6}$/.test(input.color.trim())) {
-    return 'Colour must be a hex value like #2f6fed.'
+  /* Asked of the palette rather than of a pattern typed here. This rule used
+     to demand '#RRGGBB' and so rejected every swatch the picker can actually
+     produce — the form said "Colour must be a hex value like #2f6fed." about a
+     value no screen in the app offers. See isStorableSwatch. */
+  if (input.color && !isStorableSwatch(input.color)) {
+    return 'That is not a colour this app can store.'
   }
   return null
 }
@@ -305,10 +310,13 @@ export async function patchDepartment(
 
   if ('color' in patch) {
     const color = patch.color?.trim() || null
-    // The list stores a swatch TOKEN (tile-1…tile-7), but rows written before
-    // the palette became tokens still hold a hex string, so both are allowed
-    // through — validateDepartment's hex rule would reject the tokens.
-    if (color && !/^(tile-[1-7]|#[0-9a-fA-F]{6})$/.test(color)) {
+    /* The list stores a swatch TOKEN, and rows written before the palette
+       became tokens still hold a hex string, so both go through.
+       This used to name 'tile-1…tile-7' in a literal pattern, written when
+       that WAS the palette. The palette then moved to 'cat-*' and this went
+       stale in silence — the inline colour control on the list refused all
+       twenty swatches. It now asks the palette, which cannot go out of date. */
+    if (color && !isStorableSwatch(color)) {
       return { ok: false, error: 'That is not a colour this app can store.' }
     }
     sets.push('color = ?')

@@ -1,0 +1,37 @@
+-- Room for a swatch token in departments.color.
+--
+-- ── WHY, AND WHY THIS IS THE SECOND TIME ──────────────────────────────────
+--
+-- 068_tile_token_width.sql widened products.image_color for exactly this
+-- reason, and closed with:
+--
+--     departments.color is left alone deliberately — it still stores what its
+--     own picker writes, and widening a column nothing has outgrown is churn.
+--
+-- That was true when it was written and is not true now. The department form
+-- has since moved onto the SHARED SwatchPicker, which emits swatch tokens
+-- (`cat-fresh-produce`) rather than the hex the column was sized for. Nothing
+-- announced the change to this column, because a column has no way to hear it.
+--
+-- So the note above was not wrong — it was a dated fact recorded as a standing
+-- one. 32 here for the same reason 068 chose it: a token is a name, names grow,
+-- and this is now sized like every other token column rather than like the hex
+-- string it stopped holding.
+--
+-- ── WHAT IT ACTUALLY DID ──────────────────────────────────────────────────
+--
+-- VARCHAR(9) fits `cat-deli` and refuses `cat-fresh-produce`, so the palette
+-- was split down the middle by string length: eleven of the twenty swatches
+-- saved and nine were refused by MariaDB outright — strict mode does not
+-- truncate, it rejects the statement. The colour is written in the same
+-- UPDATE as everything else, so the ENTIRE save failed, not the colour.
+--
+-- Measured on site 1 before this migration:
+--   cat-deli          -> stored
+--   cat-fresh-produce -> ER_DATA_TOO_LONG, Data too long for column 'color'
+--
+-- Existing rows are untouched: a hex string still fits, still validates, and
+-- still renders. See tileBackgroundClass, which takes both.
+
+ALTER TABLE departments
+  MODIFY COLUMN color VARCHAR(32) NULL;

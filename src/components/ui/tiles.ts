@@ -319,3 +319,62 @@ export function tileClass(token: string | null | undefined): string {
     TILE_SWATCHES[0].className
   )
 }
+
+/**
+ * Is this something a colour column can legitimately hold?
+ *
+ * ── WHY THIS IS DERIVED AND NOT A REGEX ───────────────────────────────────
+ *
+ * It has already gone wrong twice by being written out by hand. Every colour
+ * check in the app used to carry its own literal pattern, and each one froze
+ * the palette as it stood on the day it was typed:
+ *
+ *   · `validateDepartment` demanded `#RRGGBB`, from when the picker offered a
+ *     colour wheel. It rejected all twenty swatches with "Colour must be a hex
+ *     value like #2f6fed." — a message naming a format no screen can produce.
+ *   · `patchDepartment` was updated to `tile-1…7` when the palette became
+ *     tokens, and its own comment says it exists because the hex rule would
+ *     reject them. The palette then moved to `cat-*` and it went stale in
+ *     exactly the same way, on the same field, for the same reason.
+ *
+ * Both failures are silent to every test that does not name a specific token,
+ * and invisible to tsc, because a palette is data and a regex is a string. So
+ * this reads the palettes themselves: adding a swatch makes it storable, and
+ * there is no second place to remember.
+ *
+ * Hex is still accepted, and deliberately. Rows predating the token palettes
+ * hold `#ff0000`, `tileClass` still renders it, and a validator that refused it
+ * would make every one of those departments unsaveable the next time somebody
+ * edited its NAME — a colour rule breaking a field that has nothing to do with
+ * colour.
+ */
+export function isStorableSwatch(value: string): boolean {
+  const v = value.trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return true
+  if (v === TILE_NONE.token) return true
+  return (
+    CATEGORY_SWATCHES.some((s) => s.token === v) ||
+    TILE_SWATCHES.some((s) => s.token === v) ||
+    TILE_GRADIENTS.some((s) => s.token === v) ||
+    PICTURE_TILE_GRADIENTS.some((s) => s.token === v)
+  )
+}
+
+/**
+ * The longest token any palette can currently produce.
+ *
+ * Not used at runtime — it exists so a test can assert the DB column is still
+ * wide enough for the palette, which is the half of this that a validator
+ * cannot check. `departments.color` was VARCHAR(9) while the picker emitted
+ * `cat-fresh-produce`, so eleven swatches saved and nine were refused by
+ * MariaDB with ER_DATA_TOO_LONG — taking the whole record's save with them.
+ */
+export function longestSwatchToken(): string {
+  return [
+    TILE_NONE.token,
+    ...CATEGORY_SWATCHES.map((s) => s.token),
+    ...TILE_SWATCHES.map((s) => s.token),
+    ...TILE_GRADIENTS.map((s) => s.token),
+    ...PICTURE_TILE_GRADIENTS.map((s) => s.token),
+  ].reduce((a, b) => (b.length > a.length ? b : a))
+}
