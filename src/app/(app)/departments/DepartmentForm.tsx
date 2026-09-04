@@ -15,6 +15,7 @@ import {
   Switch,
 } from '@/components/ui'
 import PicturePicker from '@/components/PicturePicker'
+import DepartmentTilePanel from '@/components/DepartmentTilePanel'
 import { saveDepartmentAction, type DepartmentFormState } from './actions'
 import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { Department } from '@/lib/site/departments'
@@ -53,6 +54,7 @@ export default function DepartmentForm({
     { error: null },
   )
 
+  const [name, setName] = useState(department?.name ?? '')
   const [color, setColor] = useState(department?.color ?? '')
   const [active, setActive] = useState(department?.isActive ?? true)
 
@@ -77,21 +79,28 @@ export default function DepartmentForm({
       )}
 
       <FieldGroup title="Identity" hint="What it is called and where it sits in the tree.">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name">
-            <Input
-              name="name"
-              defaultValue={department?.name ?? ''}
-              required
-              maxLength={120}
-              autoFocus
-            />
-          </Field>
+        {/*
+          The name takes the full width now that the code is not asked for.
 
-          <Field label="Code" hint="Optional — a short reference used in reports.">
-            <Input name="code" defaultValue={department?.code ?? ''} maxLength={32} />
-          </Field>
-        </div>
+          The code is a reporting reference the app allocates — the next free
+          number, and the parent's plus ".n" underneath it — so typing one was
+          a question with a right answer the app already knew. Left to a person
+          it got skipped, and a report grouping by code silently split. It is
+          still SHOWN, because a shop that has printed it on a shelf label
+          needs to read it back; it is just no longer theirs to invent.
+        */}
+        {/* Controlled rather than defaultValue: the till preview below renames
+            as this is typed, which an uncontrolled input cannot drive. */}
+        <Field label="Name">
+          <Input
+            name="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+            maxLength={120}
+            autoFocus
+          />
+        </Field>
 
         <Field label="Sits under">
           <Select
@@ -129,12 +138,20 @@ export default function DepartmentForm({
           picture uploaded here can be reused there and the other way round.
         */}
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Till icon"
-            hint="Shown on this department's tile at the till. A clear, simple picture works best at that size."
-          >
-            <PicturePicker value={posImage?.id ?? null} current={posImage} onChange={setPosImage} />
-          </Field>
+          {/* The till icon is chosen ON the preview now, the way the product
+              form does it: the picture's whole job is to read at 40px on a
+              coloured disc across a counter, and a 112px thumbnail beside a
+              caption promising that was the one thing the old control could not
+              show. The hint it used to carry is gone with it — the tile answers
+              "what works at that size" by being the size. */}
+          <DepartmentTilePanel
+            departmentId={department?.id ?? null}
+            name={name}
+            posImage={posImage}
+            onPosImageChange={setPosImage}
+            childCount={department?.childCount ?? 0}
+            productCount={department?.productCount ?? 0}
+          />
 
           <Field
             label="Online store picture"

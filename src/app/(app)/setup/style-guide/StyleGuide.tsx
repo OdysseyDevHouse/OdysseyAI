@@ -26,6 +26,7 @@ import {
   ColourInput,
   Combobox,
   ConfirmModal,
+  RenameCodeModal,
   CurrencyInput,
   DataTable,
   DateRangeField,
@@ -33,6 +34,7 @@ import {
   Field,
   FieldGroup,
   InlineField,
+  FieldMenu,
   FileInput,
   FilterBar,
   AdvancedFilter,
@@ -414,6 +416,27 @@ function FormSection() {
             size="touch"
             quietFocus
           />
+        </Field>
+        <Field
+          label="Field with a joined menu"
+          hint="<FieldMenu> — a chevron on the field's own edge, for actions that act on what is IN it"
+        >
+          <FieldMenu triggerLabel="More barcode options">
+            <Input placeholder="Scan or type" />
+            {(close) => (
+              <>
+                <MenuItem onClick={close}>
+                  <Icons.Barcode size={15} />
+                  Extra barcodes
+                  <span className="numeric ml-auto text-xs text-muted">2</span>
+                </MenuItem>
+                <MenuItem onClick={close}>
+                  <Icons.Wand size={15} />
+                  Generate barcode
+                </MenuItem>
+              </>
+            )}
+          </FieldMenu>
         </Field>
         <Field label="Textarea" className="md:col-span-2">
           <Textarea placeholder="Notes..." />
@@ -2208,6 +2231,7 @@ function SelectionSection() {
 function ModalSection() {
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const [filling, setFilling] = useState(false)
   const [board, setBoard] = useState(false)
   const [growing, setGrowing] = useState(false)
@@ -2230,6 +2254,16 @@ function ModalSection() {
         <Button variant="danger-ghost" onClick={() => setConfirming(true)}>
           <Icons.Trash size={15} />
           Delete something
+        </Button>
+      </Row>
+      <Row>
+        <Spec
+          name="<RenameCodeModal>"
+          note="Changing a record's code — stock, customer or supplier. Shows the OLD code beside the field so the change is visible, and states what the rename will not touch."
+        />
+        <Button variant="secondary" onClick={() => setRenaming(true)}>
+          <Icons.Hash size={15} />
+          Rename a code
         </Button>
       </Row>
       <Row>
@@ -2395,6 +2429,26 @@ function ModalSection() {
           )}
         </div>
       </Modal>
+
+      <RenameCodeModal
+        open={renaming}
+        onClose={() => setRenaming(false)}
+        onSubmit={(next) => {
+          setRenaming(false)
+          toast.success(`Renamed to ${next}`)
+        }}
+        title="Rename stock code"
+        label="New stock code"
+        currentCode="COF-250"
+        recordName="Colombian Coffee Beans 250g"
+        maxLength={48}
+        note={
+          <>
+            Past invoices, orders and stock movements keep{' '}
+            <span className="numeric font-medium">COF-250</span>, so history stays readable.
+          </>
+        }
+      />
 
       <ConfirmModal
         open={confirming}

@@ -11,7 +11,7 @@ import {
   ButtonLink,
   DataTable,
   Icons,
-  RowTile,
+  RowGlyph,
   type Column,
 } from '@/components/ui'
 import { PRODUCT_TYPES } from '@/lib/productTypes'
@@ -173,7 +173,16 @@ export default function ProductsTable({
          by keyboard at all. The row click is the convenience on top. */
       cell: (p) => (
         <Link href={rowHref(p)} className="flex items-center gap-2.5 hover:text-brand">
-          <RowTile label={p.description} token={p.imageColor} />
+          {/* The product's own till icon when it has one, the initials disc
+              when it has not — the same pair the departments list draws.
+              `imageIcon` is the stored filename, so its presence IS the test
+              for whether there is a picture; the bytes come from the route
+              keyed by product id. */}
+          <RowGlyph
+            label={p.description}
+            token={p.imageColor}
+            src={p.imageIcon ? `/api/product-icon/${p.id}` : null}
+          />
           <span className="flex min-w-0 flex-col">
             <span className="flex min-w-0 items-center gap-2.5">
               <span className="min-w-0 truncate text-ink">{p.description}</span>

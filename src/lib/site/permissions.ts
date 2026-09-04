@@ -95,6 +95,12 @@ export const CAPABILITY_GROUPS = [
       { key: 'products.view', label: 'View products', hint: 'Open the product list and look up prices.' },
       { key: 'products.edit', label: 'Create and edit products', hint: 'Add products, change descriptions and set prices.' },
       { key: 'products.delete', label: 'Delete products', hint: 'Remove a product from the catalogue.' },
+      /* Renaming a code is not a stronger flavour of editing. A code is how
+         stock is identified everywhere — on shelf labels, in supplier
+         paperwork, in another store's share settings — so changing one is a
+         structural act, and whoever fixes descriptions all day should not be
+         able to perform it in passing. */
+      { key: 'products.rename_code', label: 'Rename a stock code', hint: 'Change a product’s code. Past documents keep the old one.' },
       { key: 'products.cost', label: 'See cost prices', hint: 'View what stock was bought for, and the margin.' },
     ],
   },
@@ -105,6 +111,7 @@ export const CAPABILITY_GROUPS = [
       { key: 'customers.view', label: 'View customers', hint: 'Open the customer list and account history.' },
       { key: 'customers.edit', label: 'Create and edit customers', hint: 'Add accounts and change their details.' },
       { key: 'customers.credit', label: 'Set credit terms', hint: 'Change credit limits, terms and account locks.' },
+      { key: 'customers.rename_code', label: 'Rename a customer code', hint: 'Change an account’s code. Past documents keep the old one.' },
     ],
   },
   {
@@ -113,6 +120,7 @@ export const CAPABILITY_GROUPS = [
     capabilities: [
       { key: 'suppliers.view', label: 'View suppliers', hint: 'Open the supplier list and account history.' },
       { key: 'suppliers.edit', label: 'Create and edit suppliers', hint: 'Add suppliers and change their details.' },
+      { key: 'suppliers.rename_code', label: 'Rename a supplier code', hint: 'Change a supplier’s code. Past documents keep the old one.' },
     ],
   },
   {
@@ -531,6 +539,46 @@ export async function setCapability(
     `INSERT INTO role_permissions (role_id, capability, allowed) VALUES (?,?,?)
      ON DUPLICATE KEY UPDATE allowed = VALUES(allowed)`,
     [roleId, capability, allowed ? 1 : 0],
+  )
+  return { ok: true }
+}
+
+/**
+ * Grants or revokes a whole group of capabilities on a role in one write.
+ *
+ * A section's "select all" is ONE decision, so it is one statement: a loop of
+ * single-capability saves would leave the role half-granted if the sixth of
+ * eleven failed, and a permissions screen that stops halfway is the one place
+ * a partial write is least forgivable.
+ */
+export async function setCapabilities(
+  siteId: number,
+  roleId: number,
+  capabilities: string[],
+  allowed: boolean,
+): Promise<SaveResult> {
+  const wanted = [...new Set(capabilities)]
+  if (!wanted.length || !wanted.every(isCapability)) {
+    return { ok: false, error: 'That permission does not exist.' }
+  }
+
+  const role = await siteQuery<RowDataPacket & { is_owner: number }>(
+    siteId,
+    'SELECT is_owner FROM roles WHERE id = ? LIMIT 1',
+    [roleId],
+  )
+  if (!role.length) return { ok: false, error: 'That role no longer exists.' }
+  if (role[0].is_owner) {
+    return { ok: false, error: 'The owner role keeps every permission — otherwise nobody can restore it.' }
+  }
+
+  await siteExecute(
+    siteId,
+    `INSERT INTO role_permissions (role_id, capability, allowed) VALUES ${wanted
+      .map(() => '(?,?,?)')
+      .join(', ')}
+     ON DUPLICATE KEY UPDATE allowed = VALUES(allowed)`,
+    wanted.flatMap((capability) => [roleId, capability, allowed ? 1 : 0]),
   )
   return { ok: true }
 }

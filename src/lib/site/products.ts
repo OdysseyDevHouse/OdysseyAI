@@ -13,6 +13,7 @@ import {
   type PriceCalcId,
 } from '../productProperties'
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
+import { logActivityTx, type Actor } from './activityLog'
 import { writePriceRows } from './reprice'
 import { resolveMasterCode } from './masterCodes'
 import { whyTaxRateRefused, vatRatePercent } from './taxIdentity'
@@ -2033,5 +2034,124 @@ export async function quickUpdateProduct(
     }
 
     return { ok: true as const, id }
+  })
+}
+
+/* ── Renaming a stock code ───────────────────────────────────────────────── */
+
+export type RenameProductCodeResult =
+  | { ok: true; from: string; to: string; followed: { table: string; rows: number }[] }
+  | { ok: false; error: string }
+
+/**
+ * Changes a product's code, and carries the code-keyed lookups with it.
+ *
+ * The code is deliberately `readOnly` on the edit form — it is how stock is
+ * identified everywhere, so changing one is a structural act rather than a
+ * correction, and it gets its own action, its own capability and its own
+ * confirm. This function is that act.
+ *
+ * THE DIVIDING LINE, and the whole reason this is not one UPDATE:
+ *
+ * A product code is stored two different ways in this schema, and a rename has
+ * to treat them as opposites.
+ *
+ *   FOLLOWS the rename — a live lookup that means "the product whose code is
+ *   this". These break silently if left behind, because nothing enforces them
+ *   (no foreign key can: they are codes, not ids). `product_share_settings` is
+ *   keyed by code precisely because ids differ per store (004), and the loyalty
+ *   tables carry `reward_product_code` / `product_code` "by CODE, never by id"
+ *   so programme configuration travels across a group (052).
+ *
+ *   STAYS BEHIND — a snapshot of what the code WAS when a document was issued.
+ *   `sales_document_lines.product_code` sits under the comment "snapshot:
+ *   renaming must not rewrite history", and purchasing, laybys, transfers,
+ *   stock takes, adjustments, commission and void events all repeat it. An
+ *   invoice printed last year says what it said; rewriting those columns would
+ *   restate an issued document, which is the one thing a code change must not
+ *   do. They are listed here only to record that leaving them alone is a
+ *   decision, not an oversight.
+ *
+ * `loyalty_stamps.product_code` is the one code-keyed column that stays behind
+ * anyway: 052 calls it "kept for the 'what did I stamp' question ... not joined
+ * to anything", which makes it history rather than a lookup.
+ *
+ * Tills cache the catalogue by code offline, so a renamed product reaches them
+ * on the next catalogue sync rather than instantly — the caller says so.
+ */
+export async function renameProductCode(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  rawCode: string,
+): Promise<RenameProductCodeResult> {
+  const code = rawCode.trim()
+
+  if (!code) return { ok: false, error: 'A product code is required.' }
+  if (code.length > 48) return { ok: false, error: 'Product code must be 48 characters or fewer.' }
+
+  return siteTransaction(siteId, async (tx) => {
+    /* FOR UPDATE so two renames cannot both pass the clash check below and
+       then race each other onto the same code. The unique key would refuse the
+       second, but with a driver error rather than a sentence. */
+    const [current] = await tx.query<RowDataPacket[]>(
+      'SELECT code, description FROM products WHERE id = ? FOR UPDATE',
+      [id],
+    )
+    const product = current[0]
+    if (!product) return { ok: false as const, error: 'That product no longer exists.' }
+
+    const from = String(product.code)
+    if (from === code) {
+      return { ok: false as const, error: 'That is already this product’s code.' }
+    }
+
+    const [clash] = await tx.query<RowDataPacket[]>(
+      'SELECT id FROM products WHERE code = ? AND id <> ? LIMIT 1',
+      [code, id],
+    )
+    if (clash.length > 0) {
+      return { ok: false as const, error: `Product code "${code}" is already in use.` }
+    }
+
+    await tx.execute('UPDATE products SET code = ?, last_edit_date = NOW() WHERE id = ?', [
+      code,
+      id,
+    ] as never)
+
+    /* The live lookups. Each is best-effort against a site that may not have
+       the table: schema drifts between sites, and a shop with no loyalty
+       module has no loyalty tables — a missing table must not fail a rename
+       that has already succeeded on the product itself. */
+    const followed: { table: string; rows: number }[] = []
+    const follow = async (table: string, column: string) => {
+      try {
+        const [res] = await tx.execute(
+          `UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`,
+          [code, from] as never,
+        )
+        const rows = (res as { affectedRows?: number }).affectedRows ?? 0
+        if (rows > 0) followed.push({ table, rows })
+      } catch (err) {
+        // ER_NO_SUCH_TABLE — this site does not have that module. Anything else
+        // is real and must abort the transaction rather than be swallowed.
+        if ((err as { code?: string }).code !== 'ER_NO_SUCH_TABLE') throw err
+      }
+    }
+
+    await follow('product_share_settings', 'product_code')
+    await follow('loyalty_cards', 'reward_product_code')
+    await follow('loyalty_card_items', 'product_code')
+    await follow('loyalty_vouchers', 'reward_product_code')
+
+    await logActivityTx(tx, actor, {
+      entity: 'product',
+      entityId: id,
+      action: 'rename_code',
+      detail: `Stock code ${from} → ${code} (${String(product.description ?? '')})`,
+      changes: { code: { from, to: code } },
+    })
+
+    return { ok: true as const, from, to: code, followed }
   })
 }

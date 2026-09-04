@@ -139,8 +139,30 @@ export default function PricingPanel({
   const purchaseRates = vatRates.filter((v) => v.vatType === 'purchase')
   const salesRates = vatRates.filter((v) => v.vatType === 'sales')
 
-  const [purchaseVatId, setPurchaseVatId] = useState<number | ''>(defaultPurchaseVatId ?? '')
-  const [sellingVatId, setSellingVatId] = useState<number | ''>(defaultSellingVatId ?? '')
+  /*
+   * EVERY PRODUCT CARRIES A VAT RATE. There is no <None>.
+   *
+   * "None" and "0%" were two spellings of the same money — both charge nothing
+   * — but they are not the same row, and the difference leaked. Most reads are
+   * a LEFT JOIN and treat a missing rate as zero, but jobTime.ts:130 joins
+   * vat_rates INNER, so a product with no rate DISAPPEARS from labour billing
+   * rather than billing at zero. A field where two identical-looking answers
+   * behave differently under one report is a field that will be got wrong.
+   *
+   * So the picker offers the site's real rates only, and anything without one
+   * lands on zero-rated: the safe end, because a product that should have been
+   * standard-rated reads as an obvious 0% on the screen, where a product
+   * silently defaulted to 15% would look right and overcharge.
+   */
+  const zeroRate = (rates: VatRate[]) =>
+    rates.find((v) => v.rate === 0)?.id ?? rates[0]?.id ?? ''
+
+  const [purchaseVatId, setPurchaseVatId] = useState<number | ''>(
+    defaultPurchaseVatId ?? zeroRate(purchaseRates),
+  )
+  const [sellingVatId, setSellingVatId] = useState<number | ''>(
+    defaultSellingVatId ?? zeroRate(salesRates),
+  )
   const [typedCostExcl, setCostExcl] = useState(defaultCostExcl)
 
   // A derived cost wins outright. Kept separate from the typed value rather
@@ -283,7 +305,6 @@ export default function PricingPanel({
                         }
                         className={CONTROL_W}
                       >
-                        <option value="">&lt;None&gt;</option>
                         {purchaseRates.map((v) => (
                           <option key={v.id} value={v.id}>
                             {v.rate}%
@@ -326,7 +347,6 @@ export default function PricingPanel({
                         }
                         className={CONTROL_W}
                       >
-                        <option value="">&lt;None&gt;</option>
                         {salesRates.map((v) => (
                           <option key={v.id} value={v.id}>
                             {v.rate}%

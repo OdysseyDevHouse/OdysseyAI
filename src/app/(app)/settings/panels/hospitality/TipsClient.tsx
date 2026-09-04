@@ -216,7 +216,27 @@ export default function TipsClient({
           )}
 
           {adding && (
-            <div className="flex flex-wrap items-end gap-3 rounded-card border border-border bg-surface-2 p-3">
+            /*
+              `items-start`, NOT `items-end`.
+
+              Every Field here is label / control / optional hint, and the hint
+              is only rendered when there is one — so "From" and "Up to" stand
+              22px taller than "Charge" and "Percent". Aligning the row's BOTTOM
+              edges therefore pushed the two hintless controls 22px down the
+              screen (measured: inputs at y=561 against y=583) and the boxes
+              stepped down mid-row. Aligning the tops lines the labels up, and
+              the controls under them follow, because every control in the row
+              is the same height.
+
+              The buttons need no `FIELD_CONTROL_OFFSET`. That token drops an
+              unlabelled control into line with labelled Fields beside it, and
+              is the right tool when a button shares the field line — but this
+              card is width-capped by the settings column, so the four fields
+              fill the row and the buttons always wrap onto their own line
+              beneath. Measured at both 1600px and 2200px: they wrap at each.
+              Offsetting them there only adds a stray 26px above the buttons.
+            */
+            <div className="flex flex-wrap items-start gap-3 rounded-card border border-border bg-surface-2 p-3">
               <Field label="From" hint="Included in the band">
                 <NumberInput
                   value={draft.minTotal}

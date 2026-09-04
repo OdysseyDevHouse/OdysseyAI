@@ -14,7 +14,7 @@ import { safeReturnTo } from '@/lib/returnTo'
 import { toVariableType, toPriceCalc } from '@/lib/productProperties'
 import { linkedStores } from '@/lib/storeGroups'
 import { setShareSettings } from '@/lib/site/shareSettings'
-import { fanoutProduct } from '@/lib/site/productFanout'
+import { fanoutProduct, fanoutCodeRename } from '@/lib/site/productFanout'
 import { setGroupsForProduct } from '@/lib/site/instructions'
 import { setPrintersForProduct } from '@/lib/site/kitchenPrinters'
 import { saveLocationLevels } from '@/lib/site/stockLocations'
@@ -32,6 +32,7 @@ import {
   setDerivedCost,
   deleteProduct,
   getProduct,
+  renameProductCode,
   propertyColumnMap,
   bulkUpdateProducts,
   quickUpdateProduct,
@@ -893,4 +894,62 @@ export async function quickEditProductAction(
 
   revalidatePath('/products')
   return { ok: true }
+}
+
+/**
+ * Renames a stock code.
+ *
+ * Its own action and its own capability, because it is a structural act rather
+ * than an edit: the code identifies the product on shelf labels, in supplier
+ * paperwork and in every sibling store's database. The form keeps the field
+ * readOnly precisely so this is the only way to change one.
+ *
+ * Ownership is checked here as well as inside the fanout: a branch may not
+ * rename head office's product, and refusing at the action means the local
+ * database is never renamed out from under a fanout that would then be
+ * declined.
+ */
+export async function renameProductCodeAction(form: FormData): Promise<void> {
+  const ctx = await actorForOrThrow('products.rename_code')
+  const { siteId, actor } = ctx
+  const id = Number(form.get('id'))
+  const code = String(form.get('code') ?? '')
+
+  const back = safeReturnTo(form.get('returnTo'))
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+
+  if (!Number.isFinite(id) || id <= 0) redirect('/products')
+
+  const existing = await getProduct(siteId, id)
+  if (!existing) redirect('/products')
+
+  const { editRefusal } = await import('@/lib/site/productOwnership')
+  const refusal = await editRefusal(siteId, existing.code)
+  if (refusal) {
+    redirect(`/products/${id}?error=${encodeURIComponent(refusal)}${from}`)
+  }
+
+  const result = await renameProductCode(siteId, actor, id, code)
+  if (!result.ok) {
+    redirect(`/products/${id}?error=${encodeURIComponent(result.error)}${from}`)
+  }
+
+  /* Sibling stores hold the same product under the same code, so the rename
+     has to travel or one product becomes two. Failures are reported, not
+     thrown: this store's rename already stands. */
+  const spread = await fanoutCodeRename(siteId, result.from, result.to)
+  const stranded = spread.filter((o) => o.status === 'failed')
+
+  revalidatePath('/products')
+  revalidatePath(`/products/${id}`)
+
+  const note =
+    stranded.length > 0
+      ? `&warn=${encodeURIComponent(
+          `Renamed here, but ${stranded.map((s) => s.storeName).join(', ')} could not follow: ` +
+            `${stranded[0].detail ?? ''}`.trim(),
+        )}`
+      : ''
+
+  redirect(`/products/${id}?renamed=${encodeURIComponent(result.from)}${note}${from}`)
 }

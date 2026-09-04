@@ -128,22 +128,14 @@ export default function SerialsPanel({
           },
         ]
       : []),
-    {
-      key: 'sold',
-      header: 'Sold on',
-      cell: (row) => (
-        <span className="text-sm text-ink-2">
-          {row.soldDocNumber ? `${row.soldDocNumber} · ${formatDate(row.soldAt)}` : '—'}
-        </span>
-      ),
-      sortValue: (row) => row.soldAt?.toString() ?? '',
-    },
-    {
-      key: 'customer',
-      header: 'Customer',
-      cell: (row) => <span className="text-sm text-ink-2">{row.customerName ?? '—'}</span>,
-      sortValue: (row) => row.customerName ?? '',
-    },
+    /* No "Sold on" or "Customer" column. This tab answers "which units do we
+       have, and what shape is each one in" — and it grows a row per unit
+       forever, so every column it carries is width taken off the serial itself
+       on a list that will one day be thousands long. Who bought a unit and when
+       is a question the sale already answers: the document holds the customer
+       and the date, and the serial reports join through `sold_doc_id` to show
+       them. The Status badge here says whether a unit has gone, which is all
+       this screen needs. */
     {
       key: 'warranty',
       header: 'Warranty until',

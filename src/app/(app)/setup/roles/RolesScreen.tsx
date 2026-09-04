@@ -8,6 +8,7 @@ import {
   Card,
   CardHeader,
   DataTable,
+  Checkbox,
   SegmentedControl,
   Switch,
   Modal,
@@ -31,6 +32,7 @@ import {
   updateRoleAction,
   deleteRoleAction,
   setCapabilityAction,
+  setCapabilitiesAction,
 } from '../users/actions'
 
 type Group = {
@@ -97,6 +99,43 @@ export default function RolesScreen({
         setLocal((current) => ({
           ...current,
           [roleId]: { ...current[roleId], [capability]: previous },
+        }))
+        toast.error(result.error)
+        return
+      }
+      router.refresh()
+    })
+  }
+
+  /**
+   * Every permission in one section, on or off together.
+   *
+   * Sent as ONE call rather than a loop over toggle(): a section is up to
+   * eleven switches, and a half-applied grant is the one failure mode a
+   * permissions screen must not have. The optimistic paint and the rollback
+   * therefore cover the whole group too.
+   */
+  function toggleGroupCapabilities(roleId: number, group: Group, next: boolean) {
+    const keys = group.capabilities.map((capability) => capability.key)
+    const previous = local[roleId] ?? {}
+
+    setLocal((current) => ({
+      ...current,
+      [roleId]: {
+        ...current[roleId],
+        ...Object.fromEntries(keys.map((key) => [key, next])),
+      },
+    }))
+
+    startTransition(async () => {
+      const result = await setCapabilitiesAction(roleId, keys, next)
+      if (!result.ok) {
+        setLocal((current) => ({
+          ...current,
+          [roleId]: {
+            ...current[roleId],
+            ...Object.fromEntries(keys.map((key) => [key, previous[key] ?? false])),
+          },
         }))
         toast.error(result.error)
         return
@@ -231,24 +270,61 @@ export default function RolesScreen({
       {selected &&
         groups.map((group) => {
           const expanded = open.has(group.key)
+          /* The owner reads as fully granted without any rows behind it, so the
+             count comes off the flag rather than the matrix — see the switches
+             below, which do the same. */
+          const granted = selected.isOwner
+            ? group.capabilities.length
+            : group.capabilities.filter((c) => local[selected.id]?.[c.key]).length
+          const all = granted === group.capabilities.length
+
           return (
             <Card key={group.key}>
-              {/* Not a <Button>: this is a full-width disclosure row that must
-                  fill the card header, which button chrome would fight. */}
-              <button
-                data-kit-ok
-                type="button"
-                onClick={() => toggleGroup(group.key)}
-                aria-expanded={expanded}
-                className="flex w-full items-center gap-2 px-6 py-4 text-left transition hover:bg-surface-2"
-              >
-                <Icons.ChevronDown
-                  size={16}
-                  className={`shrink-0 text-muted transition-transform ${expanded ? '' : '-rotate-90'}`}
+              {/* The disclosure and the select-all are SIBLINGS, not nested:
+                  a checkbox inside the header button would be a control inside
+                  a control, and every click on it would also expand the card. */}
+              <div className="flex items-center gap-3 pr-6">
+                {/* Not a <Button>: this is a full-width disclosure row that must
+                    fill the card header, which button chrome would fight. */}
+                <button
+                  data-kit-ok
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  aria-expanded={expanded}
+                  className="flex min-w-0 flex-1 items-center gap-2 px-6 py-4 text-left transition hover:bg-surface-2"
+                >
+                  <Icons.ChevronDown
+                    size={16}
+                    className={`shrink-0 text-muted transition-transform ${expanded ? '' : '-rotate-90'}`}
+                  />
+                  <span className="font-medium text-ink">{group.label}</span>
+                  {/* The count of what is ON, not just how many exist: it is
+                      what a collapsed section is being scanned for, and it
+                      makes the select-all's state readable without opening. */}
+                  <span className="shrink-0 text-xs text-muted">
+                    {granted} of {group.capabilities.length}
+                  </span>
+                </button>
+
+                <Checkbox
+                  className="shrink-0"
+                  checked={all}
+                  /* Some-but-not-all — the dash. */
+                  indeterminate={granted > 0 && !all}
+                  disabled={selected.isOwner || pending}
+                  onChange={(e) =>
+                    toggleGroupCapabilities(selected.id, group, e.target.checked)
+                  }
+                  label={<span className="text-xs text-muted">All</span>}
+                  aria-label={
+                    selected.isOwner
+                      ? `${group.label} — the owner role always has every permission`
+                      : all
+                        ? `Turn off every ${group.label} permission for ${selected.name}`
+                        : `Turn on every ${group.label} permission for ${selected.name}`
+                  }
                 />
-                <span className="font-medium text-ink">{group.label}</span>
-                <span className="text-xs text-muted">{group.capabilities.length} permissions</span>
-              </button>
+              </div>
 
               {expanded && (
                 /* Hand-built rather than DataTable: the cells hold live

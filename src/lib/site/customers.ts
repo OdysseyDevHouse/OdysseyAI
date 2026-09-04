@@ -1174,3 +1174,76 @@ export async function customerOptions(
   )
   return rows.map((r) => ({ id: Number(r.id), name: `${String(r.name)} (${String(r.code)})` }))
 }
+
+/* ── Renaming a customer code ────────────────────────────────────────────── */
+
+export type RenamePartyCodeResult =
+  | { ok: true; from: string; to: string }
+  | { ok: false; error: string }
+
+/**
+ * Changes a customer's account code.
+ *
+ * Every other table that holds a customer code holds it as a SNAPSHOT of what
+ * the account was called when a document was issued —
+ * `sales_document_lines`-side documents, statement runs, payment and credit
+ * control runs, job cards. `sales_core.sql` states the rule outright next to
+ * the column: "snapshot: renaming must not rewrite history". So this writes
+ * exactly one column and deliberately leaves those behind; a statement already
+ * sent keeps the code it was sent under.
+ *
+ * Everything that is a live relationship — invoices, ledger entries, loyalty —
+ * hangs off `customers.id`, which does not move. That is why this is one
+ * UPDATE where the product equivalent is a transaction over several tables.
+ *
+ * The row is written on the OWNER's connection (the file may be shared across
+ * a group) while the audit line is written to the branch, the same split
+ * createCustomer() makes and for the same reason: the row is the fact, the log
+ * line is the note about who did it.
+ */
+export async function renameCustomerCode(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  rawCode: string,
+): Promise<RenamePartyCodeResult> {
+  const code = rawCode.trim()
+
+  if (!code) return { ok: false, error: 'A customer code is required.' }
+  if (code.length > 32) return { ok: false, error: 'Customer code must be 32 characters or fewer.' }
+
+  const result = await customerTransaction(siteId, async (tx) => {
+    const [current] = await tx.query<RowDataPacket[]>(
+      'SELECT code, name FROM customers WHERE id = ? FOR UPDATE',
+      [id],
+    )
+    const customer = current[0]
+    if (!customer) return { ok: false as const, error: 'That customer no longer exists.' }
+
+    const from = String(customer.code ?? '')
+    if (from === code) return { ok: false as const, error: 'That is already this account’s code.' }
+
+    const [clash] = await tx.query<RowDataPacket[]>(
+      'SELECT id FROM customers WHERE code = ? AND id <> ? LIMIT 1',
+      [code, id],
+    )
+    if (clash.length > 0) {
+      return { ok: false as const, error: `Customer code "${code}" is already in use.` }
+    }
+
+    await tx.execute('UPDATE customers SET code = ? WHERE id = ?', [code, id] as never)
+    return { ok: true as const, from, to: code, name: String(customer.name ?? '') }
+  })
+
+  if (!result.ok) return result
+
+  await logActivity(siteId, actor, {
+    entity: 'customer',
+    entityId: id,
+    action: 'rename_code',
+    detail: `Customer code ${result.from} → ${result.to} (${result.name})`,
+    changes: { code: { from: result.from, to: result.to } },
+  })
+
+  return { ok: true, from: result.from, to: result.to }
+}

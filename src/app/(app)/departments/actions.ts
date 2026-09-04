@@ -29,7 +29,10 @@ function readInput(form: FormData): DepartmentInput {
   return {
     name: String(form.get('name') ?? ''),
     parentId: optionalId(form, 'parentId'),
-    code: String(form.get('code') ?? '') || null,
+    /* No code: the form stopped asking for one, and departments.ts allocates
+       the next free one on create and keeps the stored one on update. Posting
+       null here instead would clear the code of every department that got
+       saved. */
     color: String(form.get('color') ?? '') || null,
     sortOrder: Number.isFinite(sort) ? sort : 0,
     isActive: form.get('isActive') === 'on',
@@ -134,8 +137,9 @@ export async function reorderDepartmentsAction(orderedIds: number[]): Promise<In
 /**
  * Create or rename from the list's own modal, without leaving the page.
  *
- * The full form at /departments/[id] still owns code, sort order and
- * re-parenting — this covers only what the list itself offers.
+ * The full form at /departments/[id] still owns sort order and re-parenting —
+ * this covers only what the list itself offers. Neither owns the code any
+ * more: it is allocated on create and carried untouched thereafter.
  */
 export async function quickSaveDepartmentAction(input: {
   id?: number
@@ -206,4 +210,40 @@ export async function deleteDepartmentAction(form: FormData): Promise<void> {
     redirect(`/departments/${id}?error=${encodeURIComponent(result.error)}`)
   }
   redirect('/departments?deleted=1')
+}
+
+/**
+ * Create a department from a screen that is in the middle of something else —
+ * today, the "<Create new>" option on the product form's department pickers.
+ *
+ * Its own action rather than a flag on quickSaveDepartmentAction because the
+ * CALLER needs something that one deliberately throws away: the new id. The
+ * product form has to select what was just created, and an InlineResult cannot
+ * say which row it made. Returning the id is the whole point.
+ *
+ * Only creates. Renaming from inside a product form would be a way to rename a
+ * department for every product that uses it while looking like an edit to the
+ * one on screen.
+ */
+export type CreateDepartmentResult =
+  | { ok: true; id: number; name: string }
+  | { ok: false; error: string }
+
+export async function createDepartmentInlineAction(input: {
+  name: string
+  parentId: number | null
+  color: string | null
+}): Promise<CreateDepartmentResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await createDepartment(ctx.siteId, {
+    name: input.name,
+    parentId: input.parentId,
+    color: input.color,
+  })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidateDepartments()
+  return { ok: true, id: result.id, name: input.name.trim() }
 }

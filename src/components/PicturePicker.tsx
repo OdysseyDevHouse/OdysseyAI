@@ -40,6 +40,7 @@ export default function PicturePicker({
   value,
   current,
   onChange,
+  showThumbnail = true,
 }: {
   /** The chosen image id, or null. */
   value: number | null
@@ -49,6 +50,15 @@ export default function PicturePicker({
    */
   current: StorefrontImage | null
   onChange: (image: StorefrontImage | null) => void
+  /**
+   * Draw the little preview square, or leave it to the caller.
+   *
+   * Off where something beside the picker ALREADY shows the picture — the
+   * department form puts it on a live till tile, and a 112px crop of the same
+   * image next to it is a second, worse answer to a question already answered.
+   * The buttons still do the whole job; only the redundant thumbnail goes.
+   */
+  showThumbnail?: boolean
 }) {
   const [open, setOpen] = useState(false)
 
@@ -57,26 +67,28 @@ export default function PicturePicker({
       <div className="flex items-center gap-3">
         {/* The thumbnail doubles as the "change it" button — a picture is the
             one thing nobody needs a label to recognise. */}
-        <button
-          data-kit-ok
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label={value ? 'Change the picture' : 'Choose a picture'}
-          className="relative h-16 w-28 shrink-0 overflow-hidden rounded-control border border-border bg-surface-2 transition hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-        >
-          {value ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={`/api/storefront-images/${value}`}
-              alt=""
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <span className="flex h-full w-full items-center justify-center text-muted">
-              <Icons.Picture size={20} />
-            </span>
-          )}
-        </button>
+        {showThumbnail && (
+          <button
+            data-kit-ok
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label={value ? 'Change the picture' : 'Choose a picture'}
+            className="relative h-16 w-28 shrink-0 overflow-hidden rounded-control border border-border bg-surface-2 transition hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+          >
+            {value ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/api/storefront-images/${value}`}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-muted">
+                <Icons.Picture size={20} />
+              </span>
+            )}
+          </button>
+        )}
 
         <div className="flex min-w-0 flex-col gap-1">
           <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>

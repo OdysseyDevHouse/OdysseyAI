@@ -61,9 +61,19 @@ export default async function EditDepartmentPage({
 
   return (
     <>
+      {/*
+        The code rides on the subtitle rather than sitting in the form.
+
+        It is allocated, not typed — see nextDepartmentCode — so it is a fact
+        ABOUT this record like its path, not a decision the page is asking for.
+        Among the inputs it read as one more blank to fill in; here it reads as
+        the reference a shop quotes back off a report.
+      */}
       <PageHeader
         title={department.name}
-        subtitle={departmentPath(departments, department.id)}
+        subtitle={[departmentPath(departments, department.id), department.code]
+          .filter(Boolean)
+          .join(' · ')}
         backHref="/departments"
         action={
           <div className="flex items-center gap-2">

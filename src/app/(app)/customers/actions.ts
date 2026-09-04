@@ -13,6 +13,7 @@ import {
   createCustomer,
   updateCustomer,
   deleteCustomer,
+  renameCustomerCode,
   bulkUpdateCustomers,
   toCustomerStatus,
   possibleDuplicates,
@@ -294,4 +295,32 @@ export async function setCustomerCustomValuesAction(
   const result = await setValues(ctx.siteId, ctx.actor, 'customer', entityId, values)
   if (result.ok) revalidatePath(`/customers/${entityId}`)
   return result
+}
+
+/**
+ * Renames a customer's account code.
+ *
+ * Its own capability rather than customers.edit: the code is what appears on
+ * every statement and remittance the account has ever been sent, and changing
+ * one is a structural act rather than a correction to a detail.
+ */
+export async function renameCustomerCodeAction(form: FormData): Promise<void> {
+  const ctx = await actorForModuleOrThrow('customers', 'customers.rename_code')
+  const { siteId, actor } = ctx
+  const id = Number(form.get('id'))
+  const code = String(form.get('code') ?? '')
+
+  if (!Number.isFinite(id) || id <= 0) redirect('/customers')
+
+  const back = safeReturnTo(form.get('returnTo'))
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+
+  const result = await renameCustomerCode(siteId, actor, id, code)
+  if (!result.ok) {
+    redirect(`/customers/${id}?error=${encodeURIComponent(result.error)}${from}`)
+  }
+
+  revalidatePath('/customers')
+  revalidatePath(`/customers/${id}`)
+  redirect(`/customers/${id}?renamed=${encodeURIComponent(result.from)}${from}`)
 }

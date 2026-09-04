@@ -19,7 +19,8 @@ import { listRecipe } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
-import { Callout, PageBody, PageHeader } from '@/components/ui'
+import { ButtonLink, Callout, PageBody, PageHeader } from '@/components/ui'
+import { Plus } from '@/components/ui/icons'
 import { listImages } from '@/lib/site/productImages'
 import { getSetting } from '@/lib/site/settings'
 import { variantStanding } from '@/lib/site/productVariants'
@@ -28,7 +29,6 @@ import { referChain, isOnReferLadder } from '@/lib/site/referRange'
 import ProductForm, { SaveProductButton } from '../ProductForm'
 import ProductImages from '../ProductImages'
 import VariantsPanel from '../VariantsPanel'
-import BarcodesPanel from '../BarcodesPanel'
 import PriceHistoryPanel from '../PriceHistoryPanel'
 import { listProductBarcodes } from '@/lib/site/productBarcodes'
 import { listPriceHistory } from '@/lib/site/priceHistory'
@@ -43,10 +43,19 @@ export default async function EditProductPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ saved?: string; from?: string }>
+  searchParams: Promise<{
+    saved?: string
+    from?: string
+    /** A refusal from archive, delete or rename. */
+    error?: string
+    /** The code a rename moved AWAY from, so the banner can name both ends. */
+    renamed?: string
+    /** A rename that this store applied but a sibling store could not follow. */
+    warn?: string
+  }>
 }) {
   const { id } = await params
-  const { saved, from } = await searchParams
+  const { saved, from, error, renamed, warn } = await searchParams
 
   /* Where leaving this product goes. The list that sent us here when it had
      filters worth keeping, else the plain catalogue.
@@ -221,6 +230,21 @@ export default async function EditProductPage({
         backHref={backHref}
         action={
           <>
+            {/* Capturing a batch of products lands here after every save —
+                createProductAction redirects to this screen — so without this
+                the only way on to the next one is Back and then New product on
+                the list. Secondary, not primary: Save is the primary act on a
+                screen with unsaved edits in it, and two solid buttons side by
+                side would argue about which one that is.
+
+                Guarded by `products.edit`, which is the capability the New product
+                screen itself requires. Not gated again here: creating and
+                editing are the SAME capability, and reaching this page at all
+                already took it — see requireCapability at the top. */}
+            <ButtonLink variant="secondary" href="/products/new">
+              <Plus size={15} />
+              New product
+            </ButtonLink>
             {/* Submits the form below by id — it is a sibling of that form, not
                 an ancestor, which is exactly what the `form` attribute is for.
 
@@ -234,7 +258,12 @@ export default async function EditProductPage({
               returnTo={backHref === '/products' ? null : backHref}
               isArchived={product.isArchived}
               name={product.description}
+              code={product.code}
               canDelete={can(capabilities, 'products.delete')}
+              canRenameCode={can(capabilities, 'products.rename_code')}
+              /* Reopens the rename dialog holding the refusal, rather than
+                 letting it read as a banner behind a closed dialog. */
+              renameError={renamed ? null : (error ?? null)}
             />
           </>
         }
@@ -242,6 +271,17 @@ export default async function EditProductPage({
 
       <PageBody>
         {saved === '1' && <Callout tone="success" title="Product saved." />}
+        {renamed && (
+          <Callout tone="success" title="Stock code renamed.">
+            <span className="numeric font-medium">{renamed}</span> is now{' '}
+            <span className="numeric font-medium">{product.code}</span>. Documents already issued
+            keep the old code.
+          </Callout>
+        )}
+        {warn && <Callout tone="warning" title="Not every store followed">{warn}</Callout>}
+        {/* A rename refusal is shown inside the dialog instead, so it is not
+            repeated here. */}
+        {error && !renamed && <Callout tone="danger">{error}</Callout>}
 
         <ProductForm
           /* Only when it differs from the default — a bare '/products' is what
@@ -271,6 +311,9 @@ export default async function EditProductPage({
           autoCode={autoCode}
           pictureFont={pictureFont}
           serials={serials}
+          /* The alias barcodes moved OFF the General tab and behind the chevron
+             beside the Barcode field — see ExtraBarcodesModal for why. */
+          extraBarcodes={extraBarcodes}
           productSuppliers={productSuppliers}
           /* Module first, then capability — the same order and the same two
              gates the Adjustments screen applies. The action re-checks both. */
@@ -299,9 +342,6 @@ export default async function EditProductPage({
               {/* Images upload immediately and individually, so they are not
                   part of the product's save at all. */}
               <ProductImages productId={product.id} initial={images} />
-
-              {/* The alias barcodes (143). Self-saving, like its siblings. */}
-              <BarcodesPanel productId={product.id} initial={extraBarcodes} />
 
               {/* Price history has MOVED to the Reporting tab — it is history,
                   which is what that tab is for, and the General tab was long. */}

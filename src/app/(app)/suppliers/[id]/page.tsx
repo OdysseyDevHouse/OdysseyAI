@@ -32,7 +32,9 @@ import TransactionsTab from './TransactionsTab'
 import ContactsPanel from '@/components/party/ContactsPanel'
 import DocumentsPanel from '@/components/party/DocumentsPanel'
 import CommentsPanel from '@/components/party/CommentsPanel'
-import { deleteSupplierAction } from '../actions'
+import { can } from '@/lib/site/permissions'
+import PartyCodeActions from '../../partyCodeActions'
+import { deleteSupplierAction, renameSupplierCodeAction } from '../actions'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,12 +58,19 @@ export default async function SupplierPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ tab?: string; saved?: string; error?: string; from?: string }>
+  searchParams: Promise<{
+    tab?: string
+    saved?: string
+    error?: string
+    from?: string
+    /** The code a rename moved away from, so the banner can name both ends. */
+    renamed?: string
+  }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { siteId } = await requireCapability('suppliers.view')
+  const { siteId, capabilities } = await requireCapability('suppliers.view')
   const { id } = await params
-  const { tab, saved, error, from } = await searchParams
+  const { tab, saved, error, from, renamed } = await searchParams
 
   /* Where leaving goes: the list that sent us here when it had filters worth
      keeping, else the plain register. Validated — see lib/returnTo.ts. */
@@ -106,14 +115,27 @@ export default async function SupplierPage({
         backHref={backHref}
         backLabel="Suppliers"
         action={
-          // Nothing posted yet means nothing to reconcile — matches how the
-          // customer page gates its Statement button.
-          ledger.length > 0 ? (
-            <ButtonLink href={`/suppliers/${supplier.id}/statement`} variant="secondary">
-              <Icons.Receipt size={15} />
-              Statement
-            </ButtonLink>
-          ) : undefined
+          <>
+            {/* Nothing posted yet means nothing to reconcile — matches how the
+                customer page gates its Statement button. */}
+            {ledger.length > 0 && (
+              <ButtonLink href={`/suppliers/${supplier.id}/statement`} variant="secondary">
+                <Icons.Receipt size={15} />
+                Statement
+              </ButtonLink>
+            )}
+            {can(capabilities, 'suppliers.rename_code') && (
+              <PartyCodeActions
+                action={renameSupplierCodeAction}
+                id={supplier.id}
+                code={supplier.code}
+                name={supplier.name}
+                noun="supplier"
+                returnTo={backHref === '/suppliers' ? null : backHref}
+                renameError={renamed ? null : (error ?? null)}
+              />
+            )}
+          </>
         }
       />
 
@@ -122,7 +144,18 @@ export default async function SupplierPage({
           <Callout tone="success" title="Saved." />
         </div>
       )}
-      {error && (
+      {renamed && (
+        <div className="px-6 pt-4">
+          <Callout tone="success" title="Supplier code renamed.">
+            <span className="numeric font-medium">{renamed}</span> is now{' '}
+            <span className="numeric font-medium">{supplier.code}</span>. Orders and remittances
+            already issued keep the old code.
+          </Callout>
+        </div>
+      )}
+      {/* A rename refusal reopens the dialog holding the message, so it is not
+          repeated as a banner behind it. */}
+      {error && !renamed && (
         <div className="px-6 pt-4">
           <Callout tone="danger" title={error} />
         </div>

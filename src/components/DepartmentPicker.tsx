@@ -1,8 +1,11 @@
 'use client'
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { Field, Select } from '@/components/ui'
+import { useRouter } from 'next/navigation'
+import { Field, Select, useToast } from '@/components/ui'
 import type { Department } from '@/lib/site/departments'
+import DepartmentEditorModal, { type DepartmentEditorTarget } from './DepartmentEditorModal'
+import { createDepartmentInlineAction } from '@/app/(app)/departments/actions'
 
 /**
  * Cascading selects over an arbitrary-depth department tree.
@@ -13,9 +16,25 @@ import type { Department } from '@/lib/site/departments'
  *
  * The submitted value is the DEEPEST department chosen, since that identifies
  * the whole path — its ancestors are implied.
+ *
+ * ── CREATING ONE FROM HERE ────────────────────────────────────────────────
+ *
+ * Every level ends with a "<Create new>" option that opens the same
+ * name-and-colour dialog the departments list uses. The moment somebody
+ * discovers a department is missing is the moment they are filing a product,
+ * and sending them to another screen then means abandoning a half-filled form.
+ *
+ * The department is created immediately rather than at product-save: it is a
+ * real row either way, and a save that had to create departments as a side
+ * effect would be one that can half-succeed. It is then selected at the level
+ * it was made at, which is the only reason this needs the new id back.
  */
 
 const LEVEL_LABELS = ['Major department', 'Sub department 1', 'Sub department 2']
+
+/* The option value that opens the create dialog. A string that is not a
+   number, so it can never collide with a department id. */
+const CREATE = 'create'
 
 function labelFor(depth: number): string {
   return LEVEL_LABELS[depth] ?? `Sub department ${depth}`
@@ -26,6 +45,7 @@ export default function DepartmentPicker({
   departments,
   defaultValue,
   trailing,
+  canCreate = true,
 }: {
   name: string
   departments: Department[]
@@ -41,27 +61,50 @@ export default function DepartmentPicker({
    * not the picker's.
    */
   trailing?: ReactNode
+  /**
+   * `products.edit`. The action enforces it too — this only hides the option,
+   * so somebody who may not create one is not handed a dialog that will fail.
+   */
+  canCreate?: boolean
 }) {
-  const byId = useMemo(() => new Map(departments.map((d) => [d.id, d])), [departments])
+  const router = useRouter()
+  const toast = useToast()
 
-  // The chain of chosen ids, root first. Rebuilt from the saved department so
-  // an existing product opens with every level already filled in.
+  /* Departments created here, appended to what the server sent.
+     router.refresh() brings the real rows down, but it is not instant and a
+     <select> cannot show an option that is not in its list yet. Holding them
+     locally is what makes a new department appear the moment it exists rather
+     than a beat later. */
+  const [added, setAdded] = useState<Department[]>([])
+  const all = useMemo(() => [...departments, ...added], [departments, added])
+
+  const [editor, setEditor] = useState<DepartmentEditorTarget | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const byId = useMemo(() => new Map(all.map((d) => [d.id, d])), [all])
+
+  /* The chain of chosen ids, root first. Rebuilt from the SAVED department so
+     an existing product opens with every level already filled in.
+
+     Built from `departments` rather than the combined list on purpose: this
+     must not re-run when something is created here, or the choice just made
+     would be recomputed from the saved value and thrown away. */
   const initialChain = useMemo(() => {
     const chain: number[] = []
     const seen = new Set<number>()
-    let current = defaultValue === null ? undefined : byId.get(defaultValue)
+    const lookup = new Map(departments.map((d) => [d.id, d]))
+    let current = defaultValue === null ? undefined : lookup.get(defaultValue)
     while (current && !seen.has(current.id)) {
       seen.add(current.id)
       chain.unshift(current.id)
-      current = current.parentId === null ? undefined : byId.get(current.parentId)
+      current = current.parentId === null ? undefined : lookup.get(current.parentId)
     }
     return chain
-  }, [defaultValue, byId])
+  }, [defaultValue, departments])
 
   const [chain, setChain] = useState<number[]>(initialChain)
 
-  const childrenOf = (parentId: number | null) =>
-    departments.filter((d) => d.parentId === parentId)
+  const childrenOf = (parentId: number | null) => all.filter((d) => d.parentId === parentId)
 
   // One select per level: the roots, then the children of each chosen node,
   // stopping when a level has nothing to offer.
@@ -69,7 +112,10 @@ export default function DepartmentPicker({
   let parentId: number | null = null
   for (let depth = 0; ; depth++) {
     const options = childrenOf(parentId)
-    if (options.length === 0) break
+    /* Without create, an empty level is simply the end of the tree. With it,
+       one more select still has to appear — otherwise a leaf department offers
+       nowhere to stand to add its first child. */
+    if (options.length === 0 && !canCreate) break
     // Indexing past the end gives undefined at runtime but types as number,
     // so the length check is what actually decides whether a level is chosen.
     const selected: number | '' = depth < chain.length ? chain[depth] : ''
@@ -79,10 +125,70 @@ export default function DepartmentPicker({
   }
 
   const choose = (depth: number, value: string) => {
+    if (value === CREATE) {
+      /* The parent is whatever is chosen one level UP, so creating from the
+         "Sub department 1" row makes a child of the chosen major — which is
+         exactly what that row is asking for. */
+      const parent = depth > 0 ? (chain[depth - 1] ?? null) : null
+      setEditor({
+        mode: 'create',
+        parentId: parent,
+        parentName: parent === null ? undefined : byId.get(parent)?.name,
+      })
+      return
+    }
     // Truncate deeper choices — they belonged to the branch just abandoned.
     const next = chain.slice(0, depth)
     if (value !== '') next.push(Number(value))
     setChain(next)
+  }
+
+  const create = async (values: { name: string; color: string | null }) => {
+    if (editor?.mode !== 'create') return
+    const parent = editor.parentId
+    setBusy(true)
+    try {
+      const result = await createDepartmentInlineAction({
+        name: values.name,
+        parentId: parent,
+        color: values.color,
+      })
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+
+      /* A stand-in until refresh() brings the real row down. Only the fields
+         this picker reads are known here; the counts are zero because it was
+         created empty, which is true at this instant. */
+      const fresh: Department = {
+        id: result.id,
+        parentId: parent,
+        name: result.name,
+        code: null,
+        color: values.color,
+        sortOrder: 0,
+        isActive: true,
+        posImageId: null,
+        onlineImageId: null,
+        productCount: 0,
+        childCount: 0,
+      }
+      setAdded((current) => [...current, fresh])
+
+      // Select it at the level it was made at, replacing whatever deeper
+      // choice used to sit below its parent.
+      setChain((current) => {
+        const depth = parent === null ? 0 : current.indexOf(parent) + 1
+        return [...current.slice(0, depth), result.id]
+      })
+
+      setEditor(null)
+      toast.success(`${result.name} created.`)
+      router.refresh()
+    } finally {
+      setBusy(false)
+    }
   }
 
   const deepest = chain.length ? chain[chain.length - 1] : ''
@@ -103,6 +209,7 @@ export default function DepartmentPicker({
                   {d.name}
                 </option>
               ))}
+              {canCreate && <option value={CREATE}>&lt;Create new&gt;</option>}
             </Select>
           </Field>
         ))}
@@ -117,6 +224,13 @@ export default function DepartmentPicker({
       </div>
 
       <input type="hidden" name={name} value={deepest} />
+
+      <DepartmentEditorModal
+        target={editor}
+        busy={busy}
+        onClose={() => setEditor(null)}
+        onSave={create}
+      />
     </>
   )
 }

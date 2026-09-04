@@ -10,6 +10,8 @@ import LinkedStoresPanel from '@/components/LinkedStoresPanel'
 import type { LinkedProductView } from '@/lib/site/productFanout'
 import ProductTypePanel from '@/components/ProductTypePanel'
 import TillTilePanel from './TillTilePanel'
+import ExtraBarcodesModal from './ExtraBarcodesModal'
+import GenerateBarcodeModal from './GenerateBarcodeModal'
 import PropertiesPanel from '@/components/PropertiesPanel'
 import InstructionsPanel from '@/components/InstructionsPanel'
 import RecipePanel from '@/components/RecipePanel'
@@ -26,6 +28,7 @@ import type { RecipeLine } from '@/lib/site/productComposition'
 import type { ChainRung } from '@/lib/site/referRange'
 import type { Serial } from '@/lib/site/serials'
 import type { ProductSupplier } from '@/lib/site/productSuppliers'
+import type { ProductBarcode } from '@/lib/site/productBarcodes'
 import {
   Button,
   Callout,
@@ -33,7 +36,9 @@ import {
   EDIT_COLUMN,
   FIELD_LABEL,
   Field,
+  FieldMenu,
   Input,
+  MenuItem,
   SectionTitle,
   SectionBody,
   Select,
@@ -50,6 +55,7 @@ import {
   Lightbulb,
   Truck,
   Barcode,
+  Wand,
   ArrowLeftRight,
   Printer,
   LineChart,
@@ -140,6 +146,7 @@ export default function ProductForm({
   autoCode = false,
   pictureFont = '',
   generalExtras = null,
+  extraBarcodes = [],
   returnTo = null,
 }: {
   product: Product | null
@@ -162,6 +169,12 @@ export default function ProductForm({
    * and the browser drops a nested one.
    */
   generalExtras?: React.ReactNode
+  /**
+   * The alias barcodes already on file, for the chevron beside the Barcode
+   * field. Read on the server with the rest of the product; empty on the
+   * new-product screen, which has no product to hang an alias off yet.
+   */
+  extraBarcodes?: ProductBarcode[]
   /**
    * Pre-filled code for a new product, or null when auto-numbering is off.
    * A suggestion only — see lib/site/masterCodes.ts.
@@ -240,6 +253,21 @@ export default function ProductForm({
 
   const isNew = product === null
   const [description, setDescription] = useState(product?.description ?? '')
+
+  /* The barcode is CONTROLLED, unlike the other overview fields, because the
+     generator writes into it: an uncontrolled input with a defaultValue cannot
+     be changed from outside without reaching for a ref, and the dialog would
+     be writing to the DOM behind React's back.
+
+     The alias rows are held here too, so the chevron's menu can show a count
+     without the dialog being open — a product WITH extra barcodes says so
+     before anyone opens it, which is what makes hiding them behind a menu
+     safe. Kept in sync by the dialog rather than re-read: each add/remove is
+     already its own round trip.  */
+  const [barcode, setBarcode] = useState(product?.barcode ?? '')
+  const [aliases, setAliases] = useState<ProductBarcode[]>(extraBarcodes)
+  const [aliasesOpen, setAliasesOpen] = useState(false)
+  const [generatorOpen, setGeneratorOpen] = useState(false)
   // Existing rows may still hold a hex from before these became tokens;
   // tileClass() falls back to the first swatch rather than rendering nothing.
   const [color, setColor] = useState(product?.imageColor ?? TILE_SWATCHES[0].token)
@@ -348,7 +376,48 @@ export default function ProductForm({
   // the form but inside this div.
   return (
     <div className={`flex ${EDIT_COLUMN} flex-col gap-4`}>
-      <form id={FORM_ID} action={formAction} className="flex flex-col gap-4">
+      {/*
+        ── ENTER DOES NOT SAVE ──────────────────────────────────────────────
+
+        A form with a single submit button submits on Enter from any input —
+        the browser's "implicit submission". On a one-question form that is a
+        convenience. Here it is a trap: this form is seven tabs deep, the tab
+        is client state, and saving reloads the page — so Enter in a Recipe
+        quantity box saved the product and dropped the user back on General,
+        looking like the app had navigated away by itself.
+
+        The cost of getting it wrong is asymmetric. Nobody types a quantity and
+        expects the whole product to commit; but somebody halfway through a
+        recipe, tabbing between quantity and wastage, hits Enter out of habit
+        constantly. Saving is a deliberate act on a form this size, and it has
+        a deliberate button in the header.
+
+        Blocked at the FORM rather than on each input, because the bug is the
+        form's rule, not any one field's — a per-input handler would be thirty
+        copies of this and would still miss the next field somebody adds.
+
+        Three deliberate exceptions:
+          - textarea, where Enter is a newline and never submitted anything.
+          - anything that has already handled the key: the Combobox picks the
+            highlighted ingredient with Enter and calls preventDefault itself,
+            so a defaultPrevented event is one that has done its job.
+          - a real submit button focused and activated with Enter, which is a
+            press of that button rather than implicit submission.
+        The header's Save is a <button type="submit" form="product-form">, which
+        does not travel through this handler at all — it stays unaffected.
+      */}
+      <form
+        id={FORM_ID}
+        action={formAction}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.defaultPrevented) return
+          const el = e.target as HTMLElement
+          if (el.tagName === 'TEXTAREA') return
+          if (el.tagName === 'BUTTON' && (el as HTMLButtonElement).type === 'submit') return
+          e.preventDefault()
+        }}
+        className="flex flex-col gap-4"
+      >
         {product && <input type="hidden" name="id" value={product.id} />}
 
         {/* The list this product was opened from, so saving returns to it with
@@ -515,13 +584,51 @@ export default function ProductForm({
                   />
                 </Field>
 
+                {/* The chevron is JOINED to the field on purpose: everything
+                    behind it acts on this barcode, and a separate button an inch
+                    away would read as an unrelated control. See FieldMenu. */}
                 <Field label="Barcode">
-                  <Input
-                    name="barcode"
-                    defaultValue={product?.barcode ?? ''}
-                    maxLength={64}
-                    placeholder="Scan or type"
-                  />
+                  <FieldMenu triggerLabel="More barcode options">
+                    <Input
+                      name="barcode"
+                      value={barcode}
+                      onChange={(e) => setBarcode(e.target.value)}
+                      maxLength={64}
+                      placeholder="Scan or type"
+                    />
+                    {(close) => (
+                      <>
+                        {/* Edit only. An alias is a row pointing at a product
+                            id, and a product being created has no id yet — the
+                            entry is offered once there is something to attach
+                            it to. */}
+                        <MenuItem
+                          disabled={isNew}
+                          onClick={() => {
+                            close()
+                            setAliasesOpen(true)
+                          }}
+                        >
+                          <Barcode size={15} />
+                          Extra barcodes
+                          {aliases.length > 0 && (
+                            <span className="numeric ml-auto text-xs text-muted">
+                              {aliases.length}
+                            </span>
+                          )}
+                        </MenuItem>
+                        <MenuItem
+                          onClick={() => {
+                            close()
+                            setGeneratorOpen(true)
+                          }}
+                        >
+                          <Wand size={15} />
+                          Generate barcode
+                        </MenuItem>
+                      </>
+                    )}
+                  </FieldMenu>
                 </Field>
               </div>
 
@@ -629,21 +736,22 @@ export default function ProductForm({
                   so it fills the spare column on a shallow tree instead of
                   costing a whole row of height. On a 3-level tree it wraps
                   underneath, which is where it used to live anyway. */}
-              {departments.length === 0 ? (
-                <>
-                  <p className="text-sm text-muted">
-                    No departments exist yet. Products can still be saved without one.
-                  </p>
-                  {brandField}
-                </>
-              ) : (
-                <DepartmentPicker
-                  name="departmentId"
-                  departments={departments}
-                  defaultValue={product?.departmentId ?? null}
-                  trailing={brandField}
-                />
+              {/* No empty-state branch: the picker handles an empty tree by
+                  showing one select holding nothing but <Create new>, which is
+                  how the FIRST department gets made without leaving a
+                  half-filled product form. */}
+              {departments.length === 0 && (
+                <p className="text-sm text-muted">
+                  No departments exist yet — pick <span className="text-ink-2">&lt;Create
+                  new&gt;</span> below to add one. Products can also be saved without one.
+                </p>
               )}
+              <DepartmentPicker
+                name="departmentId"
+                departments={departments}
+                defaultValue={product?.departmentId ?? null}
+                trailing={brandField}
+              />
             </div>
           </Card>
 
@@ -940,6 +1048,30 @@ export default function ProductForm({
       )}
 
       {/* ── General tab, continued ───────────────────────────────────────── */}
+      {/* The two barcode dialogs the chevron opens. Outside <form> for the
+          same reason the wizard is: the alias dialog carries its own inputs and
+          saves on its own, and a nested form is dropped by the browser. */}
+      {product && (
+        <ExtraBarcodesModal
+          open={aliasesOpen}
+          onClose={() => setAliasesOpen(false)}
+          productId={product.id}
+          rows={aliases}
+          onRowsChange={setAliases}
+        />
+      )}
+
+      <GenerateBarcodeModal
+        open={generatorOpen}
+        onClose={() => setGeneratorOpen(false)}
+        /* The LIVE code field, not the saved product: on a new product the code
+           being typed now is the only one there is, and on an existing one it
+           is the same value anyway. */
+        productCode={product?.code ?? suggestedCode ?? ''}
+        currentBarcode={barcode}
+        onGenerated={setBarcode}
+      />
+
       {/* Variants and photographs. Rendered after </form> for the same reason
           Serials is — both save on their own and carry their own form elements
           — but hidden with the General tab, because they are part of it. Left

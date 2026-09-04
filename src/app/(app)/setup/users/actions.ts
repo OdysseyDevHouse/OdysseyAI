@@ -8,6 +8,7 @@ import {
   updateRole,
   deleteRole,
   setCapability,
+  setCapabilities,
 } from '@/lib/site/permissions'
 import {
   createUser,
@@ -232,6 +233,33 @@ export async function setCapabilityAction(
 
   revalidatePath('/setup/roles')
   return { ok: true, message: allowed ? 'Permission granted.' : 'Permission removed.' }
+}
+
+/**
+ * The whole of one permission group at once — the section "select all".
+ *
+ * Takes the group's capabilities from the caller rather than a group key so
+ * that the server never has to agree with the screen about what a group
+ * contains; every key is checked against the capability list regardless, so
+ * the worst a tampered call can do is grant something it also could have
+ * granted one switch at a time.
+ */
+export async function setCapabilitiesAction(
+  roleId: number,
+  capabilities: string[],
+  allowed: boolean,
+): Promise<Result> {
+  const ctx = await requireUserAdmin()
+  if (!ctx) return DENIED
+
+  const result = await setCapabilities(ctx.site.id, roleId, capabilities, allowed)
+  if (!result.ok) return result
+
+  revalidatePath('/setup/roles')
+  return {
+    ok: true,
+    message: allowed ? 'Permissions granted.' : 'Permissions removed.',
+  }
 }
 
 /**

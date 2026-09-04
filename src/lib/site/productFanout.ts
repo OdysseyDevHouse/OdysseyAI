@@ -700,3 +700,109 @@ export async function readLinkedProducts(
 
   return views
 }
+
+/**
+ * Carries a stock-code rename across the store group.
+ *
+ * fanoutProduct() cannot express this. Every step of it — the share settings,
+ * the availability lookup, applyToStore() itself — MATCHES the target row by
+ * code, which is the one thing a rename changes. Pointing it at the new code
+ * would find nothing in a sibling store and create a second product there,
+ * leaving the original stranded under the old code: one product becomes two,
+ * silently, in every branch.
+ *
+ * So this matches on the OLD code and moves the row, plus the two code-keyed
+ * side tables that live in each store's own database (share settings and
+ * availability, both keyed by product_code per 004 and 005).
+ *
+ * Only the owner may rename, enforced by the caller the same way fanoutProduct
+ * enforces it — and re-checked here, because this function does the travelling.
+ *
+ * Every store is attempted even if one fails: a branch that is down must not
+ * strand the rename in the stores that are reachable. The outcomes are
+ * returned so the screen can say which stores did not follow.
+ */
+export async function fanoutCodeRename(
+  originSiteId: number,
+  fromCode: string,
+  toCode: string,
+): Promise<FanoutOutcome[]> {
+  const { ownershipOf } = await import('./productOwnership')
+  const ownership = await ownershipOf(originSiteId, toCode)
+  if (!ownership.canEdit) return []
+
+  const stores = await linkedStores(originSiteId)
+  const targets = stores.filter((s) => s.siteId !== originSiteId)
+  if (targets.length === 0) return []
+
+  const outcomes: FanoutOutcome[] = []
+
+  for (const store of targets) {
+    try {
+      const existing = await siteQueryOne<RowDataPacket & { id: number }>(
+        store.siteId,
+        'SELECT id FROM products WHERE code = ? LIMIT 1',
+        [fromCode],
+      )
+      if (!existing) {
+        outcomes.push({
+          siteId: store.siteId,
+          storeName: store.displayName,
+          status: 'skipped',
+          detail: 'Does not stock this product.',
+        })
+        continue
+      }
+
+      // A store that already has something at the new code cannot take the
+      // rename — its own unique key would refuse it. Report rather than throw:
+      // the other stores must still get their rename.
+      const clash = await siteQueryOne<RowDataPacket & { id: number }>(
+        store.siteId,
+        'SELECT id FROM products WHERE code = ? AND id <> ? LIMIT 1',
+        [toCode, existing.id],
+      )
+      if (clash) {
+        outcomes.push({
+          siteId: store.siteId,
+          storeName: store.displayName,
+          status: 'failed',
+          detail: `Already has a different product coded ${toCode}.`,
+        })
+        continue
+      }
+
+      await siteTransaction(store.siteId, async (tx) => {
+        await tx.execute('UPDATE products SET code = ? WHERE id = ?', [
+          toCode,
+          existing.id,
+        ] as never)
+
+        /* The one code-keyed side table in this store's own database. It
+           carries BOTH the sharing flags and this store's availability — 005
+           added `available` as a column here rather than as a table of its
+           own — so moving this row moves both. Best effort: a store that has
+           not run 004 has no row to move. */
+        try {
+          await tx.execute(
+            'UPDATE product_share_settings SET product_code = ? WHERE product_code = ?',
+            [toCode, fromCode] as never,
+          )
+        } catch (err) {
+          if ((err as { code?: string }).code !== 'ER_NO_SUCH_TABLE') throw err
+        }
+      })
+
+      outcomes.push({ siteId: store.siteId, storeName: store.displayName, status: 'written' })
+    } catch (err) {
+      outcomes.push({
+        siteId: store.siteId,
+        storeName: store.displayName,
+        status: 'failed',
+        detail: err instanceof Error ? err.message : 'Unknown error.',
+      })
+    }
+  }
+
+  return outcomes
+}

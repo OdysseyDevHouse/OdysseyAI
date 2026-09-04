@@ -79,7 +79,20 @@ export const productSpec: ImportSpec<ProductDraft> = {
     text<ProductDraft>({
       key: 'description',
       label: 'Description',
-      aliases: ['Description', 'Product', 'Name', 'Product Name', 'Item'],
+      /* 'Description1' pairs with 'Description2' in several till exports — the
+         first line is the name, the second the extra one below. Matching is
+         exact after normalising, so without these a file straight out of one of
+         those systems leaves the REQUIRED field unmatched and the import blocked
+         on its own catalogue. */
+      aliases: [
+        'Description',
+        'Product',
+        'Name',
+        'Product Name',
+        'Item',
+        'Description1',
+        'Item Description',
+      ],
       required: true,
       example: 'Coca-Cola 2L',
       max: 190,
@@ -105,7 +118,7 @@ export const productSpec: ImportSpec<ProductDraft> = {
     text<ProductDraft>({
       key: 'extraDescription',
       label: 'Extra description',
-      aliases: ['Extra Description', 'Long Description', 'Notes'],
+      aliases: ['Extra Description', 'Long Description', 'Notes', 'Description2'],
       max: 4000,
     }),
     departmentPath<ProductDraft>({
@@ -405,10 +418,56 @@ function priceFields(lookups: LookupTables): ImportField<ProductDraft>[] {
     if (!seen.has(id) && !/^PRICE \d+$/.test(name)) seen.set(id, name)
   }
 
-  return [...seen.entries()].map(([id, name]) => ({
+  return [...seen.entries()].map(([id, name], index) => ({
     key: `${PRICE}${id}`,
-    label: titleCase(name),
-    aliases: [titleCase(name), `${titleCase(name)} Price`, `Price ${titleCase(name)}`],
+    /*
+     * The price list's own name, said as the selling price it holds.
+     *
+     * On its own the label is whatever the shop called the list — "Retail",
+     * "Wholesale" — and someone scanning a twelve-field grid for where the
+     * selling price goes does not read that as a price at all. It looks like a
+     * category, so the search moves on and lands on "Selling VAT", which is a
+     * tax code and takes the column happily. Naming it here rather than only in
+     * the hint puts the answer where the eye already is.
+     */
+    label: `${titleCase(name)} selling price`,
+    /*
+     * Aliases carry the bare list name FIRST so a file whose column is called
+     * "Retail" still matches on the first pass — autoMap tries every field's
+     * first alias before anyone's second, and demoting it would let another
+     * field claim the column.
+     *
+     * Then the ones naming this list specifically. The generic headings that
+     * tills and accounting packages export — "InclSelling", "Sell Incl" — say
+     * only "the selling price" and name no list, so they go to the FIRST list
+     * alone (lookups orders by position, so that is the shop's main one).
+     * Given to every list they would be ambiguous, and autoMap claims a column
+     * once: on a Retail-and-Wholesale site a plain "Selling Price" column would
+     * land on whichever list happened to be built first, which is a coin toss
+     * that writes wholesale prices onto the shop floor.
+     *
+     * These matter more than they look. An unmatched price column is not an
+     * error, it is silence — the import runs, and 2 000 products arrive with no
+     * selling price at all.
+     */
+    aliases: [
+      titleCase(name),
+      `${titleCase(name)} Price`,
+      `Price ${titleCase(name)}`,
+      `${titleCase(name)} Incl`,
+      `${titleCase(name)} Selling`,
+      ...(index === 0
+        ? [
+            'Incl Selling',
+            'Selling Incl',
+            'Sell Incl',
+            'Incl Price',
+            'Selling Price',
+            'Price Incl',
+            'Price Including VAT',
+          ]
+        : []),
+    ],
     lookup: 'priceList' as const,
     hint: 'Selling price, INCLUDING VAT.',
     example: '24.99',

@@ -470,6 +470,40 @@ for (const p of paths) {
     ? readFileSync(process.env.SHOT_PROBE_FILE, 'utf8')
     : process.env.SHOT_PROBE
   if (PROBE) {
+    /*
+     * A REAL key press, for the probe to await: await __press('Enter').
+     *
+     * new KeyboardEvent(...) is not enough for anything the BROWSER does in
+     * response to a key rather than the page — implicit form submission on
+     * Enter, above all. A synthetic event is untrusted, so the browser ignores
+     * it and a probe testing "does Enter submit this form?" would report a
+     * confident no on a form that submits every time in a real hand.
+     * Input.dispatchKeyEvent goes in at the same level the keyboard does.
+     */
+    await send(
+      'Runtime.addBinding',
+      { name: '__pressBinding' },
+      sessionId,
+    ).catch(() => {})
+    await evaluate(`window.__press = (key) => new Promise((resolve) => {
+      const id = 'p' + Math.random()
+      window['__pressDone_' + id] = resolve
+      window.__pressBinding(JSON.stringify({ id, key }))
+    })`)
+    ws.addEventListener('message', async (e) => {
+      const msg = JSON.parse(e.data)
+      if (msg.method !== 'Runtime.bindingCalled') return
+      if (msg.params?.name !== '__pressBinding') return
+      const { id, key } = JSON.parse(msg.params.payload)
+      const base = { windowsVirtualKeyCode: key === 'Enter' ? 13 : 0, key }
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base }, sessionId)
+      if (key === 'Enter') {
+        await send('Input.dispatchKeyEvent', { type: 'char', text: '\r', ...base }, sessionId)
+      }
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base }, sessionId)
+      await evaluate(`(() => { const f = window['__pressDone_${id}']; delete window['__pressDone_${id}']; f && f(true) })()`)
+    })
+
     const probed = await evaluate(`(async () => { ${PROBE} })()`)
     console.log('probe:', typeof probed === 'string' ? probed : JSON.stringify(probed))
   }

@@ -740,3 +740,70 @@ export function toSupplierStatus(value: unknown): SupplierStatus | null {
   const raw = String(value ?? '')
   return (SUPPLIER_STATUSES as readonly string[]).includes(raw) ? (raw as SupplierStatus) : null
 }
+
+/* ── Renaming a supplier code ────────────────────────────────────────────── */
+
+export type RenamePartyCodeResult =
+  | { ok: true; from: string; to: string }
+  | { ok: false; error: string }
+
+/**
+ * Changes a supplier's code.
+ *
+ * The mirror of renameCustomerCode(), and the same dividing line: every other
+ * `supplier_code` in the schema is a snapshot on an issued document — orders,
+ * goods received, payment runs — carrying 017's note "snapshot, as everywhere
+ * else". Those stay as they were sent.
+ *
+ * `product_suppliers.supplier_code` looks like it belongs in a rename and does
+ * NOT: 013 defines it as "their code for it, which is what goes on the order",
+ * meaning the SUPPLIER's code for our product. It has nothing to do with our
+ * code for the supplier, and rewriting it would corrupt every purchase order.
+ * The link itself is `product_suppliers.supplier_id`, which does not move.
+ */
+export async function renameSupplierCode(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  rawCode: string,
+): Promise<RenamePartyCodeResult> {
+  const code = rawCode.trim()
+
+  if (!code) return { ok: false, error: 'A supplier code is required.' }
+  if (code.length > 32) return { ok: false, error: 'Supplier code must be 32 characters or fewer.' }
+
+  const result = await supplierTransaction(siteId, async (tx) => {
+    const [current] = await tx.query<RowDataPacket[]>(
+      'SELECT code, name FROM suppliers WHERE id = ? FOR UPDATE',
+      [id],
+    )
+    const supplier = current[0]
+    if (!supplier) return { ok: false as const, error: 'That supplier no longer exists.' }
+
+    const from = String(supplier.code ?? '')
+    if (from === code) return { ok: false as const, error: 'That is already this supplier’s code.' }
+
+    const [clash] = await tx.query<RowDataPacket[]>(
+      'SELECT id FROM suppliers WHERE code = ? AND id <> ? LIMIT 1',
+      [code, id],
+    )
+    if (clash.length > 0) {
+      return { ok: false as const, error: `Supplier code "${code}" is already in use.` }
+    }
+
+    await tx.execute('UPDATE suppliers SET code = ? WHERE id = ?', [code, id] as never)
+    return { ok: true as const, from, to: code, name: String(supplier.name ?? '') }
+  })
+
+  if (!result.ok) return result
+
+  await logActivity(siteId, actor, {
+    entity: 'supplier',
+    entityId: id,
+    action: 'rename_code',
+    detail: `Supplier code ${result.from} → ${result.to} (${result.name})`,
+    changes: { code: { from: result.from, to: result.to } },
+  })
+
+  return { ok: true, from: result.from, to: result.to }
+}

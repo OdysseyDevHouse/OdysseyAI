@@ -2,30 +2,46 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button, Card, CardHeader, CardBody, Field, Icons, Input, useToast } from '@/components/ui'
+import { Button, Field, Icons, Input, Modal, useToast } from '@/components/ui'
 import type { ProductBarcode } from '@/lib/site/productBarcodes'
 import { addBarcodeAction, removeBarcodeAction } from './barcodeActions'
 
 /**
  * The extra barcodes a product answers to — the 6-pack code, the old supplier
- * code. Self-saving (each add/remove is its own round trip), like every other
- * panel in the generalExtras slot: it lives outside the product's <form>.
+ * code — reached from the chevron beside the Barcode field.
  *
- * The MAIN barcode stays on the General tab's own field; this list is the
- * aliases, strictly unique across the shop, which is what makes an alias scan
- * deterministic.
+ * ── WHY A DIALOG AND NOT A PANEL ──────────────────────────────────────────
+ *
+ * This was a card sitting open on the General tab, and it was there on every
+ * visit for every product — while the great majority of products have exactly
+ * one barcode and nothing to say. A permanently open panel for an occasional
+ * exception is a tab that is longer than it needs to be, every time.
+ *
+ * Behind the chevron it is one click away for the products that need it and
+ * invisible for the ones that do not. The count on the menu entry is what
+ * makes that safe: a product WITH aliases still says so without being opened.
+ *
+ * Self-saving, as it was: each add and remove is its own round trip, because
+ * this list is not part of the product's <form> and never was. That is also
+ * why it is safe to close mid-edit — there is no unsaved state to lose.
  */
-export default function BarcodesPanel({
+export default function ExtraBarcodesModal({
+  open,
+  onClose,
   productId,
-  initial,
+  rows,
+  onRowsChange,
 }: {
+  open: boolean
+  onClose: () => void
   productId: number
-  initial: ProductBarcode[]
+  /** Held by the caller so the chevron's menu can show the count. */
+  rows: ProductBarcode[]
+  onRowsChange: (next: ProductBarcode[]) => void
 }) {
   const toast = useToast()
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const [rows, setRows] = useState(initial)
   const [barcode, setBarcode] = useState('')
   const [note, setNote] = useState('')
 
@@ -38,9 +54,9 @@ export default function BarcodesPanel({
         toast.error(result.error)
         return
       }
-      setRows((r) =>
-        [...r, { id: result.id, productId, barcode: code, note: note.trim() || null }].sort((a, b) =>
-          a.barcode.localeCompare(b.barcode),
+      onRowsChange(
+        [...rows, { id: result.id, productId, barcode: code, note: note.trim() || null }].sort(
+          (a, b) => a.barcode.localeCompare(b.barcode),
         ),
       )
       setBarcode('')
@@ -57,23 +73,33 @@ export default function BarcodesPanel({
         toast.error(result.error)
         return
       }
-      setRows((r) => r.filter((x) => x.id !== row.id))
+      onRowsChange(rows.filter((x) => x.id !== row.id))
       toast.success(`${row.barcode} removed.`)
       router.refresh()
     })
   }
 
   return (
-    <Card>
-      <CardHeader
-        title="Extra barcodes"
-        description="Other codes this product scans as — a 6-pack code, an old supplier code. The main barcode stays on the General tab."
-      />
-      <CardBody>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Extra barcodes"
+      description="Other codes this product scans as. The main barcode stays on the General tab."
+      size="md"
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      <div className="space-y-4">
         {rows.length === 0 ? (
-          <p className="text-sm text-muted">Only the main barcode is on file.</p>
+          <p className="text-sm text-muted">
+            Only the main barcode is on file. Add a code below and this product will scan as that
+            one too.
+          </p>
         ) : (
-          <ul className="mb-3 flex flex-col gap-1.5">
+          <ul className="flex flex-col gap-1.5">
             {rows.map((row) => (
               <li
                 key={row.id}
@@ -98,11 +124,14 @@ export default function BarcodesPanel({
           </ul>
         )}
 
-        <div className="flex flex-wrap items-end gap-2">
-          <Field label="Barcode" className="w-56">
+        {/* The add row, separated by a rule: everything above is what is on
+            file, everything below adds to it. */}
+        <div className="flex flex-wrap items-end gap-2 border-t border-border pt-4">
+          <Field label="Barcode" className="w-52">
             <Input
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
+              autoComplete="off"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
@@ -112,7 +141,7 @@ export default function BarcodesPanel({
               placeholder="Scan or type it"
             />
           </Field>
-          <Field label="Note (optional)" className="w-44">
+          <Field label="Note (optional)" className="w-40">
             <Input
               value={note}
               onChange={(e) => setNote(e.target.value)}
@@ -125,7 +154,7 @@ export default function BarcodesPanel({
             Add
           </Button>
         </div>
-      </CardBody>
-    </Card>
+      </div>
+    </Modal>
   )
 }

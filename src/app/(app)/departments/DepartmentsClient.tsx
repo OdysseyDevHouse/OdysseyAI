@@ -9,12 +9,10 @@ import {
   Callout,
   Card,
   EmptyState,
-  Field,
   Icons,
-  Input,
   Modal,
   PrimaryLink,
-  RowTile,
+  RowGlyph,
   Switch,
   SwatchPicker,
   TABLE,
@@ -27,6 +25,9 @@ import {
   useToast,
 } from '@/components/ui'
 import type { Department } from '@/lib/site/departments'
+import DepartmentEditorModal, {
+  type DepartmentEditorTarget as EditorTarget,
+} from '@/components/DepartmentEditorModal'
 import {
   deleteDepartmentInlineAction,
   quickSaveDepartmentAction,
@@ -57,10 +58,6 @@ function childrenOf(all: Department[], parentId: number | null): Department[] {
     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
 }
 
-/** What the editor modal is currently doing. */
-type EditorTarget =
-  | { mode: 'create'; parentId: number | null; parentName?: string }
-  | { mode: 'edit'; department: Department }
 
 type Row = { department: Department; depth: number }
 
@@ -351,7 +348,6 @@ export function DepartmentsClient({
                       setExpanded((p) => new Set(p).add(d.id))
                       setEditor({ mode: 'create', parentId: d.id, parentName: d.name })
                     }}
-                    onEdit={() => setEditor({ mode: 'edit', department: d })}
                     onDelete={() => setConfirmDelete(d)}
                     onOpenColor={() => setColorFor(d)}
                     onToggleActive={(next) =>
@@ -415,7 +411,7 @@ export function DepartmentsClient({
         }}
       />
 
-      <EditorModal
+      <DepartmentEditorModal
         target={editor}
         busy={busy}
         onClose={() => setEditor(null)}
@@ -487,7 +483,6 @@ function DepartmentRow({
   isDragOver,
   onToggle,
   onAddChild,
-  onEdit,
   onDelete,
   onOpenColor,
   onToggleActive,
@@ -507,7 +502,6 @@ function DepartmentRow({
   isDragOver: boolean
   onToggle: () => void
   onAddChild: () => void
-  onEdit: () => void
   onDelete: () => void
   onOpenColor: () => void
   onToggleActive: (next: boolean) => void
@@ -670,16 +664,6 @@ function DepartmentRow({
                 Add {levelLabel(depth + 1)}
               </Button>
               <Button
-                variant="ghost"
-                size="sm"
-                iconOnly
-                aria-label={`Rename ${d.name}`}
-                title="Rename"
-                onClick={onEdit}
-              >
-                <Icons.Pencil size={14} />
-              </Button>
-              <Button
                 variant="danger-ghost"
                 size="sm"
                 iconOnly
@@ -691,15 +675,24 @@ function DepartmentRow({
               </Button>
             </>
           )}
+          {/*
+            The pencil opens the full record rather than a rename box.
+
+            The name is one field of a department among several, and a shop that
+            came to change it usually came to change more than that. Two doors —
+            a quick rename beside a chevron to the same department — made the row
+            ask which one you wanted before it could know; one door that leads
+            everywhere answers it.
+          */}
           <ButtonLink
             href={`/departments/${d.id}`}
             variant="ghost"
             size="sm"
             iconOnly
-            aria-label={`Open ${d.name}`}
-            title="Open full record"
+            aria-label={`Edit ${d.name}`}
+            title="Edit"
           >
-            <Icons.ChevronRight size={14} />
+            <Icons.Pencil size={14} />
           </ButtonLink>
         </div>
       </td>
@@ -792,20 +785,17 @@ function DepartmentGlyph({
   color: string | null
   pictureId: number | null
 }) {
-  if (pictureId === null) return <RowTile label={name} token={color} className="size-[34px]" />
-
+  /* The picture/initials pair now lives in the kit as `RowGlyph` — the products
+     list needed the same mark for a product's till icon, and a second hand-rolled
+     copy is how the two would drift. This wrapper stays because the departments
+     row deals in an image ID and the kit deals in a URL: turning one into the
+     other is this screen's business, not the kit's. */
   return (
-    /* data-kit-ok: a stored picture at row scale. RowTile draws initials on a
-       token fill and has no image form; the box around the picture is what keeps
-       a non-square upload from being stretched into one. */
-    <span
-      data-kit-ok
-      aria-hidden
-      className="flex size-[34px] shrink-0 items-center justify-center overflow-hidden rounded-control bg-surface-2"
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={`/api/storefront-images/${pictureId}`} alt="" className="size-full object-contain" />
-    </span>
+    <RowGlyph
+      label={name}
+      token={color}
+      src={pictureId === null ? null : `/api/storefront-images/${pictureId}`}
+    />
   )
 }
 /* ── modals ──────────────────────────────────────────────────────────────── */
@@ -828,89 +818,6 @@ function ColorModal({
       size="sm"
     >
       <SwatchPicker value={department?.color ?? null} onChange={onPick} />
-    </Modal>
-  )
-}
-
-function EditorModal({
-  target,
-  busy,
-  onClose,
-  onSave,
-}: {
-  target: EditorTarget | null
-  busy: boolean
-  onClose: () => void
-  onSave: (values: { name: string; color: string | null }) => void
-}) {
-  // Held in the parent of the <dialog>'s keyed body so a value survives the
-  // remount, but re-seeded whenever the target changes.
-  const [name, setName] = useState('')
-  const [color, setColor] = useState<string | null>(null)
-  const [seenTarget, setSeenTarget] = useState<EditorTarget | null>(null)
-
-  if (seenTarget !== target) {
-    setSeenTarget(target)
-    setName(target?.mode === 'edit' ? target.department.name : '')
-    setColor(target?.mode === 'edit' ? target.department.color : null)
-  }
-
-  const title =
-    target?.mode === 'edit'
-      ? `Rename ${target.department.name}`
-      : target?.parentName
-        ? `New sub-department under ${target.parentName}`
-        : 'New top-level department'
-
-  const trimmed = name.trim()
-
-  return (
-    <Modal
-      open={target !== null}
-      onClose={onClose}
-      title={title}
-      description={
-        target?.mode === 'edit'
-          ? 'Code, sort order and re-parenting live on the full record.'
-          : 'You can set a code and sort order on the full record afterwards.'
-      }
-      size="sm"
-      /* Holds half-typed work — a stray backdrop click must not discard it. */
-      closeOnBackdrop={false}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy || trimmed.length === 0}
-            onClick={() => onSave({ name: trimmed, color })}
-          >
-            <Icons.Save size={15} />
-            {busy ? 'Saving…' : 'Save'}
-          </Button>
-        </>
-      }
-    >
-      <div className="flex flex-col gap-4">
-        <Field label="Name">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            maxLength={120}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && trimmed) onSave({ name: trimmed, color })
-            }}
-          />
-        </Field>
-
-        <div>
-          <span className="mb-1.5 block text-sm font-medium text-ink-2">Colour</span>
-          <SwatchPicker value={color} onChange={setColor} size="sm" />
-        </div>
-      </div>
     </Modal>
   )
 }

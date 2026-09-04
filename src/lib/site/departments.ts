@@ -150,6 +150,66 @@ export function flattenTree(
   ])
 }
 
+// ── Codes ───────────────────────────────────────────────────────────────
+
+/**
+ * The next free code for a department sitting under `parentId`.
+ *
+ * The code is a reporting reference, not a name, and shops do not want to
+ * invent one — left to a person it gets typed once, skipped twice, and the
+ * report that groups by it silently splits. So the app allocates it and the
+ * form no longer asks.
+ *
+ * The scheme is the one the data already uses: a top-level department gets the
+ * next free integer, and a child gets its parent's code plus `.n`. That makes
+ * the code say where the department sits, which is exactly what a report
+ * sorting on it wants.
+ *
+ * Only NUMERIC siblings count toward the next number. A hand-typed code like
+ * "RBI" is left alone rather than renumbered — it was someone's deliberate
+ * choice, and the whole point of allocating from the free numbers is that it
+ * never has to argue with one. Gaps are not filled either: `MAX + 1` keeps a
+ * code stable once printed on a shelf label or a report, where reusing 30
+ * because its department was deleted would quietly merge two years of history.
+ */
+export async function nextDepartmentCode(
+  siteId: number,
+  parentId: number | null,
+): Promise<string> {
+  const parent = parentId === null ? null : await getDepartment(siteId, parentId)
+
+  // A parent with no code of its own has no stem to extend, so its children
+  // number from the top-level sequence rather than inheriting an empty prefix
+  // and colliding with the roots.
+  const stem = parent?.code?.trim() || null
+
+  const siblings = await siteQuery<Row>(
+    siteId,
+    `SELECT code FROM departments
+      WHERE ${parentId === null ? 'parent_id IS NULL' : 'parent_id = ?'}
+        AND code IS NOT NULL`,
+    parentId === null ? [] : [parentId],
+  )
+
+  let highest = 0
+  for (const row of siblings) {
+    const code = String(row.code ?? '').trim()
+    // A child's own number is the last segment; the stem is its parent's and
+    // is the same for every sibling, so comparing whole codes would sort
+    // "18.10" below "18.9".
+    const tail = stem === null ? code : code.startsWith(`${stem}.`) ? code.slice(stem.length + 1) : ''
+    if (!/^\d+$/.test(tail)) continue
+    highest = Math.max(highest, Number(tail))
+  }
+
+  const next = `${stem === null ? '' : `${stem}.`}${highest + 1}`
+
+  /* The column is 32 characters, and a code that cannot be stored is worse
+     than none: it would fail the save of a department whose name was fine.
+     Deep enough nesting genuinely runs out of room, so it gives up instead. */
+  return next.length > 32 ? '' : next
+}
+
 // ── Writes ──────────────────────────────────────────────────────────────
 
 export type DepartmentInput = {
@@ -216,6 +276,12 @@ export async function createDepartment(
     return { ok: false, error: `"${name}" already exists at this level.` }
   }
 
+  /* No caller types a code any more, so an unset one is allocated rather than
+     stored as null — a department with no code drops out of every report that
+     groups by it. An explicit code is still honoured, for the importer and for
+     anything restoring a row that already had one. */
+  const code = input.code?.trim() || (await nextDepartmentCode(siteId, parentId))
+
   const res = await siteExecute(
     siteId,
     `INSERT INTO departments
@@ -224,7 +290,7 @@ export async function createDepartment(
     [
       parentId,
       name,
-      input.code?.trim() || null,
+      code || null,
       input.color?.trim() || null,
       input.sortOrder ?? 0,
       input.isActive === false ? 0 : 1,
@@ -266,6 +332,23 @@ export async function updateDepartment(
     return { ok: false, error: `"${name}" already exists at this level.` }
   }
 
+  /*
+   * An absent code means "leave it alone", not "clear it".
+   *
+   * The edit form stopped asking for a code once it was allocated
+   * automatically, so it posts none — and reading that as null would wipe the
+   * code off every department the moment someone renamed one. `undefined` is
+   * the only way a caller now says "no opinion"; an empty string still clears,
+   * which is what an importer sending a blank column means.
+   *
+   * A department that has never had one is given a code here rather than left
+   * without, so the rows predating this fill themselves in as they are edited.
+   */
+  const code =
+    input.code === undefined
+      ? existing.code || (await nextDepartmentCode(siteId, parentId))
+      : input.code?.trim() || null
+
   await siteExecute(
     siteId,
     `UPDATE departments
@@ -275,7 +358,7 @@ export async function updateDepartment(
     [
       parentId,
       name,
-      input.code?.trim() || null,
+      code || null,
       input.color?.trim() || null,
       input.sortOrder ?? 0,
       input.isActive === false ? 0 : 1,

@@ -80,6 +80,7 @@ export {
   ColourInput,
   type ControlSize,
 } from './Field'
+export { FieldMenu } from './FieldMenu'
 export { FileInput } from './FileInput'
 export { Slider } from './Slider'
 export { Stepper } from './Stepper'
@@ -124,7 +125,7 @@ export { FavoriteToggle } from './FavoriteToggle'
 export { PageHeader, PageBody, PrimaryLink } from './PageHeader'
 export { StatTile, StatStrip, MiniStat, SearchBar } from './Stats'
 export { SummaryList, SummaryRow, SummaryTotal } from './Summary'
-export { RowTile } from './RowTile'
+export { RowTile, RowGlyph } from './RowTile'
 export { PickerResults, type PickerResult } from './PickerResults'
 /* The loaders. A <Skeleton> is still the first choice for a first load whose
    shape is known — these are for the waits it cannot cover. */
@@ -184,6 +185,7 @@ export { Tabs, LinkTabs, type TabItem } from './Tabs'
 export { Menu, MenuItem, MenuSeparator } from './Menu'
 export { HtmlEditor, type InsertToken } from './HtmlEditor'
 export { Modal, ConfirmModal } from './Modal'
+export { RenameCodeModal } from './RenameCodeModal'
 export { Drawer } from './Drawer'
 export { PinPad } from './PinPad'
 export { SignaturePad } from './SignaturePad'

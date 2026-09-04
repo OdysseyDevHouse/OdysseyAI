@@ -8,6 +8,7 @@ import {
   createSupplier,
   updateSupplier,
   deleteSupplier,
+  renameSupplierCode,
   bulkUpdateSuppliers,
   toSupplierStatus,
   type SupplierBulkChange,
@@ -112,4 +113,28 @@ export async function bulkUpdateSuppliersAction(
   const result = await bulkUpdateSuppliers(siteId, actor, ids, change)
   revalidatePath('/suppliers')
   return result
+}
+
+/**
+ * Renames a supplier's code. The mirror of the customer action above.
+ */
+export async function renameSupplierCodeAction(form: FormData): Promise<void> {
+  const ctx = await actorForOrThrow('suppliers.rename_code')
+  const { siteId, actor } = ctx
+  const id = Number(form.get('id'))
+  const code = String(form.get('code') ?? '')
+
+  if (!Number.isFinite(id) || id <= 0) redirect('/suppliers')
+
+  const back = safeReturnTo(form.get('returnTo'))
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+
+  const result = await renameSupplierCode(siteId, actor, id, code)
+  if (!result.ok) {
+    redirect(`/suppliers/${id}?error=${encodeURIComponent(result.error)}${from}`)
+  }
+
+  revalidatePath('/suppliers')
+  revalidatePath(`/suppliers/${id}`)
+  redirect(`/suppliers/${id}?renamed=${encodeURIComponent(result.from)}${from}`)
 }

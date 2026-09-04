@@ -50,7 +50,12 @@ import { listPriceStructures } from '@/lib/site/lookups'
 import { AddressesPanel } from './AddressesPanel'
 import DocumentsPanel from '@/components/party/DocumentsPanel'
 import CommentsPanel from '@/components/party/CommentsPanel'
-import { deleteCustomerAction, setCustomerCustomValuesAction } from '../actions'
+import PartyCodeActions from '../../partyCodeActions'
+import {
+  deleteCustomerAction,
+  renameCustomerCodeAction,
+  setCustomerCustomValuesAction,
+} from '../actions'
 import CustomFieldsPanel from '@/components/CustomFieldsPanel'
 import { valuesFor } from '@/lib/site/customFields'
 
@@ -184,12 +189,19 @@ export default async function CustomerPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ tab?: string; saved?: string; error?: string; from?: string }>
+  searchParams: Promise<{
+    tab?: string
+    saved?: string
+    error?: string
+    from?: string
+    /** The code a rename moved away from, so the banner can name both ends. */
+    renamed?: string
+  }>
 }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId, capabilities } = await requireModuleCapability('customers', 'customers.view')
   const { id } = await params
-  const { tab, saved, error, from } = await searchParams
+  const { tab, saved, error, from, renamed } = await searchParams
 
   /* Where leaving goes: the list that sent us here when it had filters worth
      keeping, else the plain register. Validated — see lib/returnTo.ts. */
@@ -266,12 +278,25 @@ export default async function CustomerPage({
         backHref={backHref}
         backLabel="Customers"
         action={
-          ledger.length > 0 ? (
-            <ButtonLink href={`/customers/${customerId}/statement`} variant="secondary">
-              <Icons.Mail size={15} />
-              Statement
-            </ButtonLink>
-          ) : undefined
+          <>
+            {ledger.length > 0 && (
+              <ButtonLink href={`/customers/${customerId}/statement`} variant="secondary">
+                <Icons.Mail size={15} />
+                Statement
+              </ButtonLink>
+            )}
+            {can(capabilities, 'customers.rename_code') && (
+              <PartyCodeActions
+                action={renameCustomerCodeAction}
+                id={customer.id}
+                code={customer.code}
+                name={customer.name}
+                noun="customer"
+                returnTo={backHref === '/customers' ? null : backHref}
+                renameError={renamed ? null : (error ?? null)}
+              />
+            )}
+          </>
         }
       />
 
@@ -279,7 +304,15 @@ export default async function CustomerPage({
           it because the shared LedgerTab brings its own. */}
       <PageBody className={active === 'transactions' ? 'pb-0' : ''}>
         {saved === '1' && <Callout tone="success" title="Saved." />}
-        {error && <Callout tone="danger">{error}</Callout>}
+        {renamed && (
+          <Callout tone="success" title="Customer code renamed.">
+            <span className="numeric font-medium">{renamed}</span> is now{' '}
+            <span className="numeric font-medium">{customer.code}</span>. Statements and invoices
+            already issued keep the old code.
+          </Callout>
+        )}
+        {/* A rename refusal reopens the dialog holding the message. */}
+        {error && !renamed && <Callout tone="danger">{error}</Callout>}
 
         <StatStrip columns={4}>
           <StatTile
