@@ -8,6 +8,8 @@ import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { getSettings } from '@/lib/site/settings'
 import { terminalForDevice } from '@/lib/site/terminals'
+import { touchDevice } from '@/lib/site/devices'
+import { printConfigForDevice } from '@/lib/site/documentPrinters'
 import { getSequence } from '@/lib/site/sequences'
 import { numberingConfig, tillNumber } from '@/lib/site/numbering'
 import { operatorsForDevice } from '@/lib/site/offlineOperators'
@@ -85,7 +87,10 @@ export const dynamic = 'force-dynamic'
  * number and this route decides whether a delta is safe; bump only one and every
  * till in the shop full-loads on every poll, forever, with no error to show for it.
  */
-const CATALOG_SCHEMA = 8
+/* 9 added `printing` — this machine's resolved printer setup. A new stored key,
+   so a till holding schema 8 must take a full load rather than patch into a
+   shape it does not have. */
+const CATALOG_SCHEMA = 9
 
 /**
  * Ceiling on one response.
@@ -159,6 +164,22 @@ export async function GET(req: NextRequest) {
 
   const config = await numberingConfig(siteId)
   const terminal = deviceId ? await terminalForDevice(siteId, deviceId) : null
+
+  /* Records that this machine exists, so Setup → Printing can offer it. A till
+     never visits the back office, so this feed is the only thing that ever sees
+     its id — and printer setup is keyed on the MACHINE rather than on the till
+     it happens to be holding. Deliberately not awaited into the critical path's
+     result: touchDevice swallows its own failures and throttles its write, and a
+     catalog load must never fail because a setup list is out of date. */
+  if (deviceId) {
+    void touchDevice(siteId, {
+      deviceId,
+      label: terminal ? `${terminal.code} — ${terminal.name}` : '',
+      kind: 'unknown',
+      platform: '',
+      appRole: 'pos',
+    })
+  }
 
   /* Resolved before the fan-out rather than threaded through it as a promise:
      products, and only products, are priced through it, and passing a pending
@@ -406,6 +427,21 @@ export async function GET(req: NextRequest) {
       terminal: terminal
         ? { id: terminal.id, code: terminal.code, tillNumber: till }
         : null,
+      /**
+       * Where each document comes out on THIS machine, already resolved.
+       *
+       * Sent WHOLE on every response, delta or not. Re-pointing a printer
+       * touches nothing on products.updated_at, so a products-keyed delta would
+       * leave a till printing to yesterday's queue until something unrelated
+       * happened to touch a product.
+       *
+       * Resolved on the server rather than sent as two halves — the shop's
+       * answer and this machine's override. A till reconciling them itself
+       * would be a second implementation of a rule that has to keep working
+       * with the server gone, and two implementations of that rule is how a
+       * slip starts coming out of the wrong printer.
+       */
+      printing: deviceId ? await printConfigForDevice(siteId, deviceId) : null,
       /** Null when this store numbers site-wide — the till then cannot sell offline. */
       sequence:
         sequence && till

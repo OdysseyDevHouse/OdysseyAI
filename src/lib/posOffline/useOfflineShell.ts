@@ -71,6 +71,43 @@ export function useOfflineShell(enabled = true, target: ShellTarget = POS_SHELL)
       setState({ ready: false, reason: 'This browser cannot work offline.', updateWaiting: false })
       return
     }
+
+    /*
+     * NOT IN DEVELOPMENT — unless somebody deliberately asks for it.
+     *
+     * The worker serves /_next/static/* stale-while-revalidate (rule 2 in
+     * pos-sw.js). In PRODUCTION that is safe: chunk URLs are content-hashed, so a
+     * cached copy is always the copy that URL means. Turbopack's DEV chunk URLs
+     * are not — the same path is rewritten on every edit, so the cache hands the
+     * page a chunk from an earlier compile and the till dies on load with
+     * "module factory is not available". No reload fixes it, because the worker
+     * answers the reload too.
+     *
+     * UNREGISTERING rather than merely skipping registration is the point: a
+     * worker installed by an earlier run keeps controlling this origin until
+     * something removes it, so a guard alone would leave every machine that has
+     * ever opened the till in dev broken until its owner cleared storage by hand.
+     */
+    if (process.env.NODE_ENV !== 'production' && !process.env.NEXT_PUBLIC_OFFLINE_SHELL_IN_DEV) {
+      void navigator.serviceWorker
+        .getRegistrations()
+        .then((registrations) => Promise.all(registrations.map((r) => r.unregister())))
+        .then(() => ('caches' in window ? caches.keys() : []))
+        /* Ours only, keyed on the prefix both workers share, so a dev server sharing
+           localhost with another app does not have its caches deleted underneath it. */
+        .then((keys) =>
+          Promise.all(keys.filter((k) => k.startsWith('odyssey-')).map((k) => caches.delete(k))),
+        )
+        .catch(() => {})
+      setState({
+        ready: false,
+        reason:
+          'Offline mode is off in development. Set NEXT_PUBLIC_OFFLINE_SHELL_IN_DEV=1 to test it.',
+        updateWaiting: false,
+      })
+      return
+    }
+
     if (!window.isSecureContext) {
       setState({
         ready: false,

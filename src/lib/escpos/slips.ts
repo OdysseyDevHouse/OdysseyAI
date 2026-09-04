@@ -10,11 +10,21 @@ import type { BillData } from '../billData'
  * the two prints cannot disagree — the whole reason receiptData/billData are
  * pure. Columns default to 48 (80mm, Font A); 42 fits the narrower heads.
  *
- * Nothing here talks to a printer. The bytes go to the local bridge
- * (scripts/print-bridge.mjs), which forwards them raw.
+ * Nothing here talks to a printer. The bytes go to the desktop shell's print
+ * engine (electron/printing.js), which writes them to a socket or a spool queue
+ * untouched.
  */
 
-export type SlipOptions = { columns?: 42 | 48 }
+/**
+ * How wide the paper is.
+ *
+ * A plain number rather than `42 | 48`. Those were the two choices the
+ * per-machine bridge config offered; the width is now a property of the PRINTER
+ * (printers.paper, overridable by printers.slip_columns), because it is a fact
+ * about the head rather than about the machine driving it. A shop with a 58mm
+ * roll running at 32 columns is ordinary, and the union could not say it.
+ */
+export type SlipOptions = { columns?: number }
 
 function header(job: EscPos, siteName: string, columns: number): void {
   void columns

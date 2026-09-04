@@ -3,7 +3,7 @@ import { ShieldCheck } from '@/components/ui/icons'
 import LoginForm from './login/LoginForm'
 import LocalLoginForm from './login/LocalLoginForm'
 import { localSiteId } from '@/lib/localSignIn'
-import { cloudSiteMessage } from '@/lib/desktopBackOffice'
+import { wrongShellMessage } from '@/lib/siteOpensHere'
 import styles from './login.module.css'
 
 /**
@@ -29,9 +29,9 @@ import styles from './login.module.css'
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; kicked?: string; cloudsite?: string }>
+  searchParams: Promise<{ next?: string; kicked?: string; wrongsite?: string }>
 }) {
-  const { next, kicked, cloudsite } = await searchParams
+  const { next, kicked, wrongsite } = await searchParams
   const local = await localSiteId()
 
   return (
@@ -66,12 +66,14 @@ export default async function HomePage({
         )}
 
         {/* A store that was open here and is not any more: requireSite() sets
-            this when connection_type has been changed to cloud under a live
-            session. Distinct from `kicked` on purpose — the remedy is a
-            browser, not another attempt at this form. */}
-        {cloudsite === '1' && (
+            this when connection_type has been changed under a live session —
+            migrated up to the cloud, or brought back down onto the shop's own
+            hardware. Distinct from `kicked` on purpose: the remedy is the OTHER
+            back office, not another attempt at this form. wrongShellMessage()
+            says which one, from the build this is. */}
+        {wrongsite === '1' && (
           <div className={styles.notice} role="status">
-            {cloudSiteMessage()}
+            {wrongShellMessage()}
           </div>
         )}
 

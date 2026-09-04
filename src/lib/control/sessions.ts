@@ -22,6 +22,25 @@ import { execute, queryOne } from '@/lib/db'
  * INSERT ... ON DUPLICATE KEY UPDATE that atomically replaces whatever was
  * there. Eviction needs no DELETE, and two simultaneous sign-ins cannot race
  * into two live rows — the database decides which one won.
+ *
+ * ── WHY THE ROW STAYS IN THE CONTROL DATABASE ───────────────────────────────
+ *
+ * The obvious optimisation, once the control database lives on its own server
+ * and the trading databases are spread across several others, is to move this
+ * table into each store's own database so the check never leaves the machine
+ * serving the request. It does not work, for the same reason store groups do
+ * not (see lib/storeGroups.ts): a session belongs to the USER, and one user
+ * reaches several stores — which land on different servers.
+ *
+ * Per-store rows would mean a group manager signed into two branches at once
+ * holds two live sessions on one licence with nothing able to notice;
+ * site-switching would leave the previous store's row still naming the old id;
+ * and a password change would need a fan-out write across servers with no
+ * transaction spanning them. Sign-in cannot write a store row at all —
+ * `finishSignIn` claims while `siteId` is still null for exactly those
+ * multi-site users.
+ *
+ * The cost that motivates the idea is real, and it is paid for below instead.
  */
 
 type Row = RowDataPacket & Record<string, unknown>
@@ -50,7 +69,62 @@ export async function claimSession(
        user_agent   = VALUES(user_agent)`,
     [userId, sessionId, meta.ip?.slice(0, 45) ?? null, meta.userAgent?.slice(0, 255) ?? null],
   )
+  /* Whatever this process last verified is now the wrong answer.
+     This matters for the browser doing the signing IN, not the one being
+     evicted: without it, a request arriving on THIS process moments later could
+     be told its own predecessor is still the current session. Other processes
+     hold their own copy and expire it on the interval below — see the note
+     there on what that window costs. */
+  verified.delete(userId)
 }
+
+/* ── THE VERIFY CACHE ────────────────────────────────────────────────────────
+ *
+ * `sessionIsCurrent` runs on every guarded request, and with the control
+ * database on its own server that is a cross-server round trip per page load,
+ * per server action, for every store on every site server. The query itself is
+ * trivial — a primary-key hit on a table small enough to live permanently in
+ * the buffer pool — but the trip is not, and it is paid on the one machine
+ * every tenant shares.
+ *
+ * So a session verified in the last minute is taken at its word. This is a
+ * staleness check rather than a poll: nothing runs on a timer, an idle session
+ * costs nothing at all, and someone clicking through forty pages in a minute
+ * pays for one lookup instead of forty.
+ *
+ * ── ONLY THE POSITIVE ANSWER IS CACHED ─────────────────────────────────────
+ *
+ * A mismatch is never remembered. The lookup that finds one has just read the
+ * authoritative row, so eviction stays exact and immediate — the expensive
+ * direction to get wrong is the one that never takes a shortcut. Nor is a
+ * failed lookup cached: the fail-soft branch already lets that request through,
+ * and remembering it would stretch one blip into a minute of unenforced access.
+ *
+ * ── WHAT THIS COSTS ────────────────────────────────────────────────────────
+ *
+ * Eviction lands within a minute instead of on the very next request, and each
+ * app server holds its own copy, so a displaced browser may keep working
+ * against one of them after another has already cut it off.
+ *
+ * That is the right trade for what this feature IS. It is a licence limit, not
+ * a security boundary — it exists so ten people cannot share one seat, and an
+ * extra minute of overlap does not undermine that. A revoked or deactivated
+ * USER is a different question and is NOT answered here: `requireSiteUser`
+ * re-reads the account on every request and is not cached.
+ *
+ * A minute is also the resolution the table already worked at, since
+ * `last_seen_at` is only stamped that often — and skipping the read skips the
+ * stamp with it, so that column behaves exactly as it did before.
+ */
+const VERIFY_EVERY_MS = 60_000
+
+type Verified = { sid: string; at: number }
+
+/* Survives module reloads in dev the same way the pools do. */
+const globalVerified = globalThis as unknown as {
+  __odysseySessionVerified?: Map<number, Verified>
+}
+const verified = (globalVerified.__odysseySessionVerified ??= new Map())
 
 /**
  * Is this the session that counts?
@@ -58,7 +132,8 @@ export async function claimSession(
  * ── THE HOT PATH ────────────────────────────────────────────────────────────
  *
  * Runs on every guarded request — every page load, every server action, every
- * API route. One primary-key lookup, which is about as cheap as a query gets.
+ * API route. At most one primary-key lookup per session per minute; see the
+ * cache above for why, and for what that costs.
  *
  * ── WHY AN UNREADABLE REGISTRY LETS THE REQUEST THROUGH ────────────────────
  *
@@ -73,6 +148,17 @@ export async function claimSession(
  * try/catch.
  */
 export async function sessionIsCurrent(userId: number, sessionId: string): Promise<boolean> {
+  /* Verified recently, and for THIS session id. Comparing the id matters as
+     much as the age: the entry records WHICH session was blessed, so a token
+     presenting a different one falls through to a real lookup instead of
+     inheriting its predecessor's answer.
+
+     `at` is deliberately not refreshed on a hit. Doing so would turn the
+     interval into a sliding window that an active user renews forever — and an
+     active user is precisely the one this exists to re-check. */
+  const seen = verified.get(userId)
+  if (seen && seen.sid === sessionId && Date.now() - seen.at < VERIFY_EVERY_MS) return true
+
   try {
     const row = await queryOne<Row>(
       'SELECT session_id, last_seen_at FROM cp2_user_sessions WHERE user_id = ? LIMIT 1',
@@ -83,15 +169,34 @@ export async function sessionIsCurrent(userId: number, sessionId: string): Promi
        shipped — an in-flight session from before the deploy. Allowed, for the
        same reason the token's `sid` is optional: nobody should be signed out by
        a deployment. The next sign-in enrols them. */
-    if (!row) return true
+    if (!row) {
+      remember(userId, sessionId)
+      return true
+    }
 
+    /* Superseded. NOT remembered — see "only the positive answer is cached". */
     if (String(row.session_id) !== sessionId) return false
 
+    remember(userId, sessionId)
     void touch(userId, row.last_seen_at as Date | null)
     return true
   } catch (err) {
     console.error('[session] registry unreadable; allowing the request', err)
     return true
+  }
+}
+
+function remember(userId: number, sessionId: string): void {
+  verified.set(userId, { sid: sessionId, at: Date.now() })
+  /* One entry per signed-in user is a few dozen bytes and largely
+     self-limiting, but a long-lived process should not grow a map unboundedly
+     on any input. Trimmed oldest-first, well above any plausible concurrent
+     user count — the same bound rateLimit.ts puts on its buckets, and just as
+     harmless to overshoot: a dropped entry costs one extra lookup, nothing
+     more. */
+  if (verified.size > 10_000) {
+    const oldest = [...verified.entries()].sort((a, b) => a[1].at - b[1].at)
+    for (const [k] of oldest.slice(0, 5_000)) verified.delete(k)
   }
 }
 
@@ -122,6 +227,9 @@ async function touch(userId: number, lastSeen: Date | null): Promise<void> {
  * than held until the token would have expired twelve hours later.
  */
 export async function releaseSession(userId: number): Promise<void> {
+  /* Before the delete, so a throw below cannot leave this process still holding
+     a verdict for a row that is on its way out. */
+  verified.delete(userId)
   try {
     await execute('DELETE FROM cp2_user_sessions WHERE user_id = ?', [userId])
   } catch (err) {

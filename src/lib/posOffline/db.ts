@@ -357,4 +357,14 @@ export const KV = {
    * library: two short rows per group, read whole every time the picker opens.
    */
   variantAxes: 'variantAxes',
+  /**
+   * Where each document comes out on THIS machine, already resolved.
+   *
+   * A till must still print with the server unreachable, and the answer is
+   * small — a handful of printers and sixteen documents. Written WHOLE on every
+   * response, never as a delta: re-pointing a printer touches nothing on
+   * products.updated_at, so a products-keyed delta would leave a till printing
+   * to yesterday's queue until something unrelated happened to touch a product.
+   */
+  printing: 'printing',
 } as const

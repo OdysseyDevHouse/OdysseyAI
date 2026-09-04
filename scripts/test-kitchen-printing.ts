@@ -21,13 +21,11 @@
  */
 import { siteExecute, siteQuery, siteQueryOne } from '../src/lib/siteDb'
 import {
-  createKitchenPrinter,
-  setKitchenPrinterActive,
   listKitchenPrinters,
   setPrintersForProduct,
   printersForProduct,
   printersForProducts,
-  setTerminalPrinter,
+  printerMapForDevice,
   printerMapForTerminal,
   sentQtyByLineAndPrinter,
   recordKitchenSend,
@@ -36,6 +34,11 @@ import {
   anyLineForProduct,
   distinctKitchenGroups,
 } from '../src/lib/site/kitchenPrinters'
+/* The printer LIST and the per-machine address moved out of kitchenPrinters in
+   246 — neither was a kitchen question. This suite still gates them, because
+   the fold-in is exactly the change that could break kitchen printing. */
+import { createPrinter, setPrinterActive, updatePrinter } from '../src/lib/site/printers'
+import { touchDevice } from '../src/lib/site/devices'
 import { saveDraft, saveForLaterDocument, getDocument } from '../src/lib/site/salesDocuments'
 import { kitchenDelta, groupKitchenLines } from '../src/lib/kitchenTicket'
 import { toNum } from '../src/lib/decimals'
@@ -52,22 +55,23 @@ async function main() {
   const stamp = Date.now().toString().slice(-6)
 
   /* Sweep what an earlier crashed run left. `name` is UNIQUE on
-     kitchen_printers, so litter fails the INSERT rather than the assertion it
+     printers, so litter fails the INSERT rather than the assertion it
      was making. Sends go first — the printer FK is ON DELETE RESTRICT. */
   await siteExecute(
     SITE,
     `DELETE ksl FROM kitchen_send_lines ksl
        INNER JOIN kitchen_sends ks ON ks.id = ksl.send_id
-       INNER JOIN kitchen_printers p ON p.id = ks.printer_id
+       INNER JOIN printers p ON p.id = ks.printer_id
       WHERE p.name LIKE 'KTEST%'`,
   )
   await siteExecute(
     SITE,
     `DELETE ks FROM kitchen_sends ks
-       INNER JOIN kitchen_printers p ON p.id = ks.printer_id
+       INNER JOIN printers p ON p.id = ks.printer_id
       WHERE p.name LIKE 'KTEST%'`,
   )
-  await siteExecute(SITE, "DELETE FROM kitchen_printers WHERE name LIKE 'KTEST%'")
+  await siteExecute(SITE, "DELETE FROM printers WHERE name LIKE 'KTEST%'")
+  await siteExecute(SITE, "DELETE FROM devices WHERE device_id LIKE 'ktest-%'")
   await siteExecute(SITE, "DELETE FROM products WHERE code LIKE 'KIT9%'")
 
   const vat = await siteQueryOne<any>(
@@ -97,23 +101,56 @@ async function main() {
   /* ── 1. Printers ────────────────────────────────────────────────────────── */
   console.log('\n── Printers ────────────────────────────────────────────────\n')
 
-  const grill = await createKitchenPrinter(SITE, `KTEST Grill ${stamp}`)
-  const bar = await createKitchenPrinter(SITE, `KTEST Bar ${stamp}`)
+  /* A kitchen printer on the network — reachable from every machine with no
+     driver installed anywhere, which is how a restaurant actually wires one. */
+  const kitchen = (name: string, target = '192.0.2.40') =>
+    createPrinter(SITE, {
+      name,
+      purpose: 'kitchen' as const,
+      paper: 'slip80' as const,
+      slipColumns: null,
+      connection: 'network' as const,
+      deviceId: null,
+      target,
+      shareName: '',
+      port: 9100,
+      drawerKick: false,
+    })
+
+  const grill = await kitchen(`KTEST Grill ${stamp}`)
+  const bar = await kitchen(`KTEST Bar ${stamp}`)
   ok('a printer is created', grill.ok && bar.ok)
   if (!grill.ok || !bar.ok) throw new Error('could not create printers')
 
-  const dupe = await createKitchenPrinter(SITE, `KTEST Grill ${stamp}`)
+  const dupe = await kitchen(`KTEST Grill ${stamp}`)
   ok('*** a duplicate name is refused ***', !dupe.ok)
 
   /* Deactivate-then-recreate reconnects rather than making "Bar 2" — a station
      coming back after a refit is the same station. */
-  await setKitchenPrinterActive(SITE, bar.id, false)
-  const revived = await createKitchenPrinter(SITE, `KTEST Bar ${stamp}`)
+  await setPrinterActive(SITE, bar.id, false)
+  const revived = await kitchen(`KTEST Bar ${stamp}`)
   ok('*** re-adding a switched-off printer revives it, same id ***',
      revived.ok && revived.id === bar.id)
 
   const active = await listKitchenPrinters(SITE)
   ok('an active printer lists', active.some((p) => p.id === grill.id))
+
+  /* The purpose filter: a general printer must not reach a product's Kitchen
+     tab, or a shop routes steaks to the office laser. */
+  const laser = await createPrinter(SITE, {
+    name: `KTEST Office ${stamp}`,
+    purpose: 'general' as const,
+    paper: 'a4' as const,
+    slipColumns: null,
+    connection: 'network' as const,
+    deviceId: null,
+    target: '192.0.2.9',
+    shareName: '',
+    port: 9100,
+    drawerKick: false,
+  })
+  ok('*** a general printer is not offered as a kitchen station ***',
+     laser.ok && !(await listKitchenPrinters(SITE)).some((p) => laser.ok && p.id === laser.id))
 
   /* ── 2. Routing ─────────────────────────────────────────────────────────── */
   console.log('\n── Routing ─────────────────────────────────────────────────\n')
@@ -137,33 +174,118 @@ async function main() {
      (await printersForProduct(SITE, cokeId)).length === 0)
   await setPrintersForProduct(SITE, cokeId, [bar.id])
 
-  /* ── 3. Per-till mapping ────────────────────────────────────────────────── */
-  console.log('\n── Per-till mapping ────────────────────────────────────────\n')
+  /* ── 3. Which machine reaches which printer ──────────────────── */
+  console.log('\n── Reachability ───────────────────────────────\n')
 
+  /* Since 247 a printer knows its own location, so reachability is two rules
+     rather than a table: a NETWORK printer is reachable from every machine, and
+     a QUEUE printer only from the machine its queue is installed on.
+
+     `terminal` is still read because the send history below records WHICH TILL
+     put paper out — a fact about the sale, not about the printer. */
   const terminal = await siteQueryOne<any>(SITE, 'SELECT id FROM terminals LIMIT 1')
-  if (terminal) {
-    await setTerminalPrinter(SITE, terminal.id, grill.id, 'EPSON-GRILL')
-    const map = await printerMapForTerminal(SITE, terminal.id)
-    const grillRow = map.find((m) => m.printerId === grill.id)
-    ok('a mapped printer carries its spool name', grillRow?.bridgePrinter === 'EPSON-GRILL')
 
-    /* Every active printer appears, mapped or not — the unmapped ones are
-       exactly the state where food silently stops printing, so the screen must
-       be able to show them. */
-    const barRow = map.find((m) => m.printerId === bar.id)
-    ok('*** an unmapped printer still appears, with an empty name ***',
-       barRow !== undefined && barRow.bridgePrinter === '')
+  const device = `ktest-${stamp}-aaaa`
+  const other = `ktest-${stamp}-bbbb`
+  for (const id of [device, other]) {
+    await touchDevice(SITE, {
+      deviceId: id,
+      label: `KTEST ${id.slice(-4)} ${stamp}`,
+      kind: 'desktop',
+      platform: 'win32',
+      appRole: 'pos',
+    })
+  }
 
-    // Blank CLEARS rather than storing '' — one representation for "unreachable".
-    await setTerminalPrinter(SITE, terminal.id, grill.id, '')
-    const cleared = await siteQuery<any>(
-      SITE,
-      'SELECT * FROM terminal_kitchen_printers WHERE terminal_id = ? AND printer_id = ?',
-      [terminal.id, grill.id],
-    )
-    ok('*** blanking a mapping deletes the row ***', cleared.length === 0)
+  /* The whole point of the network option: nothing was ever said about THIS
+     machine and the grill, and it reaches it anyway. Move the printer and every
+     machine follows — one edit, not one per till. */
+  const map = await printerMapForDevice(SITE, device)
+  const grillRow = map.find((m) => m.printerId === grill.id)
+  ok('*** a network printer is reachable from a machine that was never told about it ***',
+     grillRow?.bridgePrinter === '192.0.2.40')
+  ok('…and from a second machine, with no second edit',
+     (await printerMapForDevice(SITE, other)).find((m) => m.printerId === grill.id)?.bridgePrinter ===
+       '192.0.2.40')
+
+  ok('*** the kitchen view excludes general printers ***',
+     !map.some((m) => laser.ok && m.printerId === laser.id))
+
+  /* A QUEUE printer belongs to one machine. Every active kitchen printer still
+     APPEARS on the others — an empty address is exactly the state where food
+     silently stops printing, so the screen must be able to show it — but it
+     carries no way in. */
+  const pass = await createPrinter(SITE, {
+    name: `KTEST Pass ${stamp}`,
+    purpose: 'kitchen' as const,
+    paper: 'slip58' as const,
+    slipColumns: null,
+    connection: 'queue' as const,
+    deviceId: device,
+    target: 'EPSON-PASS',
+    shareName: '',
+    port: null,
+    drawerKick: false,
+  })
+  if (!pass.ok) throw new Error('could not create the queue printer')
+
+  const own = (await printerMapForDevice(SITE, device)).find((m) => m.printerId === pass.id)
+  ok('*** a queue printer is reachable from its own machine ***', own?.bridgePrinter === 'EPSON-PASS')
+  ok('…carrying ITS paper width, not the counter’s', own?.columns === 32)
+
+  const foreign = (await printerMapForDevice(SITE, other)).find((m) => m.printerId === pass.id)
+  ok('*** …and appears but is unreachable from any other machine ***',
+     foreign !== undefined && foreign.bridgePrinter === '')
+
+  /* A half-finished printer reaches nothing, from anywhere. It is the state a
+     manager leaves behind when they add a printer for a machine they are not
+     sitting at, so it must be visible rather than silently broken. */
+  const half = await createPrinter(SITE, {
+    name: `KTEST Half ${stamp}`,
+    purpose: 'kitchen' as const,
+    paper: 'slip80' as const,
+    slipColumns: null,
+    connection: 'queue' as const,
+    deviceId: null,
+    target: '',
+    shareName: '',
+    port: null,
+    drawerKick: false,
+  })
+  if (!half.ok) throw new Error('could not create the half-finished printer')
+  ok('*** an unfinished printer reaches nothing ***',
+     (await printerMapForDevice(SITE, device)).find((m) => m.printerId === half.id)?.bridgePrinter === '')
+
+  /* Re-pointing the shop’s network printer moves every machine at once. */
+  await updatePrinter(SITE, grill.id, {
+    name: `KTEST Grill ${stamp}`,
+    purpose: 'kitchen' as const,
+    paper: 'slip80' as const,
+    slipColumns: null,
+    connection: 'network' as const,
+    deviceId: null,
+    target: '192.0.2.99',
+    shareName: '',
+    port: 9100,
+    drawerKick: false,
+  })
+  ok('*** one address change moves every machine ***',
+     (await printerMapForDevice(SITE, device)).find((m) => m.printerId === grill.id)?.bridgePrinter ===
+       '192.0.2.99' &&
+     (await printerMapForDevice(SITE, other)).find((m) => m.printerId === grill.id)?.bridgePrinter ===
+       '192.0.2.99')
+
+  /* The terminal-shaped view, still working. A till no machine has claimed
+     reaches nothing — the honest answer rather than an error. */
+  const unclaimed = await siteQueryOne<any>(
+    SITE,
+    "SELECT id FROM terminals WHERE device_id IS NULL OR device_id = '' LIMIT 1",
+  )
+  if (unclaimed) {
+    ok('*** an unclaimed till reaches nothing ***',
+       (await printerMapForTerminal(SITE, unclaimed.id)).length === 0)
   } else {
-    console.log('SKIP  per-till mapping — this site has no terminals')
+    console.log('SKIP  unclaimed till — every terminal on this site is claimed')
   }
 
   /* ── 4. The delta, per line per printer ─────────────────────────────────── */
@@ -360,7 +482,8 @@ async function main() {
   await siteExecute(SITE, 'DELETE FROM kitchen_sends WHERE document_id = ?', [documentId])
   await siteExecute(SITE, 'DELETE FROM sales_document_lines WHERE document_id = ?', [documentId])
   await siteExecute(SITE, 'DELETE FROM sales_documents WHERE id = ?', [documentId])
-  await siteExecute(SITE, "DELETE FROM kitchen_printers WHERE name LIKE 'KTEST%'")
+  await siteExecute(SITE, "DELETE FROM printers WHERE name LIKE 'KTEST%'")
+  await siteExecute(SITE, "DELETE FROM devices WHERE device_id LIKE 'ktest-%'")
   await siteExecute(SITE, 'DELETE FROM products WHERE id IN (?,?,?)', [steakId, cokeId, iceId])
 
   console.log(fails === 0 ? '\nAll kitchen printing rules hold.\n' : `\n${fails} FAILURE(S)\n`)

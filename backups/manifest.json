@@ -1,0 +1,21 @@
+{
+  "startedAt": "2026-09-03T12:19:17.452Z",
+  "finishedAt": "2026-09-03T12:20:58.449Z",
+  "folder": "2026-09-03_1419",
+  "ok": true,
+  "targets": [
+    {
+      "name": "site-7-ody10006_master",
+      "ok": true,
+      "bytes": 88748
+    },
+    {
+      "name": "uploads",
+      "ok": true,
+      "bytes": null,
+      "note": "copied, tar unavailable"
+    }
+  ],
+  "removed": [],
+  "retentionDays": 14
+}

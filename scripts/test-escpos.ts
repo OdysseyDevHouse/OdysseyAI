@@ -4,7 +4,7 @@
  * Everything here is pure: the encoder and layouts never touch a printer, so
  * this suite is what stands between a refactor and a shop full of confetti.
  * The bridge itself is hardware and gets the manual checklist in
- * docs/print-bridge.md.
+ * docs/printing.md.
  */
 
 import { EscPos, encodeCp858, twoCol, wrapText } from '../src/lib/escpos/encoder'

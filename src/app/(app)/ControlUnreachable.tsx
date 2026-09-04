@@ -1,6 +1,6 @@
 import { ButtonLink, Callout, Card, Icons } from '@/components/ui'
 import { getSession } from '@/lib/session'
-import { describeErrorChain, isStoreDetailsUnavailable } from '@/lib/sites'
+import { describeErrorChain, isSiteDbRefusal, isStoreDetailsUnavailable } from '@/lib/sites'
 import NeedsInternetScreen from './NeedsInternetScreen'
 import RetryConnectionButton from './RetryConnectionButton'
 
@@ -54,10 +54,22 @@ import RetryConnectionButton from './RetryConnectionButton'
  * why /select-site carries its own catch for that case.
  */
 export default async function ControlUnreachable({ err }: { err: unknown }) {
+  /* ── A DATABASE THAT ANSWERED IS NOT A LINE THAT IS DOWN ───────────────────
+   *
+   * "Access denied for user 'ody10003'@'127.0.0.1'" proves the opposite of no
+   * internet: the socket opened, the server replied, and it said no. Sending
+   * that to NeedsInternetScreen would have a shop owner checking a router that
+   * is working perfectly while the actual fault — a password, a grant, a schema
+   * name, all of them fields of one cp2_site_databases row — goes unmentioned.
+   *
+   * So a refusal takes the diagnostic screen on EVERY build, till included, and
+   * only the wording below changes with it. */
+  const refused = isSiteDbRefusal(err)
+
   /* Read on the server from the baked build mode, not from the client. Same
      check as the layouts' own `isDesktop`; it is repeated here rather than
      passed in so that both call sites cannot drift into different answers. */
-  if (process.env.APP_MODE === 'desktop') {
+  if (process.env.APP_MODE === 'desktop' && !refused) {
     return <NeedsInternetScreen firstRun={isStoreDetailsUnavailable(err)} />
   }
 
@@ -76,9 +88,15 @@ export default async function ControlUnreachable({ err }: { err: unknown }) {
               <Icons.StatusError size={24} />
             </span>
             <div>
-              <h1 className="text-lg font-bold text-ink">Couldn&rsquo;t reach the database</h1>
+              <h1 className="text-lg font-bold text-ink">
+                {refused
+                  ? 'The database wouldn’t accept these details'
+                  : 'Couldn’t reach the database'}
+              </h1>
               <p className="mt-1 text-sm text-muted">
-                The server could not open this site&rsquo;s data. This is the error it returned.
+                {refused
+                  ? 'The server answered and turned the connection away. This is what it said.'
+                  : 'The server could not open this site’s data. This is the error it returned.'}
               </p>
             </div>
           </div>
@@ -116,15 +134,32 @@ export default async function ControlUnreachable({ err }: { err: unknown }) {
           </div>
 
           <Callout tone="brand">
-            <p className="text-sm">
-              A connection error at this point is usually the address rather than the
-              credentials. Site databases store <code className="font-mono">localhost</code>,
-              meaning localhost <em>of the database server</em> — set{' '}
-              <code className="font-mono">SITE_DB_HOST_OVERRIDE</code> in the server&rsquo;s{' '}
-              <code className="font-mono">.env</code> when that is a different machine. It
-              overrides the stored value for every site, so a corrected row is ignored while
-              it is set. The control database is <code className="font-mono">DB_HOST</code>.
-            </p>
+            {/* Two different faults want two different first moves. Offering the
+                host-override advice for a denied login sends someone editing an
+                address that is demonstrably correct — the server at that address
+                is the one that just answered. */}
+            {refused ? (
+              <p className="text-sm">
+                The address is right — something answered on it. What was rejected is one of{' '}
+                <code className="font-mono">db_username</code>,{' '}
+                <code className="font-mono">db_password_enc</code> or{' '}
+                <code className="font-mono">database_name</code> on this site&rsquo;s row in{' '}
+                <code className="font-mono">cp2_site_databases</code>, or the grant behind
+                them. A password stored against a <em>different</em>{' '}
+                <code className="font-mono">ENCRYPTION_KEY</code> decrypts to nonsense and
+                fails here in exactly this way.
+              </p>
+            ) : (
+              <p className="text-sm">
+                A connection error at this point is usually the address rather than the
+                credentials. Site databases store <code className="font-mono">localhost</code>,
+                meaning localhost <em>of the database server</em> — set{' '}
+                <code className="font-mono">SITE_DB_HOST_OVERRIDE</code> in the server&rsquo;s{' '}
+                <code className="font-mono">.env</code> when that is a different machine. It
+                overrides the stored value for every site, so a corrected row is ignored while
+                it is set. The control database is <code className="font-mono">DB_HOST</code>.
+              </p>
+            )}
             {/* The distinction that costs the most time when it is missing: one of
                 these two edits is picked up by the button above and the other is
                 not, and both look like "I changed it and nothing happened". */}

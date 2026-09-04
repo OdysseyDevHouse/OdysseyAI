@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { requireSession, requireSiteUser } from '@/lib/auth'
-import { listSitesForUser, isControlUnreachable } from '@/lib/sites'
-import { opensHere } from '@/lib/desktopBackOffice'
+import { listSitesForUser, isSiteDataUnavailable } from '@/lib/sites'
+import { opensHere } from '@/lib/siteOpensHere'
 import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
@@ -13,6 +13,7 @@ import LeaseLockScreen from './LeaseLockScreen'
 import ControlUnreachable from './ControlUnreachable'
 import { lockState } from '@/lib/licence/lockState'
 import PrecisionProvider from '@/components/PrecisionProvider'
+import DeviceHeartbeat from '@/components/DeviceHeartbeat'
 import { getSettings } from '@/lib/site/settings'
 import { setDisplayPrecision } from '@/lib/decimals'
 import { hiddenAreas } from '@/lib/site/menuVisibility'
@@ -47,19 +48,26 @@ export default async function AppLayout({ children }: { children: React.ReactNod
    * given the same treatment as an expired lease — a screen that says what
    * happened and what to do.
    *
+   * The same goes for a database that ANSWERS and refuses — a wrong password
+   * or a schema that is not there. Nothing about "Access denied for user
+   * 'ody10003'@'127.0.0.1'" needs a stack trace to be understood, and the
+   * reader can fix it in the row it came from, so it gets the screen too. What
+   * it does NOT get is the same wording; see ControlUnreachable.
+   *
    * ── WHY THE CATCH IS NARROW ──────────────────────────────────────────────
    *
    * `redirect()` works by throwing, and requireSession()/requireSiteUser() both
    * use it — for a password change, a missing site, a superseded session.
    * Swallowing that would strand the user on this screen instead of sending
-   * them where they were meant to go. So only a recognised offline error is
-   * caught and everything else, redirects included, is re-thrown untouched.
+   * them where they were meant to go. So only a recognised failure to open the
+   * site's data is caught; everything else, redirects included, is re-thrown
+   * untouched.
    */
   let resolved
   try {
     resolved = await requireSiteUser()
   } catch (err) {
-    if (!isControlUnreachable(err)) throw err
+    if (!isSiteDataUnavailable(err)) throw err
     /* Which screen that becomes depends on the build — see ControlUnreachable.
        A till gets the plain-English remedy; the web build gets the error, because
        there the reader is an operator and the cause is a setting. */
@@ -159,12 +167,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const sites =
     session.scope === 'site'
       ? [site]
-      : /* Filtered for the same reason /select-site is: on the back office EXE a
-           cloud store is not openable, and a switcher row that selectSiteAction
-           refuses is a door drawn on a wall. An account holding one store of
-           each kind is exactly the case that reaches this line — it signs in
-           against the control panel, opens its local store, and would otherwise
-           be offered the cloud one in the header. */
+      : /* Filtered for the same reason /select-site is: each back office opens
+           one kind of store — the EXE local, the browser cloud — and a switcher
+           row that selectSiteAction refuses is a door drawn on a wall. An
+           account holding one store of each kind is exactly the case that
+           reaches this line: it signs in against the control panel, opens the
+           store this door serves, and would otherwise be offered the other one
+           in the header. */
         (await listSitesForUser(session.userId)).filter((s) => opensHere(s.connectionType))
 
   // The bell's starting figure. One indexed COUNT; the client keeps itself
@@ -214,6 +223,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (await isMobileShell()) {
     return (
       <div className="flex h-screen flex-col overflow-hidden">
+        {/* Registers this machine with the shop, once per load. A back-office PC
+            never opens the till, so nothing else would ever tell Setup →
+            Printing that it exists — and it is exactly the machine that needs
+            its own answer for where an A4 invoice goes. Renders nothing and
+            swallows every failure. */}
+        <DeviceHeartbeat />
         <MobileTopBar
           granted={[...capabilities.granted]}
           isOwner={capabilities.isOwner}
@@ -242,6 +257,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen overflow-hidden">
+      {/* Registers this machine with the shop, once per load. A back-office PC
+          never opens the till, so nothing else would ever tell Setup →
+          Printing that it exists — and it is exactly the machine that needs
+          its own answer for where an A4 invoice goes. Renders nothing and
+          swallows every failure. */}
+      <DeviceHeartbeat />
       <Sidebar
         granted={[...capabilities.granted]}
         isOwner={capabilities.isOwner}

@@ -25,6 +25,7 @@ import {
   storedPosMenus,
   storedInstructions,
   storedSettings,
+  storedPrintConfig,
   variantChildren,
   storedVariantAxes,
 } from '@/lib/posOffline/catalog'
@@ -166,11 +167,15 @@ import { EmailInvoiceDialog } from '@/app/(app)/sales/EmailInvoiceDialog'
 import { receiptDataFromBasket, type ReceiptData } from '@/lib/receiptData'
 import {
   kickDrawer,
-  printSlipViaBridge,
-  printBillViaBridge,
-  hasBridgeSlipPrinter,
-  printKitchenViaBridge,
+  printSlip,
+  printGiftSlip,
+  /* Aliased: this file already has its own `printBill()`, the tender action
+     that opens the bill modal. Two different verbs, one obvious name. */
+  printBill as printBillDirect,
+  hasSlipPrinter,
+  printKitchen,
 } from './printing'
+import { loadPrintConfig, primePrintConfig } from '@/lib/print/deviceConfig'
 import {
   kitchenTicketAction,
   markKitchenSentAction,
@@ -1137,6 +1142,24 @@ export default function PosShell({
      route through it, and `printDocument` would read as a third one. */
   const printPaper = usePrintDocument()
   const router = useRouter()
+
+  /* This machine's printer setup, fetched ONCE and read synchronously
+     thereafter. Every `hasSlipPrinter()` below is a render-time branch, so an
+     async answer would turn each of them into state — see
+     lib/print/deviceConfig.ts. Nothing waits on it: until it lands, every
+     document falls back to the browser's print dialog, which is what they all
+     did before printer setup existed. */
+  useEffect(() => {
+    /* The offline store FIRST, then the network.
+     *
+     * Ordered this way because the offline copy is the one that is always
+     * available: a till that opened with no line still knows where its slips
+     * come out, and the fetch merely refreshes it when there is a server to ask.
+     * The reverse order would leave an offline till with no printer at all
+     * until the next time it reconnected. */
+    void storedPrintConfig(siteId).then(primePrintConfig)
+    void loadPrintConfig()
+  }, [siteId])
 
   /*
    * Which till this machine IS.
@@ -4805,14 +4828,24 @@ export default function PosShell({
     setBillPrinting(true)
     startTransition(async () => {
       try {
-        if (hasBridgeSlipPrinter()) {
-          const printed = await printBillViaBridge(data)
+        if (hasSlipPrinter()) {
+          const printed = await printBillDirect(data)
           if (printed.ok) {
-            toast.success('Bill printed.')
+            /* "Sent", never "printed". Nothing in any transport reports that
+               paper moved — see printTransports.js — and a cashier told
+               "printed" stops looking at the printer. */
+            toast.success('Bill sent to the printer.')
             setBillOpen(false)
             return
           }
-          toast.error(printed.error)
+          /* A deliberate "do not print this here" says nothing at all and stops.
+             An error is worth showing. Anything else falls through to the
+             browser's own dialog below. */
+          if (printed.reason === 'off') {
+            setBillOpen(false)
+            return
+          }
+          if (printed.reason === 'error') toast.error(printed.error)
         }
         if (documentId) printPaper(`/sales/${documentId}/bill`)
       } finally {
@@ -5181,9 +5214,17 @@ export default function PosShell({
     const failures: string[] = []
 
     for (const job of result.jobs) {
-      const printed = await printKitchenViaBridge(job.bridgePrinter, job.ticket)
+      const printed = await printKitchen(job.target, job.ticket)
       if (!printed.ok) {
-        failures.push(printed.error)
+        /* 'off' cannot happen here — a kitchen ticket is routed per product and
+           never through the assignment table — and 'browser' means this machine
+           has no engine, which is a setup problem worth naming rather than a
+           silent skip. */
+        failures.push(
+          printed.reason === 'error'
+            ? printed.error
+            : `${job.ticket.printerName || 'The kitchen'} cannot be printed from this machine — Setup → Printing.`,
+        )
         continue
       }
       /* PRINT THEN MARK. A failed mark risks a duplicate docket, which a
@@ -5244,7 +5285,7 @@ export default function PosShell({
       if (!result.ok || result.jobs.length === 0) return
 
       for (const job of result.jobs) {
-        const printed = await printKitchenViaBridge(job.bridgePrinter, job.ticket)
+        const printed = await printKitchen(job.target, job.ticket)
         if (!printed.ok) {
           /* Loud, and named. "The Grill did not print the cancellation" is a
              sentence somebody can act on by walking through the door; a silent
@@ -7681,7 +7722,7 @@ export default function PosShell({
           /* A basket snapshot only becomes paper on a THERMAL till. The trade
              counter's paper is the stored A4 document, so an unposted offline
              sale has nothing for it to print yet. */
-          (!invoicing && slipRef.current !== null && hasBridgeSlipPrinter())
+          (!invoicing && slipRef.current !== null && hasSlipPrinter())
         }
         /* What the paper IS, per till, is openSalePaper's decision — see there.
            The bridge stays here because it is a thermal shortcut around that
@@ -7693,18 +7734,23 @@ export default function PosShell({
            machine. */
         onPrint={() => {
           const snapshot = slipRef.current
-          if (!invoicing && snapshot && hasBridgeSlipPrinter()) {
-            void printSlipViaBridge(snapshot).then((result) => {
+          if (!invoicing && snapshot && hasSlipPrinter()) {
+            void printSlip(snapshot).then((result) => {
               if (result.ok) {
                 if (receipt && receipt.documentId > 0) {
                   void recordPrintAction(receipt.documentId).catch(() => {})
                 }
                 toast.success('Slip sent to the printer.')
-              } else {
-                toast.error(result.error)
-                if (receipt && receipt.documentId > 0) {
-                  openSalePaper(receipt.documentId)
-                }
+                return
+              }
+              /* The shop said slips do not print here. Saying nothing is the
+                 correct response to a setting somebody chose on purpose. */
+              if (result.reason === 'off') return
+              if (result.reason === 'error') toast.error(result.error)
+              /* Either way, fall back to the paper route — which is also the
+                 only path a machine with no print engine ever had. */
+              if (receipt && receipt.documentId > 0) {
+                openSalePaper(receipt.documentId)
               }
             })
             return
@@ -7721,7 +7767,26 @@ export default function PosShell({
           invoicing
             ? undefined
             : () => {
-                if (receipt) printPaper(`/sales/${receipt.documentId}/slip?gift=1`)
+                if (!receipt) return
+                /* Its own destination in Setup → Printing, defaulting to the
+                   till slip's — so a shop that wants gift slips on a different
+                   roll can say so, and one that does not never has to. Before
+                   this it always went to the browser dialog, which made that
+                   row in the table decorative. */
+                const snapshot = slipRef.current
+                if (snapshot && hasSlipPrinter()) {
+                  void printGiftSlip({ ...snapshot, gift: true }).then((result) => {
+                    if (result.ok) {
+                      toast.success('Gift slip sent to the printer.')
+                      return
+                    }
+                    if (result.reason === 'off') return
+                    if (result.reason === 'error') toast.error(result.error)
+                    printPaper(`/sales/${receipt.documentId}/slip?gift=1`)
+                  })
+                  return
+                }
+                printPaper(`/sales/${receipt.documentId}/slip?gift=1`)
               }
         }
         /* The back-office document — still the void/credit surface. */

@@ -260,6 +260,28 @@ extraResources:
   # So the Next app dir gets a COPY, written by scripts/make-build-defaults.mjs
   # into the buildResources directory (already excluded from `files`). The real
   # package.json is left unnamed here, and therefore stays in the asar.
+  # ── THE RAW-PRINT HELPER ────────────────────────────────────────
+  #
+  # ~6KB that hands RAW bytes to a Windows print queue, so a USB thermal printer
+  # gets a real ESC/POS stream — which is what makes the paper cut and the cash
+  # drawer work. electron/printTransports.js spawns it. Node cannot do this on
+  # its own and every alternative is worse; the argument is in RawPrint.cs.
+  #
+  # NOT a native node module: no binding.gyp, no node-gyp, no ABI coupling, so
+  # nothing here needs rebuilding when Electron moves.
+  #
+  # extraResources and NOT `files`, deliberately — this lands OUTSIDE app.asar,
+  # and you cannot spawn a path inside an asar. Anyone later "tidying" it into
+  # the files list would break raw USB printing with no error at build time.
+  #
+  # A `from` that does not exist is skipped, so a macOS or Linux build simply
+  # omits it and printTransports falls through to `lp -o raw`.
+  #
+  # Built by `npm run build:rawprint` and COMMITTED, the same way build/icon.ico
+  # is: `npm run dist` never regenerates it, because a build that silently
+  # rebuilds a binary it then spawns is a build whose output nobody reviewed.
+  - from: build/rawprint/odyssey-rawprint.exe
+    to: rawprint/odyssey-rawprint.exe
   - from: build/app-package.json
     to: app/package.json
   - from: next.config.mjs

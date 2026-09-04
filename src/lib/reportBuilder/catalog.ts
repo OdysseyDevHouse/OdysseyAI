@@ -6384,7 +6384,7 @@ const KITCHEN_SENDS_SOURCE: CatalogSource = {
   table: 'kitchen_sends',
   dateColumn: 'sent_at',
   joins: [
-    { name: 'printer', sql: 'LEFT JOIN kitchen_printers kp ON kp.id = t.printer_id' },
+    { name: 'printer', sql: 'LEFT JOIN printers kp ON kp.id = t.printer_id' },
     /* NOT named 'doc'. run.ts treats a join called 'doc' as the parent that
        carries the date range's column (dateColumnExpr), so naming it that made
        every kitchen report filter on 'd.sent_at' — a column sales_documents

@@ -126,7 +126,14 @@ const EMPTY: SalesDashboardData = {
  * it.
  */
 
-/** This month to date — the period a store owner checks most. */
+/**
+ * This month to date — the period a store owner checks most.
+ *
+ * Local-calendar, and therefore NOT safe to call while rendering: the server
+ * and the till can be on either side of midnight, and a `to` of the 3rd in the
+ * HTML against the 4th on hydration throws the whole tree away. It is called
+ * from a mount effect instead — see the empty seed on `range`.
+ */
 function thisMonth(): DateRange {
   const now = new Date()
   const iso = (d: Date) =>
@@ -145,7 +152,10 @@ export function SalesDashboard({
   visibleWidgets: readonly WidgetId[]
 }) {
   const toast = useToast()
-  const [range, setRange] = useState<DateRange>(thisMonth)
+  // Seeded empty so the server and the browser agree on the first render; the
+  // real month is filled in on mount, below.
+  const [range, setRange] = useState<DateRange>({ from: '', to: '' })
+  useEffect(() => setRange(thisMonth()), [])
   const [data, setData] = useState<SalesDashboardData>(EMPTY)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -187,6 +197,9 @@ export function SalesDashboard({
   // a range the user has already moved on from.
   const requestId = useRef(0)
   useEffect(() => {
+    // The empty seed, before the mount effect above has picked the month.
+    if (!range.from || !range.to) return
+
     const id = ++requestId.current
     setLoading(true)
     setError(null)
@@ -611,7 +624,9 @@ export function SalesDashboard({
         />
       </Modal>
 
-      <DetailModal dimension={detail} range={range} onClose={() => setDetail(null)} />
+      {range.from && (
+        <DetailModal dimension={detail} range={range} onClose={() => setDetail(null)} />
+      )}
     </div>
   )
 }

@@ -89,6 +89,37 @@ contextBridge.exposeInMainWorld('odyssey', {
     logPath: () => ipcRenderer.invoke('diagnostics:log-path'),
     openLog: () => ipcRenderer.invoke('diagnostics:open-log'),
   },
+  /**
+   * The print engine: network, USB and PDF.
+   *
+   * FIVE VERBS, and the same rule as dbSetup above — one verb per thing the
+   * caller needs, and no `invoke(channel, args)` escape hatch. The two arguments
+   * that matter are validated in main rather than trusted here: a queue NAME
+   * becomes an argv element handed to a spawned executable, and a route PATH
+   * becomes a page this app renders with the operator's own session and can
+   * write to disk. See electron/printTargets.js for what each check defends.
+   *
+   * Bytes cross as a Uint8Array over structured clone, not base64. The old HTTP
+   * bridge base64-encoded because JSON cannot carry bytes; IPC can, and a 33%
+   * size increase plus two string conversions on every slip buys nothing.
+   *
+   * Absent in a browser, which is the honest answer: a browser genuinely cannot
+   * reach a printer, and lib/print/shell.ts says so on screen rather than
+   * offering controls that will not work.
+   */
+  printing: {
+    /** The OS print queues on this machine, for Setup → Printing. */
+    listPrinters: () => ipcRenderer.invoke('printing:list-printers'),
+    /** Raw ESC/POS to a network printer or a local queue. The offline-safe path. */
+    sendRaw: (target, bytes) => ipcRenderer.invoke('printing:raw', { target, bytes }),
+    /** Render one of this app's own (print) routes and send it to a queue. */
+    printRoute: (target, path, options) =>
+      ipcRenderer.invoke('printing:route', { target, path, options }),
+    /** A PDF, from a (print) route or from bytes the caller already holds. */
+    toPdf: (source, options) => ipcRenderer.invoke('printing:pdf', { source, options }),
+    /** Can this machine reach that target? Behind the setup screen's test. */
+    probe: (target) => ipcRenderer.invoke('printing:probe', { target }),
+  },
   dbSetup: {
     signIn: (email, password) => ipcRenderer.invoke('db-setup:sign-in', { email, password }),
     sites: () => ipcRenderer.invoke('db-setup:sites'),

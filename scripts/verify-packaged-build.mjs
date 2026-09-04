@@ -81,6 +81,21 @@ else {
   process.exit(1)
 }
 
+/* ── 1b. THE RAW-PRINT HELPER ────────────────────────────────────────────
+ *
+ * Exactly the class of bug this file exists for: nothing looks wrong in the
+ * output folder, the app starts, every screen renders — and a USB thermal
+ * printer silently loses its paper cut and its cash drawer, because
+ * printTransports could not find the executable it spawns.
+ *
+ * Checked in `resources/`, not `resources/app/`: it is the SHELL's material and
+ * must live outside app.asar, since a path inside an asar cannot be spawned.
+ * The day somebody "tidies" it into the `files:` list, this is what says so.
+ */
+const helper = path.join(SRC, '..', 'rawprint', 'odyssey-rawprint.exe')
+if (fs.existsSync(helper)) pass('the raw-print helper is packaged')
+else fail('resources/rawprint/odyssey-rawprint.exe is missing - USB printers lose raw ESC/POS')
+
 /* ── 2. OUT OF THE REPO, SO RESOLUTION CANNOT CHEAT ──────────────────────── */
 const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'odyssey-verify-'))
 console.log(`\nCopying the payload outside the repo\n  -> ${dest}`)

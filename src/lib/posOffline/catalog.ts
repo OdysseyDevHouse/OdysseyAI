@@ -1,6 +1,7 @@
 'use client'
 
 import { KV } from './db'
+import type { DevicePrintConfig } from '@/lib/printing/resolve'
 import { kvGet, kvPut, posStore } from './store'
 import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
@@ -78,8 +79,14 @@ import type { VariantAxis } from '../site/productVariants'
  * till must never hold BOTH: patching parents in beside children a till
  * already has would draw one shirt six times, and no later delta would ever
  * remove the extras.
+ *
+ * 9 added `printing` — this machine's resolved printer setup, so a till knows
+ * where its slips come out with the server unreachable. A bump rather than a
+ * delta because it is a new stored KEY: a till on 8 has no slot to patch it
+ * into, and would go on using the browser's print dialog for every document
+ * with nothing on screen to say why.
  */
-const SCHEMA = 8
+const SCHEMA = 9
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -135,6 +142,8 @@ type CatalogResponse = {
   settings: CatalogSettings
   priceStructureId: number | null
   terminal: { id: number; code: string; tillNumber: string | null } | null
+  /** Where each document comes out on THIS machine. Null on an older server. */
+  printing: DevicePrintConfig | null
   sequence: {
     terminalId: number
     prefix: string
@@ -279,6 +288,11 @@ export async function refreshCatalog(
       { key: KV.settings, value: body.settings },
       { key: KV.operators, value: body.operators },
       { key: KV.terminal, value: body.terminal },
+      /* Null-defaulted rather than omitted: a till talking to an older server
+         gets no printing config, and null is exactly right — planFor() reads it
+         as "use the browser's print dialog", which is what every document did
+         before printer setup existed. */
+      { key: KV.printing, value: body.printing ?? null },
       { key: KV.quickKeys, value: body.quickKeys ?? [] },
       {
         key: KV.quickKeyNames,
@@ -642,6 +656,18 @@ function menuOrder(a: TillProduct, b: TillProduct): number {
 
 export async function storedDepartments(siteId: number) {
   return (await kvGet<CatalogResponse['departments']>(siteId, KV.departments)) ?? []
+}
+
+/**
+ * This machine's printer setup, as last synced.
+ *
+ * Read by the till on mount and handed to lib/print/deviceConfig, so an offline
+ * till resolves the same printer the server would have. Null when the till has
+ * never synced or the shop has set nothing up — which planFor() reads as "use
+ * the browser's print dialog".
+ */
+export async function storedPrintConfig(siteId: number): Promise<DevicePrintConfig | null> {
+  return (await kvGet<DevicePrintConfig | null>(siteId, KV.printing)) ?? null
 }
 
 export async function storedSettings(siteId: number): Promise<CatalogSettings> {

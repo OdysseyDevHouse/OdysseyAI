@@ -388,7 +388,7 @@ function emitBlock(
 export function renderSlipSpec(
   spec: SlipSpec,
   data: ReceiptData,
-  opts: { columns?: 42 | 48 } = {},
+  opts: { columns?: number } = {},
 ): Uint8Array {
   const columns = opts.columns ?? 48
   const job = new EscPos().init()

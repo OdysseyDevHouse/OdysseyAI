@@ -14,6 +14,7 @@ const dbSetupBridge = require('./dbSetupBridge')
 const { applyMigrations } = require('./siteMigrate')
 const log = require('./log')
 const updater = require('./updater')
+const printing = require('./printing')
 const licenceRefresh = require('./licenceRefresh')
 const { appRequire } = require('./appModules')
 
@@ -229,10 +230,41 @@ async function prepareRuntime(onProgress) {
          being. Windows starts it at boot; a stopped one is a support question,
          not something to paper over. */
     }
-    onProgress?.('Connecting to the shop’s database…')
-    await mariaService.waitForPort(Number(process.env.DB_PORT)).catch(() => {
+    /* ── THE SHOP'S PORT, NOT THE CONTROL DATABASE'S ──────────────────────
+     *
+     * This read DB_PORT until the adopted branch of resolveEnv() stopped
+     * setting it — see the "NO DB_* HERE ANY MORE" note there. An adopted
+     * install has no control connection on this machine at all now; the only
+     * database here is the shop's own, and its port is ODYSSEY_SITE_DB_PORT.
+     * migrateAdoptedSite() below was already reading that, which is why the
+     * schema step was fine and only the wait in front of it was not.
+     *
+     * The result was loud for a user and invisible to a developer:
+     * Number(undefined) is NaN, so a shop was told the service "is not
+     * answering on port undefined" and sent to Services to start something that
+     * was running perfectly well on the port its own config named.
+     *
+     * DB_PORT is still consulted second, for the older self-provisioning local
+     * backend, which does set it and could in principle be on a machine that
+     * also has the service registered.
+     */
+    const dbPort = Number(process.env.ODYSSEY_SITE_DB_PORT || process.env.DB_PORT)
+    if (!Number.isInteger(dbPort) || dbPort <= 0 || dbPort > 65535) {
+      /* Said now rather than after sixty seconds of dialling NaN. A port this
+         install cannot name is a machine-config problem, and sending somebody
+         to Services for it wastes the one support call they were going to
+         make. */
       throw new Error(
-        `The Odyssey Database service is not answering on port ${process.env.DB_PORT}. ` +
+        'This installation does not know which port the shop database is on. ' +
+          `Its configuration is at ${runtimeConfig.configPath()} — run Odyssey ` +
+          'Database Setup again to rebuild it.',
+      )
+    }
+
+    onProgress?.('Connecting to the shop’s database…')
+    await mariaService.waitForPort(dbPort).catch(() => {
+      throw new Error(
+        `The Odyssey Database service is not answering on port ${dbPort}. ` +
           `Open Services, start "${mariaService.SERVICE_NAME}", and try again.`,
       )
     })
@@ -648,6 +680,25 @@ if (!app.requestSingleInstanceLock()) {
       return file
     })
 
+    /* ── THE PRINT ENGINE ──────────────────────────────────────────────
+     *
+     * Registered unconditionally, like diagnostics:* and unlike dbSetupBridge:
+     * the Back Office and the till both print, and the Database Setup build
+     * simply never calls a verb. A missing bridge is harder to diagnose than a
+     * refused call — preload.js makes the same argument for the same reason.
+     *
+     * Thunks rather than values because neither is known yet: appOrigin is
+     * fixed when the server URL resolves, and mainWindow is created below.
+     *
+     * The hidden render window it owns is created IN MAIN, which is why it never
+     * reaches the setWindowOpenHandler above and why the till build's
+     * will-navigate guard — attached to mainWindow.webContents alone — does not
+     * apply to it. That is a consequence to rely on, not an accident. */
+    printing.register({
+      getOrigin: () => appOrigin,
+      getWindow: () => mainWindow,
+    })
+
     /* Started after the window, deliberately: the first half-minute belongs to
        opening the shop. A download competing with the Next server starting is
        felt on a counter PC. */
@@ -682,6 +733,10 @@ if (!app.requestSingleInstanceLock()) {
     /* Before the early return below: a cloud install never started one, and
        stopping a timer that does not exist is free. */
     licenceRefresh.stop()
+    /* Also before the early return: a held webContents keeps the process alive
+       past the point where the Next server has closed, and a till that will not
+       shut down is a till somebody power-cycles. */
+    printing.shutdown()
 
     if (shuttingDown || runtimeConfig.backendMode() !== 'local') return
     event.preventDefault()

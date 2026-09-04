@@ -13,7 +13,7 @@ import {
 import { moduleLabelFor } from './control/moduleMessages'
 import { verifyPassword, hashPassword } from './password'
 import { getSite, getSiteForUser, listSitesForUser, type Site } from './sites'
-import { opensHere, cloudSiteMessage } from './desktopBackOffice'
+import { opensHere, wrongShellMessage } from './siteOpensHere'
 import { siteExecute } from './siteDb'
 import { getTillSession } from './tillSession'
 import { getUserByControlId, getUser, type SiteUser } from './site/users'
@@ -348,24 +348,25 @@ async function finishSignIn(user: UserRow, normalisedEmail: string): Promise<Sig
   // rather than a broken page.
   const all = await listSitesForUser(user.id)
 
-  /* ── THE BACK OFFICE EXE OPENS LOCAL STORES ONLY ──────────────────────────
+  /* ── EACH FRONT DOOR OPENS ONE KIND OF STORE ──────────────────────────────
    *
-   * Filtered rather than refused outright, because an account with a local
-   * store and a cloud one has a perfectly good reason to be here — for the
-   * local one. Offering both and failing on the second would be a picker that
-   * lists a door it then refuses to open.
+   * The back office EXE opens local stores; the web back office opens cloud
+   * ones. Filtered rather than refused outright, because an account with a
+   * local store and a cloud one has a perfectly good reason to be here — for
+   * whichever kind this door opens. Offering both and failing on the second
+   * would be a picker that lists a door it then refuses to open.
    *
    * BEFORE claimSession below, and that ordering is the whole reason this sits
    * here rather than in the caller. Claiming displaces the user's other live
    * session, so a refusal issued after it would sign somebody out of the
    * browser they were legitimately working in — as a side effect of being told
-   * this app cannot help them. See lib/desktopBackOffice.ts.
+   * this app cannot help them. See lib/siteOpensHere.ts.
    */
   const sites = all.filter((s) => opensHere(s.connectionType))
   if (sites.length === 0 && all.length > 0) {
     return {
       ok: false,
-      error: cloudSiteMessage(all.length === 1 ? all[0].displayName : undefined),
+      error: wrongShellMessage(all.length === 1 ? all[0].displayName : undefined),
     }
   }
 
@@ -696,20 +697,23 @@ export async function requireSite(): Promise<Site> {
       : await getSiteForUser(session.userId, session.siteId)
   if (!site) redirect('/select-site')
 
-  /* ── AND IT HAS TO STILL BE A LOCAL STORE ─────────────────────────────────
+  /* ── AND IT HAS TO STILL BE THE KIND THIS DOOR OPENS ──────────────────────
    *
    * Re-checked on every request rather than trusted from the sign-in, because
    * connection_type changes in the control panel under sessions that are
    * already open — which is precisely what happens the day a shop is migrated
-   * to the cloud. Without this, that shop keeps trading through a back office
-   * EXE that has quietly become the wrong way to reach it, and nobody finds
-   * out until the line drops.
+   * to the cloud, or brought back down onto its own hardware. Without this,
+   * that shop keeps trading through a back office that has quietly become the
+   * wrong way to reach it, and nobody finds out until the first read that has
+   * no route.
    *
-   * `/?cloudsite=1` rather than a screen of its own: it is the same shape as
+   * `/?wrongsite=1` rather than a screen of its own: it is the same shape as
    * the `kicked` notice, the login page already explains itself above the form,
-   * and somebody turned away has to end up there regardless.
+   * and somebody turned away has to end up there regardless. The page works out
+   * WHICH refusal it is from the build it is running as — see
+   * wrongShellMessage().
    */
-  if (!opensHere(site.connectionType)) redirect('/?cloudsite=1')
+  if (!opensHere(site.connectionType)) redirect('/?wrongsite=1')
 
   return site
 }

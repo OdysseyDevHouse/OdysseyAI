@@ -92,6 +92,57 @@ async function main() {
   ok('re-claiming the same sid stays at one row', (await rowsFor(USER_B)).length === 1)
   ok('  and remains current', (await sessionIsCurrent(USER_B, 'sid-b')) === true)
 
+  // ── The verify cache ────────────────────────────────────────────────────
+  // A session verified in the last minute is taken at its word, so it never
+  // reaches the control database. These assert the parts of that which must
+  // NOT be softened: a sid nobody blessed can never inherit a cached yes, and
+  // a claim on this process drops what it remembered.
+  await claimSession(USER_A, 'sid-cached', {})
+  ok('a freshly claimed session verifies', (await sessionIsCurrent(USER_A, 'sid-cached')) === true)
+
+  // Claiming again must drop the cached verdict. Without that, the browser that
+  // just signed in could be told its own predecessor still holds the seat — and
+  // told it for a full minute, because the cached sid matches what is asked.
+  await claimSession(USER_A, 'sid-newer', {})
+  ok(
+    '*** claiming invalidates the cached verdict, so the old sid is refused at once ***',
+    (await sessionIsCurrent(USER_A, 'sid-cached')) === false,
+  )
+  ok('  and the newer sid verifies', (await sessionIsCurrent(USER_A, 'sid-newer')) === true)
+  ok(
+    '*** an unknown sid is refused even with a warm cache ***',
+    (await sessionIsCurrent(USER_A, 'sid-never-issued')) === false,
+  )
+
+  // A sign-in on ANOTHER app server: the row changes underneath this process,
+  // which has no way to hear about it. This is the documented window — the
+  // cached sid rides it out, and nothing else does.
+  await execute('UPDATE cp2_user_sessions SET session_id = ? WHERE user_id = ?', [
+    'sid-elsewhere',
+    USER_A,
+  ])
+  ok(
+    'a sid displaced on another server survives the window (the documented trade)',
+    (await sessionIsCurrent(USER_A, 'sid-newer')) === true,
+  )
+  ok(
+    '  but only that one — any other sid is refused immediately',
+    (await sessionIsCurrent(USER_A, 'sid-cached')) === false,
+  )
+
+  // Sign-out drops the cached verdict too, not just the row. Proven by putting
+  // a different session in place out of band: a stale cache would still be
+  // waving `sid-newer` through.
+  await releaseSession(USER_A)
+  await execute('INSERT INTO cp2_user_sessions (user_id, session_id) VALUES (?, ?)', [
+    USER_A,
+    'sid-after-release',
+  ])
+  ok(
+    '*** releasing drops the cached verdict, not just the row ***',
+    (await sessionIsCurrent(USER_A, 'sid-newer')) === false,
+  )
+
   const removed = await sweep()
   console.log(`\ncleaned up ${removed} row(s)`)
   const left = await query<{ n: number }>(

@@ -1,4 +1,5 @@
 import 'server-only'
+import { cache } from 'react'
 import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne, execute } from './db'
 import { keepsProfile, readSiteProfile, writeSiteProfile } from './site/siteProfile'
@@ -222,6 +223,51 @@ const OFFLINE_CODES = new Set([
 ])
 
 /**
+ * The database answered, and would not have us.
+ *
+ * The OPPOSITE finding to the set above, and kept apart from it on purpose. A
+ * shop owner reading "no internet connection" when the line is fine and the
+ * password is wrong will check the router, phone the ISP, and get nowhere —
+ * the reassuring screen is the one that wastes the afternoon. These are all
+ * fields of a cp2_site_databases row, so the reader who can act is whoever
+ * commissioned the store, and what they need is the sentence the server got.
+ *
+ * Walked down the `cause` chain like everything else here: siteDb.ts wraps the
+ * driver's error to name the site, and the code it re-publishes matches at
+ * depth 0 either way.
+ */
+const REFUSED_CODES = new Set([
+  'ER_ACCESS_DENIED_ERROR',
+  'ER_DBACCESS_DENIED_ERROR',
+  'ER_BAD_DB_ERROR',
+  'ER_HOST_NOT_PRIVILEGED',
+  'ER_NOT_SUPPORTED_AUTH_MODE',
+  'ER_CON_COUNT_ERROR',
+  'ER_TOO_MANY_USER_CONNECTIONS',
+])
+
+export function isSiteDbRefusal(err: unknown): boolean {
+  let cur: unknown = err
+  for (let depth = 0; cur && depth < 5; depth++) {
+    const code = (cur as { code?: unknown }).code
+    if (typeof code === 'string' && REFUSED_CODES.has(code)) return true
+    cur = (cur as { cause?: unknown }).cause
+  }
+  return false
+}
+
+/**
+ * Either kind of "this store's data could not be opened".
+ *
+ * What a GATE asks, when all it has to decide is whether to render the screen
+ * or the stack trace. The screen itself still asks the two questions apart —
+ * see ControlUnreachable, which words itself from isSiteDbRefusal.
+ */
+export function isSiteDataUnavailable(err: unknown): boolean {
+  return isControlUnreachable(err) || isSiteDbRefusal(err)
+}
+
+/**
  * Could this machine simply not reach the control panel?
  *
  * The question a gate screen asks. It is deliberately BROADER than
@@ -381,7 +427,22 @@ export async function getSite(siteId: number): Promise<Site | null> {
   return site
 }
 
-export async function getSiteForUser(userId: number, siteId: number): Promise<Site | null> {
+/**
+ * Memoised with React's `cache()`, for the same reason `entitlementsForSite` is
+ * (control/modules.ts) and with more to gain: `requireSite()` calls this on
+ * every authenticated page, and a single render reaches the guards several
+ * times over — `requireSiteUser`, `requireCapabilities` and the layout each
+ * arrive here independently. Uncached, that was a control-database round trip
+ * apiece for an answer that cannot change mid-render.
+ *
+ * Per-request only, so this is a deduplication rather than a cache: access
+ * revoked in the control panel still takes effect on the very next request,
+ * which is the property `requireSite` documents and depends on.
+ */
+export const getSiteForUser = cache(async function getSiteForUser(
+  userId: number,
+  siteId: number,
+): Promise<Site | null> {
   const row = await queryOne<SiteRow>(
     `${SELECT_SITE}
       WHERE us.user_id = ?
@@ -392,7 +453,7 @@ export async function getSiteForUser(userId: number, siteId: number): Promise<Si
     [userId, siteId],
   )
   return row ? mapSite(row) : null
-}
+})
 
 /**
  * The shop's public name, for the storefront header.

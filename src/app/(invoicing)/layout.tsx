@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { requireSession, requireSiteUser } from '@/lib/auth'
-import { isControlUnreachable } from '@/lib/sites'
+import { isSiteDataUnavailable } from '@/lib/sites'
 import ControlUnreachable from '../(app)/ControlUnreachable'
 import { getUser } from '@/lib/site/users'
 import { can, capabilitiesForRole } from '@/lib/site/permissions'
@@ -65,7 +65,7 @@ export default async function InvoicingLayout({ children }: { children: React.Re
   try {
     resolved = await requireSiteUser()
   } catch (err) {
-    if (!isControlUnreachable(err)) throw err
+    if (!isSiteDataUnavailable(err)) throw err
     return <ControlUnreachable err={err} />
   }
   const { site, capabilities } = resolved

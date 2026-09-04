@@ -37,7 +37,7 @@ async function main() {
   await step('sites.getSiteForUser', () => sites.getSiteForUser(1, 4))
   await step('sites.getSite', () => sites.getSite(4))
   await step('twoFactor.totpStatus', () => twoFactor.totpStatus(1))
-  await step('sessions.claimSession', () => sessions.claimSession(1, 'probe', 'probe'))
+  await step('sessions.claimSession', () => sessions.claimSession(1, 'probe', { ip: 'probe', userAgent: 'probe' }))
   await step('signinLog.recordSignIn', () => signinLog.recordSignIn({ userId: 1, email: 'p@x', event: 'failed' } as never))
   await step('modules.siteModules', () => (modules as never as Record<string, (n: number) => Promise<unknown>>).siteModules(4))
   await step('siteDb.sitePool(master)', () => (siteDb as never as Record<string, (n: number) => Promise<unknown>>).sitePool(4))

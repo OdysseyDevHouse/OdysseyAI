@@ -114,3 +114,32 @@ export function deviceLabel(): string {
 export function isDesktopShell(): boolean {
   return bridge()?.isDesktop === true
 }
+
+/**
+ * What KIND of machine this is — which decides whether it can reach a printer
+ * directly at all.
+ *
+ * A desktop shell has a print engine in its main process; a browser has only
+ * the print dialog; an Android till has neither and its WebView does not honour
+ * an 80mm page size. Setup → Printing says so out loud rather than offering
+ * controls that will not work, so it needs the answer in the same three
+ * buckets the server stores.
+ */
+export function deviceKind(): 'desktop' | 'browser' | 'android' | 'unknown' {
+  if (typeof window === 'undefined') return 'unknown'
+  if (bridge()?.isDesktop) return 'desktop'
+  if (typeof navigator === 'undefined') return 'unknown'
+  if (/Android/i.test(navigator.userAgent)) return 'android'
+  return 'browser'
+}
+
+/** The shell's role, when there is a shell. Empty in a browser. */
+export function deviceRole(): string {
+  const shell = bridge() as { role?: string } | undefined
+  return shell?.role ?? ''
+}
+
+/** The shell's platform ('win32'), when there is one. Empty in a browser. */
+export function devicePlatform(): string {
+  return bridge()?.platform ?? ''
+}

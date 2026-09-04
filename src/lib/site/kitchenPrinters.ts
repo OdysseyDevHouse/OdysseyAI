@@ -2,133 +2,47 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
+import { columnsFor, listPrinters, reachableFrom, type PrinterConnection, type Printer } from './printers'
+import { getTerminal } from './terminals'
 
 /**
- * Kitchen printers — the three layers of "where does this food go".
+ * Kitchen printing — which products go where, and what has already gone there.
  *
- * A logical printer ("Bar") is one row here. Products point at it. Each TILL
- * says which of its own spool queues that name means. The reasoning for the
- * split is in sql/site/229_kitchen_printing.sql; the short version is that
- * the menu changes weekly, the hardware changes yearly, and neither should
- * have to be re-done because the other did.
+ * ── WHAT MOVED OUT OF HERE ────────────────────────────────────────────────
  *
- * A product with no printers never reaches a kitchen, and that is the
- * ordinary case rather than a gap to be defaulted away — see
- * `printersForProducts`.
+ * 229 gave this file three layers: the printer LIST, the product routing, and
+ * the per-till physical address. The list and the address turned out not to be
+ * kitchen-specific at all — every document has a printer and every machine
+ * reaches it somehow — so 246 generalised both. They now live in
+ * lib/site/printers.ts, and what stays here is what is genuinely about food:
+ * which products fire a ticket, and what each printer has already been told.
+ *
+ * `listKitchenPrinters` and `printerMapForTerminal` remain as the narrow views
+ * their callers want, delegating rather than duplicating. Two queries for "the
+ * shop's printers" is exactly how the two would drift.
+ *
+ * A product with no printers never reaches a kitchen, and that is the ordinary
+ * case rather than a gap to be defaulted away — see `printersForProducts`.
  */
 
-export type KitchenPrinter = {
-  id: number
-  name: string
-  sortOrder: number
-  isActive: boolean
-  /** How many products currently route here. Shown so a rename is informed. */
-  productCount: number
-  /** How many tills can actually reach it. Zero is the "nothing prints" trap. */
-  terminalCount: number
-}
+/** The printer list as the kitchen screens want it: only the kitchen ones. */
+export type KitchenPrinter = Printer
 
 type Row = RowDataPacket & Record<string, unknown>
 
-function mapPrinter(r: Row): KitchenPrinter {
-  return {
-    id: Number(r.id),
-    name: String(r.name),
-    sortOrder: Number(r.sort_order ?? 0),
-    isActive: Number(r.is_active ?? 1) === 1,
-    productCount: Number(r.product_count ?? 0),
-    terminalCount: Number(r.terminal_count ?? 0),
-  }
-}
-
+/**
+ * The printers a product may be routed to.
+ *
+ * Filtered to `purpose = 'kitchen'` so the product form's picker offers the
+ * Grill and the Bar and not the office laser. A filter rather than a boundary:
+ * nothing breaks if a general printer is routed to, it is simply not offered.
+ */
 export async function listKitchenPrinters(
   siteId: number,
   includeInactive = false,
 ): Promise<KitchenPrinter[]> {
-  const rows = await siteQuery<Row>(
-    siteId,
-    `SELECT p.*,
-            (SELECT COUNT(*) FROM product_kitchen_printers pkp WHERE pkp.printer_id = p.id) AS product_count,
-            (SELECT COUNT(*) FROM terminal_kitchen_printers tkp WHERE tkp.printer_id = p.id) AS terminal_count
-       FROM kitchen_printers p
-      ${includeInactive ? '' : 'WHERE p.is_active = 1'}
-      ORDER BY p.sort_order ASC, p.name ASC`,
-  ).catch(() => [] as Row[])
-  return rows.map(mapPrinter)
-}
-
-export async function createKitchenPrinter(
-  siteId: number,
-  name: string,
-): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
-  const clean = name.trim()
-  if (!clean) return { ok: false, error: 'Give the printer a name.' }
-  if (clean.length > 60) return { ok: false, error: 'That name is too long — 60 characters at most.' }
-
-  /* Reactivate rather than refuse when the name is already taken by a
-     deactivated printer. "Bar" coming back after a refit is the same Bar, and
-     its history should reconnect rather than become "Bar 2". */
-  const existing = await siteQuery<Row>(
-    siteId,
-    `SELECT id, is_active FROM kitchen_printers WHERE name = ? LIMIT 1`,
-    [clean],
-  )
-  if (existing.length > 0) {
-    const row = existing[0]
-    if (Number(row.is_active) === 1) {
-      return { ok: false, error: `There is already a printer called “${clean}”.` }
-    }
-    await siteExecute(siteId, `UPDATE kitchen_printers SET is_active = 1 WHERE id = ?`, [row.id])
-    return { ok: true, id: Number(row.id) }
-  }
-
-  const result = await siteExecute(
-    siteId,
-    `INSERT INTO kitchen_printers (name, sort_order)
-     VALUES (?, (SELECT COALESCE(MAX(s.sort_order), 0) + 10 FROM (SELECT sort_order FROM kitchen_printers) s))`,
-    [clean],
-  )
-  return { ok: true, id: result.insertId }
-}
-
-export async function renameKitchenPrinter(
-  siteId: number,
-  id: number,
-  name: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const clean = name.trim()
-  if (!clean) return { ok: false, error: 'Give the printer a name.' }
-  if (clean.length > 60) return { ok: false, error: 'That name is too long — 60 characters at most.' }
-
-  const clash = await siteQuery<Row>(
-    siteId,
-    `SELECT id FROM kitchen_printers WHERE name = ? AND id <> ? LIMIT 1`,
-    [clean, id],
-  )
-  if (clash.length > 0) return { ok: false, error: `There is already a printer called “${clean}”.` }
-
-  await siteExecute(siteId, `UPDATE kitchen_printers SET name = ? WHERE id = ?`, [clean, id])
-  return { ok: true }
-}
-
-/**
- * Turns a printer off. Never deletes.
- *
- * Tickets already sent point at this row, and kitchen_sends holds the FK with
- * ON DELETE RESTRICT — so deleting a printer that has ever cooked anything is
- * refused by the database. Deactivating is what the screen offers instead: the
- * routing rules stay put, so turning it back on restores the shop's setup
- * rather than asking somebody to re-tick four hundred products.
- */
-export async function setKitchenPrinterActive(
-  siteId: number,
-  id: number,
-  active: boolean,
-): Promise<void> {
-  await siteExecute(siteId, `UPDATE kitchen_printers SET is_active = ? WHERE id = ?`, [
-    active ? 1 : 0,
-    id,
-  ])
+  const all = await listPrinters(siteId, includeInactive)
+  return all.filter((p) => p.purpose === 'kitchen')
 }
 
 /* ── Product routing ──────────────────────────────────────────────────── */
@@ -195,7 +109,7 @@ export async function printersForProducts(
     siteId,
     `SELECT pkp.product_id, pkp.printer_id
        FROM product_kitchen_printers pkp
-       INNER JOIN kitchen_printers p ON p.id = pkp.printer_id
+       INNER JOIN printers p ON p.id = pkp.printer_id
       WHERE pkp.product_id IN (${ids.map(() => '?').join(',')})
         AND p.is_active = 1`,
     ids,
@@ -233,74 +147,86 @@ export async function distinctKitchenGroups(siteId: number): Promise<string[]> {
   return rows.map((r) => String(r.kitchen_group))
 }
 
-/* ── Per-till mapping ─────────────────────────────────────────────────── */
+/* ── Where a machine sends its tickets ────────────────────────────────── */
 
 export type TerminalPrinterMap = {
   printerId: number
   printerName: string
-  /** The bridge's own name for the spool queue. Empty means unreachable. */
+  /**
+   * How this machine opens that printer — an IP, or an OS queue name.
+   *
+   * EMPTY MEANS UNREACHABLE, and the send path skips it. That contract is
+   * unchanged from 229; what changed is where the answer comes from. It used to
+   * be a bridge spool name typed per till; it is now the resolved address from
+   * `printerLinksForDevice`, which may be the shop's own network address rather
+   * than anything this machine had to be told.
+   */
   bridgePrinter: string
+  /**
+   * WHICH KIND of address that is.
+   *
+   * Sent rather than inferred. The client could guess from the string's shape —
+   * dots and digits look like an IP — but a printer queue called "TM-T20.2" or a
+   * network printer addressed by bare hostname would each guess wrong, and the
+   * failure is a ticket that silently goes nowhere. The server resolved it; it
+   * costs one field to say so.
+   */
+  connection: PrinterConnection
+  port: number | null
+  /**
+   * How wide the docket paper is, from the KITCHEN printer's own row.
+   *
+   * A shop with a 58mm docket printer at the pass and an 80mm head at the
+   * counter is ordinary, and one column count for both prints one of them
+   * wrong.
+   */
+  columns: number | null
 }
 
 /**
- * What THIS till can reach, one row per active logical printer.
+ * What a MACHINE can reach, one row per active kitchen printer.
  *
- * Every active printer appears, mapped or not — the unmapped ones carry an
- * empty `bridgePrinter`. A setup screen has to show the gaps, because a
- * missing row is exactly the state where food silently stops printing, and a
- * list that only showed what was already working could never reveal it.
+ * Every active kitchen printer appears, reachable or not — the unreachable ones
+ * carry an empty string. A setup screen has to show the gaps, because a missing
+ * answer is exactly the state where food silently stops printing, and a list
+ * that only showed what was already working could never reveal it.
+ */
+export async function printerMapForDevice(
+  siteId: number,
+  deviceId: string,
+): Promise<TerminalPrinterMap[]> {
+  const printers = await listPrinters(siteId)
+  return printers
+    .filter((p) => p.purpose === 'kitchen')
+    .map((p) => {
+      const reachable = reachableFrom(p, deviceId)
+      return {
+        printerId: p.id,
+        printerName: p.name,
+        bridgePrinter: reachable ? p.target : '',
+        connection: p.connection,
+        port: p.port,
+        columns: columnsFor(p),
+      }
+    })
+}
+
+/**
+ * The same answer, for callers that hold a till rather than a machine.
+ *
+ * The POS knows which terminal it is long before it thinks about printers, so
+ * this stays as the shape its two call sites want. It resolves the terminal to
+ * the machine currently holding it and delegates — because printer setup is a
+ * fact about the MACHINE, and a till nobody has claimed reaches nothing, which
+ * is the honest answer rather than an error.
  */
 export async function printerMapForTerminal(
   siteId: number,
   terminalId: number,
 ): Promise<TerminalPrinterMap[]> {
-  const rows = await siteQuery<Row>(
-    siteId,
-    `SELECT p.id, p.name, COALESCE(tkp.bridge_printer, '') AS bridge_printer
-       FROM kitchen_printers p
-       LEFT JOIN terminal_kitchen_printers tkp
-              ON tkp.printer_id = p.id AND tkp.terminal_id = ?
-      WHERE p.is_active = 1
-      ORDER BY p.sort_order ASC, p.name ASC`,
-    [terminalId],
-  ).catch(() => [] as Row[])
-
-  return rows.map((r) => ({
-    printerId: Number(r.id),
-    printerName: String(r.name),
-    bridgePrinter: String(r.bridge_printer ?? ''),
-  }))
-}
-
-/**
- * Points one till's logical printer at one of its spool queues.
- *
- * Blank CLEARS the mapping rather than storing an empty string, so "this till
- * cannot reach the grill" has exactly one representation — no row — and every
- * reader tests the same thing.
- */
-export async function setTerminalPrinter(
-  siteId: number,
-  terminalId: number,
-  printerId: number,
-  bridgePrinter: string,
-): Promise<void> {
-  const clean = bridgePrinter.trim()
-  if (!clean) {
-    await siteExecute(
-      siteId,
-      `DELETE FROM terminal_kitchen_printers WHERE terminal_id = ? AND printer_id = ?`,
-      [terminalId, printerId],
-    )
-    return
-  }
-  await siteExecute(
-    siteId,
-    `INSERT INTO terminal_kitchen_printers (terminal_id, printer_id, bridge_printer)
-     VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE bridge_printer = VALUES(bridge_printer)`,
-    [terminalId, printerId, clean.slice(0, 190)],
-  )
+  const terminal = await getTerminal(siteId, terminalId)
+  if (!terminal?.deviceId) return []
+  return printerMapForDevice(siteId, terminal.deviceId)
 }
 
 /* ── Send history ─────────────────────────────────────────────────────── */

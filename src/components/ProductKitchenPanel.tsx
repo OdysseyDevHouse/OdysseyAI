@@ -90,9 +90,10 @@ export default function ProductKitchenPanel({
                 checked={selected.has(printer.id)}
                 onChange={() => toggle(printer.id)}
               />
-              {/* The trap worth surfacing here as well as in Setup: a printer no
-                  till can reach takes this product's dockets nowhere. */}
-              {printer.terminalCount === 0 && <Badge tone="warning">No till reaches it</Badge>}
+              {/* The trap worth surfacing here as well as in Setup: a printer
+                  nobody finished setting up takes this product's dockets
+                  nowhere, however many products point at it. */}
+              {printer.unconfigured && <Badge tone="warning">Not set up yet</Badge>}
             </label>
           ))}
         </div>

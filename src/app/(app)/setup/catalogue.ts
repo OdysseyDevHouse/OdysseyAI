@@ -510,8 +510,9 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
       },
       {
         href: '/setup/printing',
-        description: 'The slip’s footer, and the thermal printer plugged into each till.',
-        keywords: 'receipt printer thermal esc pos slip 80mm cash drawer kick kitchen bridge print',
+        description: 'Your printers, how each machine reaches them, and what every document prints on.',
+        keywords:
+          'receipt printer thermal esc pos slip 80mm 58mm a4 cash drawer kick kitchen print usb network pdf queue laser label assign document per device machine till back office',
         icon: 'Receipt',
         tone: 'amber',
         capability: 'setup.edit',

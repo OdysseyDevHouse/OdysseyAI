@@ -7,47 +7,57 @@ import {
   Callout,
   Field,
   Icons,
-  Input,
-  SegmentedControl,
+  Select,
   SettingGroup,
   SettingRow,
-  Switch,
   Textarea,
   useToast,
 } from '@/components/ui'
-import {
-  bridgeConfig,
-  saveBridgeConfig,
-  bridgeHealth,
-  printRaw,
-  type PrintBridgeConfig,
-} from '@/lib/printBridge'
-import { renderTestSlip } from '@/lib/escpos/slips'
-import type { KitchenPrinter, TerminalPrinterMap } from '@/lib/site/kitchenPrinters'
+import { deviceId as thisDeviceId } from '@/lib/deviceId'
+import { shellCanPrint } from '@/lib/print/shell'
+import type { Device } from '@/lib/site/devices'
+import type { Printer } from '@/lib/site/printers'
+import type { DocumentAssignment } from '@/lib/site/documentPrinters'
+import type { KitchenPrinter } from '@/lib/site/kitchenPrinters'
 import { savePrintingSettingsAction } from './actions'
+import { copyPrintingSetupAction } from './deviceActions'
+import PrintersPanel from './PrintersPanel'
+import DocumentAssignmentTable from './DocumentAssignmentTable'
 import KitchenPrintersPanel from './KitchenPrintersPanel'
 
 /**
- * Printing setup.
+ * Printer setup.
  *
- * The footer card writes a SITE setting; the bridge card writes THIS
- * MACHINE's localStorage — said out loud in amber, because "I configured the
- * printer" on the office PC configures nothing at the counter.
+ * ── THE DEVICE PICKER IS THE WHOLE FEATURE ────────────────────────────────
+ *
+ * Everything below the first card is scoped to one machine, and the machine is
+ * chosen here rather than being "whichever one you are sitting at". That single
+ * control is what makes it possible to set up the till in the next room from
+ * the office — and it only works because every per-machine write is now a
+ * server action keyed on a UUID rather than a write to this browser's own
+ * localStorage, which is where all of this used to live.
+ *
+ * The amber callout this screen used to carry said the opposite: "saved on THIS
+ * machine only". Same job, opposite polarity — it now warns when you are NOT
+ * configuring the machine in front of you, because that is the way round that
+ * can now surprise somebody.
  */
 export default function PrintingClient({
-  siteName,
   footerText: initialFooter,
+  printers,
+  devices,
+  assignments,
   kitchenPrinters,
-  terminals,
-  terminalMaps,
   autoPrintKitchen,
+  modules,
 }: {
-  siteName: string
   footerText: string
+  printers: Printer[]
+  devices: Device[]
+  assignments: Record<string, DocumentAssignment[]>
   kitchenPrinters: KitchenPrinter[]
-  terminals: { id: number; code: string; name: string }[]
-  terminalMaps: Record<number, TerminalPrinterMap[]>
   autoPrintKitchen: boolean
+  modules: string[]
 }) {
   const toast = useToast()
   const [pending, startTransition] = useTransition()
@@ -55,20 +65,33 @@ export default function PrintingClient({
   const [footer, setFooter] = useState(initialFooter)
   const [savedFooter, setSavedFooter] = useState(initialFooter)
 
-  const [config, setConfig] = useState<PrintBridgeConfig>({
-    url: 'http://127.0.0.1:9723',
-    receiptPrinter: '',
-    columns: 48,
-    drawerKick: true,
-  })
-  const [known, setKnown] = useState<string[] | null>(null)
-  const [testing, setTesting] = useState(false)
+  /* Resolved after mount. `deviceId()` reads localStorage (or the desktop
+     shell), neither of which exists during SSR — reading it during render would
+     mismatch the server's HTML. `undefined` means "not looked yet" and is
+     deliberately distinct from `null`, which means "looked, and this browser
+     will not tell us". */
+  const [here, setHere] = useState<string | null | undefined>(undefined)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [canEngine, setCanEngine] = useState(false)
 
-  // Hydrate after mount — localStorage during render would mismatch SSR.
   useEffect(() => {
-    const stored = bridgeConfig()
-    if (stored) setConfig(stored)
-  }, [])
+    const id = thisDeviceId()
+    setHere(id)
+    setCanEngine(shellCanPrint())
+    /* Default to the machine we are on, when the shop knows it — a manager who
+       opened this page almost always means "set up this one". Falling back to
+       the first machine rather than to nothing keeps the screen useful on a
+       browser that will not tell us who it is. */
+    setSelected((current) => current ?? (id && devices.some((d) => d.deviceId === id) ? id : (devices[0]?.deviceId ?? null)))
+  }, [devices])
+
+  const device = devices.find((d) => d.deviceId === selected) ?? null
+  const isThisMachine = here != null && device?.deviceId === here
+  const deviceLabel = device
+    ? device.terminal
+      ? `${device.terminal.code} — ${device.terminal.name}`
+      : device.label || 'this machine'
+    : 'this machine'
 
   function saveFooter() {
     startTransition(async () => {
@@ -82,42 +105,133 @@ export default function PrintingClient({
     })
   }
 
-  function saveMachine() {
-    saveBridgeConfig(config.url.trim() ? { ...config, url: config.url.trim() } : null)
-    toast.success('Saved for this machine.')
+  function copyFrom(fromId: string) {
+    if (!device) return
+    startTransition(async () => {
+      const result = await copyPrintingSetupAction(fromId, device.deviceId)
+      if (result.ok) toast.success(result.message)
+      else toast.error(result.error)
+    })
   }
 
-  async function testConnection() {
-    setTesting(true)
-    try {
-      const health = await bridgeHealth(config.url)
-      if (!health.ok) {
-        setKnown(null)
-        toast.error(health.error)
-        return
-      }
-      setKnown(health.printers)
-      toast.success(
-        `Bridge ${health.version} answered — printers: ${health.printers.join(', ') || 'none configured on the bridge'}.`,
-      )
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  async function testPrint() {
-    // The SAVED config is what prints — save first so the test tests reality.
-    saveMachine()
-    const result = await printRaw('receipt', renderTestSlip({ siteName, columns: config.columns }))
-    if (result.ok) toast.success('Test slip sent — check the printer.')
-    else toast.error(result.error)
-  }
+  /** Grouped so a shop with six machines can find the one it means. */
+  const tills = devices.filter((d) => d.terminal !== null)
+  const others = devices.filter((d) => d.terminal === null)
 
   return (
     <div className="flex flex-col gap-4">
+      {devices.length === 0 ? (
+        <Callout tone="warning" title="No machines have checked in yet">
+          A machine appears here the first time somebody signs in on it, or the first time a
+          till loads its products. Open this page on the machine you want to set up.
+        </Callout>
+      ) : (
+        <>
+          <SettingGroup title="The machine">
+            <SettingRow
+              icon={<Icons.Terminal size={16} />}
+              label="Setting up"
+              description="Which machine the document list below applies to. The printers themselves are the shop’s, wherever you set them up from."
+              htmlFor="device-picker"
+            >
+              <div className="flex items-center gap-2">
+                {isThisMachine && <Badge tone="brand">This machine</Badge>}
+                <Select
+                  id="device-picker"
+                  className="w-72"
+                  value={selected ?? ''}
+                  onChange={(e) => setSelected(e.target.value)}
+                >
+                  {tills.length > 0 && (
+                    <optgroup label="Tills">
+                      {tills.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.terminal!.code} — {d.terminal!.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {others.length > 0 && (
+                    <optgroup label="Other machines">
+                      {others.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.label || d.deviceId.slice(0, 8)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </Select>
+              </div>
+            </SettingRow>
+
+            {devices.length > 1 && device && (
+              <SettingRow
+                icon={<Icons.Copy size={16} />}
+                label="Copy setup from another machine"
+                description="Replaces this machine's printers and documents with that one's. The fast way to set up a second till."
+                htmlFor="copy-from"
+              >
+                <Select
+                  id="copy-from"
+                  className="w-64"
+                  value=""
+                  disabled={pending}
+                  onChange={(e) => e.target.value && copyFrom(e.target.value)}
+                >
+                  <option value="">Copy from…</option>
+                  {devices
+                    .filter((d) => d.deviceId !== device.deviceId)
+                    .map((d) => (
+                      <option key={d.deviceId} value={d.deviceId}>
+                        {d.terminal ? `${d.terminal.code} — ${d.terminal.name}` : d.label || d.deviceId.slice(0, 8)}
+                      </option>
+                    ))}
+                </Select>
+              </SettingRow>
+            )}
+          </SettingGroup>
+
+          {device && !isThisMachine && here !== undefined && (
+            <Callout tone="warning" title={`You are setting up ${deviceLabel}`}>
+              The document list below is {deviceLabel}’s, not this machine’s. Adding a printer
+              plugged into {deviceLabel} also needs its Windows printer name typed by hand —
+              only the machine itself can list what is plugged into it.
+            </Callout>
+          )}
+
+          <PrintersPanel
+            printers={printers}
+            deviceId={device?.deviceId ?? null}
+            deviceLabel={deviceLabel}
+            isThisMachine={isThisMachine}
+          />
+
+          {isThisMachine && !canEngine && (
+            <Callout tone="warning" title="This machine cannot talk to a printer directly">
+              Documents here go through the browser’s print dialog, and the printer list above
+              cannot be read from Windows. Install the desktop app on this machine to pick
+              printers from a list, open a cash drawer, or save a PDF without being asked
+              where.
+            </Callout>
+          )}
+
+          {device && (
+            <DocumentAssignmentTable
+              deviceId={device.deviceId}
+              deviceLabel={deviceLabel}
+              assignments={assignments[device.deviceId] ?? []}
+              printers={printers.filter((p) => p.isActive)}
+              modules={modules}
+            />
+          )}
+        </>
+      )}
+
+      <KitchenPrintersPanel printers={kitchenPrinters} autoPrint={autoPrintKitchen} />
+
       <SettingGroup
         title="The slip"
-        description="What every till on this site prints — the machine-specific parts live below."
+        description="What every till on this site prints at the bottom of a receipt."
       >
         <div className="px-4 py-3">
           <Field
@@ -132,123 +246,18 @@ export default function PrintingClient({
             />
           </Field>
           <div className="mt-3 flex items-center justify-end gap-3">
-            {footer === savedFooter && (
-              <span className="text-xs text-muted">No changes to save.</span>
-            )}
-            <Button variant="primary" disabled={pending || footer === savedFooter} onClick={saveFooter}>
+            {footer === savedFooter && <span className="text-xs text-muted">No changes to save.</span>}
+            <Button
+              variant="secondary"
+              disabled={pending || footer === savedFooter}
+              onClick={saveFooter}
+            >
               <Icons.Save size={15} />
               {pending ? 'Saving…' : 'Save'}
             </Button>
           </div>
         </div>
       </SettingGroup>
-
-      <Callout tone="warning" title="The printer settings below are saved on THIS machine only">
-        They describe what is physically plugged in here. Open this page on each till and
-        set its own bridge — a printer configured on the office PC prints nothing at the
-        counter.
-      </Callout>
-
-      <SettingGroup
-        title="This machine's printers"
-        description="The print bridge (scripts/print-bridge.mjs) runs on the till and forwards slips to the printer. See docs/print-bridge.md."
-      >
-        <SettingRow
-          icon={<Icons.Link2 size={16} />}
-          label="Bridge address"
-          description="http://127.0.0.1:9723 when the bridge runs on this till; a LAN address when tills share one."
-          htmlFor="bridge-url"
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              id="bridge-url"
-              className="w-72"
-              value={config.url}
-              onChange={(e) => setConfig((c) => ({ ...c, url: e.target.value }))}
-              placeholder="http://127.0.0.1:9723"
-            />
-            <Button variant="secondary" disabled={testing} onClick={() => void testConnection()}>
-              {testing ? 'Testing…' : 'Test connection'}
-            </Button>
-          </div>
-        </SettingRow>
-
-        <SettingRow
-          icon={<Icons.Printer size={16} />}
-          label="Slip printer"
-          description="The bridge's name for the printer that prints receipts and bills."
-          htmlFor="receipt-printer"
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              id="receipt-printer"
-              className="w-48"
-              value={config.receiptPrinter}
-              onChange={(e) => setConfig((c) => ({ ...c, receiptPrinter: e.target.value }))}
-              placeholder="receipt"
-            />
-            {known?.includes(config.receiptPrinter) && <Badge tone="success">Found</Badge>}
-          </div>
-        </SettingRow>
-
-        {/* No kitchen printer row here any more. One machine-local slot could
-            not describe a shop with a bar and a grill, and it hid a till's
-            routing from the back office — so kitchen stations are named per
-            SITE and mapped per TILL, both on the server. See the Kitchen
-            printers card below and sql/site/229. */}
-
-        <SettingRow
-          icon={<Icons.SlidersHorizontal size={16} />}
-          label="Paper width"
-          description="48 columns for 80mm paper; 42 for the narrower heads. The test slip shows which lines up."
-        >
-          <SegmentedControl
-            aria-label="Slip columns"
-            value={String(config.columns)}
-            onChange={(v) => setConfig((c) => ({ ...c, columns: v === '42' ? 42 : 48 }))}
-            options={[
-              { value: '48', label: '48 (80mm)' },
-              { value: '42', label: '42' },
-            ]}
-          />
-        </SettingRow>
-
-        <SettingRow
-          icon={<Icons.Coins size={16} />}
-          label="Kick the cash drawer"
-          description="When a sale is paid with a tender whose ‘Opens cash drawer’ flag is on. The drawer plugs into the slip printer."
-          htmlFor="drawer-kick"
-        >
-          <Switch
-            id="drawer-kick"
-            checked={config.drawerKick}
-            onChange={(next) => setConfig((c) => ({ ...c, drawerKick: next }))}
-          />
-        </SettingRow>
-
-        <div className="flex items-center justify-end gap-2 px-4 py-3">
-          <Button variant="secondary" onClick={() => void testPrint()}>
-            <Icons.Printer size={15} />
-            Print test slip
-          </Button>
-          <Button variant="primary" onClick={saveMachine}>
-            <Icons.Save size={15} />
-            Save for this machine
-          </Button>
-        </div>
-      </SettingGroup>
-
-      {/* Rendered here rather than as its own sibling on the page so it can share
-          `known` — the spool names this machine's bridge reported. Test
-          connection above is what fills it, and the mapping rows below use it to
-          confirm a typed name actually exists on this till. */}
-      <KitchenPrintersPanel
-        printers={kitchenPrinters}
-        terminals={terminals}
-        terminalMaps={terminalMaps}
-        autoPrint={autoPrintKitchen}
-        knownBridgePrinters={known}
-      />
     </div>
   )
 }

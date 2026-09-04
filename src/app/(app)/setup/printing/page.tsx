@@ -1,11 +1,9 @@
-import { requireCapability, requireSite } from '@/lib/auth'
+import { requireCapability, requireSite, requireSiteUser } from '@/lib/auth'
 import { getSetting } from '@/lib/site/settings'
-import { listTerminals } from '@/lib/site/terminals'
-import {
-  listKitchenPrinters,
-  printerMapForTerminal,
-  type TerminalPrinterMap,
-} from '@/lib/site/kitchenPrinters'
+import { listDevices } from '@/lib/site/devices'
+import { listPrinters } from '@/lib/site/printers'
+import { assignmentsForDevice, type DocumentAssignment } from '@/lib/site/documentPrinters'
+import { listKitchenPrinters } from '@/lib/site/kitchenPrinters'
 import { PageHeader, PageBody } from '@/components/ui'
 import PrintingClient from './PrintingClient'
 
@@ -14,34 +12,47 @@ export const dynamic = 'force-dynamic'
 /**
  * Printing.
  *
- * Two very different halves on one screen, each labelled as what it is: the
- * slip FOOTER is the site's (every till prints it), while the BRIDGE and
- * printers are this machine's — a property of what is physically plugged in,
- * stored in this browser, set once per till.
+ * Two subjects, in the order a shop meets them: the printers it owns, and what
+ * each MACHINE prints on which of them.
+ *
+ * There used to be a third card between them — "how this machine reaches each
+ * printer" — which asked every printer's connection question a second time. A
+ * printer now knows its own location; sql/site/247 has the argument.
+ *
+ * The assignments are per-machine, and live on the server rather than in one
+ * browser's localStorage, so a manager can see and fix a till's setup without
+ * walking to it.
  */
 export default async function PrintingSetupPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   await requireCapability('setup.edit')
   const site = await requireSite()
+  const { modules } = await requireSiteUser()
 
   const footerText = await getSetting(site.id, 'receipt_footer_text')
 
-  /* Inactive printers included: the panel shows them in their own "Switched
-     off" card, so a station taken out of service can be brought back without
-     re-pointing every product at it. */
-  const kitchenPrinters = await listKitchenPrinters(site.id, true)
-  const terminals = await listTerminals(site.id, false)
+  /* Inactive included: the panel shows them in their own "Switched off" card, so
+     a printer taken out of service can be brought back without re-pointing every
+     product and every document at it. */
+  const printers = await listPrinters(site.id, true)
+  const devices = await listDevices(site.id)
 
-  /* Every till's mapping, read up front rather than on selection. A shop has a
-     handful of tills and each query is one small indexed join, so this costs
-     less than a round trip every time somebody changes the picker — and it
-     means the card can switch tills without a spinner. */
-  const terminalMaps: Record<number, TerminalPrinterMap[]> = {}
+  /* Every machine's assignments, read up front rather than on selection. A shop
+     has a handful of machines and each read is one small indexed query, so this
+     costs less than a round trip every time somebody changes the picker — and it
+     means the screen switches machines without a spinner. Same reasoning this
+     page already used for the per-till kitchen maps.
+     
+     The printer LIST is read once and shared: since 247 a printer knows its own
+     location, so there is nothing per-machine to resolve about it. */
+  const assignments: Record<string, DocumentAssignment[]> = {}
   await Promise.all(
-    terminals.map(async (terminal) => {
-      terminalMaps[terminal.id] = await printerMapForTerminal(site.id, terminal.id)
+    devices.map(async (device) => {
+      assignments[device.deviceId] = await assignmentsForDevice(site.id, device.deviceId, printers)
     }),
   )
+
+  const kitchenPrinters = await listKitchenPrinters(site.id, false)
 
   /* Absent means ON — see pos_auto_print_kitchen in settings.ts. The feature
      does nothing at all until products are routed, so the default is read only
@@ -52,16 +63,17 @@ export default async function PrintingSetupPage() {
     <>
       <PageHeader
         title="Printing"
-        subtitle="The slip's footer, the printer plugged into this till, and where food goes."
+        subtitle="Your printers, how each machine reaches them, and what every document prints on."
       />
       <PageBody>
         <PrintingClient
-          siteName={site.displayName}
           footerText={footerText ?? ''}
+          printers={printers}
+          devices={devices}
+          assignments={assignments}
           kitchenPrinters={kitchenPrinters}
-          terminals={terminals.map((t) => ({ id: t.id, code: t.code, name: t.name }))}
-          terminalMaps={terminalMaps}
           autoPrintKitchen={autoPrintKitchen}
+          modules={[...modules.held]}
         />
       </PageBody>
     </>

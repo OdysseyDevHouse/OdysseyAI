@@ -44,8 +44,22 @@ import type { KitchenTicketData } from '@/lib/escpos/slips'
 /** One printer's worth of a send: what to print, and where this till sends it. */
 export type KitchenTicketJob = {
   printerId: number
-  /** The bridge's spool name on THIS till. Empty means unreachable from here. */
-  bridgePrinter: string
+  /**
+   * How THIS machine opens that printer, resolved by the server.
+   *
+   * An address and the kind of address it is, rather than a bare string the
+   * client has to interpret. A queue called "TM-T20.2" and a network printer
+   * addressed by bare hostname each defeat a shape-guess, and the failure is a
+   * docket that silently goes nowhere.
+   *
+   * An empty `address` means unreachable from here, and the send path skips it.
+   */
+  target: {
+    address: string
+    connection: 'queue' | 'network'
+    port: number | null
+    columns: number | null
+  }
   ticket: KitchenTicketData
   /** What to mark once paper actually comes out. */
   lines: { lineId: number; qty: number }[]
@@ -112,7 +126,12 @@ export async function kitchenTicketAction(
     terminalId ? printerMapForTerminal(siteId, terminalId) : Promise.resolve([]),
   ])
 
-  const bridgeFor = new Map(terminalMap.map((m) => [m.printerId, m.bridgePrinter]))
+  const targetFor = new Map(
+    terminalMap.map((m) => [
+      m.printerId,
+      { address: m.bridgePrinter, connection: m.connection, port: m.port, columns: m.columns },
+    ]),
+  )
   const nameFor = new Map(terminalMap.map((m) => [m.printerId, m.printerName]))
 
   /* Invert the routing: for each printer, which lines owe it something. A line
@@ -148,7 +167,12 @@ export async function kitchenTicketAction(
 
     jobs.push({
       printerId,
-      bridgePrinter: bridgeFor.get(printerId) ?? '',
+      target: targetFor.get(printerId) ?? {
+        address: '',
+        connection: 'queue' as const,
+        port: null,
+        columns: null,
+      },
       ticket: {
         tableLabel: doc.customerName?.trim() || 'Table',
         printerName,
@@ -342,7 +366,12 @@ export async function kitchenCancelTicketAction(
     terminalId ? printerMapForTerminal(siteId, terminalId) : Promise.resolve([]),
   ])
 
-  const bridgeFor = new Map(terminalMap.map((m) => [m.printerId, m.bridgePrinter]))
+  const targetFor = new Map(
+    terminalMap.map((m) => [
+      m.printerId,
+      { address: m.bridgePrinter, connection: m.connection, port: m.port, columns: m.columns },
+    ]),
+  )
   const nameFor = new Map(terminalMap.map((m) => [m.printerId, m.printerName]))
 
   /* Per printer, what of this void it has actually had. Two lines of the same
@@ -404,7 +433,12 @@ export async function kitchenCancelTicketAction(
 
     jobs.push({
       printerId,
-      bridgePrinter: bridgeFor.get(printerId) ?? '',
+      target: targetFor.get(printerId) ?? {
+        address: '',
+        connection: 'queue' as const,
+        port: null,
+        columns: null,
+      },
       ticket: {
         tableLabel: doc?.customerName?.trim() || 'Table',
         printerName: nameFor.get(printerId) ?? '',
