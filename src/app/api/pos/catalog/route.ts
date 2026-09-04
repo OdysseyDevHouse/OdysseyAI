@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { activeScaleRules } from '@/lib/site/scaleBarcodes'
 import { siteIdForCapability } from '@/lib/auth'
 import { browseForTill, tillCatalogTotal } from '@/lib/site/tillSearch'
 import { listDepartments } from '@/lib/site/departments'
@@ -200,6 +201,7 @@ export async function GET(req: NextRequest) {
     operators,
     instructions,
     variantAxes,
+    scaleRules,
   ] = await Promise.all([
     productsSince(siteId, cutoff, priceStructure?.id ?? null, terminal?.stockLocationId ?? null),
     wantsDelta ? removedSince(siteId, cutoff!) : Promise.resolve<number[]>([]),
@@ -236,8 +238,14 @@ export async function GET(req: NextRequest) {
       getSettings(siteId, [
       'sales_cash_rounding',
       'cost_basis',
-      // Without these three the till cannot read a scale barcode offline, and in a
-      // grocer that is most of the shop.
+      /* Without these the till cannot read a scale barcode offline, and in a
+         grocer that is most of the shop.
+
+         Still shipped even though scale_barcode_rules has replaced them: a till
+         that has not synced since the deploy is running the OLD client code,
+         which reads exactly these three keys. Dropping them would leave that
+         till unable to price a weighed item until it next reaches the server —
+         which, being offline, is the one thing it cannot do. */
       'barcode_variable_prefix',
       'barcode_plu_length',
       'barcode_value_divisor',
@@ -288,6 +296,9 @@ export async function GET(req: NextRequest) {
      * the till draws the flat grid it drew before the feature.
      */
     allVariantAxes(siteId).catch(() => ({})),
+    /* The scale barcode shapes this shop reads. Active ones only: a paused rule
+       belongs on the setup screen and must never reach a scanner. */
+    activeScaleRules(siteId)
   ])
 
   // This till's own invoice sequence, so it can number a sale with no server.
@@ -409,7 +420,21 @@ export async function GET(req: NextRequest) {
        * A machine matching no terminal gets 'retail', which is the answer that
        * trades and the same one the column defaults to.
        */
-      settings: { ...settings, pos_mode: terminal?.posMode ?? 'retail' },
+      /* The scale shapes, as JSON on the settings map.
+       *
+       * Carried inside `settings` rather than as a new top-level field so the
+       * offline store's schema does not change: a Dexie version bump makes every
+       * till in the country re-download its whole catalogue on the next open,
+       * which is a heavy price for a handful of rows. The map is already
+       * Record<string, string | null>, so a JSON string needs nothing new.
+       *
+       * A client too old to know the key ignores it and falls back to the three
+       * legacy settings above, which is exactly the behaviour it had yesterday. */
+      settings: {
+        ...settings,
+        pos_mode: terminal?.posMode ?? 'retail',
+        scale_barcode_rules: JSON.stringify(scaleRules),
+      },
       /**
        * The questions the till may ask, and which ones each product starts on.
        *

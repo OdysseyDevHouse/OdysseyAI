@@ -123,7 +123,7 @@ export const SETTINGS_CATEGORIES = [
     key: 'stock-tracking',
     label: 'Stock tracking',
     blurb: 'Lots, expiry and scale labels',
-    description: 'Which lot a sale comes from, and how a scale label is read.',
+    description: 'Which lot a sale comes from, and when the till asks for it.',
     icon: 'Barcode',
     tone: 'violet',
     keywords:

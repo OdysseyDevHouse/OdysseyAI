@@ -5,7 +5,6 @@ import {
   Button,
   Callout,
   Icons,
-  Input,
   Select,
   SettingGroup,
   SettingRow,
@@ -39,26 +38,34 @@ export default function StockTrackingClient({
   const [saved, setSaved] = useState(initial)
   const [mode, setMode] = useState(initial.lotCaptureMode)
   const [strict, setStrict] = useState(initial.lotCaptureStrict)
-  const [prefix, setPrefix] = useState(initial.barcodePrefix)
-  const [pluLength, setPluLength] = useState(initial.barcodePluLength)
-  const [divisor, setDivisor] = useState(initial.barcodeValueDivisor)
+  /* ── THE OLD BARCODE VALUES, HELD AND NOT EDITED ────────────────────────
+   *
+   * No control on this screen changes them any more — scale barcodes moved to
+   * /setup/scale-barcodes. They are still READ and written straight back,
+   * because this screen's action writes the whole group and dropping them from
+   * the payload would blank three settings rows.
+   *
+   * Blanking them is not cosmetic. A till that has not synced since the deploy
+   * still reads exactly these three keys for its offline scale parsing, so
+   * clearing them would stop weighed items scanning on the tills least able to
+   * fetch a replacement. They age out when every till has synced; until then
+   * they are the fallback. */
+  const legacyBarcode = {
+    barcodePrefix: initial.barcodePrefix,
+    barcodePluLength: initial.barcodePluLength,
+    barcodeValueDivisor: initial.barcodeValueDivisor,
+  }
 
   const capturing = mode !== 'fefo'
   const dirty =
-    mode !== saved.lotCaptureMode ||
-    (capturing && strict !== saved.lotCaptureStrict) ||
-    prefix !== saved.barcodePrefix ||
-    pluLength !== saved.barcodePluLength ||
-    divisor !== saved.barcodeValueDivisor
+    mode !== saved.lotCaptureMode || (capturing && strict !== saved.lotCaptureStrict)
 
   function save() {
     startTransition(async () => {
       const result = await saveStockTrackingSettingsAction({
         lotCaptureMode: mode,
         lotCaptureStrict: strict,
-        barcodePrefix: prefix,
-        barcodePluLength: pluLength,
-        barcodeValueDivisor: divisor,
+        ...legacyBarcode,
       })
 
       if (!result.ok) {
@@ -143,57 +150,19 @@ export default function StockTrackingClient({
         </Callout>
       )}
 
-      <SettingGroup
-        title="Scale barcodes"
-        description="How a label printed by a scale is read. Formats vary by vendor."
-      >
-        <SettingRow
-          icon={<Icons.Barcode size={16} />}
-          label="Prefix"
-          description="The leading digit or two that marks a scale label."
-          htmlFor="bc-prefix"
-        >
-          <Input
-            id="bc-prefix"
-            className="w-24"
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value)}
-          />
-        </SettingRow>
+      {/* ── SCALE BARCODES MOVED ────────────────────────────────────────
+          They were three rows here, beside lot capture. They are now a LIST —
+          a shop runs several scales and each prints a different shape — and a
+          list with an Add button is not a settings row. It lives at
+          /setup/scale-barcodes.
 
-        <SettingRow
-          icon={<Icons.Hash size={16} />}
-          label="PLU length"
-          description="How many digits of the code identify the product."
-          htmlFor="bc-plu"
-        >
-          <Input
-            id="bc-plu"
-            className="w-24"
-            value={pluLength}
-            onChange={(e) => setPluLength(e.target.value)}
-          />
-        </SettingRow>
-
-        <SettingRow
-          icon={<Icons.Percent size={16} />}
-          label="Value divisor"
-          description="100 when the embedded figure is in cents, 1000 when it is in grams."
-          htmlFor="bc-divisor"
-        >
-          <Select
-            id="bc-divisor"
-            className="w-32"
-            value={divisor}
-            onChange={(e) => setDivisor(e.target.value)}
-          >
-            <option value="1">1</option>
-            <option value="10">10</option>
-            <option value="100">100</option>
-            <option value="1000">1000</option>
-          </Select>
-        </SettingRow>
-      </SettingGroup>
+          A pointer rather than a silent deletion: somebody who set this up
+          once will come back to this tab looking for it, and a screen that
+          simply no longer has it teaches them the feature was removed. */}
+      <Callout tone="brand" title="Scale barcodes have their own screen">
+        A shop can now set up more than one shape — one per scale. Find them under
+        Setup → Scale barcodes.
+      </Callout>
 
       <div className="flex justify-end">
         <Button variant="primary" onClick={save} disabled={!dirty || pending}>

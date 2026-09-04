@@ -5,7 +5,7 @@ import type { DevicePrintConfig } from '@/lib/printing/resolve'
 import { kvGet, kvPut, posStore } from './store'
 import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
-import { parseVariableBarcode } from '../barcodes'
+import { parseVariableBarcode, parseWithRules, type ScaleBarcodeRule } from '../barcodes'
 import { parseGs1, gtinCandidates, lotCaptureFor } from '../gs1'
 import type { TillProduct } from '../site/tillSearch'
 import type { PendingSchedule } from '../priceSchedules'
@@ -397,17 +397,57 @@ export function catalogAgeHours(meta: CatalogMeta | null): number | null {
 }
 
 /**
+ * The scale shapes this till knows about, and what they make of a barcode.
+ *
+ * ── WHY IT FALLS BACK ─────────────────────────────────────────────────────
+ *
+ * `scale_barcode_rules` arrives as JSON on the settings map — see the catalog
+ * route for why it rides there rather than in a field of its own. A till that
+ * has not synced since the deploy has no such key, and its cached settings still
+ * hold the three legacy ones. Falling back to those is what keeps a weighed item
+ * scanning on a till that is offline, which is precisely when it cannot fetch
+ * the new shape.
+ *
+ * Malformed JSON falls back the same way rather than throwing. This runs on
+ * every scan that misses an exact barcode, so an exception here would take out
+ * the scan path for ordinary products too.
+ */
+function readScaleBarcode(term: string, settings: Record<string, string | null>) {
+  const raw = settings.scale_barcode_rules
+  if (raw) {
+    try {
+      const rules = JSON.parse(raw) as ScaleBarcodeRule[]
+      if (Array.isArray(rules)) {
+        /* An EMPTY array is a real answer — the shop has deleted every rule —
+           and must NOT fall through to the legacy settings below, which would
+           resurrect a shape somebody deliberately removed. */
+        return rules.length ? (parseWithRules(term, rules)?.parsed ?? null) : null
+      }
+    } catch {
+      /* Fall through to the legacy shape. */
+    }
+  }
+  return parseVariableBarcode(term, {
+    prefix: String(settings.barcode_variable_prefix ?? ''),
+    pluLength: Number(settings.barcode_plu_length),
+    divisor: Number(settings.barcode_value_divisor),
+  })
+}
+
+/**
  * A barcode or code, resolved against the stored catalog.
  *
  * Barcode first, then code — the same order the server's `scanAction` uses, because
  * a scanner sends a barcode and that path must feel instant.
  *
  * Then the SCALE-BARCODE fallback, mirroring resolveScan(): prefix + PLU +
- * embedded value + check digit, read with the same parseVariableBarcode the
- * server uses (extracted from tillSearch for exactly this call) and the same
- * settings the catalog feed ships. This was the missing half of that
- * extraction — without it a weighed item scanned offline simply beeped, and
- * in a grocer that is most of the shop.
+ * embedded value + check digit, read with the same parser the server uses
+ * (extracted from tillSearch for exactly this call) and the same shapes the
+ * catalog feed ships. This was the missing half of that extraction — without it
+ * a weighed item scanned offline simply beeped, and in a grocer that is most of
+ * the shop.
+ *
+ * SHAPES, plural: a shop floor is not one scale. See readScaleBarcode below.
  */
 export async function findByCode(siteId: number, code: string): Promise<TillProduct | null> {
   const term = code.trim()
@@ -453,11 +493,7 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
   if (exact) return exact
 
   const settings = await storedSettings(siteId)
-  const variable = parseVariableBarcode(term, {
-    prefix: String(settings.barcode_variable_prefix ?? ''),
-    pluLength: Number(settings.barcode_plu_length),
-    divisor: Number(settings.barcode_value_divisor),
-  })
+  const variable = readScaleBarcode(term, settings as Record<string, string | null>)
   if (!variable) return null
 
   const byPlu =

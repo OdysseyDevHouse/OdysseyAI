@@ -5,7 +5,10 @@ import { loadStockTrackingSettingsAction, type StockTrackingSettings } from './a
 import StockTrackingClient from './StockTrackingClient'
 
 /**
- * Stock tracking — which lot a sale comes from, and how a scale label is read.
+ * Stock tracking — which lot a sale comes from, and when the till asks for it.
+ *
+ * Scale barcodes used to be the other half of this screen. They are a LIST now,
+ * one shape per scale, and live at /setup/scale-barcodes.
  * Moved from /setup/stock-tracking.
  */
 export default function StockTrackingPanel() {

@@ -806,6 +806,7 @@ export const SUBPAGE_LABELS = {
      cost"; the tabs of that screen are panels on one route, so there is no
      subpage label to replace it with. */
   '/setup/tender-types': 'Tender types',
+  '/setup/scale-barcodes': 'Scale barcodes',
   /* '/setup/cashup' was here. It moved to /settings → "Cash up". */
   /* '/setup/tips' was here. It moved to /settings → "Hospitality". */
   // "Tills", not "Terminals" — it is what the screen's own heading says, and
@@ -1105,6 +1106,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/customer-groups':
     'customer groups categories wholesale retail staff trade terms price structure defaults segment',
   '/setup/tender-types': 'cash card eft payment methods vouchers',
+  '/setup/scale-barcodes': 'scale barcode variable weight price embedded plu prefix check digit decimals weighed label deli butchery produce',
   '/setup/terminals': 'terminals registers pos devices',
   '/setup/billing': 'plan subscription modules upgrade downgrade invoice licence price cost add-on account debit order',
   /* Heavy on the words somebody types when the menu is in their way rather than

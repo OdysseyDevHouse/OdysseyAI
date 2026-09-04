@@ -4,7 +4,8 @@ import { siteQuery, siteQueryOne } from '../siteDb'
 import { toNum, round } from '../decimals'
 import { getSettings } from './settings'
 import { duePricesFor } from './priceSchedules'
-import { parseVariableBarcode } from '../barcodes'
+import { parseVariableBarcode, parseWithRules } from '../barcodes'
+import { activeScaleRules } from './scaleBarcodes'
 import { parseGs1, gtinCandidates, lotCaptureFor } from '../gs1'
 import type { ProductTypeId } from '../productTypes'
 import { toVariableType, type VariableTypeId } from '../productProperties'
@@ -259,6 +260,52 @@ const LIVE_GROUP_ONLY = `AND (
 )`
 
 /**
+ * A hidden department hides its PRODUCTS too.
+ *
+ * The rail already drops inactive departments — `(pos)/pos/page.tsx` filters on
+ * `isActive` before shipping them — so hiding one removed its tile and left the
+ * products behind it fully sellable. They kept turning up in till search, and
+ * they still counted towards the offline catalogue's total. "Hidden" meant one
+ * thing on the rail and nothing at all to the grid.
+ *
+ * Applied to the whole ANCESTRY, not just the product's own department. Hiding
+ * a parent is how a shop retires a branch — the children are never touched
+ * one by one, and a rule that read only `department_id` would hide the top tile
+ * while every sub-department's stock stayed on the till.
+ *
+ * A product filed nowhere (`department_id IS NULL`) is NOT hidden by this. It
+ * is in no department, so no department's visibility speaks for it, and
+ * dropping it here would quietly delete uncategorised stock from the till.
+ * That case needs saying out loud rather than left to `NOT IN`: SQL's
+ * `NULL NOT IN (…)` is NULL, not true, so without the explicit guard every
+ * uncategorised product would fail the test and vanish. Measured on site 33 —
+ * the guard is the difference between 214 rows and the correct 215.
+ *
+ * Built TOP-DOWN — every inactive department, then everything beneath it —
+ * rather than walking each product's ancestry upwards. The upward form reads
+ * more naturally and does not run: MariaDB cannot correlate an outer column
+ * into a recursive CTE's anchor, so `WHERE d.id = p.department_id` inside the
+ * CTE fails with "Unknown column 'p.department_id' in 'WHERE'". This form
+ * needs no correlation at all — the hidden set stands on its own.
+ *
+ * ⚠ BROWSING ONLY. `resolveScan` deliberately omits this, exactly as it omits
+ * `visible_in_pos`: a scanned barcode must still ring up. Hiding is about what
+ * the shop puts in front of a cashier to tap, not about refusing stock that is
+ * physically at the counter with a barcode on it.
+ */
+const VISIBLE_DEPARTMENT_ONLY = `AND (
+  p.department_id IS NULL
+  OR p.department_id NOT IN (
+    WITH RECURSIVE hidden (id) AS (
+      SELECT d.id FROM departments d WHERE d.is_active = 0
+      UNION ALL
+      SELECT d.id FROM departments d JOIN hidden h ON d.parent_id = h.id
+    )
+    SELECT id FROM hidden
+  )
+)`
+
+/**
  * The four leading parameters `selectProduct` needs, in its own order.
  *
  * A helper rather than four literals at each of the six call sites: the pairs
@@ -402,6 +449,7 @@ export async function searchForTill(
     `${selectProduct(costBasis)}
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
+        ${VISIBLE_DEPARTMENT_ONLY}
         -- A variant parent holds no stock and recordMovement refuses it, so it
         -- must never reach a till line. Its variants are ordinary products and
         -- appear here normally. Not folded into visible_in_pos: that flag is
@@ -567,6 +615,7 @@ export async function browseForTill(
     `${selectProduct(costBasis)}
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
+        ${VISIBLE_DEPARTMENT_ONLY}
         ${variantScope}
         ${scope}
         ${filter}
@@ -662,13 +711,20 @@ export async function resolveScan(
   )
   if (exact) return mapProduct(exact)
 
-  // A scale barcode: prefix + PLU + embedded value + check digit. Formats vary
-  // by scale vendor, which is why the parts are settings and not constants.
-  const variable = parseVariableBarcode(code, {
-    prefix: settings.barcode_variable_prefix,
-    pluLength: Number(settings.barcode_plu_length),
-    divisor: Number(settings.barcode_value_divisor),
-  })
+  /* A scale barcode: prefix + PLU + embedded value + check digit.
+   *
+   * SEVERAL shapes, not one. Formats vary by scale vendor, and a shop floor is
+   * not one scale — a grocer runs two, replaces one, or takes deliveries
+   * pre-labelled by a supplier whose machine prints a different prefix. With a
+   * single stored shape everything off the second scale scanned as an unknown
+   * barcode, with no price and nothing saying why. See site/scaleBarcodes.ts.
+   *
+   * Read only once per scan, and only after the exact-barcode lookup above has
+   * missed — which is every ordinary scan, so this costs a query on the scale
+   * items alone. */
+  const rules = await activeScaleRules(siteId)
+  const hit = parseWithRules(code, rules)
+  const variable = hit?.parsed ?? null
   if (!variable) return null
 
   const byPlu = await siteQueryOne<Row>(
@@ -819,6 +875,7 @@ export async function tillProductCounts(siteId: number): Promise<Record<number, 
        FROM products p
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
+        ${VISIBLE_DEPARTMENT_ONLY}
         -- The GROUP counts as one, its members not at all — matching
         -- browseForTill under includeVariantParents, which is how the till
         -- grid reads. Counting the children instead would promise five tiles
@@ -859,6 +916,7 @@ export async function tillCatalogTotal(siteId: number): Promise<number> {
        FROM products p
       WHERE p.is_archived = 0
         AND p.visible_in_pos = 1
+        ${VISIBLE_DEPARTMENT_ONLY}
         AND (
           /* The grid: a group stands for its members, loose products for
              themselves — browseForTill under includeVariantParents. */

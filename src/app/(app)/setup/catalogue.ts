@@ -287,6 +287,22 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
          find either. No `module`: the void and return lists belong to every
          shop, and the screen shows the adjustments tab only where the inventory
          module is actually held. */
+      /* Its own tile rather than three rows on the Stock tracking settings tab,
+         where it used to live. A shop maintains SEVERAL of these now — one per
+         scale, and a grocer runs more than one — and a list with an Add button
+         is not a settings row. It sits with what the shop holds, because the
+         question it answers is a shop-floor one: what did the scale in the deli
+         just print. */
+      {
+        href: '/setup/scale-barcodes',
+        description:
+          'How the till reads a weighed label — the price or weight printed into the barcode.',
+        keywords:
+          'scale barcode variable weight price embedded plu prefix check digit decimals weighed label deli butchery produce',
+        icon: 'Scale',
+        tone: 'teal',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/reasons',
         description:
