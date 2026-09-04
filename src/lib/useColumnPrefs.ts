@@ -44,6 +44,16 @@ export type ColumnPrefs = {
   visible: Set<string>
   setVisible: (next: Set<string>) => void
   reset: () => void
+  /**
+   * Drop the STORED override without changing what is on screen.
+   *
+   * For the one caller that has just made this device's set the store's set:
+   * `reset()` would snap the table back to `defaultVisible`, which is a prop
+   * that has not been refreshed yet, so the change would flicker off and on
+   * again. Forgetting keeps the live set and lets the next load read the
+   * store's copy.
+   */
+  forget: () => void
   /** False until the stored preference has been read. */
   ready: boolean
 }
@@ -114,5 +124,13 @@ export function useColumnPrefs(
     }
   }, [storageKey, fallback])
 
-  return { visible, setVisible, reset, ready }
+  const forget = useCallback(() => {
+    try {
+      window.localStorage.removeItem(storageKey)
+    } catch {
+      /* As above. */
+    }
+  }, [storageKey])
+
+  return { visible, setVisible, reset, forget, ready }
 }

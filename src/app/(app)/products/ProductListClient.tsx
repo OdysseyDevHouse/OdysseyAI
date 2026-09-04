@@ -54,20 +54,11 @@ type Stage = { view: 'options' } | { view: 'form'; kind: BulkKind } | null
 export default function ProductListClient({
   lookups,
   canDelete,
-  storeColumns,
   ...tableProps
 }: {
   lookups: ProductBulkLookups
   /** Whether this role holds products.delete — decides if delete is offered. */
   canDelete: boolean
-  /**
-   * The columns THIS STORE shows, from list_columns — or the list's own default
-   * when it has never chosen. See lib/site/listColumns.ts.
-   *
-   * The Columns button in the toolbar takes the same value and resolves it with
-   * the same hook, so the control and the table always agree.
-   */
-  storeColumns: string[]
 } & Omit<
   Parameters<typeof ProductsTable>[0],
   'selectedKeys' | 'onSelectionChange' | 'visibleColumns' | 'departments'
@@ -82,9 +73,13 @@ export default function ProductListClient({
 
   const count = selected.size
 
-  /* The same hook the Columns button in the toolbar uses, so the control and
-     the table cannot disagree about what is shown. See ProductColumnsButton. */
-  const { visible: visibleColumns } = useProductColumns(storeColumns)
+  /* The SAME STATE the Columns button in the toolbar holds, read through the
+     provider that wraps them both — not merely the same hook. Calling the hook
+     here independently is what the bug was: two `useState`s, the button
+     updating one and this table rendering the other, so a newly ticked column
+     only appeared once a reload rebuilt both from the same props. See
+     ProductColumnsProvider. */
+  const { visible: visibleColumns } = useProductColumns()
 
   function runBulk(change: ProductBulkChange) {
     const ids = [...selected].map(Number)

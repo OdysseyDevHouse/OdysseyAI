@@ -15,7 +15,7 @@ import { listDepartments, departmentPath, descendantIds } from '@/lib/site/depar
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom, withParams } from '@/lib/searchParams'
 import { listColumnsFor } from '@/lib/site/listColumns'
 import { PRODUCT_COLUMN_IDS, PRODUCT_DEFAULT_COLUMNS } from './columns'
-import ProductColumnsButton from './ProductColumnsButton'
+import ProductColumnsButton, { ProductColumnsProvider } from './ProductColumnsButton'
 import ListFilterButton from '@/components/lists/ListFilterButton'
 import {
   PageHeader,
@@ -486,15 +486,17 @@ export default async function ProductsPage({
           40px the table was refused and nothing else uses. The card's own
           padding still keeps the last row off the window edge. */}
       <PageBody flush>
+        {/* The toolbar's Columns button and the table below are SIBLINGS, so
+            they cannot share state by nesting. This provider is what makes the
+            two one state: without it each held its own, and a newly ticked
+            column showed up only after a reload. See ProductColumnsProvider. */}
+        <ProductColumnsProvider storeColumns={storeColumns}>
         {/* Columns goes in the actions slot — right-aligned, beside the other
             things you do TO the list, rather than in a strip of its own
             between the toolbar and the table. */}
         <TableToolbar
           actions={
-            <ProductColumnsButton
-              storeColumns={storeColumns}
-              canSetColumns={can(capabilities, 'setup.edit')}
-            />
+            <ProductColumnsButton canSetColumns={can(capabilities, 'setup.edit')} />
           }
           /* Applied filters get the second row. A "Where" chip spells its
              condition out in a sentence — "Product type is Returnable
@@ -623,7 +625,6 @@ export default async function ProductsPage({
             editSuffix={editSuffix}
             parentNames={parentNames}
             dates={dates}
-            storeColumns={storeColumns}
             /* Null inside a group: those rows are in the group's own size
                order, which the sort argument deliberately does not override. */
             sort={openGroup ? null : { key: sortKey, direction }}
@@ -640,6 +641,7 @@ export default async function ProductsPage({
             hrefFor={(next) => href({ page: next === 1 ? null : next })}
           />
         </Card>
+        </ProductColumnsProvider>
       </PageBody>
     </>
   )
