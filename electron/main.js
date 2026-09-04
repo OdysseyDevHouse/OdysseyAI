@@ -10,6 +10,8 @@ const localDb = require('./localDb')
 const mariaService = require('./mariaService')
 const replicationTunnel = require('./replicationTunnel')
 const { isPos, isDatabaseSetup, startPath, posNavigation, setupNavigation } = require('./appRole')
+/* Why the .exe never resumes a session. See the file. */
+const { signOutOnLaunch } = require('./signOutOnLaunch')
 const dbSetupBridge = require('./dbSetupBridge')
 const { applyMigrations } = require('./siteMigrate')
 const log = require('./log')
@@ -611,6 +613,24 @@ async function createWindow() {
     dialog.showErrorBox('Odyssey could not start', String(err?.message || err))
     app.quit()
     return
+  }
+
+  /* ── OPENING THE APP IS SIGNING IN ───────────────────────────────────────
+   *
+   * Before the window is pointed at the app, never after: the cookie has to be
+   * gone by the time the first request is made, or the root route reads the
+   * session that is still there, renders the dashboard, and the login screen
+   * only appears on a reload nobody performs.
+   *
+   * The database-setup build is exempt because it has no session to clear and
+   * nothing to sign into — its whole life happens before a shop exists.
+   *
+   * See signOutOnLaunch.js for why a shared shop PC cannot keep the web's
+   * twelve-hour session, and why this is the shell's job rather than the
+   * server's.
+   */
+  if (!isDatabaseSetup()) {
+    await signOutOnLaunch(mainWindow.webContents.session, appOrigin || url)
   }
 
   /* The till lands on /pos, the setup wizard on /database-setup, the back
