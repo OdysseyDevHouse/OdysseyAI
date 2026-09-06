@@ -18,6 +18,7 @@ import {
   Select,
   Switch,
   TableToolbar,
+  ToolbarControl,
   useToast,
   type Column,
 } from '@/components/ui'
@@ -192,12 +193,16 @@ export default function StatementRunClient({
                   <option value="activity">Full activity</option>
                 </Select>
               </Field>
-              <Switch
-                checked={owingOnly}
-                onChange={setOwingOnly}
-                label="Only accounts with a balance"
-                hint="A statement saying nothing is owed is inbox noise."
-              />
+              {/* Wrapped, so the switch sits on the same line as the inputs
+                  beside it rather than up level with their labels. */}
+              <ToolbarControl>
+                <Switch
+                  checked={owingOnly}
+                  onChange={setOwingOnly}
+                  label="Only accounts with a balance"
+                  hint="A statement saying nothing is owed is inbox noise."
+                />
+              </ToolbarControl>
             </TableToolbar>
 
             {/* Only worth saying when the selection actually spans cycles —

@@ -49,6 +49,7 @@ function member(
     availableQty: stock,
     askPriceAtSale: false,
     allowFractions: false,
+    qtyDecimals: 3,
     scaleItem: false,
     variableType: 'none',
     maxDiscountPct: 0,

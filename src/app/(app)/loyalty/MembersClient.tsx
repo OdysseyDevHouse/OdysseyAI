@@ -295,8 +295,15 @@ export function MembersClient({
                 value={tier}
                 onChange={setTier}
                 options={[
-                  { value: 'all', label: 'All' },
-                  ...tierNames.map((name) => ({ value: name, label: name })),
+                  { value: 'all', label: 'All', icon: <Icons.LayoutGrid size={15} /> },
+                  /* Every tier wears the programme's own glyph — the names are
+                     the shop's own words, so there is no meaning to draw a
+                     different shape from. All or none, per the bar's rule. */
+                  ...tierNames.map((name) => ({
+                    value: name,
+                    label: name,
+                    icon: <Icons.Gem size={15} />,
+                  })),
                 ]}
               />
             )}

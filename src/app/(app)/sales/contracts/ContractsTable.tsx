@@ -6,6 +6,7 @@ import {
   Badge,
   Card,
   DataTable,
+  Icons,
   SegmentedControl,
   TableToolbar,
   ToolbarSearch,
@@ -158,10 +159,10 @@ export function ContractsTable({ contracts }: { contracts: ContractRow[] }) {
               value={slice}
               onChange={setSlice}
               options={[
-                { value: 'all', label: 'All' },
-                { value: 'active', label: 'Active' },
-                { value: 'due', label: 'Due' },
-                { value: 'ended', label: 'Paused & ended' },
+                { value: 'all', label: 'All', icon: <Icons.LayoutGrid size={15} /> },
+                { value: 'active', label: 'Active', icon: <Icons.Repeat size={15} /> },
+                { value: 'due', label: 'Due', icon: <Icons.CalendarClock size={15} /> },
+                { value: 'ended', label: 'Paused & ended', icon: <Icons.Pause size={15} /> },
               ]}
             />
             <ToolbarSearch

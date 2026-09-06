@@ -189,7 +189,7 @@ import {
 import SendToKitchenModal from './SendToKitchenModal'
 import { tillCreditNoteAction, tillExchangeAction } from './returnActions'
 import { validateTillCodeAction } from './discountCodeActions'
-import { formatMoney, round } from '@/lib/decimals'
+import { formatMoney, round, roundQty, DEFAULT_QTY_DECIMALS } from '@/lib/decimals'
 import { serviceChargeFor, planTips, type ServiceTier } from '@/lib/tipMath'
 import { RefundPad } from './RefundPad'
 import { TableGate } from './TableGate'
@@ -1577,7 +1577,11 @@ export default function PosShell({
           unitCostExcl: product.costExcl,
           maxDiscountPct: 0,
           shelfPriceIncl: 0,
+          // A reward is handed over in whole units, so fractions are off and
+          // the precision below never gets asked about — it is set to the
+          // default rather than left out because the line has to be complete.
           allowFractions: false,
+          qtyDecimals: DEFAULT_QTY_DECIMALS,
           instructions: [],
           note: '',
           orderedAt: Date.now(),

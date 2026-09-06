@@ -153,10 +153,10 @@ export default function GiftCardsClient({
           value={slice}
           onChange={(v) => setSlice(v as typeof slice)}
           options={[
-            { value: 'all', label: 'All' },
-            { value: 'active', label: 'Active' },
-            { value: 'pending', label: 'Unsold' },
-            { value: 'finished', label: 'Finished' },
+            { value: 'all', label: 'All', icon: <Icons.LayoutGrid size={15} /> },
+            { value: 'active', label: 'Active', icon: <Icons.Gift size={15} /> },
+            { value: 'pending', label: 'Unsold', icon: <Icons.Clock size={15} /> },
+            { value: 'finished', label: 'Finished', icon: <Icons.Check size={15} /> },
           ]}
         />
       </TableToolbar>

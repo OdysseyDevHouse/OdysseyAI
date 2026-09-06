@@ -12,7 +12,7 @@ import {
   SegmentedControl,
   numPadValue,
 } from '@/components/ui'
-import { formatMoney, formatQty, round } from '@/lib/decimals'
+import { formatMoney, formatQty, round, roundQty, qtyDecimalsOf } from '@/lib/decimals'
 import { lineTotals } from '@/lib/documentMath'
 import { discountAllowed, instructionAdjust, type BasketLine } from '@/lib/basket'
 
@@ -99,7 +99,19 @@ export function LineEditModal({
     discount: setDiscount,
   }
 
-  const nextQty = numPadValue(qty)
+  /*
+   * Rounded to what this product allows, at the point the typed digits become a
+   * number — so every reader below (the refusal, the supervisor request, the
+   * totals, the saved line) sees ONE quantity rather than each rounding its own
+   * copy and disagreeing by a thousandth.
+   *
+   * Rounded rather than refused: a cashier keying 1.2345 into a two-decimal
+   * product has measured more finely than the product is sold in, which is not
+   * a mistake to send back. The pad below stops accepting a fifth digit anyway;
+   * this catches the value that was already in the box when the modal opened —
+   * a recalled line, or a scale barcode's embedded weight.
+   */
+  const nextQty = roundQty(numPadValue(qty), line)
   const nextPrice = numPadValue(price)
   const nextDiscount = numPadValue(discount)
 
@@ -216,9 +228,9 @@ export function LineEditModal({
           value={field}
           onChange={(v) => setField(v as FieldName)}
           options={[
-            { value: 'qty', label: 'Quantity' },
-            { value: 'price', label: 'Price' },
-            { value: 'discount', label: 'Discount %' },
+            { value: 'qty', label: 'Quantity', icon: <Icons.Hash size={15} /> },
+            { value: 'price', label: 'Price', icon: <Icons.Money size={15} /> },
+            { value: 'discount', label: 'Discount %', icon: <Icons.Percent size={15} /> },
           ]}
         />
 
@@ -226,7 +238,10 @@ export function LineEditModal({
           label={
             field === 'qty'
               ? line.allowFractions
-                ? 'Quantity (fractions allowed)'
+                ? // The number of places is named, not just the fact of them:
+                  // "fractions allowed" left a cashier to discover the limit by
+                  // being rounded, which is the moment it is least welcome.
+                  `Quantity — up to ${qtyDecimalsOf(line)} decimals`
                 : 'Quantity'
               : field === 'price'
                 ? line.shelfPriceIncl !== null
@@ -247,9 +262,14 @@ export function LineEditModal({
         <NumPad
           value={values[field]}
           onChange={setters[field]}
-          // Quantity of a whole-unit product takes no decimal point at all, which
-          // is a clearer refusal than accepting 1.5 and rejecting it on save.
-          maxDecimals={field === 'qty' && !line.allowFractions ? 0 : field === 'qty' ? 3 : 2}
+          /* Quantity of a whole-unit product takes no decimal point at all,
+             which is a clearer refusal than accepting 1.5 and rejecting it on
+             save. A fractional one takes the places IT allows — the pad simply
+             stops accepting digits past them, so the cashier sees the limit as
+             they type rather than watching the number change under them after.
+             qtyDecimalsOf answers 0 for a whole-unit product, which is the same
+             answer the old !allowFractions branch gave. */
+          maxDecimals={field === 'qty' ? qtyDecimalsOf(line) : 2}
         />
 
         {/* A note on ANY line, not only one that happened to be asked a

@@ -376,11 +376,21 @@ export function TableGate({
   }, [armableCount, splitting, transferring, floorLoaded])
 
   const visitOptions = [
-    { value: ALL_VISITS, label: 'All tables', count: searched.length },
+    {
+      value: ALL_VISITS,
+      label: 'All tables',
+      count: searched.length,
+      icon: <Icons.LayoutGrid size={15} />,
+    },
+    /* Each type wears the seat — the names are the shop's own words (Eat in,
+       Takeaway, Collection), so there is no fixed meaning to draw a distinct
+       shape from. All the segments carry one or none of them may, which is why
+       "All tables" gets its glyph above. */
     ...visitTypes.map((v) => ({
       value: String(v.id),
       label: v.name,
       count: searched.filter((t) => matchesVisit(t, String(v.id))).length,
+      icon: <Icons.Armchair size={15} />,
     })),
   ]
 
@@ -425,8 +435,8 @@ export function TableGate({
               <SegmentedControl
                 aria-label="How to show the floor"
                 options={[
-                  { value: 'floor', label: 'Floor' },
-                  { value: 'list', label: 'List' },
+                  { value: 'floor', label: 'Floor', icon: <Icons.LayoutGrid size={15} /> },
+                  { value: 'list', label: 'List', icon: <Icons.List size={15} /> },
                 ]}
                 value={effectiveView}
                 onChange={(next) => setPrefs({ view: next as 'floor' | 'list' })}

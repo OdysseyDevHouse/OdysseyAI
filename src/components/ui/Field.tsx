@@ -4,11 +4,13 @@ import {
   createContext,
   useContext,
   useId,
+  useRef,
   useState,
   type ComponentProps,
   type ReactNode,
 } from 'react'
 import { ChevronDown } from './icons'
+import { SetupText } from './SetupText'
 import {
   CONTROL,
   CONTROL_H,
@@ -86,9 +88,12 @@ export function Field({
           </label>
         )}
         {children}
+        {/* Through SetupText: a field's hint and its error both point at a
+            settings screen often enough to be worth linking — "needs an SMS
+            provider under Setup → Text messages" is a dead end otherwise. */}
         {message && (
           <p id={messageId} className={`mt-1.5 text-xs ${error ? 'text-danger' : 'text-muted'}`}>
-            {message}
+            <SetupText>{message}</SetupText>
           </p>
         )}
       </div>
@@ -304,7 +309,32 @@ export function NumberInput({
   // Controlled while blurred, free-form while focused — formatting per keystroke
   // would fight the caret.
   const [editing, setEditing] = useState<string | null>(null)
-  const shown = editing ?? (value !== undefined ? format(value) : undefined)
+
+  /*
+   * CONTROLLED-NESS IS DECIDED ONCE, BY THE CALLER.
+   *
+   * Read from the FIRST render and kept, because React treats an input that
+   * gains a `value` as switching from uncontrolled to controlled and warns —
+   * and this component used to do exactly that to itself. An uncontrolled
+   * caller (`defaultValue`, no `value`) rendered `value={undefined}`, then
+   * focus set `editing` to a string and `shown` became defined: the input
+   * flipped mid-life on a plain click, with no prop having changed.
+   *
+   * A ref rather than state because it must not cause a render, and must not
+   * follow a caller that starts passing `value` later — the DOM node's mode is
+   * fixed when it mounts, so tracking anything else would only move the warning.
+   */
+  const controlled = useRef(value !== undefined).current
+
+  /*
+   * The editing buffer feeds the CONTROLLED path only.
+   *
+   * An uncontrolled input already holds what is typed — that is what
+   * uncontrolled means — so feeding `editing` back would both flip the mode and
+   * fight the DOM for the caret. It is still tracked: onChange callers get
+   * their value either way, and onBlur clears it in both modes.
+   */
+  const shown = controlled ? (editing ?? format(value)) : undefined
 
   return (
     <Input
@@ -333,7 +363,7 @@ export function NumberInput({
       data-1p-ignore
       data-lpignore="true"
       value={shown}
-      defaultValue={value === undefined ? format(defaultValue) : undefined}
+      defaultValue={controlled ? undefined : format(defaultValue)}
       onFocus={(e) => {
         setEditing(e.target.value)
         selectOnFocus(e)
@@ -393,7 +423,11 @@ export function CurrencyInput({
 
   // Controlled while blurred, free-form while focused.
   const [editing, setEditing] = useState<string | null>(null)
-  const shown = editing ?? (value !== undefined ? format(value) : undefined)
+
+  // Fixed at mount, exactly as in NumberInput above — see the note there for
+  // why an uncontrolled box must never be handed `editing`.
+  const controlled = useRef(value !== undefined).current
+  const shown = controlled ? (editing ?? format(value)) : undefined
 
   return (
     <Input
@@ -422,7 +456,7 @@ export function CurrencyInput({
       data-1p-ignore
       data-lpignore="true"
       value={shown}
-      defaultValue={value === undefined ? format(defaultValue) : undefined}
+      defaultValue={controlled ? undefined : format(defaultValue)}
       onFocus={(e) => {
         setEditing(e.target.value)
         selectOnFocus(e)
@@ -712,7 +746,7 @@ export function ColourInput({
         value={value}
         disabled={disabled}
         spellCheck={false}
-        placeholder="#2f6fed"
+        placeholder="#1890cd"
         aria-describedby={wiring.describedBy}
         onChange={(event) => onChange(event.target.value)}
         className={`${CONTROL} ${CONTROL_H} w-32`}

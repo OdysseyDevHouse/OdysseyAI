@@ -331,7 +331,7 @@ export function tileClass(token: string | null | undefined): string {
  *
  *   · `validateDepartment` demanded `#RRGGBB`, from when the picker offered a
  *     colour wheel. It rejected all twenty swatches with "Colour must be a hex
- *     value like #2f6fed." — a message naming a format no screen can produce.
+ *     value like #1890cd." — a message naming a format no screen can produce.
  *   · `patchDepartment` was updated to `tile-1…7` when the palette became
  *     tokens, and its own comment says it exists because the hex rule would
  *     reject them. The palette then moved to `cat-*` and it went stale in

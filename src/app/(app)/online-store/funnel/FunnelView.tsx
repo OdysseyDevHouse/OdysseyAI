@@ -66,9 +66,9 @@ export default function FunnelView({
           value={String(days)}
           onChange={(value) => router.push(`/online-store/funnel?days=${value}`)}
           options={[
-            { value: '7', label: '7 days' },
-            { value: '30', label: '30 days' },
-            { value: '90', label: '90 days' },
+            { value: '7', label: '7 days', icon: <Icons.Calendar size={15} /> },
+            { value: '30', label: '30 days', icon: <Icons.CalendarRange size={15} /> },
+            { value: '90', label: '90 days', icon: <Icons.History size={15} /> },
           ]}
         />
       </div>

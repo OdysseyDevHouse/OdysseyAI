@@ -888,7 +888,15 @@ export default function FloorDesigner({
                    from another room would move what you cannot see. */
                 history.clear()
               }}
-              options={rooms.map((r) => ({ value: String(r.id), label: r.name }))}
+              /* One glyph for every room, not a vocabulary: a room is named by
+                 the shop, so there is nothing per-row to say. It is here so the
+                 bar reads as places rather than as words — the same reason the
+                 rest of the app's filter bars carry one. */
+              options={rooms.map((r) => ({
+                value: String(r.id),
+                label: r.name,
+                icon: <Icons.MapPin size={15} />,
+              }))}
             />
             <Button variant="ghost" size="sm" onClick={() => setAddingRoom(true)}>
               <Icons.Plus size={14} />

@@ -165,10 +165,16 @@ export default async function SchedulePage({
                 <TextLink href={shift(view === 'week' ? 7 : 1)}>Next {view} →</TextLink>
                 <LinkSegmentedControl
                   options={[
-                    { value: 'day', label: 'Day', href: `/jobs/schedule?date=${date}` },
+                    {
+                      value: 'day',
+                      label: 'Day',
+                      icon: <Icons.Calendar size={15} />,
+                      href: `/jobs/schedule?date=${date}`,
+                    },
                     {
                       value: 'week',
                       label: 'Week',
+                      icon: <Icons.CalendarRange size={15} />,
                       href: `/jobs/schedule?date=${date}&view=week`,
                     },
                   ]}

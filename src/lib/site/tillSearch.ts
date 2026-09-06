@@ -1,7 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
-import { toNum, round } from '../decimals'
+import { toNum, round, toQtyDecimals } from '../decimals'
 import { getSettings } from './settings'
 import { duePricesFor } from './priceSchedules'
 import { parseVariableBarcode, parseWithRules } from '../barcodes'
@@ -46,6 +46,8 @@ export type TillProduct = {
   availableQty: number
   askPriceAtSale: boolean
   allowFractions: boolean
+  /** Decimal places a quantity may carry when fractions are allowed. */
+  qtyDecimals: number
   /**
    * Sold by weight. A scan of a scale barcode arrives with the weight embedded
    * (scannedQty); any other way of adding it must PROMPT for one — the promise
@@ -184,6 +186,7 @@ function mapProduct(r: Row): TillProduct {
     availableQty: round(stockOnHand - reservedQty, 3),
     askPriceAtSale: !!r.ask_price_at_sale,
     allowFractions: !!r.allow_fractions,
+    qtyDecimals: toQtyDecimals(r.qty_decimals),
     scaleItem: !!r.scale_item,
     variableType: toVariableType(r.variable_type),
     maxDiscountPct: toNum(r.max_discount_pct),
@@ -324,7 +327,7 @@ const PARAMS = (locationId: number | null, priceStructureId: number | null): unk
 function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
-           p.ask_price_at_sale, p.allow_fractions, p.scale_item, p.variable_type,
+           p.ask_price_at_sale, p.allow_fractions, p.qty_decimals, p.scale_item, p.variable_type,
            p.max_discount_pct, p.image_color, p.image_icon,
            -- The variant scheme (070). Shipped on every row rather than only
            -- where a group exists: the till's guard in add() reads

@@ -4,7 +4,7 @@ import { menuHolder } from '@/lib/site/menuVisibility'
 import { PageHeader, PageBody, Badge, Card, Icons } from '@/components/ui'
 import { SalesDashboard } from './SalesDashboard'
 import { MobileDashboard } from './MobileDashboard'
-import { isMobileShell } from '@/lib/mobileShell'
+import { isPhoneLayout } from '@/lib/phoneLayout'
 import { WIDGETS } from './widgets'
 
 /**
@@ -56,7 +56,7 @@ export default async function DashboardPage() {
      a different component rather than a breakpoint. No PageHeader: the mobile
      top bar already carries the store's name, and repeating it would spend a
      fifth of a 390px screen saying the same thing twice. */
-  if (await isMobileShell()) {
+  if (await isPhoneLayout()) {
     return allowed ? (
       <MobileDashboard visibleWidgets={visibleWidgets} />
     ) : (

@@ -83,9 +83,39 @@ export default function InstructionsModal({
 
   const qtyOf = (optionId: number) => chosen.find((c) => c.optionId === optionId)?.qty ?? 0
 
+  /**
+   * DISTINCT answers chosen in one question — what `maxChoices` bounds.
+   *
+   * Distinct, not units: "up to 2 toppings" with bacon ×3 and cheese ×1 is two
+   * against the ceiling, not four. Same reading as `validateSelection`, which is
+   * the whole point of counting it the same way in both places.
+   */
+  const countFor = (groupId: number) => chosen.filter((c) => c.groupId === groupId).length
+
   /** Sets one answer's count, and drops any follow-up that is no longer asked. */
   const setQty = (group: TillInstructionGroup, option: TillInstructionOption, next: number) => {
     setError(null)
+
+    // ── The group's ceiling, enforced ON THE TAP ────────────────────────────
+    //
+    // "Choose up to 3" has to stop the fourth answer HERE, not at "Add to sale".
+    // Letting it through and refusing at the end tells a cashier the order is
+    // wrong only after they have read it back to the customer, and says nothing
+    // about which of the four to drop. The count is DISTINCT answers, matching
+    // `validateSelection` — so a fourth topping is refused while a fourth rasher
+    // of an already-chosen one is not. A pick-one group is not checked here: it
+    // REPLACES below, which is a better answer than a refusal.
+    if (
+      next > 0 &&
+      group.maxChoices > 1 &&
+      qtyOf(option.id) === 0 &&
+      countFor(group.id) >= group.maxChoices
+    ) {
+      const label = group.prompt || group.name
+      setError(`${label}: choose no more than ${group.maxChoices}. Take one off first.`)
+      return
+    }
+
     setChosen((prev) => {
       const without = prev.filter((c) => c.optionId !== option.id)
 
@@ -136,7 +166,19 @@ export default function InstructionsModal({
           <Package size={22} />
         </span>
       }
-      subheader={asked.length > 1 ? <StepRail groups={asked} chosen={chosen} /> : undefined}
+      /* The refusal goes in the SUBHEADER, which stays put while the body
+         scrolls. A cashier who hits the ceiling on the last question of a long
+         menu is at the bottom of the list; a message pinned to the top of the
+         body would be the one thing they cannot see at the moment it is about
+         them. */
+      subheader={
+        error || asked.length > 1 ? (
+          <div className="flex flex-col gap-2">
+            {error && <Callout tone="danger">{error}</Callout>}
+            {asked.length > 1 && <StepRail groups={asked} chosen={chosen} />}
+          </div>
+        ) : undefined
+      }
       size="lg"
       /* One heading per question, each with a grid of options, so this is as
          tall as the shop's modifier list — the case the 60vh cap gets most
@@ -182,8 +224,6 @@ export default function InstructionsModal({
       }
     >
       <div className="flex flex-col gap-4">
-        {error && <Callout tone="danger">{error}</Callout>}
-
         {asked.map((group) => (
           <section
             key={group.id}
@@ -211,6 +251,15 @@ export default function InstructionsModal({
                   option={option}
                   count={qtyOf(option.id)}
                   single={group.maxChoices === 1}
+                  /* Dimmed once the group is full, so the ceiling is visible
+                     before a tap rather than after one. An answer already
+                     chosen is never dimmed — it can still be counted up and
+                     taken off. */
+                  full={
+                    group.maxChoices > 1 &&
+                    qtyOf(option.id) === 0 &&
+                    countFor(group.id) >= group.maxChoices
+                  }
                   onPick={(next) => setQty(group, option, next)}
                 />
               ))}
@@ -325,11 +374,14 @@ function OptionTile({
   option,
   count,
   single,
+  full,
   onPick,
 }: {
   option: TillInstructionOption
   count: number
   single: boolean
+  /** The question has as many answers as it allows, and this is not one of them. */
+  full: boolean
   onPick: (next: number) => void
 }) {
   const on = count > 0
@@ -360,7 +412,13 @@ function OptionTile({
          data-kit-ok */
       data-kit-ok
       className={`flex min-h-touch-lg items-stretch overflow-hidden rounded-control border transition ${
-        on ? 'border-brand bg-brand-soft' : 'border-border bg-surface hover:border-brand/50'
+        on
+          ? 'border-brand bg-brand-soft'
+          : full
+            ? /* Dimmed, but still tappable: the tap answers "why not?" with the
+                 rule, which a dead button cannot do. */
+              'border-border bg-surface opacity-50'
+            : 'border-border bg-surface hover:border-brand/50'
       }`}
     >
       <button

@@ -4,7 +4,7 @@
 
    Deliberately NOT built from the design tokens in globals.css. This screen is
    a pixel-for-pixel match of Odyssey's login, down to its own brand blue
-   (#2563eb vs OdysseyAI's #2f6fed) and its own radii, and mixing the two would
+   (#2563eb vs OdysseyAI's #1890cd) and its own radii, and mixing the two would
    leave it subtly off. The values are therefore restated locally, scoped to
    this module, and must not be copied into any other screen: everything else in
    the app keeps using the tokens.

@@ -334,6 +334,34 @@ if (HEADERS) {
 }
 
 /*
+ * SHOT_PHONE=1 asks for the page as a HANDSET, not merely at a handset's size.
+ *
+ * SHOT_VIEWPORT alone cannot verify the phone layout. The shell is chosen on
+ * the SERVER, from `Sec-CH-UA-Mobile` and the user-agent — see
+ * `src/lib/phoneLayout.ts` for why it cannot be a media query — so a narrow
+ * viewport with a desktop UA renders the desktop sidebar squeezed into 390px.
+ * That looks like a broken responsive layout and is in fact a correct desktop
+ * one, which is the most misleading screenshot this tool could produce.
+ *
+ * So the identity is overridden at the network layer, where the server reads
+ * it, and the metrics follow: an iPhone-sized viewport with `mobile: true` so
+ * touch media queries match too.
+ */
+const PHONE = process.env.SHOT_PHONE === '1'
+if (PHONE) {
+  const ua =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 ' +
+    '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+  await send('Network.enable', {}, sessionId)
+  await send('Emulation.setUserAgentOverride', { userAgent: ua }, sessionId)
+  await send(
+    'Emulation.setDeviceMetricsOverride',
+    { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+    sessionId,
+  )
+}
+
+/*
  * SHOT_VIEWPORT="1366x768" drives the page at a specific screen size.
  *
  * For a screen whose whole job is fitting a fixed height — a till dialog that

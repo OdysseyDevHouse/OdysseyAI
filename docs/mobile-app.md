@@ -22,7 +22,9 @@ it never meets a login form after the first run.
 | Device register | `sql/tickets/014_mobile_devices.sql` | One row per enrolled phone, holding a hashed refresh token |
 | Token library | `src/lib/control/mobileDevices.ts` | Enrol, resolve, list, revoke |
 | Auth endpoints | `src/app/api/mobile/auth/` | `login` (once), `session` (every launch), `revoke` |
-| Shell signal | `src/lib/mobileShell.ts`, `mobileShellKeys.ts` | Decides which chrome the layout draws |
+| Shell signal | `src/lib/mobileShell.ts`, `mobileShellKeys.ts` | Says the request is the app's WebView |
+| Layout choice | `src/lib/phoneLayout.ts`, `phoneLayoutKeys.ts` | Decides which chrome the layout draws |
+| Layout switch | `src/components/LayoutPreferenceSwitch.tsx`, `(app)/layoutActions.ts` | The override, both ways |
 | Phone chrome | `src/components/MobileTopBar.tsx` | Title bar and drawer, filtered by the real capabilities |
 | Stacked dashboard | `src/app/(app)/dashboard/MobileDashboard.tsx` | The same widgets, one column, no drag |
 | Revoke list | Setup → Users → the phone icon | Cuts a lost device off |
@@ -168,10 +170,52 @@ and there could not be one without rebuilding the product as an SPA.
 If that placeholder ever appears on a device, the build was pointed at a host it
 could not reach.
 
+## The phone layout is not app-only
+
+A customer who opens the back office in Safari on their own phone gets the same
+one-column shell the app does. They may not have installed anything, and the
+layout that fits a handset does not stop fitting one because the request came
+from a browser.
+
+That makes two questions, and they used to be one boolean:
+
+| Question | Ask | Governs |
+| --- | --- | --- |
+| Am I inside the app's WebView? | `isMobileShell()` | Native chrome — the back gesture, biometrics, what the shell already draws |
+| Am I a 390px screen? | `isPhoneLayout()` | The **shape** of the page — MobileTopBar vs Sidebar, stacked vs gridded |
+
+The layout and the dashboard ask the second. Only genuinely native concerns ask
+the first — which is now one line, the one deciding whether to offer "Desktop
+site" at all (a WebView has no address bar to come back from).
+
+`isPhoneLayout()` answers in a fixed order, and the order is the design:
+
+1. **An explicit choice** — the `odyssey_layout` cookie, written by the switch.
+2. **The app's own signal** — the shell header/cookie, re-asserted every launch.
+3. **A guess** — `Sec-CH-UA-Mobile` where it is sent, else a user-agent test.
+
+Sniffing is last because it is the only step that can be wrong about a real
+device, and the switch exists so that being wrong costs one tap instead of a
+support call. Tablets deliberately land on desktop: an iPad has room for the
+sidebar, and iPadOS reports itself as a Mac anyway.
+
+It is presentation only, exactly as the shell signal is — forging any of it
+gets you a narrow layout, not access to anything.
+
 ## Verifying a mobile screen
 
-The screenshot script takes `SHOT_HEADERS`, which is how a mobile screen gets
-photographed as itself:
+`SHOT_PHONE=1` photographs a screen as a **handset in a browser** — it overrides
+the user-agent *and* the metrics, which is what the server actually reads:
+
+```sh
+SHOT_PHONE=1 npm run shot -- /dashboard
+```
+
+`SHOT_VIEWPORT` alone cannot do this. A narrow viewport with a desktop
+user-agent renders the desktop sidebar squeezed into 390px, which looks like a
+broken responsive layout and is in fact a correct desktop one.
+
+To photograph the **app's** chrome specifically, send its header instead:
 
 ```sh
 SHOT_VIEWPORT=390x844 SHOT_HEADERS='{"x-odyssey-shell":"mobile"}' npm run shot -- /dashboard

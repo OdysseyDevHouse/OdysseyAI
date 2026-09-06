@@ -262,7 +262,15 @@ export default function RolesScreen({
             aria-label="Role to edit"
             value={String(selected.id)}
             onChange={(next) => setSelectedId(Number(next))}
-            options={roles.map((role) => ({ value: String(role.id), label: role.name }))}
+            /* The owner wears the shield: it is the one role whose grid is
+               settled by what it IS rather than by the switches below, and the
+               glyph says so before a manager clicks in and finds every row
+               locked. */
+            options={roles.map((role) => ({
+              value: String(role.id),
+              label: role.name,
+              icon: role.isOwner ? <Icons.ShieldCheck size={15} /> : <Icons.KeyRound size={15} />,
+            }))}
           />
         </TableToolbar>
       )}

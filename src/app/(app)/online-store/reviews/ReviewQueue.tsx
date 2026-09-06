@@ -140,16 +140,19 @@ export default function ReviewQueue({
               {
                 value: 'pending',
                 label: `Waiting (${counts.pending})`,
+                icon: <Icons.Clock size={15} />,
                 href: '/online-store/reviews?status=pending',
               },
               {
                 value: 'approved',
                 label: `Published (${counts.approved})`,
+                icon: <Icons.StatusSuccess size={15} />,
                 href: '/online-store/reviews?status=approved',
               },
               {
                 value: 'rejected',
                 label: `Rejected (${counts.rejected})`,
+                icon: <Icons.Ban size={15} />,
                 href: '/online-store/reviews?status=rejected',
               },
             ]}

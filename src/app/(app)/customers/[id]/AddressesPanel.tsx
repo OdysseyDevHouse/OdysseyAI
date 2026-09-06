@@ -242,8 +242,8 @@ function AddressEditor({
             <SegmentedControl
               aria-label="Address kind"
               options={[
-                { value: 'delivery', label: 'Delivery' },
-                { value: 'billing', label: 'Billing' },
+                { value: 'delivery', label: 'Delivery', icon: <Icons.Truck size={15} /> },
+                { value: 'billing', label: 'Billing', icon: <Icons.Receipt size={15} /> },
               ]}
               value={kind}
               onChange={setKind}
@@ -288,8 +288,8 @@ function AddressEditor({
           <SegmentedControl
             aria-label="Default"
             options={[
-              { value: 'no', label: 'No' },
-              { value: 'yes', label: 'Make it the default' },
+              { value: 'no', label: 'No', icon: <Icons.Close size={15} /> },
+              { value: 'yes', label: 'Make it the default', icon: <Icons.Star size={15} /> },
             ]}
             value={isDefault ? 'yes' : 'no'}
             onChange={(v) => setIsDefault(v === 'yes')}

@@ -1,4 +1,4 @@
-import { round } from './decimals'
+import { round, roundQty, DEFAULT_QTY_DECIMALS } from './decimals'
 import { adjustPerUnit, type ChosenOption } from './instructionRules'
 import type { TillProduct } from './site/tillSearch'
 
@@ -48,6 +48,15 @@ export type BasketLine = {
    */
   shelfPriceIncl: number | null
   allowFractions: boolean
+  /**
+   * Decimal places this product's quantity may carry, when it allows fractions.
+   *
+   * Carried ON the line rather than looked up, because a line outlives the
+   * catalogue read that made it: a parked sale recalled tomorrow must round the
+   * way it did when it was rung, not the way the product has since been
+   * reconfigured. Read it through `qtyDecimalsOf`, never directly.
+   */
+  qtyDecimals: number
   /**
    * The answers the cashier gave to this product's questions.
    *
@@ -256,6 +265,7 @@ export function lineFromProduct(
     maxDiscountPct: product.maxDiscountPct,
     shelfPriceIncl: product.askPriceAtSale ? null : shelf,
     allowFractions: product.allowFractions,
+    qtyDecimals: product.qtyDecimals ?? DEFAULT_QTY_DECIMALS,
     instructions: [],
     note: '',
     // Rung NOW. Same clock the key already reads, so this adds no impurity that
@@ -496,9 +506,12 @@ export function addToBasket(
     product.productType !== 'gift_card'
   ) {
     const next = [...lines]
-    // round to 3: quantities are DECIMAL(_,3) and a weighed item adds fractions,
-    // so repeated addition without rounding drifts into 2.9999999999999996.
-    next[mergeable] = { ...next[mergeable], qty: round(next[mergeable].qty + qty, 3) }
+    /* Rounded to what this product allows, because a weighed item adds
+       fractions and repeated addition without rounding drifts into
+       2.9999999999999996. The places used to be a hardcoded 3 — the column
+       width at the time — and are now the product's own, so scanning the same
+       two-decimal item twice cannot accumulate a third. */
+    next[mergeable] = { ...next[mergeable], qty: roundQty(next[mergeable].qty + qty, next[mergeable]) }
     return next
   }
 
@@ -549,7 +562,7 @@ export function stepQty(lines: BasketLine[], key: string, delta: number): Basket
   // The line's own direction, so a refund grows downwards.
   const direction = line.qty < 0 ? -1 : 1
   const step = Math.sign(delta) * magnitude * direction
-  const next = round(line.qty + step, 3)
+  const next = roundQty(line.qty + step, line)
   // Stepped down to nothing, or through it: the cashier means "take it off".
   if (next === 0 || Math.sign(next) !== direction) return removeBasketLine(lines, key)
   return updateBasketLine(lines, key, { qty: next })

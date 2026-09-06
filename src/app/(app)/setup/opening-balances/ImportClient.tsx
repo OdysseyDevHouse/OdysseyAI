@@ -188,8 +188,8 @@ export default function ImportClient({
                   setResult(null)
                 }}
                 options={[
-                  { value: 'customer', label: 'Customers' },
-                  { value: 'supplier', label: 'Suppliers' },
+                  { value: 'customer', label: 'Customers', icon: <Icons.Users size={15} /> },
+                  { value: 'supplier', label: 'Suppliers', icon: <Icons.Truck size={15} /> },
                 ]}
               />
               <Button variant="ghost" size="sm" onClick={() => setCsv(SAMPLE)} disabled={pending}>

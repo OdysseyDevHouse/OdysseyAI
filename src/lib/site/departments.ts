@@ -231,7 +231,7 @@ export function validateDepartment(input: DepartmentInput): string | null {
   if (input.code && input.code.trim().length > 32) return 'Code must be 32 characters or fewer.'
   /* Asked of the palette rather than of a pattern typed here. This rule used
      to demand '#RRGGBB' and so rejected every swatch the picker can actually
-     produce — the form said "Colour must be a hex value like #2f6fed." about a
+     produce — the form said "Colour must be a hex value like #1890cd." about a
      value no screen in the app offers. See isStorableSwatch. */
   if (input.color && !isStorableSwatch(input.color)) {
     return 'That is not a colour this app can store.'

@@ -309,8 +309,12 @@ export default function NewTransferScreen({
                   value={destKind}
                   onChange={setDestKind}
                   options={[
-                    { value: 'location', label: 'To a location' },
-                    { value: 'store', label: 'To a store' },
+                    {
+                      value: 'location',
+                      label: 'To a location',
+                      icon: <Icons.Warehouse size={15} />,
+                    },
+                    { value: 'store', label: 'To a store', icon: <Icons.Store size={15} /> },
                   ]}
                 />
               ) : undefined

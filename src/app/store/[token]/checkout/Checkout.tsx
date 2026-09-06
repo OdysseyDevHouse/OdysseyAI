@@ -428,8 +428,8 @@ export default function Checkout({
                   setQuote(null)
                 }}
                 options={[
-                  { value: 'collect', label: 'Collect' },
-                  { value: 'deliver', label: 'Deliver' },
+                  { value: 'collect', label: 'Collect', icon: <Icons.ShoppingBag size={15} /> },
+                  { value: 'deliver', label: 'Deliver', icon: <Icons.Truck size={15} /> },
                 ]}
               />
             )}

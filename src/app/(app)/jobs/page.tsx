@@ -155,9 +155,24 @@ export default async function JobsPage({
           >
             <LinkSegmentedControl
               options={[
-                { value: 'open', label: 'Open', href: href({ state: 'open', page: undefined }) },
-                { value: 'closed', label: 'Closed', href: href({ state: 'closed', page: undefined }) },
-                { value: 'all', label: 'All', href: href({ state: 'all', page: undefined }) },
+                {
+                  value: 'open',
+                  label: 'Open',
+                  icon: <Icons.Wrench size={15} />,
+                  href: href({ state: 'open', page: undefined }),
+                },
+                {
+                  value: 'closed',
+                  label: 'Closed',
+                  icon: <Icons.StatusSuccess size={15} />,
+                  href: href({ state: 'closed', page: undefined }),
+                },
+                {
+                  value: 'all',
+                  label: 'All',
+                  icon: <Icons.LayoutGrid size={15} />,
+                  href: href({ state: 'all', page: undefined }),
+                },
               ]}
               value={state}
               aria-label="Which jobs to show"

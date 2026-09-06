@@ -453,7 +453,7 @@ export const THEME_PRESETS: readonly ThemePreset[] = [
     key: 'classic',
     name: 'Classic',
     hint: 'What your shop looks like now. Clean and familiar.',
-    brandColour: '#2f6fed',
+    brandColour: '#1890cd',
     tokens: { ...DEFAULT_TOKENS },
   },
   {

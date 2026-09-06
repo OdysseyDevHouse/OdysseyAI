@@ -27,6 +27,18 @@ export const dynamic = 'force-dynamic'
 
 const PAGE_SIZE = 50
 
+/**
+ * A glyph per document type, so the filter bar reads as three shapes rather
+ * than three phrases. Keyed by value because the segments are built by mapping
+ * over the type list — the bar's rule is all or none, and a `.map()` cannot
+ * carry an icon per option without somewhere to look one up.
+ */
+const PURCHASE_DOC_ICONS = {
+  purchase_order: <Icons.FileText size={15} />,
+  grv: <Icons.PackageOpen size={15} />,
+  supplier_return: <Icons.Reverse size={15} />,
+} as const
+
 export default async function PurchasingPage({
   searchParams,
 }: {
@@ -168,11 +180,17 @@ export default async function PurchasingPage({
               aria-label="Filter by document type"
               value={type ?? 'all'}
               options={[
-                { value: 'all', label: 'All', href: filterHref({ type: null }) },
+                {
+                  value: 'all',
+                  label: 'All',
+                  href: filterHref({ type: null }),
+                  icon: <Icons.LayoutGrid size={15} />,
+                },
                 ...(['purchase_order', 'grv', 'supplier_return'] as const).map((value) => ({
                   value,
                   label: PURCHASE_DOC_LABELS[value],
                   href: filterHref({ type: value }),
+                  icon: PURCHASE_DOC_ICONS[value],
                 })),
               ]}
             />

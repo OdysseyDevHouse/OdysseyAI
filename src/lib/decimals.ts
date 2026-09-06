@@ -20,6 +20,72 @@ export function toDecimalString(value: number | string, places = 4): string {
   return toNum(value).toFixed(places)
 }
 
+/* ── How many decimals a quantity may carry ──────────────────────────────── */
+
+/**
+ * The decimal places a product allows on a quantity, when it allows fractions
+ * at all.
+ *
+ * 4 is the ceiling because that is what the columns hold — 250_quantity_four_
+ * decimals.sql widened every quantity column in the sales and stock path to
+ * DECIMAL(_,4). Offering a fifth place here would be offering something the
+ * database would silently truncate, which is the disagreement between the slip
+ * and the stock movement that the migration exists to prevent.
+ *
+ * 2 is the floor for a FRACTIONAL product: a shop that wants whole units has
+ * the fractions switch for that, and one that has turned fractions ON is saying
+ * it sells halves and quarters, which one decimal cannot express.
+ */
+export const QTY_DECIMAL_CHOICES = [2, 3, 4] as const
+export type QtyDecimals = (typeof QTY_DECIMAL_CHOICES)[number]
+
+/** The default, and what every product had before the setting existed. */
+export const DEFAULT_QTY_DECIMALS: QtyDecimals = 3
+
+/**
+ * A stored `qty_decimals` as one of the values the app actually offers.
+ *
+ * Anything unrecognised becomes the default rather than throwing: this reads a
+ * TINYINT that an import, a restore or a hand-run UPDATE could have set to
+ * anything, and a product row that will not load is a worse outcome than one
+ * that quietly behaves the way it did before the column existed.
+ */
+export function toQtyDecimals(value: unknown): QtyDecimals {
+  const n = Math.trunc(toNum(value, DEFAULT_QTY_DECIMALS))
+  return (QTY_DECIMAL_CHOICES as readonly number[]).includes(n)
+    ? (n as QtyDecimals)
+    : DEFAULT_QTY_DECIMALS
+}
+
+/**
+ * How many decimals THIS product's quantity may carry — the one function every
+ * caller should ask, rather than reading `qtyDecimals` directly.
+ *
+ * The fractions flag is asked first and answers 0, because the two settings are
+ * one question with two halves: `qtyDecimals` is meaningless while fractions
+ * are off, and is deliberately left at whatever it was so switching fractions
+ * off and on again does not lose the choice. A caller reading the number alone
+ * would let a whole-unit product take 1.25.
+ */
+export function qtyDecimalsOf(product: {
+  allowFractions: boolean
+  qtyDecimals?: number | null
+}): number {
+  return product.allowFractions ? toQtyDecimals(product.qtyDecimals) : 0
+}
+
+/**
+ * A quantity as the product allows it to be written.
+ *
+ * Rounds rather than refuses, which is what a scale demands: a till weighing
+ * 1.2345 kg of a product allowing two decimals has not made a mistake to be
+ * corrected, it has measured more finely than this product is sold in. Refusing
+ * would leave a cashier retyping a number they did not choose.
+ */
+export function roundQty(qty: number, product: { allowFractions: boolean; qtyDecimals?: number | null }): number {
+  return round(qty, qtyDecimalsOf(product))
+}
+
 export function formatMoney(value: unknown, currency = 'R'): string {
   const n = toNum(value)
   const s = Math.abs(n)

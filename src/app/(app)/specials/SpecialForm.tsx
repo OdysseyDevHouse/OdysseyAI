@@ -98,6 +98,46 @@ const BUILT: ReadonlySet<SpecialShape> = new Set([
   'free_delivery',
 ])
 
+/**
+ * A glyph for each choice the form's three segmented bars offer.
+ *
+ * Keyed by value rather than passed at the call site because every one of those
+ * bars is built by mapping a constant from the engine — so an icon written into
+ * the option objects would have to be written into the engine, where a pure
+ * pricing module has no business importing React.
+ */
+const GROUP_ICONS: Record<string, React.ReactNode> = {
+  happy_hour: <Icons.Clock size={15} />,
+  special_price: <Icons.Tag size={15} />,
+  combo: <Icons.Boxes size={15} />,
+  spend: <Icons.Money size={15} />,
+}
+
+const SHAPE_ICONS: Record<SpecialShape, React.ReactNode> = {
+  happy_hour: <Icons.Clock size={15} />,
+  special_price: <Icons.Tag size={15} />,
+  // The combo shapes, told apart by what the shopper gets for buying more.
+  cheapest_free: <Icons.Percent size={15} />,
+  free_item: <Icons.Gift size={15} />,
+  percent_off: <Icons.Percent size={15} />,
+  bundle_price: <Icons.Package size={15} />,
+  multibuy: <Icons.Boxes size={15} />,
+  quantity_break: <Icons.Scale size={15} />,
+  second_at_pct: <Icons.Copy size={15} />,
+  mix_and_match: <Icons.Shapes size={15} />,
+  // The spend-and-get shapes.
+  spend: <Icons.Money size={15} />,
+  free_delivery: <Icons.Truck size={15} />,
+  bonus_points: <Icons.Gem size={15} />,
+}
+
+const AUDIENCE_ICONS: Record<Audience, React.ReactNode> = {
+  everyone: <Icons.Users size={15} />,
+  account: <Icons.Contact size={15} />,
+  member: <Icons.Gem size={15} />,
+  group: <Icons.Shapes size={15} />,
+}
+
 /** A row as the form holds it — the item plus what it is called and costs. */
 export type FormRow = SpecialItemInput & {
   label: string
@@ -254,7 +294,11 @@ export default function SpecialForm({
               const group = SHAPE_GROUPS.find((g) => g.key === v)
               if (group) patch({ shape: group.shapes[0] })
             }}
-            options={SHAPE_GROUPS.map((g) => ({ value: g.key, label: g.label }))}
+            options={SHAPE_GROUPS.map((g) => ({
+              value: g.key,
+              label: g.label,
+              icon: GROUP_ICONS[g.key],
+            }))}
           />
           {/* The second question, asked only when the group holds a choice. */}
           {group.shapes.length > 1 && (
@@ -266,7 +310,7 @@ export default function SpecialForm({
                 // not written yet, and offering one would let a shop set up a
                 // promotion that silently never fires.
                 .filter((s) => BUILT.has(s))
-                .map((s) => ({ value: s, label: SHAPE_LABEL[s] }))}
+                .map((s) => ({ value: s, label: SHAPE_LABEL[s], icon: SHAPE_ICONS[s] }))}
             />
           )}
         </Section>
@@ -694,7 +738,11 @@ function AudienceSection({
       <SegmentedControl
         value={audience}
         onChange={(v) => patch({ audience: v as Audience })}
-        options={AUDIENCES.map((a) => ({ value: a, label: AUDIENCE_LABEL[a] }))}
+        options={AUDIENCES.map((a) => ({
+          value: a,
+          label: AUDIENCE_LABEL[a],
+          icon: AUDIENCE_ICONS[a],
+        }))}
       />
 
       {audience === 'group' && (

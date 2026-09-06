@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ChevronRight, HelpCircle as CircleHelp, Settings, Bell, LogOut, ShieldCheck } from '@/components/ui/icons'
 import { Button, ButtonLink, MenuItem } from '@/components/ui'
 import { breadcrumbFor } from '@/lib/nav'
+import { LayoutPreferenceSwitch } from './LayoutPreferenceSwitch'
 import StoreSwitcher, { type SwitcherSite } from './StoreSwitcher'
 import ThemeToggle from './ThemeToggle'
 import NotificationBell from './NotificationBell'
@@ -69,11 +70,20 @@ export default function TopBar({
   userEmail,
   roleName,
   unreadNotifications = 0,
+  onChooseLayout,
 }: {
   sites: SwitcherSite[]
   currentSiteId: number
   userName: string
   userEmail: string
+  /**
+   * Switch back to the phone layout. Passed rather than imported, for the
+   * reason LayoutPreferenceSwitch gives.
+   *
+   * Present ONLY when the device is a phone that chose this layout — a real
+   * desktop never gets the row. Undefined is therefore the normal case.
+   */
+  onChooseLayout?: (pref: 'phone' | 'desktop') => Promise<void>
   /** Null when nobody has given this person a role yet. */
   roleName?: string | null
   /** Server-computed at render; the bell keeps itself fresh from there. */
@@ -194,6 +204,16 @@ export default function TopBar({
                   </MenuItem>
                 </Link>
               </div>
+
+              {/* The way BACK to the phone layout, and shown only to a handset
+                  that asked for this one. A desktop has nothing to return to,
+                  so offering it there would be a menu row that hands a 1600px
+                  screen a 390px layout for no reason. */}
+              {onChooseLayout && (
+                <div className="border-b border-border p-1">
+                  <LayoutPreferenceSwitch current="desktop" onChoose={onChooseLayout} />
+                </div>
+              )}
 
               <form action="/api/auth/signout" method="post" className="p-1">
                 <MenuItem type="submit" tone="danger">

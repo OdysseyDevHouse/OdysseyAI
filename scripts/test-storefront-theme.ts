@@ -97,7 +97,7 @@ for (const p of THEME_PRESETS) {
 console.log('\n— A shop that types its own colour —')
 {
   // Not only the curated swatches: the free field is the point of this check.
-  const typed = ['#2f6fed', '#be123c', '#15803d', '#000000', '#ffffff', '#ffff00', '#888888']
+  const typed = ['#1890cd', '#be123c', '#15803d', '#000000', '#ffffff', '#ffff00', '#888888']
   let worst = 99
   let worstAt = ''
   for (const colour of typed) {
@@ -151,7 +151,7 @@ console.log('\n— Nothing hostile survives being stored —')
 
 console.log('\n— The variables the storefront actually applies —')
 {
-  const vars = themeVars(DEFAULT_TOKENS, '#2f6fed')
+  const vars = themeVars(DEFAULT_TOKENS, '#1890cd')
 
   /*
    * Every variable globals.css redefines under prefers-color-scheme, or a

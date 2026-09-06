@@ -33,7 +33,7 @@
   /* --- Brand ------------------------------------------------------------- */
   /* Each accent has three steps: base (fill), -ink (hover/active + text on a
      tint), -soft (the pale background used by badges and active pills). */
-  --color-brand: #2f6fed;
+  --color-brand: #1890cd;
   --color-brand-ink: #1b4fc0;
   --color-brand-soft: #eaf1fe;
   /* The rule a card wears down its left edge when its heading is brand-toned.
@@ -145,7 +145,7 @@
      built from it came out deep blue in one theme and a pale wash carrying
      white text in the other. These two stay saturated in both, which is what
      a panel with white text on it needs. */
-  --color-quote: #2f6fed;
+  --color-quote: #1890cd;
   --color-quote-2: #1b4fc0;
 
   /* Legacy alias — older screens say tone="positive". Points at the same
@@ -173,7 +173,7 @@
   /* The palette offered when a product has no photo and gets a coloured
      initial instead. These are content, not UI chrome — each must stay
      distinguishable from its neighbours, and all must carry white text. */
-  --color-tile-1: #2f6fed;
+  --color-tile-1: #1890cd;
   --color-tile-2: #0f7b4f;
   --color-tile-3: #b5730a;
   --color-tile-4: #c02626;
@@ -288,7 +288,7 @@
 
      chart-1 is the brand blue on purpose — a single-series chart should look
      like it belongs to this app rather than to a chart library. */
-  --color-chart-1: #2f6fed;
+  --color-chart-1: #1890cd;
   --color-chart-2: #0d9488;
   --color-chart-3: #d97706;
   --color-chart-4: #7c3aed;

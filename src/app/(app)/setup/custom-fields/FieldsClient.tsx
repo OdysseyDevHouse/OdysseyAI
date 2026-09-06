@@ -44,6 +44,20 @@ import { saveFieldAction, deleteFieldAction, moveFieldAction } from './actions'
  * make "which column is this in the export" unanswerable from the screen that
  * defines it.
  */
+/**
+ * What each set of fields hangs off, as a glyph.
+ *
+ * Keyed by entity rather than written into the option objects because the tabs
+ * are mapped from FIELD_ENTITIES — and that list lives in a pure model module
+ * which must stay free of React.
+ */
+const ENTITY_ICONS: Record<CustomFieldEntity, React.ReactNode> = {
+  job: <Icons.Wrench size={15} />,
+  customer: <Icons.Users size={15} />,
+  equipment: <Icons.Package size={15} />,
+  sale: <Icons.Receipt size={15} />,
+}
+
 export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
   const router = useRouter()
   const toast = useToast()
@@ -179,6 +193,7 @@ export default function FieldsClient({ fields }: { fields: CustomFieldDef[] }) {
                 // The count is on the tab, so somebody can see where their
                 // fields are without clicking through three empty sets.
                 label: `${ENTITY_PLURAL[e]} (${fields.filter((f) => f.entity === e).length})`,
+                icon: ENTITY_ICONS[e],
               }))}
             />
           </div>

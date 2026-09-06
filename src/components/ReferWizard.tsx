@@ -117,6 +117,7 @@ export default function ReferWizard({
   open,
   onClose,
   vatPercent,
+  priceStructureId,
   autoCode = false,
   supplierId,
   base,
@@ -127,6 +128,20 @@ export default function ReferWizard({
   onClose: () => void
   /** The selling VAT rate, so markup and the inclusive price agree. */
   vatPercent: number
+  /**
+   * Which structure the "Selling" column writes to — the site's default one.
+   *
+   * The wizard offers ONE price per rung rather than a column per structure:
+   * six pack sizes times five structures is a spreadsheet, not a dialog, and
+   * the range's other prices are set afterwards on each product's own Pricing
+   * tab. That one price has to land somewhere, and the default structure is
+   * what the base rung's price was read from at the call site.
+   *
+   * Null when the site has no default structure. The prices are then not sent
+   * at all rather than guessed at — writing a shelf price into whichever
+   * structure happened to sort first is worse than leaving it to be typed.
+   */
+  priceStructureId: number | null
   /**
    * Whether the site numbers products automatically.
    *
@@ -367,6 +382,21 @@ export default function ReferWizard({
           packSize: r.packSize,
           packDescription: r.packDescription,
           costExcl: r.costExcl,
+          /*
+           * The typed shelf price, which used to be dropped here.
+           *
+           * Every rung is priced in this dialog — there is a Selling column, a
+           * "fill down by pack size" button that computes one, and a margin
+           * shown against it — and none of it reached the server, so a range
+           * was created with the cost saved and every price at nothing. A
+           * six-pack rang up at 0.00 until somebody opened it and typed the
+           * price they had already typed here.
+           *
+           * Sent only when there is a price AND somewhere to put it: 0 is the
+           * box's empty state, not a decision to sell at nothing.
+           */
+          prices:
+            priceStructureId && r.sellIncl > 0 ? { [priceStructureId]: r.sellIncl } : undefined,
           supplierCode: r.supplierCode,
           supplierPackSize: r.packSize,
         })),

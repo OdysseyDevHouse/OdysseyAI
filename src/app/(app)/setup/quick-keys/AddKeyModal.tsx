@@ -192,10 +192,12 @@ export function AddKeyModal({
           aria-label="What kind of key"
           value={kind}
           onChange={(next) => setKind(next)}
+          /* The same three glyphs the library rail and the till itself use for
+             these, so a key looks like what it does before it is made. */
           options={[
-            { value: 'action', label: 'Does something' },
-            { value: 'product', label: 'A product' },
-            { value: 'department', label: 'A department' },
+            { value: 'action', label: 'Does something', icon: <Icons.Zap size={15} /> },
+            { value: 'product', label: 'A product', icon: <Icons.Package size={15} /> },
+            { value: 'department', label: 'A department', icon: <Icons.Tag size={15} /> },
           ]}
         />
 

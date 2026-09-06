@@ -90,9 +90,24 @@ export default async function TicketsPage({
                 value={state === 'closed' ? 'closed' : state === 'all' ? 'all' : 'open'}
                 aria-label="Which tickets to show"
                 options={[
-                  { value: 'open', label: 'Open', href: '/tickets' },
-                  { value: 'closed', label: 'Closed', href: '/tickets?show=closed' },
-                  { value: 'all', label: 'Everything', href: '/tickets?show=all' },
+                  {
+                    value: 'open',
+                    label: 'Open',
+                    href: '/tickets',
+                    icon: <Icons.FolderOpen size={15} />,
+                  },
+                  {
+                    value: 'closed',
+                    label: 'Closed',
+                    href: '/tickets?show=closed',
+                    icon: <Icons.Check size={15} />,
+                  },
+                  {
+                    value: 'all',
+                    label: 'Everything',
+                    href: '/tickets?show=all',
+                    icon: <Icons.LayoutGrid size={15} />,
+                  },
                 ]}
               />
             </div>

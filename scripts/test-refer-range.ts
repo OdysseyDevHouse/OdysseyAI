@@ -85,13 +85,28 @@ async function main() {
   })
   if (!sup.ok) { console.log('setup failed —', sup.error); process.exit(1) }
 
+  /*
+   * The structure the wizard's one "Selling" column writes to. Read rather
+   * than hardcoded: a literal id fails on the DATA the moment a site is set up
+   * with different structures.
+   */
+  const defaultStructure = toNum(
+    (await siteQueryOne<any>(SITE,
+      'SELECT id FROM price_structures WHERE is_default = 1 ORDER BY position, id LIMIT 1'))?.id,
+  )
+  ok('the site has a default price structure to price into', defaultStructure > 0,
+    String(defaultStructure))
+
   const built = await createReferRange(SITE, {
     method: 'normal',
     supplierId: sup.id,
     rows: [
-      { description: 'Range single', code: `RG${stamp}`, packSize: 1, costExcl: 10, supplierCode: 'SGL' },
-      { description: 'Range six', code: `RG${stamp}-6`, packSize: 6, costExcl: 60, supplierCode: 'SIX' },
-      { description: 'Range case', code: `RG${stamp}-24`, packSize: 24, costExcl: 240, supplierCode: 'CSE' },
+      { description: 'Range single', code: `RG${stamp}`, packSize: 1, costExcl: 10, supplierCode: 'SGL',
+        prices: { [defaultStructure]: 15 } },
+      { description: 'Range six', code: `RG${stamp}-6`, packSize: 6, costExcl: 60, supplierCode: 'SIX',
+        prices: { [defaultStructure]: 85 } },
+      { description: 'Range case', code: `RG${stamp}-24`, packSize: 24, costExcl: 240, supplierCode: 'CSE',
+        prices: { [defaultStructure]: 330 } },
     ],
   })
   ok('*** the range was created ***', built.ok, built.ok ? '' : built.error)
@@ -122,6 +137,50 @@ async function main() {
   const supRows = await siteQuery<any>(SITE,
     'SELECT product_id, supplier_code FROM product_suppliers WHERE supplier_id = ? ORDER BY product_id', [sup.id])
   ok('*** each rung kept its own supplier code ***', supRows.length === 3, String(supRows.length))
+
+  /*
+   * ── The selling price of EVERY rung ──────────────────────────────────────
+   *
+   * The wizard prices each pack size — there is a Selling column, a "fill down
+   * by pack size" button and a margin shown against it — and none of it used
+   * to reach the server: the row it submitted carried costExcl and simply left
+   * `prices` out. Every range was therefore created with the costs saved and
+   * every shelf price at nothing, and the six-pack rang up at 0.00 until
+   * somebody opened it and re-typed the price they had already typed.
+   *
+   * Asserted per rung rather than "some price row exists": the cost cascade
+   * (recostFromBase) rewrites costs UP the ladder afterwards, and a check that
+   * only counted rows would pass just as happily if every rung ended up on the
+   * base's price.
+   */
+  const priceOf = async (id: number) =>
+    toNum((await siteQueryOne<any>(SITE,
+      'SELECT selling_price_incl FROM product_prices WHERE product_id = ? AND price_structure_id = ?',
+      [id, defaultStructure]))?.selling_price_incl)
+
+  ok('*** the base rung kept the price it was given ***', (await priceOf(single)) === 15,
+    String(await priceOf(single)))
+  ok('*** so did the six-pack — its OWN price, not the base\'s ***', (await priceOf(six)) === 85,
+    String(await priceOf(six)))
+  ok('*** and the case ***', (await priceOf(box)) === 330, String(await priceOf(box)))
+
+  // A rung priced at nothing must not write a 0.00 shelf price: the wizard
+  // sends no `prices` for an empty box, and empty is not "sells for nothing".
+  const unpriced = await createReferRange(SITE, {
+    method: 'normal',
+    rows: [
+      { description: 'Unpriced single', code: `RG${stamp}-500`, packSize: 1, costExcl: 4 },
+      { description: 'Unpriced six', code: `RG${stamp}-506`, packSize: 6 },
+    ],
+  })
+  ok('a range with no prices is still created', unpriced.ok, unpriced.ok ? '' : unpriced.error)
+  if (unpriced.ok) {
+    const rows = await siteQuery<any>(SITE,
+      `SELECT product_id FROM product_prices WHERE product_id IN (?, ?)`,
+      [unpriced.productIds[0], unpriced.productIds[1]])
+    ok('*** and a blank price box writes NO price row, not a 0.00 one ***', rows.length === 0,
+      `${rows.length} row(s)`)
+  }
 
   // ── Extending an existing product
   console.log('\n── Extending an existing product ──')

@@ -559,7 +559,7 @@ export default function ReferPanel({
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                   {rung.stockOnHand.toLocaleString('en-ZA')}
                 </td>
-                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{money(rung.averageCost)}</td>
+                <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>{money(rung.costExcl)}</td>
                 <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                   {index > 0 && (
                     <Button

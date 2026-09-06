@@ -174,10 +174,28 @@ export const PURCHASE_COLUMNS: readonly (ColumnOption & { id: GridColumnId })[] 
   { id: 'avgNow', label: 'Average cost now', group: 'Cost' },
   { id: 'avgAfter', label: 'Average cost after', group: 'Cost' },
 
-  { id: 'sellIncl', label: 'Selling (incl.)', group: 'Pricing' },
-  { id: 'sellExcl', label: 'Selling (excl.)', group: 'Pricing' },
+  /*
+   * Margin first, then the price it produces.
+   *
+   * This array IS the on-screen order — the grid renders
+   * `PURCHASE_COLUMN_IDS.filter(show)`, and `visible` is a Set, so a user's
+   * saved column choice decides WHICH of these appear and never in what order.
+   * Moving a row here moves it on every buyer's screen at once.
+   *
+   * Reading left to right the row now goes cost → what you add → what it sells
+   * for, which is the order a buyer pricing a delivery actually thinks in: the
+   * markup is the decision and the selling price is its consequence. With the
+   * prices first, the two figures that get TYPED sat either side of the two
+   * that get read.
+   *
+   * Excl. before incl. for the same reason the cost columns are: every other
+   * money column on this grid is exclusive-first, and a pair that alternates is
+   * a pair somebody eventually types the wrong half of.
+   */
   { id: 'markup', label: 'Markup %', group: 'Pricing' },
   { id: 'gp', label: 'GP %', group: 'Pricing' },
+  { id: 'sellExcl', label: 'Selling (excl.)', group: 'Pricing' },
+  { id: 'sellIncl', label: 'Selling (incl.)', group: 'Pricing' },
 
   { id: 'vat', label: 'VAT rate', group: 'Line' },
   { id: 'supplierCode', label: 'Their code', group: 'Line' },
@@ -199,17 +217,33 @@ export const PURCHASE_COLUMNS: readonly (ColumnOption & { id: GridColumnId })[] 
  * has to be on the screen by default. Behind the Columns picker it was a
  * feature only the person who went looking for it ever found.
  *
- * Markup % rather than GP % beside it: both write the same selling price, and
- * a buyer working from a supplier's invoice thinks in what they add to cost.
- * GP % stays one click away for whoever measures the other way.
+ * All four pricing columns, not two. Markup % and GP % are two ways of saying
+ * the same thing and a buyer has a settled preference between them — but it is
+ * not the SAME preference from buyer to buyer, and the one whose habit was not
+ * catered for had to find the Columns picker before they could price anything.
+ * Both write the same selling price, so showing both costs a narrow column and
+ * removes a step for half the people using the screen. The same argument runs
+ * for the two selling prices: whichever one matches the shelf ticket in hand is
+ * the one that gets typed.
+ *
+ * ── THIS ONLY REACHES A NEW SCREEN ───────────────────────────────────────────
+ *
+ * `useColumnPrefs` stores a chosen set per device, and a stored set WINS over
+ * this list. Anyone who has already opened the GRV screen keeps the columns
+ * they had; only a fresh device — or someone who presses Reset in the picker —
+ * gets these. That is the right trade (a layout somebody arranged should not be
+ * rearranged by a deploy) but it does mean adding a column here is not the same
+ * as putting it in front of existing users.
  */
 export const RECEIVE_DEFAULT_COLUMNS: GridColumnId[] = [
   'received',
   'costExcl',
   'supplierCode',
   'location',
-  'sellIncl',
   'markup',
+  'gp',
+  'sellExcl',
+  'sellIncl',
   'lineTotalExcl',
   'lineTotalIncl',
 ]

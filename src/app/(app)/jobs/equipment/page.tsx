@@ -127,6 +127,7 @@ export default async function EquipmentPage({
             }
           >
             <LinkSelect
+              icon={<Icons.Shapes size={16} />}
               value={params.type ?? ''}
               options={[
                 { value: '', label: 'Every kind', href: href({ type: undefined }) },
@@ -139,6 +140,7 @@ export default async function EquipmentPage({
               aria-label="Kind of equipment"
             />
             <LinkSelect
+              icon={<Icons.CalendarClock size={16} />}
               value={dueOnly ? '1' : ''}
               options={[
                 { value: '', label: 'Any service date', href: href({ due: undefined }) },
@@ -147,6 +149,7 @@ export default async function EquipmentPage({
               aria-label="Service due"
             />
             <LinkSelect
+              icon={<Icons.Archive size={16} />}
               value={includeRetired ? '1' : ''}
               options={[
                 { value: '', label: 'In use', href: href({ retired: undefined }) },

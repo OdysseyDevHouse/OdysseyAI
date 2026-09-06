@@ -61,12 +61,22 @@ export default function SerialsPanel({
   serials,
   productId,
   stockOnHand,
+  savedAsSerial,
 }: {
   serials: Serial[]
   /** Null on a product that has not been saved yet. */
   productId: number | null
   /** Compared against the in-stock count — the two must agree. */
   stockOnHand: number
+  /**
+   * Whether the product is serial-tracked IN THE DATABASE, not merely on
+   * screen. The tab appears the moment the type dropdown changes, but this
+   * panel commits on its own without going through Save — so on a product
+   * whose type was switched and not yet saved, `addSerials` re-reads the old
+   * type and refuses the batch. Knowing the saved type lets the screen say so
+   * before fifty numbers are typed, rather than after.
+   */
+  savedAsSerial: boolean
 }) {
   const empty: SerialActionState = { error: null, message: null }
   const [addState, addAction] = useActionState(addSerialsAction, empty)
@@ -79,6 +89,22 @@ export default function SerialsPanel({
         <EmptyState
           title="Save the product first"
           hint="Serial numbers attach to individual units of stock, so the product needs to exist before they can be captured. Save it, then come back to this tab."
+        />
+      </div>
+    )
+  }
+
+  /* The same refusal one step later: the product exists, but it is not
+     serial-tracked where it counts. Capture writes straight to the database
+     and is checked against the SAVED type, so without this the numbers get
+     typed, submitted and rejected — "Only a serial-tracked product carries
+     serial numbers" on a screen plainly showing a serial product. */
+  if (!savedAsSerial) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          title="Save the product as serial-tracked first"
+          hint="The type has been changed on screen but not saved yet. Serial numbers commit on their own rather than with the rest of the form, so they are checked against the saved product. Save it, then come back to this tab."
         />
       </div>
     )
@@ -149,29 +175,53 @@ export default function SerialsPanel({
       <p className="text-sm text-muted">
         Every individual unit of this product. Serials are captured here and marked sold
         automatically when the unit goes out, so the shop can answer “who bought this one” when it
-        comes back under warranty.
+        comes back under warranty. Capturing a number here also brings that unit into stock, so the
+        quantity on hand keeps step with the units listed below.
       </p>
 
-      {/* The second invariant made visible: in-stock serials must equal stock
-          on hand. Showing it here means the setup screen answers it rather than
-          leaving it for the reconciliation report to find later. */}
-      <div className="flex flex-wrap items-center gap-6 rounded-card border border-border p-4">
-        <div>
-          <span className="block text-xs text-muted">In stock</span>
-          <span className="numeric text-lg font-semibold text-ink">{inStock}</span>
+      {/* One figure, not two.
+
+          This showed "Serials captured" beside "Quantity on hand", which was
+          the second invariant made visible — in-stock serials must equal stock
+          on hand. It stopped earning its place once capture began moving the
+          quantity with it: from this screen the two now rise together, so a
+          reader saw two tiles that always matched and reasonably wondered what
+          the difference was meant to be. The count is on the tab badge and in
+          the rows below in any case.
+
+          The drift badge stays, because drift has not stopped being possible —
+          it just cannot come from HERE any more. Goods received on a purchase
+          receipt whose serials were never captured still land as quantity with
+          no units under it, and this screen is where someone would come to fix
+          that. */}
+      <div className="flex flex-col gap-3 rounded-card border border-border p-4">
+        <div className="flex flex-wrap items-center gap-6">
+          <div>
+            <span className="block text-xs text-muted">Quantity on hand</span>
+            <span className="numeric text-lg font-semibold text-ink">
+              {stockOnHand.toLocaleString('en-ZA')}
+            </span>
+          </div>
+          {Math.abs(drift) > 0.0005 && (
+            /* Warning, not danger: a receipt captured without its numbers is an
+               ordinary half-finished job, and red on routine work trains people
+               to ignore red. */
+            <Badge tone="warning">
+              {drift > 0
+                ? `${drift.toLocaleString('en-ZA')} unit(s) on hand still need a serial number`
+                : `${Math.abs(drift).toLocaleString('en-ZA')} more serial(s) captured than units on hand`}
+            </Badge>
+          )}
         </div>
-        <div>
-          <span className="block text-xs text-muted">Stock on hand</span>
-          <span className="numeric text-lg font-semibold text-ink">
-            {stockOnHand.toLocaleString('en-ZA')}
-          </span>
-        </div>
+
+        {/* Only when they disagree. Someone whose figures already match does not
+            need the mechanism explained to them. */}
         {Math.abs(drift) > 0.0005 && (
-          <Badge tone="danger">
+          <p className="text-xs text-muted">
             {drift > 0
-              ? `${drift.toLocaleString('en-ZA')} unit(s) on hand with no serial captured`
-              : `${Math.abs(drift).toLocaleString('en-ZA')} serial(s) more than stock on hand`}
-          </Badge>
+              ? 'These units were received without their serial numbers. Add them above.'
+              : 'More units are recorded here than the stock figure says you hold. Write off the ones you no longer have, or check what left without being marked sold.'}
+          </p>
         )}
       </div>
 
@@ -219,9 +269,14 @@ export default function SerialsPanel({
           </Button>
         </div>
 
+        {/* Says where the stock comes from, because "adding" units on a product
+            screen is the kind of thing an auditor asks about. Each capture
+            writes a stock adjustment under the user's own name, and it shows in
+            the movement history like any other. */}
         <p className="text-xs text-muted">
-          Capturing serials records which units are on the shelf. It does not move stock — receiving
-          goods does that, and the two figures are checked against each other above.
+          Each number captured here adds one unit to stock as an adjustment, recorded against your
+          name. Units arriving from a supplier should be received on a purchase receipt instead, so
+          the cost and the supplier are recorded with them.
         </p>
       </div>
 

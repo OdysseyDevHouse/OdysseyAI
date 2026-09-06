@@ -1,7 +1,7 @@
 import 'server-only'
 import type { RowDataPacket, PoolConnection } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
-import { round, toNum } from '../decimals'
+import { round, toNum, toQtyDecimals } from '../decimals'
 import { supplierQuery } from './customerDb'
 import { sanitiseHtml } from '../html'
 import { costLine, priceLine, type CostBasis, type CostLine, type PriceLine } from '../pricing'
@@ -78,6 +78,13 @@ export type Product = {
   changeDescription: boolean
   askPriceAtSale: boolean
   allowFractions: boolean
+  /**
+   * How many decimal places a quantity of this product may carry, when
+   * `allowFractions` is on. 2, 3 or 4 — see qtyDecimalsOf, which is the only
+   * thing that should read this, because it answers the fractions question
+   * first. Meaningless (and left alone) while fractions are off.
+   */
+  qtyDecimals: number
   chargePctSubtotal: boolean
   nonGpProduct: boolean
   maxDiscountPct: number
@@ -262,7 +269,7 @@ const SELECT_PRODUCT = `
          p.last_cost, p.average_cost,
          p.stock_on_hand, p.is_archived,
          p.visible_in_pos, p.change_description, p.ask_price_at_sale,
-         p.allow_fractions, p.charge_pct_subtotal, p.non_gp_product,
+         p.allow_fractions, p.qty_decimals, p.charge_pct_subtotal, p.non_gp_product,
          p.max_discount_pct, p.variable_type, p.price_calc,
          p.pack_weight, p.weight_description, p.pack_size, p.pack_description,
          p.length_mm, p.width_mm, p.height_mm, p.prep_time_minutes,
@@ -324,6 +331,7 @@ function mapProduct(
     changeDescription: !!r.change_description,
     askPriceAtSale: !!r.ask_price_at_sale,
     allowFractions: !!r.allow_fractions,
+    qtyDecimals: toQtyDecimals(r.qty_decimals),
     chargePctSubtotal: !!r.charge_pct_subtotal,
     nonGpProduct: !!r.non_gp_product,
     maxDiscountPct: toNum(r.max_discount_pct),
@@ -769,6 +777,8 @@ export type ProductInput = {
   changeDescription?: boolean
   askPriceAtSale?: boolean
   allowFractions?: boolean
+  /** 2, 3 or 4. Anything else — or absent — stores the default. */
+  qtyDecimals?: number
   chargePctSubtotal?: boolean
   nonGpProduct?: boolean
   maxDiscountPct?: number
@@ -860,6 +870,7 @@ const PROPERTY_COLUMNS = [
   'change_description',
   'ask_price_at_sale',
   'allow_fractions',
+  'qty_decimals',
   'charge_pct_subtotal',
   'non_gp_product',
   'max_discount_pct',
@@ -898,6 +909,10 @@ function propertyValues(input: ProductInput): unknown[] {
     input.changeDescription ? 1 : 0,
     input.askPriceAtSale ? 1 : 0,
     input.allowFractions ? 1 : 0,
+    /* Coerced rather than defaulted: an absent value means "the usual", and the
+       usual is the column default. Writing whatever arrived would let an import
+       store a 7 the till would then have to make sense of. */
+    toQtyDecimals(input.qtyDecimals),
     input.chargePctSubtotal ? 1 : 0,
     input.nonGpProduct ? 1 : 0,
     (input.maxDiscountPct ?? 0).toFixed(3),

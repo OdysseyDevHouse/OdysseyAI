@@ -67,18 +67,22 @@ async function main() {
   const vat = await siteQueryOne<any>(SITE, "SELECT id, rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1")
   const rate = toNum(vat?.rate, 15)
 
-  // A phone: serial-tracked, and stock arrives with the serials.
+  /* A phone: serial-tracked, and starting at ZERO.
+   *
+   * It used to open at 3 with a hand-written movement, because addSerials
+   * recorded units without moving stock and the fixture had to supply the
+   * quantity itself. addSerials now moves the stock it captures — see its own
+   * comment for why that is safe — so seeding here as well would count every
+   * phone twice, which is precisely what the assertions below started
+   * reporting (7 on hand where 3 was expected).
+   *
+   * Capturing the three serials IS the arrival now, which makes this fixture a
+   * closer model of the screen it stands for. */
   const p = await siteExecute(SITE,
     `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)
-     VALUES (?,?,'serial',3,4000,4000,?,1)`,
+     VALUES (?,?,'serial',0,4000,4000,?,1)`,
     [`SER${stamp}`, `Smartphone ${stamp}`, vat?.id ?? null])
   const phone = p.insertId
-  await siteExecute(SITE,
-    "INSERT INTO stock_movements (product_id, location_id, movement_type, qty_change, qty_after, unit_cost_excl, source, user_id, user_name) VALUES (?,(SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1),'opening',3,3,4000,'opening',1,'Serial Test')",
-    [phone])
-  await siteExecute(SITE,
-    'INSERT INTO product_location_stock (product_id, location_id, stock_on_hand) SELECT id, (SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1), stock_on_hand FROM products WHERE id=? ON DUPLICATE KEY UPDATE stock_on_hand=VALUES(stock_on_hand)',
-    [phone])
 
   const n = await siteExecute(SITE,
     `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)
@@ -113,9 +117,22 @@ async function main() {
     again.ok && again.added === 1 && again.skipped.length === 1,
     again.ok ? `added ${again.added}, skipped ${again.skipped.join()}` : again.error)
 
-  // D was extra, so remove it to keep stock and serials agreeing.
+  /* D was extra, so remove it to keep stock and serials agreeing.
+   *
+   * The quantity it brought in has to come off with it. Deleting the row alone
+   * was right when capture moved no stock; now it would leave a phone's worth
+   * of quantity behind with no unit under it — drift of exactly the kind
+   * reconcileSerials exists to catch, reported against the test rather than
+   * against a bug. */
   const extra = (await listSerials(SITE, { productId: phone })).items.find((s) => s.serial.endsWith('-D'))!
   await siteExecute(SITE, 'DELETE FROM product_serials WHERE id = ?', [extra.id])
+  await siteExecute(SITE, 'UPDATE products SET stock_on_hand = stock_on_hand - 1 WHERE id = ?', [phone])
+  await siteExecute(SITE,
+    'UPDATE product_location_stock SET stock_on_hand = stock_on_hand - 1 WHERE product_id = ? AND location_id = (SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1)',
+    [phone])
+  await siteExecute(SITE,
+    "DELETE FROM stock_movements WHERE product_id = ? AND source = 'serial_capture' ORDER BY id DESC LIMIT 1",
+    [phone])
 
   ok('*** serials match stock: 3 in, 3 on hand ***', (await reconcileSerials(SITE)).length === 0)
   ok('  three are available to sell', (await availableSerials(SITE, phone)).length === 3)

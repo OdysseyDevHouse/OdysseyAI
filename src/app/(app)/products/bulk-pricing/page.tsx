@@ -213,6 +213,7 @@ export default async function BulkPricingPage({
                 aria-label="Supplier"
                 options={supplierOptions}
                 value={supplierFilter ? String(supplierFilter) : ''}
+                icon={<Icons.Truck size={16} />}
               />
             )}
 

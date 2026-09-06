@@ -135,11 +135,15 @@ export default function BatchesClient({
           value={filter}
           onChange={(value) => go({ filter: value })}
           options={[
-            { value: 'open', label: 'On the shelf' },
-            { value: 'expiring', label: `Expiring (${days}d)` },
-            { value: 'expired', label: 'Expired' },
-            { value: 'untracked', label: 'Untracked' },
-            { value: 'all', label: 'All' },
+            { value: 'open', label: 'On the shelf', icon: <Icons.Boxes size={15} /> },
+            {
+              value: 'expiring',
+              label: `Expiring (${days}d)`,
+              icon: <Icons.Clock size={15} />,
+            },
+            { value: 'expired', label: 'Expired', icon: <Icons.Ban size={15} /> },
+            { value: 'untracked', label: 'Untracked', icon: <Icons.StatusWarning size={15} /> },
+            { value: 'all', label: 'All', icon: <Icons.LayoutGrid size={15} /> },
           ]}
         />
       </TableToolbar>

@@ -27,6 +27,7 @@ import { variantStanding } from '@/lib/site/productVariants'
 import { suggestedMasterCode } from '@/lib/site/masterCodes'
 import { referChain, isOnReferLadder } from '@/lib/site/referRange'
 import ProductForm, { SaveProductButton } from '../ProductForm'
+import { toProductTab } from '@/lib/productTabs'
 import ProductImages from '../ProductImages'
 import VariantsPanel from '../VariantsPanel'
 import PriceHistoryPanel from '../PriceHistoryPanel'
@@ -52,10 +53,12 @@ export default async function EditProductPage({
     renamed?: string
     /** A rename that this store applied but a sibling store could not follow. */
     warn?: string
+    /** The tab the last save was working in, so it reopens there. */
+    tab?: string
   }>
 }) {
   const { id } = await params
-  const { saved, from, error, renamed, warn } = await searchParams
+  const { saved, from, error, renamed, warn, tab } = await searchParams
 
   /* Where leaving this product goes. The list that sent us here when it had
      filters worth keeping, else the plain catalogue.
@@ -287,6 +290,9 @@ export default async function EditProductPage({
           /* Only when it differs from the default — a bare '/products' is what
              the action falls back to anyway, so carrying it is noise. */
           returnTo={backHref === '/products' ? null : backHref}
+          /* Validated here rather than trusted: it arrives in a typeable URL.
+             Anything unrecognised opens on General. */
+          initialTab={toProductTab(tab)}
           product={product}
           departments={departments}
           brands={brands}

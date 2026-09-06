@@ -9,6 +9,7 @@ import {
   SettingRow,
   Switch,
 } from '@/components/ui'
+import { QTY_DECIMAL_CHOICES } from '@/lib/decimals'
 import {
   PACK_DESCRIPTIONS,
   PRICE_CALCS,
@@ -32,6 +33,7 @@ export type ProductProperties = {
   changeDescription: boolean
   askPriceAtSale: boolean
   allowFractions: boolean
+  qtyDecimals: number
   chargePctSubtotal: boolean
   nonGpProduct: boolean
   maxDiscountPct: number
@@ -126,6 +128,45 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
             onChange={(v) => set('allowFractions', v)}
           />
         </SettingRow>
+
+        {/*
+          How many decimals, asked only once fractions are on.
+
+          A dependent question, so it is not a peer row: shown always it would
+          be a control that does nothing on the ~95% of products sold in whole
+          units, and a setting that does nothing is a setting that gets set
+          wrong. It appears indented under its switch, which is what says "this
+          belongs to the thing above" without a second explanatory sentence.
+
+          The hidden input is deliberately OUTSIDE the conditional. A product
+          whose fractions are switched off must still post its stored choice —
+          drop the field and the action reads "absent", which the writer would
+          turn back into the default, quietly resetting a 4 to a 3 because
+          someone toggled a different switch on the same screen.
+        */}
+        <input type="hidden" name="qtyDecimals" value={String(props.qtyDecimals)} />
+
+        {props.allowFractions && (
+          <SettingRow
+            nested
+            label="Decimal places"
+            description="How precise a quantity may be. A till entry with more decimals than this is rounded to it."
+            htmlFor="qtyDecimals"
+          >
+            <Select
+              id="qtyDecimals"
+              value={props.qtyDecimals}
+              onChange={(e) => set('qtyDecimals', Number(e.target.value))}
+              className="w-28"
+            >
+              {QTY_DECIMAL_CHOICES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </Select>
+          </SettingRow>
+        )}
 
         <SettingRow
           icon={<Icons.Percent size={16} />}

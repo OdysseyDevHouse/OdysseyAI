@@ -15,6 +15,7 @@ import {
   Input,
   Switch,
   TableToolbar,
+  ToolbarControl,
   useToast,
   TABLE,
   TABLE_HEAD_ROW,
@@ -242,12 +243,16 @@ export default function PaymentRunClient({ suppliers }: { suppliers: Supplier[] 
             className="w-56"
           />
         </Field>
-        <Switch
-          checked={overdueOnly}
-          onChange={setOverdueOnly}
-          label="Only overdue invoices"
-          hint="Turn off to pay early."
-        />
+        {/* Wrapped, so the switch sits on the same line as the inputs beside
+            it rather than up level with their labels. */}
+        <ToolbarControl>
+          <Switch
+            checked={overdueOnly}
+            onChange={setOverdueOnly}
+            label="Only overdue invoices"
+            hint="Turn off to pay early."
+          />
+        </ToolbarControl>
       </TableToolbar>
 
       {visible.length === 0 ? (

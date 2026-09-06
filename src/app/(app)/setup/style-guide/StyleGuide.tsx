@@ -13,6 +13,7 @@ import {
   BulkOptionsDialog,
   Button,
   Callout,
+  SetupText,
   DeepPanel,
   QuoteCard,
   Tooltip,
@@ -110,6 +111,7 @@ import {
   FormSkeleton,
   SettingRowsSkeleton,
   TableToolbar,
+  ToolbarControl,
   Tabs,
   Textarea,
   TextLink,
@@ -198,6 +200,7 @@ export default function StyleGuidePage() {
         <BadgeSection />
         <SectionTitleSection />
         <CalloutSection />
+        <SetupTextSection />
         <DeepPanelSection />
         <TooltipSection />
         <SettingsHintSection />
@@ -368,7 +371,7 @@ function ButtonsSection() {
 
 function FormSection() {
   const [posOnly, setPosOnly] = useState(true)
-  const [colour, setColour] = useState('#2f6fed')
+  const [colour, setColour] = useState('#1890cd')
   const [selected, setSelected] = useState(true)
   const [pricing, setPricing] = useState('cost')
   // A real value, not a placeholder: the point of the demo is that zero renders
@@ -1232,6 +1235,39 @@ function CalloutSection() {
   )
 }
 
+function SetupTextSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Setup links in a sentence"
+        description="<SetupText> — turns a screen named after “Setup →” into a link. Callout, EmptyState and Field already run their text through it, so a refusal returned by a server action becomes clickable without the action or the screen changing. Reach for it directly only where a message is rendered somewhere other than those three."
+      />
+      <CardBody className="flex flex-col gap-3">
+        {/* The real message from the product editor, rendered the real way —
+            a plain string handed to a Callout, linking itself. */}
+        <Callout tone="danger" title="Could not save">
+          This store has no VAT number, so a product cannot be put on a VAT rate. Add one
+          under Setup › My store information first.
+        </Callout>
+        <p className="text-sm text-muted">
+          <SetupText>
+            It links only a name that follows “Setup →” and that nav.ts actually
+            names, so Setup → Tills first links the screen and not the word after
+            it, and a sentence mentioning email or roles in passing stays plain.
+          </SetupText>
+        </p>
+        <p className="text-sm text-muted">
+          <SetupText>
+            A screen that has since been renamed or removed — Setup → Nonexistent
+            screen — degrades to the plain text it always was, rather than to a
+            link that 404s.
+          </SetupText>
+        </p>
+      </CardBody>
+    </Card>
+  )
+}
+
 function TooltipSection() {
   return (
     <Card>
@@ -1926,6 +1962,7 @@ function TabsSection() {
 function TableControlsSection() {
   const [view, setView] = useState('all')
   const [search, setSearch] = useState('')
+  const [owingOnly, setOwingOnly] = useState(true)
 
   return (
     <Card>
@@ -1935,7 +1972,7 @@ function TableControlsSection() {
       />
       <CardBody className="space-y-6">
         <div>
-          <Spec name="<SegmentedControl />" note="Pill group for switching views (the GRV All / Orders / GRVs filter). An optional `icon` per option gives each slice a shape — all of them or none, never some." />
+          <Spec name="<SegmentedControl />" note="Pill group for switching views (the GRV All / Orders / GRVs filter). An `icon` per option gives each slice a shape the eye finds without reading — all of them or none, never some. The first bar below is the counts-only form, kept as the reference for a bar whose numbers are the thing being read." />
           <div className="mt-2 flex flex-wrap gap-3">
             <SegmentedControl
               aria-label="GRV view"
@@ -1982,16 +2019,31 @@ function TableControlsSection() {
         <div>
           <Spec
             name="<LinkSegmentedControl />"
-            note="Same control, each segment a route — for list filters that live in the URL, so it works from a Server Component."
+            note="Same control, each segment a route — for list filters that live in the URL, so it works from a Server Component. Takes the same per-option `icon`."
           />
           <div className="mt-2">
             <LinkSegmentedControl
               aria-label="Status"
               value="all"
               options={[
-                { value: 'all', label: 'All', href: '/setup/style-guide' },
-                { value: 'finalised', label: 'Finalised', href: '/setup/style-guide' },
-                { value: 'saved', label: 'Saved', href: '/setup/style-guide' },
+                {
+                  value: 'all',
+                  label: 'All',
+                  icon: <Icons.LayoutGrid size={15} />,
+                  href: '/setup/style-guide',
+                },
+                {
+                  value: 'finalised',
+                  label: 'Finalised',
+                  icon: <Icons.StatusSuccess size={15} />,
+                  href: '/setup/style-guide',
+                },
+                {
+                  value: 'saved',
+                  label: 'Saved',
+                  icon: <Icons.Save size={15} />,
+                  href: '/setup/style-guide',
+                },
               ]}
             />
           </div>
@@ -2050,9 +2102,9 @@ function TableControlsSection() {
                 value={view}
                 onChange={setView}
                 options={[
-                  { value: 'all', label: 'All' },
-                  { value: 'orders', label: 'Orders' },
-                  { value: 'grvs', label: 'GRVs' },
+                  { value: 'all', label: 'All', icon: <Icons.LayoutGrid size={15} /> },
+                  { value: 'orders', label: 'Orders', icon: <Icons.ClipboardList size={15} /> },
+                  { value: 'grvs', label: 'GRVs', icon: <Icons.Truck size={15} /> },
                 ]}
               />
               <ToolbarSearch value={search} onChange={setSearch} />
@@ -2079,6 +2131,31 @@ function TableControlsSection() {
                 <ToolbarSearch value={search} onChange={setSearch} />
               </TableToolbar>
               <DataTable rows={PRODUCTS} columns={PRODUCT_COLUMNS} getRowKey={(p) => p.id} />
+            </Card>
+          </div>
+        </div>
+
+        <div>
+          <Spec
+            name="<ToolbarControl />"
+            note="Wrap a control that carries NO label of its own — a Switch, a search box — when it sits in a toolbar beside labelled Fields. The row is top-aligned so every label shares one baseline; without this the unlabelled control starts where the labels do and sits a line above its neighbours. A row with no labelled Field in it needs none of this."
+          />
+          <div className="mt-2">
+            <Card>
+              <TableToolbar inCard>
+                <Field label="Period" hint="A hint makes this field taller than its neighbours." className="w-52">
+                  <Select defaultValue="month">
+                    <option value="month">This month</option>
+                    <option value="year">This year</option>
+                  </Select>
+                </Field>
+                <Field label="Up to" className="w-44">
+                  <Input type="date" defaultValue="2026-09-06" />
+                </Field>
+                <ToolbarControl>
+                  <Switch checked={owingOnly} onChange={setOwingOnly} label="Only with a balance" />
+                </ToolbarControl>
+              </TableToolbar>
             </Card>
           </div>
         </div>
@@ -3090,6 +3167,7 @@ function SaleLineSection() {
       maxDiscountPct: 10,
       shelfPriceIncl: 125,
       allowFractions: false,
+      qtyDecimals: 3,
       instructions: [],
       note: '',
       ...over,
@@ -3317,7 +3395,10 @@ function InstructionsSection() {
       prompt: 'What Side-dish would you like with your meal?',
       isRequired: false,
       minChoices: 0,
-      maxChoices: 0,
+      // Capped on purpose, so the guide shows what a ceiling does: the fourth
+      // side dims and refuses, while a third helping of one already chosen does
+      // not — maxChoices counts distinct answers, not units.
+      maxChoices: 3,
       imageId: null,
       options: [
         option(10, 'Mashed potatoes', { priceAdjust: 55 }),
@@ -3341,7 +3422,7 @@ function InstructionsSection() {
     <Card>
       <CardHeader
         title="Instructions"
-        description="<InstructionsModal /> — the questions a product asks, answered before the line reaches the basket. Tapping an answer adds one MORE of it rather than toggling, so “mushroom sauce ×3” is three taps on the thing you are naming; the split minus at its right takes one back off. Every question is on one screen and the rail at the top only scrolls to them — paging would hide the order the cashier is building."
+        description="<InstructionsModal /> — the questions a product asks, answered before the line reaches the basket. Tapping an answer adds one MORE of it rather than toggling, so “mushroom sauce ×3” is three taps on the thing you are naming; the split minus at its right takes one back off. Every question is on one screen and the rail at the top only scrolls to them — paging would hide the order the cashier is building. A question with a ceiling (“Choose up to 3”) enforces it ON THE TAP: the answers it has no room for dim, and tapping one says why, rather than letting the order through and refusing it at “Add to sale”."
       />
       <Row>
         <Spec

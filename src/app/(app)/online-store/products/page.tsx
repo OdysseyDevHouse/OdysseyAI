@@ -158,9 +158,24 @@ export default async function OnlineProductsPage({
             aria-label="Filter by visibility"
             value={only ?? 'all'}
             options={[
-              { value: 'all', label: 'All', href: filterHref({ show: null }) },
-              { value: 'shown', label: 'Ticked', href: filterHref({ show: 'shown' }) },
-              { value: 'hidden', label: 'Not ticked', href: filterHref({ show: 'hidden' }) },
+              {
+                value: 'all',
+                label: 'All',
+                icon: <Icons.List size={15} />,
+                href: filterHref({ show: null }),
+              },
+              {
+                value: 'shown',
+                label: 'Ticked',
+                icon: <Icons.Eye size={15} />,
+                href: filterHref({ show: 'shown' }),
+              },
+              {
+                value: 'hidden',
+                label: 'Not ticked',
+                icon: <Icons.EyeOff size={15} />,
+                href: filterHref({ show: 'hidden' }),
+              },
             ]}
           />
 

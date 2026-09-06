@@ -125,8 +125,8 @@ export default function PreviewPanel({
                 value={view}
                 onChange={(v) => setView(v as typeof view)}
                 options={[
-                  { value: 'table', label: 'Table' },
-                  { value: 'chart', label: 'Chart' },
+                  { value: 'table', label: 'Table', icon: <Icons.TableIcon size={15} /> },
+                  { value: 'chart', label: 'Chart', icon: <Icons.BarChart size={15} /> },
                 ]}
               />
             )}

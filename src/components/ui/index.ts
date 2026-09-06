@@ -110,6 +110,10 @@ export {
 } from './GeneratedPicturePicker'
 export { Badge, type BadgeTone } from './Badge'
 export { Callout, type CalloutTone } from './Callout'
+/* Linkifies "…under Setup → Tills" inside a plain-string message. Callout and
+   EmptyState already run their text through it, so reach for it directly only
+   where a refusal is rendered somewhere other than those two. */
+export { SetupText } from './SetupText'
 export { Tooltip } from './Tooltip'
 export { SettingsHint } from './SettingsHint'
 export {
@@ -145,9 +149,10 @@ export { TextLink, TextLinkButton } from './TextLink'
 export { CopyLink } from './CopyLink'
 export { FieldGroup } from './FieldGroup'
 
-export { DataTable, type Column, type SortState, type SortDirection } from './DataTable'
+export { DataTable, SortGlyph, type Column, type SortState, type SortDirection } from './DataTable'
 export {
   TableToolbar,
+  ToolbarControl,
   SegmentedControl,
   LinkSegmentedControl,
   LinkSelect,

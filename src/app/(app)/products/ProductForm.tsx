@@ -21,7 +21,7 @@ import SerialsPanel from '@/components/SerialsPanel'
 import ProductSuppliersPanel from '@/components/ProductSuppliersPanel'
 import ProductKitchenPanel from '@/components/ProductKitchenPanel'
 import ProductReportingPanel, { type ProductReportChoice } from '@/components/ProductReportingPanel'
-import { formatMoney } from '@/lib/decimals'
+import { formatMoney, DEFAULT_QTY_DECIMALS } from '@/lib/decimals'
 import type { InstructionGroup } from '@/lib/site/instructions'
 import type { KitchenPrinter } from '@/lib/site/kitchenPrinters'
 import type { RecipeLine } from '@/lib/site/productComposition'
@@ -61,23 +61,18 @@ import {
   LineChart,
 } from '@/components/ui/icons'
 import { DEFAULT_PRODUCT_TYPE, type ProductTypeId } from '@/lib/productTypes'
+import { DEFAULT_PRODUCT_TAB, type ProductTab } from '@/lib/productTabs'
 import { saveProductAction, type ProductFormState } from './actions'
 import type { Product } from '@/lib/site/products'
 import type { Brand, VatRate, PriceStructure } from '@/lib/site/lookups'
 import type { Department } from '@/lib/site/departments'
 import type { CostBasis } from '@/lib/pricing'
 
-type TabValue =
-  | 'general'
-  | 'properties'
-  | 'instructions'
-  | 'kitchen'
-  | 'suppliers'
-  | 'recipe'
-  | 'refer'
-  | 'serials'
-  | 'linked'
-  | 'reporting'
+/* The tab ids live in lib/productTabs.ts because the server page needs them
+   too — it reads the `?tab=` this form's save redirect wrote. Exporting the
+   reader from here instead typechecks and then fails at request time: a
+   'use client' module's exports are client references. */
+type TabValue = ProductTab
 
 /** Which tab configures a given product type, for the setup buttons. */
 const SETUP_TAB: Partial<Record<ProductTypeId, TabValue>> = {
@@ -148,6 +143,7 @@ export default function ProductForm({
   generalExtras = null,
   extraBarcodes = [],
   returnTo = null,
+  initialTab = DEFAULT_PRODUCT_TAB,
 }: {
   product: Product | null
   /**
@@ -157,6 +153,13 @@ export default function ProductForm({
    * in which case saving falls back to the product itself, exactly as before.
    */
   returnTo?: string | null
+  /**
+   * Which tab to open on — what the last save was working in, off `?tab=`.
+   *
+   * Defaults to General, so a first visit and any caller predating this behave
+   * exactly as before.
+   */
+  initialTab?: TabValue
   /**
    * Panels that belong to the General tab but save on their own — variants and
    * the photo gallery.
@@ -293,7 +296,13 @@ export default function ProductForm({
   // The tab bar only appears once this store is linked to another — a
   // standalone store has a single tab's worth of content and no second view.
   const isLinked = linkedStores.length > 1
-  const [tab, setTab] = useState<TabValue>('general')
+  /* Seeded from the URL so a save comes back to the tab you were working in.
+     Saving redirects, which remounts this component — so a plain 'general'
+     here threw away the tab on every save, and correcting a serial or a
+     supplier meant navigating back to it each time. The action carries the
+     tab out through the redirect (see the hidden input below) and the page
+     hands it back in here. */
+  const [tab, setTab] = useState<TabValue>(initialTab)
 
   // Tracked live so the Recipe, Refer and Serials tabs appear with the type
   // they belong to, rather than only after a save-and-reload.
@@ -425,6 +434,13 @@ export default function ProductForm({
             Carried through the form because the redirect happens in the server
             action, which sees only what the FormData brings it. */}
         {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
+
+        {/* The tab being worked in, so saving comes back to it rather than to
+            General. Same mechanism as returnTo above and for the same reason:
+            the redirect happens in the server action, which sees only what the
+            FormData brings it. Not a ref — this is state, so the value
+            submitted is always the tab currently on screen. */}
+        <input type="hidden" name="tab" value={tab} />
 
         {/* Archiving moved to the header's Actions menu, but the save path still
             reads this field — without it every save would send nothing and
@@ -850,6 +866,7 @@ export default function ProductForm({
               changeDescription: product?.changeDescription ?? false,
               askPriceAtSale: product?.askPriceAtSale ?? false,
               allowFractions: product?.allowFractions ?? false,
+              qtyDecimals: product?.qtyDecimals ?? DEFAULT_QTY_DECIMALS,
               chargePctSubtotal: product?.chargePctSubtotal ?? false,
               nonGpProduct: product?.nonGpProduct ?? false,
               maxDiscountPct: product?.maxDiscountPct ?? 0,
@@ -1028,6 +1045,10 @@ export default function ProductForm({
           // nothing until the product was saved.
           onCreated={() => setReferRefresh((n) => n + 1)}
           vatPercent={sellingVatPercent}
+          // Where the wizard's one Selling column lands — the same structure
+          // the base rung's price below is read from, so the range is priced
+          // in the structure the person was just looking at.
+          priceStructureId={structures.find((s) => s.isDefault)?.id ?? null}
           autoCode={autoCode}
           // Already linked? The range joins that ladder's method rather than
           // picking one — see setReferGroupMethod.
@@ -1093,6 +1114,11 @@ export default function ProductForm({
               serials={serials}
               productId={product?.id ?? null}
               stockOnHand={product?.stockOnHand ?? 0}
+              /* The SAVED type, not `productType` — that one is the live
+                 dropdown, and it is what put this tab on screen in the first
+                 place. Capture bypasses Save, so the panel has to know what the
+                 database still thinks this product is. */
+              savedAsSerial={product?.productType === 'serial'}
             />
           </Card>
         </div>

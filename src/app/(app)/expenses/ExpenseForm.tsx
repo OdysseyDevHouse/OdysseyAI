@@ -264,8 +264,8 @@ export function ExpenseForm({
           <SegmentedControl
             aria-label="Kind of expense"
             options={[
-              { value: 'direct', label: 'Paid now' },
-              { value: 'on_account', label: 'Bill to pay later' },
+              { value: 'direct', label: 'Paid now', icon: <Icons.Banknote size={15} /> },
+              { value: 'on_account', label: 'Bill to pay later', icon: <Icons.Clock size={15} /> },
             ]}
             value={paymentType}
             onChange={setPaymentType}

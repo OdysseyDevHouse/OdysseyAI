@@ -4,6 +4,7 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '@/lib/sit
 import { customerDbPrefix } from './customerDb'
 import { toNum } from '@/lib/decimals'
 import { mainLocationId } from './stockLocations'
+import { recordMovement } from './stockMovements'
 import type { Actor } from './activityLog'
 
 /**
@@ -215,16 +216,31 @@ export async function availableSerials(
 export type AddResult = { ok: true; added: number; skipped: string[] } | { ok: false; error: string }
 
 /**
- * Takes serials into stock.
+ * Takes serials into stock — the units AND the quantity.
  *
- * Does NOT move stock. Receiving goods is what moves stock — a GRV, an opening
- * balance, an adjustment — and this records which individual units those goods
- * were. Moving stock here as well would double it, and `reconcileSerials` is
- * what catches the mismatch if the two ever get out of step.
+ * Moves stock, as an 'adjustment', for every serial it actually captures. It
+ * did not always: this used to record the units and leave the quantity alone,
+ * on the reasoning that receiving goods is what moves stock and doing it here
+ * as well would double it.
+ *
+ * That reasoning was wrong about this path. A GRV never reaches this function —
+ * it calls `receiveSerialsTx` and moves its own quantity alongside it (see
+ * purchasePosting.ts) — so there is nothing here to double. Meanwhile the
+ * screen that DOES call this had no way to make the two figures agree: the
+ * quick Adjust button is hidden for serial products, and the adjustment screen
+ * only ever writes serials off. Capturing three serials left "3 captured, 0 on
+ * hand" permanently, which is a broken record rather than a careful one.
+ *
+ * What this path means is "these units are on my shelf and the system does not
+ * know about them yet" — a stock-take correction, which is what 'adjustment'
+ * is. `reconcileSerials` still exists to catch drift from anywhere else.
  *
  * Duplicates are skipped and named rather than failing the batch: someone
  * pasting fifty serials off a delivery note should not lose all fifty because
- * one was already captured.
+ * one was already captured. A skipped duplicate moves no stock — it is already
+ * on the shelf, and moving it again would invent a unit. Contrast
+ * `receiveSerialsTx`, which refuses duplicates outright, because a GRV is an
+ * assertion that these exact units arrived.
  */
 export async function addSerials(
   siteId: number,
@@ -273,6 +289,37 @@ export async function addSerials(
 
     await siteTransaction(siteId, async (tx) => {
       await insertSerialsTx(tx, actor, productId, fresh, { ...options, locationId })
+
+      /* And the quantity, in the SAME transaction.
+       *
+       * This used to record the units and leave stock alone, which left the
+       * two figures disagreeing with no way to reconcile them from this
+       * screen: the quick Adjust button is hidden for serial products, and the
+       * adjustment screen only ever writes serials OFF. Capturing three
+       * serials produced "3 captured, 0 on hand" and a dead end.
+       *
+       * It cannot double-count a receipt. A GRV does not come through here —
+       * it calls receiveSerialsTx and moves its own quantity (see
+       * purchasePosting.ts) — and this is the only production caller of
+       * addSerials. What this path means is "these units are on my shelf and
+       * the system does not know about them yet", which is a stock-take
+       * correction, and 'adjustment' is what that is called.
+       *
+       * Only `fresh` units count: a duplicate was skipped above and is already
+       * on the shelf, so moving stock for it would invent a unit.
+       */
+      await recordMovement(tx, actor, {
+        productId,
+        movementType: 'adjustment',
+        qtyChange: fresh.length,
+        locationId,
+        unitCostExcl: options.costExcl,
+        source: 'serial_capture',
+        note:
+          fresh.length === 1
+            ? `Serial number captured on the product screen: ${fresh[0]}`
+            : `${fresh.length} serial numbers captured on the product screen`,
+      })
     })
   }
 

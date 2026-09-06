@@ -108,6 +108,7 @@ export default async function BoardPage({
             <div className="flex items-center gap-2">
               <LinkSelect
                 aria-label="Priority"
+                icon={<Icons.StatusWarning size={16} />}
                 value={priority}
                 options={[
                   { value: '', label: 'Any priority', href: href({ priority: undefined }) },
@@ -121,8 +122,18 @@ export default async function BoardPage({
               {!restricted && (
                 <LinkSegmentedControl
                   options={[
-                    { value: 'all', label: 'Everyone', href: href({ mine: undefined }) },
-                    { value: 'mine', label: 'Mine', href: href({ mine: '1' }) },
+                    {
+                      value: 'all',
+                      label: 'Everyone',
+                      icon: <Icons.Users size={15} />,
+                      href: href({ mine: undefined }),
+                    },
+                    {
+                      value: 'mine',
+                      label: 'Mine',
+                      icon: <Icons.User size={15} />,
+                      href: href({ mine: '1' }),
+                    },
                   ]}
                   value={mine ? 'mine' : 'all'}
                   aria-label="Whose jobs to show"
@@ -133,9 +144,24 @@ export default async function BoardPage({
                   the filters rather than among them. */}
               <LinkSegmentedControl
                 options={[
-                  { value: 'none', label: 'No lanes', href: href({ group: undefined }) },
-                  { value: 'owner', label: 'By person', href: href({ group: 'owner' }) },
-                  { value: 'priority', label: 'By priority', href: href({ group: 'priority' }) },
+                  {
+                    value: 'none',
+                    label: 'No lanes',
+                    icon: <Icons.LayoutGrid size={15} />,
+                    href: href({ group: undefined }),
+                  },
+                  {
+                    value: 'owner',
+                    label: 'By person',
+                    icon: <Icons.Users size={15} />,
+                    href: href({ group: 'owner' }),
+                  },
+                  {
+                    value: 'priority',
+                    label: 'By priority',
+                    icon: <Icons.StatusWarning size={15} />,
+                    href: href({ group: 'priority' }),
+                  },
                 ]}
                 value={grouping}
                 aria-label="How to group the board"
@@ -148,6 +174,10 @@ export default async function BoardPage({
               options={boards.map((b) => ({
                 value: b.slug,
                 label: b.name,
+                /* Boards are user-named, so there is no per-board meaning to
+                   draw on — one board glyph on every segment keeps the bar
+                   even, which is rule 3's point. */
+                icon: <Icons.LayoutDashboard size={15} />,
                 href: `/jobs/board/${b.slug}`,
               }))}
               value={slug}

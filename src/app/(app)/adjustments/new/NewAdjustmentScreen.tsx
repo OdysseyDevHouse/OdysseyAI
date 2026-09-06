@@ -374,8 +374,12 @@ export default function NewAdjustmentScreen({
                   value={entryMode}
                   onChange={setEntryMode}
                   options={[
-                    { value: 'delta', label: 'Gained or lost' },
-                    { value: 'count', label: 'New count' },
+                    {
+                      value: 'delta',
+                      label: 'Gained or lost',
+                      icon: <Icons.SortIcon size={15} />,
+                    },
+                    { value: 'count', label: 'New count', icon: <Icons.ClipboardList size={15} /> },
                   ]}
                 />
               }

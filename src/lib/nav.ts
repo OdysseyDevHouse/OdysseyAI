@@ -1408,3 +1408,117 @@ export function filterNav(term: string, sections: NavSection[] = NAV): NavSectio
     return items.length ? [{ ...section, items }] : []
   })
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Pointing at a settings screen from inside a sentence
+   ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Names a message may call a screen, beyond the one the menu shows.
+ *
+ * A refusal is written by whoever wrote the rule, in the words that fit the
+ * sentence — "turn it on under Setup → Tenders" reads better than the screen's
+ * full "Tender types", and both mean the same screen. Rather than rewrite ~150
+ * sentences to say the canonical name (and lose the ones that read better),
+ * the resolver below accepts these too.
+ *
+ * An alias is only ever an ADDITIONAL name. The canonical label from
+ * SUBPAGE_LABELS always resolves without needing an entry here, so a renamed
+ * screen keeps working; an alias that falls out of use is dead weight, not a
+ * dead link.
+ */
+const TRAIL_ALIASES: Record<string, SubpageHref> = {
+  /* The menu says "Tender types"; half the refusals say "Tenders", and one
+     says "Payment methods" — the words a shop uses for the same screen. */
+  tenders: '/setup/tender-types',
+  'payment methods': '/setup/tender-types',
+  /* "Tills" is the label, but the unlock screen says "Terminals" — the word on
+     the hardware rather than the word in the menu. */
+  terminals: '/setup/terminals',
+  tills: '/setup/terminals',
+  /* Roles and users are one screen wearing two names, because the question
+     "who may do this" is asked from both directions. */
+  roles: '/setup/roles',
+  permissions: '/setup/roles',
+  'roles & permissions': '/setup/roles',
+  'users & roles': '/setup/users',
+  users: '/setup/users',
+  /* The screen sets tax rates AND price structures, so it is named for both.
+     A message about either half says only its own half. */
+  pricing: '/setup/pricing',
+  vat: '/setup/pricing',
+  /* Named "Side menu customization" since the sections became switchable, but
+     every message about a switched-off area still says "Menu & modules". */
+  'menu & modules': '/setup/modules',
+  modules: '/setup/modules',
+  /* One screen, two channels, and messages name whichever one failed. */
+  sms: '/setup/sms',
+  'text messages': '/setup/sms',
+  /* The stock-adjustment reasons list, said long-hand where the sentence is
+     about an adjustment rather than about the screen. */
+  'adjustment reasons': '/setup/reasons',
+}
+
+/** Every name that resolves to a screen, lower-cased. Built once. */
+const TRAIL_TARGETS: Map<string, string> = new Map([
+  ...Object.entries(SUBPAGE_LABELS).map(
+    ([href, label]) => [label.toLowerCase(), href] as [string, string],
+  ),
+  ...Object.entries(TRAIL_ALIASES).map(([alias, href]) => [alias, href] as [string, string]),
+])
+
+/**
+ * The screen a written trail points at — `resolveTrail('My store information')`.
+ *
+ * Case-insensitive, and tolerant of the punctuation a sentence brings with it
+ * ("Tills," / "Roles."). Returns null for anything it does not recognise,
+ * which is the important half: a message naming a screen that no longer exists
+ * renders as the plain text it always was, rather than as a link to a 404.
+ */
+export function resolveTrail(name: string): { href: string; label: string } | null {
+  const key = name
+    .trim()
+    .replace(/[.,;:!?]+$/, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+  const href = TRAIL_TARGETS.get(key)
+  if (!href) return null
+  return { href, label: (SUBPAGE_LABELS as Record<string, string>)[href] ?? name.trim() }
+}
+
+/**
+ * The longest screen name this text mentions after a hub word, as the slice of
+ * the ORIGINAL string that named it — so the renderer can link exactly the
+ * words the author wrote and leave the rest of the sentence alone.
+ *
+ * Longest-first is what stops "Setup → Menu & modules, as the shop bought it"
+ * linking only "Menu" and leaving "& modules" stranded, and equally what stops
+ * "Setup → Tills first" swallowing the word "first" into the link.
+ */
+export function findTrail(
+  text: string,
+): { start: number; end: number; href: string; label: string } | null {
+  /* Only after a hub word and its separator: "Setup → X". Without that anchor
+     a message that merely uses the word "Email" or "Reasons" in a sentence
+     would sprout a link in the middle of ordinary prose. */
+  const anchor = /\b(?:Setup|Settings)\s*(?:›|→|>|&rsaquo;)\s*/g
+  let hit: RegExpExecArray | null
+  while ((hit = anchor.exec(text))) {
+    const from = hit.index + hit[0].length
+    /* The candidate name runs to the end of the clause. Everything after that
+       belongs to the sentence, not to the screen. */
+    const clause = text.slice(from).split(/[,.;:!?)]|\s+—\s+|\n/)[0] ?? ''
+    const words = clause.split(/\s+/).filter(Boolean)
+    for (let take = words.length; take > 0; take--) {
+      const candidate = words.slice(0, take).join(' ')
+      const target = resolveTrail(candidate)
+      if (target) {
+        /* Measured against the original text so the offsets survive the
+           whitespace collapsing resolveTrail does. */
+        const end = from + clause.indexOf(candidate) + candidate.length
+        return { start: hit.index, end, ...target }
+      }
+    }
+  }
+  return null
+}

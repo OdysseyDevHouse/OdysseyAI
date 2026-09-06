@@ -187,8 +187,9 @@ export function DataTable<T>({
   }
 
   return (
-    /* The gutter is on this static frame, not on the scroll box inside it, so
-       it never scrolls under the sticky header — see TABLE_FRAME. */
+    /* The frame is static and the box inside it scrolls, so any padding here
+       never scrolls under the sticky header — see TABLE_FRAME, which carries no
+       gutter so the table sits flush to the Card that holds it. */
     <div className={TABLE_FRAME}>
       <div ref={scrollRef} className={TABLE_SCROLLER} style={{ maxHeight: fitCap }}>
         <table className={TABLE}>
@@ -307,7 +308,15 @@ export function DataTable<T>({
   )
 }
 
-function SortGlyph({ direction }: { direction?: SortDirection }) {
+/**
+ * The three-state sort arrow.
+ *
+ * Exported so the hand-built tables that wear this table's skin — the ones
+ * whose cells hold cross-computing inputs DataTable cannot express, like
+ * BulkPricingGrid — show the SAME glyph in the same three states rather than
+ * inventing a second one that drifts from it.
+ */
+export function SortGlyph({ direction }: { direction?: SortDirection }) {
   if (direction === 'asc') return <SortAsc size={13} />
   if (direction === 'desc') return <SortDesc size={13} />
   return <SortNeutral size={13} className="text-faint" />

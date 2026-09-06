@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { Search } from './icons'
 import { Select } from './Field'
-import { CONTROL, CONTROL_H } from './styles'
+import { CONTROL, CONTROL_H, FIELD_CONTROL_OFFSET } from './styles'
 
 /**
  * The bar that sits above a list: filters and search on the left, actions on
@@ -91,8 +91,29 @@ export function TableToolbar({
             When a list carries enough filters to fill the row, the actions wrap
             to a line of their own — and `ml-auto` keeps them against the RIGHT
             edge when they do. Without it they landed bottom-left, under the
-            filters, where a table control reads as one more filter. */}
-        <div className="flex min-w-0 flex-wrap items-center gap-2">{children}</div>
+            filters, where a table control reads as one more filter.
+
+            ── WHY THE LEFT GROUP IS TOP-ALIGNED ──────────────────────────
+
+            `items-center` centres each control as a WHOLE BLOCK, and the blocks
+            in a filter row are rarely the same height: a Field carrying a
+            two-line hint is taller than one with no hint, which is taller again
+            than a bare Switch. Centring them lined up their midpoints, so the
+            labels sat at three different heights and the inputs at four — every
+            control visibly out of step with its neighbours (on the customer
+            Statements filters, measured at 253 / 272 / 253 for the labels
+            alone, and 279 / 298 / 279 / 289 for the controls).
+
+            Top-aligning puts every LABEL on one baseline, which puts every
+            control on one line beneath it — the line the eye actually reads the
+            row by. `items-end` is the wrong cure, for the reason
+            FIELD_CONTROL_OFFSET's note gives: a hint hangs BELOW its control,
+            so bottom-alignment lifts the hinted input above its neighbours.
+
+            A control with no label of its own then needs the label row's height
+            added back, or it floats up where the labels are — that is what
+            ToolbarControl below is for. */}
+        <div className="flex min-w-0 flex-wrap items-start gap-2">{children}</div>
         {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
       </div>
       {filters}
@@ -105,6 +126,32 @@ export function TableToolbar({
  * with the column headings underneath them.
  */
 const TOOLBAR_IN_CARD = 'border-b border-border px-4 py-3.5'
+
+/**
+ * Drops an UNLABELLED control into line with the labelled Fields beside it.
+ *
+ * The toolbar's left group is top-aligned (see the note above), which is what
+ * gives a row of `Field`s one label baseline and one control line. A control
+ * that carries no label of its own — a Switch, a search box, a segmented bar —
+ * has nothing occupying that label row, so it starts where the LABELS start and
+ * sits a line above every input next to it.
+ *
+ * Wrapping it here adds exactly the label row's height back. Only needed in a
+ * toolbar that MIXES labelled and unlabelled controls: a row that is all search
+ * and segments has no baseline to join and wants no offset.
+ *
+ * `FIELD_CONTROL_OFFSET` rather than a number, so restyling the label keeps
+ * every toolbar aligned instead of leaving each screen its own pixel off.
+ */
+export function ToolbarControl({
+  children,
+  className = '',
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return <div className={`${FIELD_CONTROL_OFFSET} ${className}`}>{children}</div>
+}
 
 export type SegmentedOption<T extends string> = {
   value: T

@@ -492,14 +492,36 @@ export default function CountSheet({
               value={filter}
               onChange={(v) => setFilter(v as Filter)}
               options={[
-                { value: 'all', label: `All ${lines.length}` },
-                { value: 'uncounted', label: `To count ${lines.length - countedCount}` },
+                {
+                  value: 'all',
+                  label: `All ${lines.length}`,
+                  icon: <Icons.LayoutGrid size={15} />,
+                },
+                {
+                  value: 'uncounted',
+                  label: `To count ${lines.length - countedCount}`,
+                  icon: <Icons.ClipboardList size={15} />,
+                },
                 /* No variance filter on a blind sheet. It would answer the exact
                    question blindness exists to withhold — "which of these did I
                    get wrong" is the expected figure, one step removed. */
-                ...(blind ? [] : [{ value: 'variances', label: 'Variances' }]),
+                ...(blind
+                  ? []
+                  : [
+                      {
+                        value: 'variances',
+                        label: 'Variances',
+                        icon: <Icons.StatusWarning size={15} />,
+                      },
+                    ]),
                 ...(unsignedCount > 0
-                  ? [{ value: 'signoff', label: `To sign off ${unsignedCount}` }]
+                  ? [
+                      {
+                        value: 'signoff',
+                        label: `To sign off ${unsignedCount}`,
+                        icon: <Icons.Check size={15} />,
+                      },
+                    ]
                   : []),
               ]}
             />

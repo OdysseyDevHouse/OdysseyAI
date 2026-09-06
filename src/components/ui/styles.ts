@@ -251,8 +251,8 @@ export const TABLE_HEAD_ROW = 'border-y border-border bg-surface-2'
  * a table differs on every screen. `useFitViewport` measures it. A table that
  * fits gets no cap at all and looks exactly as it always did.
  *
- * NO PADDING HERE, deliberately. The gutter that keeps a table off the card's
- * edge lives on `TABLE_FRAME` below, which does not scroll.
+ * NO PADDING HERE, deliberately. Any gutter a table needs lives on
+ * `TABLE_FRAME` below, which does not scroll.
  *
  * Padding on a scrolling box scrolls WITH its content, and that breaks a sticky
  * header two ways at once: at `top-0` the header parks one gutter down with
@@ -260,22 +260,70 @@ export const TABLE_HEAD_ROW = 'border-y border-border bg-surface-2'
  * fix that leaves a transparent strip above the header — the header's own
  * background only covers the header — so the rows show through the gap instead.
  * Neither is fixable from inside the scroller; the gutter has to be outside it.
+ *
+ * ── AND NO RESERVED SCROLLBAR GUTTER EITHER ───────────────────────────────
+ *
+ * `scrollbar-gutter: stable` was tried here and removed. It does what it says
+ * — the vertical bar went from reserving 0px to 15px, measured — but it
+ * reserves that width on EVERY vertically scrolling table, which is most of
+ * them. The customer and supplier lists stopped being flush on the right (a
+ * 16px gap where there had been 1px) to buy clearance for a bar that is only
+ * drawn while someone is actually scrolling. That trades the flush edge this
+ * token exists to give away for a gutter that is empty nearly all the time.
+ *
+ * The overlay bar does cover the last column while it is visible, on a wide
+ * DataTable as much as a narrow one — accepted deliberately, for the reason
+ * TABLE_FRAME gives. The bar is drawn only while someone is scrolling and
+ * fades when they stop.
  */
 export const TABLE_SCROLLER = 'overflow-auto'
 
 /**
- * The static frame a table's scroll box sits in — this is where the gutter is.
+ * The static frame a table's scroll box sits in.
  *
- * Padding here rather than on TABLE_SCROLLER means it never scrolls, so the
- * sticky header can use a plain `top-0` and sit flush against the top of the
- * box with nothing above it to show through.
+ * ── WHY THERE IS NO GUTTER HERE ───────────────────────────────────────────
  *
- * It also keeps the gutter out of the scroll box's own height, which matters
- * more than it sounds: the box is capped to the room left below it, so 24px of
- * vertical padding INSIDE it used to push the page itself into overflow and
- * give a screen two scrollbars — an outer one scrolling nothing but padding.
+ * A DataTable is nearly always the last thing in a Card, directly under a
+ * toolbar. A gutter around it inset the table from the card it fills: the
+ * header band stopped short of both edges, leaving a strip of card showing
+ * beside a heading row that is meant to read as a band across the whole width,
+ * and the last row's rule floated above the card's own bottom edge instead of
+ * meeting it. The cells carry their own `px-4` (TABLE_TH / TABLE_TD), so the
+ * TEXT still stands off the edge — the gutter was only moving the borders.
+ *
+ * The frame itself stays, even at p-0, and the split between it and
+ * TABLE_SCROLLER still matters for the two reasons it always did:
+ *
+ *   · Padding on the frame never scrolls, so a sticky header can use a plain
+ *     `top-0` and sit flush against the top of the box with nothing above it
+ *     to show through.
+ *   · It keeps any padding out of the scroll box's own height. The box is
+ *     capped to the room left below it, so vertical padding INSIDE it used to
+ *     push the page into overflow and give a screen two scrollbars — an outer
+ *     one scrolling nothing but padding.
+ *
+ * Both are properties of WHERE the padding goes, not of it being non-zero, so
+ * a caller that needs a gutter can still pass one to TableScroller's
+ * `className` and get the same behaviour.
+ *
+ * ── THE COST, ACCEPTED DELIBERATELY ───────────────────────────────────────
+ *
+ * EVERY DataTable is flush, including the wide ones that scroll sideways. The
+ * scrollbars are overlays — measured at 0px reserved width on this app's own
+ * list screens — so while someone drags a wide list sideways the bar is drawn
+ * over the last column. The products list is the one to look at.
+ *
+ * This was tried both ways. Restoring the gutter only on tables that overflow
+ * (measured per table, at render) does keep the bar clear, but it makes the
+ * geometry differ between list screens for a reason nobody looking at them can
+ * see: /customers sat flush while /products did not. One consistent edge, with
+ * a scrollbar that appears only while it is being used, beat two geometries.
+ *
+ * This covers EVERY table in the app, including the two grids built by hand
+ * outside DataTable: BulkPricingGrid and TableScroller use this same frame, so
+ * a report and a price grid meet their card edge exactly as a list does.
  */
-export const TABLE_FRAME = 'p-3'
+export const TABLE_FRAME = 'p-0'
 
 /**
  * The header row of a scrolling table. Sticks to the top of TABLE_SCROLLER so

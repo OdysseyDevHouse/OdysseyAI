@@ -206,11 +206,25 @@ export default function ScheduleList({ schedules }: { schedules: Schedule[] }) {
           <SegmentedControl
             value={filter}
             onChange={(v) => setFilter(v as Filter)}
+            /* The glyphs walk a price change's life: waiting on its clock, done,
+               or called off. "All" takes the grid, as everywhere else. */
             options={[
-              { value: 'all', label: `All (${counts.all})` },
-              { value: 'open', label: `Not yet applied (${counts.open})` },
-              { value: 'applied', label: `Applied (${counts.applied})` },
-              { value: 'cancelled', label: `Cancelled (${counts.cancelled})` },
+              { value: 'all', label: `All (${counts.all})`, icon: <Icons.LayoutGrid size={15} /> },
+              {
+                value: 'open',
+                label: `Not yet applied (${counts.open})`,
+                icon: <Icons.Clock size={15} />,
+              },
+              {
+                value: 'applied',
+                label: `Applied (${counts.applied})`,
+                icon: <Icons.StatusSuccess size={15} />,
+              },
+              {
+                value: 'cancelled',
+                label: `Cancelled (${counts.cancelled})`,
+                icon: <Icons.Ban size={15} />,
+              },
             ]}
           />
 

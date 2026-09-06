@@ -1,8 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
-import { Badge, Callout, Checkbox, EmptyState, Field, Input } from '@/components/ui'
+import { Badge, Callout, Checkbox, EmptyState, Field, Input, SetupText } from '@/components/ui'
 import { Printer } from '@/components/ui/icons'
 import type { KitchenPrinter } from '@/lib/site/kitchenPrinters'
 
@@ -131,11 +130,13 @@ export default function ProductKitchenPanel({
       )}
 
       <p className="text-xs text-muted">
-        Stations are managed under{' '}
-        <Link href="/setup/printing" className="underline">
-          Setup → Printing
-        </Link>
-        , where each till also says which of its printers each station means.
+        {/* Plain text, linked by SetupText like every other "go here" sentence
+            in the app — this used to be a hand-rolled underlined <Link> that
+            looked nothing like the ones the rest of the product renders. */}
+        <SetupText>
+          Stations are managed under Setup → Printing, where each till also says
+          which of its printers each station means.
+        </SetupText>
       </p>
     </div>
   )

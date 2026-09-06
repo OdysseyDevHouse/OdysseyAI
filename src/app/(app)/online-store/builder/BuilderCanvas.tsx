@@ -702,9 +702,9 @@ function CanvasToolbar({
           onChange={onWidthChange}
           aria-label="How wide to draw the preview"
           options={[
-            { value: 'desktop', label: 'Computer' },
-            { value: 'tablet', label: 'Tablet' },
-            { value: 'phone', label: 'Phone' },
+            { value: 'desktop', label: 'Computer', icon: <Icons.Terminal size={15} /> },
+            { value: 'tablet', label: 'Tablet', icon: <Icons.Tablet size={15} /> },
+            { value: 'phone', label: 'Phone', icon: <Icons.Smartphone size={15} /> },
           ]}
         />
       </div>

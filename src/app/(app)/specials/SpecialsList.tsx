@@ -311,12 +311,27 @@ export default function SpecialsList({
           <SegmentedControl
             value={filter}
             onChange={(v) => setFilter(v as Filter)}
+            /* A special's window, drawn: live now, waiting on its start date,
+               past, or switched off by hand — which is a decision rather than a
+               date, so it takes the hard stop and not the clock. */
             options={[
-              { value: 'all', label: `All (${counts.all})` },
-              { value: 'running', label: `Running now (${counts.running})` },
-              { value: 'scheduled', label: `Scheduled (${counts.scheduled})` },
-              { value: 'ended', label: `Ended (${counts.ended})` },
-              { value: 'off', label: `Off (${counts.off})` },
+              { value: 'all', label: `All (${counts.all})`, icon: <Icons.LayoutGrid size={15} /> },
+              {
+                value: 'running',
+                label: `Running now (${counts.running})`,
+                icon: <Icons.Play size={15} />,
+              },
+              {
+                value: 'scheduled',
+                label: `Scheduled (${counts.scheduled})`,
+                icon: <Icons.CalendarClock size={15} />,
+              },
+              {
+                value: 'ended',
+                label: `Ended (${counts.ended})`,
+                icon: <Icons.History size={15} />,
+              },
+              { value: 'off', label: `Off (${counts.off})`, icon: <Icons.Ban size={15} /> },
             ]}
           />
 

@@ -167,8 +167,8 @@ export default function HubView({
             value={view}
             onChange={(v) => setView(v as ViewMode)}
             options={[
-              { value: 'grid', label: 'Grid' },
-              { value: 'list', label: 'List' },
+              { value: 'grid', label: 'Grid', icon: <Icons.LayoutGrid size={15} /> },
+              { value: 'list', label: 'List', icon: <Icons.List size={15} /> },
             ]}
           />
         </div>

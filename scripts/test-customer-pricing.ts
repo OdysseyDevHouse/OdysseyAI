@@ -48,6 +48,7 @@ function fakeProduct(overrides: Partial<TillProduct> = {}): TillProduct {
     availableQty: 10,
     askPriceAtSale: false,
     allowFractions: false,
+    qtyDecimals: 3,
     scaleItem: false,
     variableType: 'none',
     maxDiscountPct: 0,

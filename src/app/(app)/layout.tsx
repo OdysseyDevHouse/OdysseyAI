@@ -6,7 +6,10 @@ import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
 import { MobileTopBar } from '@/components/MobileTopBar'
+import { isPhoneLayout, isPhoneRequest } from '@/lib/phoneLayout'
 import { isMobileShell } from '@/lib/mobileShell'
+import { headers } from 'next/headers'
+import { setLayoutPreference } from './layoutActions'
 import { ToastProvider } from '@/components/ui'
 import DesktopLicenceGate from './DesktopLicenceGate'
 import LeaseLockScreen from './LeaseLockScreen'
@@ -219,8 +222,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
    * line is the expensive, security-carrying half — three database reads and
    * four redirects. A parallel `(mobile)` layout would have to repeat all of
    * it, and the copy that drifts is the one that forgets a guard.
+   *
+   * `isPhoneLayout` rather than `isMobileShell`, so a customer who opens the
+   * back office in Safari on their own phone gets this shell too. The app is
+   * one of the things that answers yes here, not the only one — see
+   * `src/lib/phoneLayout.ts` for what else does and in what order.
    */
-  if (await isMobileShell()) {
+  if (await isPhoneLayout()) {
     return (
       <div className="flex h-screen flex-col overflow-hidden">
         {/* Registers this machine with the shop, once per load. A back-office PC
@@ -238,6 +246,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           userName={user.name}
           siteName={site.displayName}
           unreadNotifications={unread}
+          /* Browsers only. In the app the WebView has no address bar to get
+              back from — see the prop's own note on MobileTopBar. */
+          onChooseLayout={(await isMobileShell()) ? undefined : setLayoutPreference}
         />
         {/* min-h-0 so the pane scrolls instead of the children being crushed —
             a flex column hands its children infinite height otherwise. */}
@@ -284,6 +295,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           userEmail={session.email}
           roleName={user.roleName}
           unreadNotifications={unread}
+          /* Only a HANDSET that chose this layout is offered the way back. On a
+              real desktop the row would hand a 1600px screen a 390px layout,
+              which is an offer nobody wants and everybody can mis-tap. */
+          onChooseLayout={isPhoneRequest(await headers()) ? setLayoutPreference : undefined}
         />
         {/* `relative` is what makes `overflow-y-auto` above actually CONTAIN the
             page. Without it this pane is `position: static`, so any absolutely

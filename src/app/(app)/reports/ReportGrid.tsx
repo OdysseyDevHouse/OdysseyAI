@@ -131,10 +131,10 @@ export default function ReportGrid({
   }
 
   /*
-   * The gutter this grid used to set for itself now lives on TableScroller's
-   * frame, so every table in the app keeps the same margin rather than the
-   * reports being the one screen that had one. Hence no `p-3` here — passing it
-   * again would double the gap on this screen alone.
+   * No padding passed here on purpose. The frame comes from TableScroller,
+   * which is flush (TABLE_FRAME), so a report meets its card edge like every
+   * other table in the app. Passing a `p-3` back would make reports the one
+   * screen with a gutter, which is what this used to be.
    */
   return (
     <TableScroller>

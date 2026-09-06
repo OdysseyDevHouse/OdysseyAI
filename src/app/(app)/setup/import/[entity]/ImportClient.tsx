@@ -500,8 +500,16 @@ function ReviewCard({
               value={tab}
               onChange={(next) => onTab(next as 'problems' | 'ready')}
               options={[
-                { value: 'problems', label: `Will not import (${counts.problem})` },
-                { value: 'ready', label: `Will import (${plan.ready.length})` },
+                {
+                  value: 'problems',
+                  label: `Will not import (${counts.problem})`,
+                  icon: <Icons.StatusWarning size={15} />,
+                },
+                {
+                  value: 'ready',
+                  label: `Will import (${plan.ready.length})`,
+                  icon: <Icons.StatusSuccess size={15} />,
+                },
               ]}
             />
           </div>

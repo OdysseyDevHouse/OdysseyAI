@@ -5,6 +5,7 @@ import { terminalStockLocationId } from '@/lib/site/terminals'
 import { sentQtyByLineAndPrinter } from '@/lib/site/kitchenPrinters'
 import type { getDocument } from '@/lib/site/salesDocuments'
 import { returnablePrice, type BasketLine } from '@/lib/basket'
+import { DEFAULT_QTY_DECIMALS } from '@/lib/decimals'
 
 /**
  * Turning a stored sales document back into basket lines.
@@ -42,6 +43,7 @@ export type RecalledLine = {
   maxDiscountPct: number
   shelfPriceIncl: number | null
   allowFractions: boolean
+  qtyDecimals: number
   /**
    * The answers, and the note, exactly as they were stored.
    *
@@ -160,6 +162,10 @@ export async function basketLinesForDocument(
           ? returnablePrice(line.productType, product.priceIncl)
           : null,
       allowFractions: product?.allowFractions ?? false,
+      /* From the product, like allowFractions above: the two are one setting,
+         and a recalled line rounding to a precision the product no longer
+         allows would disagree with what a fresh scan of it does. */
+      qtyDecimals: product?.qtyDecimals ?? DEFAULT_QTY_DECIMALS,
       /* From the LINE, not the product — see the note on the type. What was
          ordered is a fact about this bill, not about the menu as it stands
          now. `unitPriceIncl` above already carries their price, so nothing is

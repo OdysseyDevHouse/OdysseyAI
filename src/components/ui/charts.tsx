@@ -55,8 +55,8 @@ const SERIES_TOKENS = [
  * flashes — see the mount guard in the hook.
  */
 const FALLBACK: ChartColors = {
-  series: ['#2f6fed', '#0d9488', '#d97706', '#7c3aed', '#db2777', '#0e7490'],
-  brand: '#2f6fed',
+  series: ['#1890cd', '#0d9488', '#d97706', '#7c3aed', '#db2777', '#0e7490'],
+  brand: '#1890cd',
   grid: '#eaecf0',
   axis: '#98a2b3',
   surface: '#ffffff',

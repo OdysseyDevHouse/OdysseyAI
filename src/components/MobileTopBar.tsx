@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Button, ButtonLink, Drawer, Icons } from '@/components/ui'
+import { LayoutPreferenceSwitch } from '@/components/LayoutPreferenceSwitch'
 import { breadcrumbFor, navFor, GETTING_STARTED_HREF, type NavSection } from '@/lib/nav'
 
 /**
@@ -37,6 +38,7 @@ export function MobileTopBar({
   userName,
   siteName,
   unreadNotifications,
+  onChooseLayout,
 }: {
   granted: string[]
   isOwner: boolean
@@ -48,6 +50,17 @@ export function MobileTopBar({
   userName: string
   siteName: string
   unreadNotifications: number
+  /**
+   * Switch to the full desktop layout. Passed rather than imported, so this bar
+   * stays renderable without a request — see LayoutPreferenceSwitch.
+   *
+   * Omitted INSIDE THE APP, deliberately: a WebView has no address bar and no
+   * browser back button, so a person who taps "Desktop site" there gets a
+   * sidebar built for 1600px on a 390px screen and no obvious way back. In a
+   * browser that mistake costs one tap; in the app it looks like a broken
+   * install. The offer only makes sense where the escape route exists.
+   */
+  onChooseLayout?: (pref: 'phone' | 'desktop') => Promise<void>
 }) {
   const [open, setOpen] = useState(false)
   const pathname = usePathname()
@@ -129,6 +142,14 @@ export function MobileTopBar({
           <div className="text-sm font-medium text-ink">{userName}</div>
           <div className="text-xs text-muted">{siteName}</div>
         </div>
+        {/* Last in the drawer, not in the header bar. It is the thing you go
+            looking for once, not a control you use while working — and the
+            header has two touch targets on a 390px screen already. */}
+        {onChooseLayout && (
+          <div className="border-t border-border px-2 py-2">
+            <LayoutPreferenceSwitch current="phone" onChoose={onChooseLayout} />
+          </div>
+        )}
       </Drawer>
     </>
   )

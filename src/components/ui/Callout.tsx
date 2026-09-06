@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { StatusError, StatusInfo, StatusSuccess, StatusWarning } from './icons'
+import { SetupText } from './SetupText'
 
 /**
  * Callout — the inline notice: "this document is cancelled", "mail is not
@@ -75,7 +76,15 @@ export function Callout({
       )}
       <div className="min-w-0 flex-1 text-sm">
         {title && <p className="font-medium text-ink">{title}</p>}
-        {children && <div className={`text-ink-2 ${title ? 'mt-0.5' : ''}`}>{children}</div>}
+        {/* Through SetupText so a message ending "…under Setup → Tills" hands
+            over a link rather than an instruction to go hunting. Most refusals
+            land in a Callout, so doing it here covers them without a single
+            call site changing. Text naming no screen passes through untouched. */}
+        {children && (
+          <div className={`text-ink-2 ${title ? 'mt-0.5' : ''}`}>
+            <SetupText>{children}</SetupText>
+          </div>
+        )}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

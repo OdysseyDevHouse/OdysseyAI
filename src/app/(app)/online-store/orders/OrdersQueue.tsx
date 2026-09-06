@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -22,6 +22,7 @@ import {
 import { formatMoney, formatQty } from '@/lib/decimals'
 import type { OnlineOrder, Repricing } from '@/lib/site/onlineOrders'
 import type { OrderStatus } from '@/lib/site/onlineStore'
+import type { StatusRole } from '@/lib/orderStatusModel'
 import { acceptOrderAction, archiveOrderAction, cancelOrderAction, moveOrderAction } from './actions'
 import OrderDetail from './OrderDetail'
 
@@ -34,6 +35,23 @@ import OrderDetail from './OrderDetail'
  * everything possible. Anything rarer — cancelling, archiving, reading the
  * basket — is one click away in the detail panel.
  */
+
+/**
+ * A glyph per status ROLE, since the statuses themselves are shop-named rows.
+ *
+ * The role is the only thing about a status this screen can read a meaning
+ * from — a shop may call its dispatched stage anything at all. The empty role
+ * is every mid-stage the shop invented, which is work in progress and so takes
+ * the clock: no other shape can be honest about a status nobody has told us
+ * anything about.
+ */
+const ROLE_ICONS: Record<StatusRole, ReactNode> = {
+  '': <Icons.Clock size={15} />,
+  new: <Icons.Bell size={15} />,
+  dispatched: <Icons.Truck size={15} />,
+  completed: <Icons.StatusSuccess size={15} />,
+  cancelled: <Icons.Ban size={15} />,
+}
 
 export default function OrdersQueue({
   orders,
@@ -252,10 +270,14 @@ export default function OrdersQueue({
   ]
 
   const statusOptions = [
-    { value: 'all', label: `All (${orders.length})` },
+    { value: 'all', label: `All (${orders.length})`, icon: <Icons.LayoutGrid size={15} /> },
     ...statuses
       .filter((s) => (counts[s.id] ?? 0) > 0)
-      .map((s) => ({ value: String(s.id), label: `${s.name} (${counts[s.id] ?? 0})` })),
+      .map((s) => ({
+        value: String(s.id),
+        label: `${s.name} (${counts[s.id] ?? 0})`,
+        icon: ROLE_ICONS[s.role],
+      })),
   ]
 
   return (

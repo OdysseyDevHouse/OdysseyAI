@@ -38,9 +38,9 @@ type FoundInvoice = Extract<ReceiptLookup, { ok: true }>['invoice']
  * account is the better way in anyway.
  */
 const RANGES: readonly SegmentedOption<ReceiptRange>[] = [
-  { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: 'week', label: 'Last 7 days' },
+  { value: 'today', label: 'Today', icon: <Icons.Calendar size={15} /> },
+  { value: 'yesterday', label: 'Yesterday', icon: <Icons.History size={15} /> },
+  { value: 'week', label: 'Last 7 days', icon: <Icons.CalendarRange size={15} /> },
 ]
 
 export type ReceiptReturnPick = {

@@ -9,6 +9,7 @@ import {
   CurrencyInput,
   NumberInput,
   Select,
+  SortGlyph,
   TABLE_FRAME,
   TABLE_HEAD_ROW,
   TABLE_HEAD_STICKY,
@@ -78,6 +79,20 @@ type Props = {
 }
 
 export type VatRateOption = { id: number; rate: number; code: string }
+
+/** Every column that can be ordered. The delta column is not one — it holds the
+    previous price of edited rows only, so ordering by it means nothing. */
+type SortKey =
+  | 'code'
+  | 'description'
+  | 'costExcl'
+  | 'buyTax'
+  | 'costIncl'
+  | 'markup'
+  | 'gp'
+  | 'sellExcl'
+  | 'sellTax'
+  | 'sellIncl'
 
 /**
  * The percentage a row is working at right now.
@@ -280,6 +295,111 @@ export default function BulkPricingGrid({
     [rows, edits, sellingVatRates, costEditable],
   )
 
+  /* ── SORTING ──────────────────────────────────────────────────────────
+   *
+   * "Which products are we making nothing on" is the question this screen
+   * exists to answer, and reading it off an alphabetical list of fifty rows is
+   * not answering it. Every column sorts, one click for low-to-high and a
+   * second for high-to-low.
+   *
+   * SNAPSHOT, NOT LIVE. The order is computed once when a heading is clicked
+   * and then held. Sorting on the live figures would re-order the table on
+   * every keystroke — type "40" into a GP box and the row leaps up the list
+   * mid-edit, carrying the caret with it. The rows are keyed by id, so React
+   * would move the DOM node the user is typing into.
+   *
+   * The consequence is deliberate and worth stating: after editing, a row can
+   * sit "out of order" until the heading is clicked again. That is the right
+   * trade — a stale position is a cosmetic surprise, a jumping caret is a
+   * broken screen — and it is why the sort re-reads the CURRENT values each
+   * time it is applied rather than remembering the old ones.
+   */
+  const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' } | null>(null)
+  const [order, setOrder] = useState<number[] | null>(null)
+
+  /**
+   * What one row is worth on one column, right now.
+   *
+   * Reads through `edits` for the same reason belowCostCount does: a row whose
+   * cost was just changed has a GP the stored figures know nothing about, and
+   * sorting on the stored one would put it in the wrong place.
+   */
+  function sortValueOf(row: BulkPricingRow, key: SortKey): string | number | null {
+    const e = edits[row.id]
+    const cost =
+      e?.lastCost !== undefined && costEditable
+        ? e.lastCost
+        : costEditable
+          ? row.lastCost
+          : row.costExcl
+    const incl = e?.priceIncl !== undefined ? e.priceIncl : row.sellingIncl
+    const sellingVat = rateOf(sellingVatRates, e?.sellingVatRateId, row.sellingVatRateId, row.sellingVatPercent)
+    const purchaseVat = rateOf(purchaseVatRates, e?.purchaseVatRateId, row.purchaseVatRateId, row.purchaseVatPercent)
+    const excl = incl === null ? null : removeVat(incl, sellingVat)
+
+    switch (key) {
+      case 'code':
+        return row.code
+      case 'description':
+        return row.description
+      case 'costExcl':
+        return cost
+      case 'buyTax':
+        return purchaseVat
+      case 'costIncl':
+        return addVat(cost, purchaseVat)
+      case 'markup':
+        /* An unpriced row or one with no cost has no percentage at all — not a
+           zero. Sent to the far end so the rows that DO have a figure stay
+           together and comparable, which is the whole point of the sort. */
+        return excl === null || cost <= 0 ? null : markupPercent(cost, excl)
+      case 'gp':
+        return excl === null || cost <= 0 ? null : gpPercent(cost, excl)
+      case 'sellExcl':
+        return excl
+      case 'sellTax':
+        return sellingVat
+      case 'sellIncl':
+        return incl
+    }
+  }
+
+  function applySort(key: SortKey) {
+    const direction: 'asc' | 'desc' =
+      sort?.key === key && sort.direction === 'asc' ? 'desc' : 'asc'
+    const factor = direction === 'asc' ? 1 : -1
+
+    const ranked = [...rows].sort((a, b) => {
+      const left = sortValueOf(a, key)
+      const right = sortValueOf(b, key)
+
+      /* A row with no figure sorts to the BOTTOM in both directions, rather
+         than counting as zero. Sorting GP ascending to find the weak margins
+         must not bury them under every unpriced row, and a product with no
+         cost is not "0% GP" — it is a product nobody has costed. */
+      if (left === null && right === null) return 0
+      if (left === null) return 1
+      if (right === null) return -1
+
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * factor
+      return String(left).localeCompare(String(right), undefined, { numeric: true }) * factor
+    })
+
+    setSort({ key, direction })
+    setOrder(ranked.map((r) => r.id))
+  }
+
+  /* The rows in the order chosen, with anything the server has sent since
+     appended: a page that reloads under a held sort must not silently drop the
+     rows the snapshot has never seen. */
+  const sortedRows = useMemo(() => {
+    if (!order) return rows
+    const rank = new Map(order.map((id, i) => [id, i]))
+    return [...rows].sort(
+      (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+    )
+  }, [rows, order])
+
   /**
    * One field of one row, changed.
    *
@@ -378,11 +498,16 @@ export default function BulkPricingGrid({
           cap the box grew to all fifty rows and pushed Save 2 200px past the
           fold, so the button was unreachable until you had scrolled the whole
           page. A fixed max-height would be right on exactly one screen size. */}
-      {/* The gutter lives on this static frame, not on the scroll box inside
-          it — the same arrangement DataTable uses. On the box it would scroll
-          with the content and leave the sticky header floating a gutter down.
-          Without it the table ran flush to both edges, and an overlay
-          scrollbar (which reserves no width) sat on top of the last column. */}
+      {/* The frame is static and the box inside it scrolls — the same
+          arrangement DataTable uses. Padding on the box would scroll with the
+          content and leave the sticky header floating a gutter down, so any
+          gutter has to live out here.
+
+          There is none: TABLE_FRAME is flush, so this grid meets its card edge
+          like every other table in the app. The horizontal scrollbar is an
+          overlay reserving no width, so while it is dragged it passes over the
+          rightmost price box — accepted deliberately for one consistent edge
+          everywhere. */}
       <div className={TABLE_FRAME}>
         <div ref={scrollRef} className={TABLE_SCROLLER} style={{ maxHeight: cap }}>
         {/* Keyboard movement is handled ONCE here rather than on every cell:
@@ -434,15 +559,41 @@ export default function BulkPricingGrid({
                   }
                 />
               </th>
-              <th className={TABLE_TH}>Code</th>
-              <th className={TABLE_TH}>Description</th>
-              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>{costLabel} excl.</th>}
-              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Buy tax</th>}
-              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>{costLabel} incl.</th>}
-              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Markup %</th>}
-              {showCost && <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>GP %</th>}
-              <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Sell excl.</th>
-              <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>Sell tax</th>
+              <SortableTh sortKey="code" sort={sort} onSort={applySort}>Code</SortableTh>
+              <SortableTh sortKey="description" sort={sort} onSort={applySort}>
+                Description
+              </SortableTh>
+              {showCost && (
+                <SortableTh sortKey="costExcl" sort={sort} onSort={applySort} numeric>
+                  {costLabel} excl.
+                </SortableTh>
+              )}
+              {showCost && (
+                <SortableTh sortKey="buyTax" sort={sort} onSort={applySort} numeric>
+                  Buy tax
+                </SortableTh>
+              )}
+              {showCost && (
+                <SortableTh sortKey="costIncl" sort={sort} onSort={applySort} numeric>
+                  {costLabel} incl.
+                </SortableTh>
+              )}
+              {showCost && (
+                <SortableTh sortKey="markup" sort={sort} onSort={applySort} numeric>
+                  Markup %
+                </SortableTh>
+              )}
+              {showCost && (
+                <SortableTh sortKey="gp" sort={sort} onSort={applySort} numeric>
+                  GP %
+                </SortableTh>
+              )}
+              <SortableTh sortKey="sellExcl" sort={sort} onSort={applySort} numeric>
+                Sell excl.
+              </SortableTh>
+              <SortableTh sortKey="sellTax" sort={sort} onSort={applySort} numeric>
+                Sell tax
+              </SortableTh>
               {/* The delta column carries no heading: it holds the OLD price of
                   whichever rows have been edited, which the "was" styling says
                   on its own. A word here would label an empty column on every
@@ -451,11 +602,13 @@ export default function BulkPricingGrid({
                 className={`${TABLE_TH} ${anyPriceEdited ? '' : 'px-0'}`}
                 aria-label="Previous price"
               />
-              <th className={`${TABLE_TH} ${TABLE_NUMERIC}`}>{structureName} incl.</th>
+              <SortableTh sortKey="sellIncl" sort={sort} onSort={applySort} numeric>
+                {structureName} incl.
+              </SortableTh>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {sortedRows.map((row) => (
               <PriceRow
                 key={row.id}
                 row={row}
@@ -511,6 +664,49 @@ export default function BulkPricingGrid({
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * A column heading you can click to order by.
+ *
+ * Built here rather than taken from the kit because this table is hand-built —
+ * see the note at the top of the file — but it borrows DataTable's own
+ * `SortGlyph` and the same `aria-sort` contract, so the two tables behave and
+ * read identically. A numeric column reverses the arrow to the left of the
+ * label, matching DataTable, so the figures stay flush against their column.
+ */
+function SortableTh({
+  sortKey,
+  sort,
+  onSort,
+  numeric = false,
+  children,
+}: {
+  sortKey: SortKey
+  sort: { key: SortKey; direction: 'asc' | 'desc' } | null
+  onSort: (key: SortKey) => void
+  numeric?: boolean
+  children: React.ReactNode
+}) {
+  const sorted = sort?.key === sortKey
+  return (
+    <th
+      scope="col"
+      aria-sort={sorted ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
+      className={`${TABLE_TH} ${numeric ? TABLE_NUMERIC : ''}`}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 transition hover:text-ink ${
+          numeric ? 'flex-row-reverse' : ''
+        } ${sorted ? 'text-ink' : ''}`}
+      >
+        {children}
+        <SortGlyph direction={sorted ? sort.direction : undefined} />
+      </button>
+    </th>
   )
 }
 

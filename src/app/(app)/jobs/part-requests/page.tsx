@@ -1,7 +1,7 @@
 import { requireModuleCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { requestQueue, REQUEST_STATUSES, type RequestStatus } from '@/lib/site/jobPartRequests'
-import { PageHeader, PageBody, LinkSegmentedControl } from '@/components/ui'
+import { PageHeader, PageBody, LinkSegmentedControl, Icons } from '@/components/ui'
 import RequestQueue from './RequestQueue'
 
 export const dynamic = 'force-dynamic'
@@ -57,17 +57,34 @@ export default async function PartRequestsPage({
             value={chosen ?? 'open'}
             aria-label="Which requests to show"
             options={[
-              { value: 'open', label: 'Outstanding', href: '/jobs/part-requests' },
+              {
+                value: 'open',
+                label: 'Outstanding',
+                icon: <Icons.List size={15} />,
+                href: '/jobs/part-requests',
+              },
               {
                 value: 'requested',
                 label: 'Undecided',
+                icon: <Icons.Clock size={15} />,
                 href: '/jobs/part-requests?show=requested',
               },
-              { value: 'ordered', label: 'On order', href: '/jobs/part-requests?show=ordered' },
-              { value: 'received', label: 'Arrived', href: '/jobs/part-requests?show=received' },
+              {
+                value: 'ordered',
+                label: 'On order',
+                icon: <Icons.Truck size={15} />,
+                href: '/jobs/part-requests?show=ordered',
+              },
+              {
+                value: 'received',
+                label: 'Arrived',
+                icon: <Icons.PackageOpen size={15} />,
+                href: '/jobs/part-requests?show=received',
+              },
               {
                 value: 'cancelled',
                 label: 'Declined',
+                icon: <Icons.Ban size={15} />,
                 href: '/jobs/part-requests?show=cancelled',
               },
             ]}

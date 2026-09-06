@@ -115,7 +115,7 @@ async function main() {
       'Printed 2026-03-15',
       '',
       'Department,Code,Colour',
-      `Preamble Test ${stamp},PRE,#2f6fed`,
+      `Preamble Test ${stamp},PRE,#1890cd`,
     ].join('\n'),
     aliases,
   )
@@ -155,7 +155,7 @@ async function main() {
     departmentSpec,
     [
       'Department,Code,Colour',
-      `Imp ${stamp} ${S} Fruit ${S} Citrus,CIT,#2f6fed`,
+      `Imp ${stamp} ${S} Fruit ${S} Citrus,CIT,#1890cd`,
       `Imp ${stamp} ${S} Fruit ${S} Berries,BER,`,
       `Imp ${stamp} ${S} Veg,VEG,`,
     ].join('\n'),
@@ -185,7 +185,7 @@ async function main() {
 
   const again = await runFile(
     departmentSpec,
-    ['Department,Code,Colour', `Imp ${stamp} ${S} Fruit ${S} Citrus,CIT,#2f6fed`].join('\n'),
+    ['Department,Code,Colour', `Imp ${stamp} ${S} Fruit ${S} Citrus,CIT,#1890cd`].join('\n'),
   )
   ok(
     '*** a re-import skips rather than duplicating ***',
@@ -261,7 +261,7 @@ async function main() {
   )
   ok(
     '  a colour in the wrong notation is refused with what to write',
-    messy.plan.problems.some((p) => /#2f6fed/.test(p.reason)),
+    messy.plan.problems.some((p) => /#1890cd/.test(p.reason)),
     messy.plan.problems.map((p) => p.reason).join(' | '),
   )
   ok('  the row that could import did', messy.totals.created >= 1, JSON.stringify(messy.totals))

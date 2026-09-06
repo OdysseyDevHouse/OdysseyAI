@@ -9,6 +9,7 @@ import {
   type ProductInput,
 } from './products'
 import { resolveMasterCode } from './masterCodes'
+import { getSettings } from './settings'
 import type { ReferMethod } from './productComposition'
 
 /**
@@ -169,7 +170,15 @@ export type ChainRung = {
   packSize: number
   method: ReferMethod | null
   stockOnHand: number
-  averageCost: number
+  /**
+   * The cost this site PRICES from — last or average, per cost_basis.
+   *
+   * Named for what it is rather than `averageCost`, which is what it used to
+   * be called while reading `average_cost` unconditionally. On a last-cost
+   * site that name was also the bug: the ladder showed 0.00 for every rung
+   * while each product's own screen showed a real cost.
+   */
+  costExcl: number
   /** True for the product whose screen this is. */
   isCurrent: boolean
   /**
@@ -228,9 +237,21 @@ export async function referChain(siteId: number, productId: number): Promise<Cha
     ids.push(next)
   }
 
+  /*
+   * The cost column shows whichever cost this site PRICES from.
+   *
+   * This read was `p.average_cost` alone, which is not the figure the General
+   * tab shows: that one follows the cost_basis setting, exactly as the till,
+   * specials, online orders and bulk pricing all do. On a site set to last
+   * cost the ladder therefore reported 0.00 for every rung while the product's
+   * own screen showed its real cost — the same number, named the same way, in
+   * two places, disagreeing.
+   */
+  const { cost_basis: costBasis } = await getSettings(siteId, ['cost_basis'])
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand, p.average_cost,
+    `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand,
+            ${costBasis === 'last' ? 'p.last_cost' : 'p.average_cost'} AS cost_excl,
             f.factor, f.method
        FROM products p
        LEFT JOIN product_refers f ON f.product_id = p.id
@@ -278,7 +299,7 @@ export async function referChain(siteId: number, productId: number): Promise<Cha
       packSize,
       method: index === 0 ? null : ((r?.method as ReferMethod) ?? 'subtract'),
       stockOnHand: Number(r?.stock_on_hand ?? 0),
-      averageCost: Number(r?.average_cost ?? 0),
+      costExcl: Number(r?.cost_excl ?? 0),
       isCurrent: id === productId,
     }
   })
@@ -552,7 +573,7 @@ export async function addReferRung(
       }
     }
 
-    return siteTransaction(siteId, async (tx) => {
+    const attached = await siteTransaction(siteId, async (tx) => {
       // It has to BE a refer product to carry a link — saveRefer refuses
       // otherwise, and so does the sale path.
       await tx.execute("UPDATE products SET product_type = 'refer', pack_size = ? WHERE id = ?", [
@@ -569,6 +590,12 @@ export async function addReferRung(
       await ensureBaseIsStockedTx(tx, chain[0].productId)
       return { ok: true as const, productId: input.productId as number }
     })
+
+    // An EXISTING product joining the ladder needs recosting just as much as a
+    // new one: whatever cost it carried was its own, and from here its cost is
+    // the base's times the pack size. See recostFromBase below.
+    await recostFromBase(siteId, chain[0].productId)
+    return attached
   }
 
   // Otherwise create one.
@@ -619,7 +646,7 @@ export async function addReferRung(
 
   const vat = await resolveVat(siteId, productInput)
 
-  return siteTransaction(siteId, async (tx) => {
+  const created = await siteTransaction(siteId, async (tx) => {
     const id = await insertProductTx(tx, { ...productInput, code }, vat)
     await tx.execute(
       `INSERT INTO product_refers (product_id, target_id, factor, method)
@@ -629,6 +656,39 @@ export async function addReferRung(
     await ensureBaseIsStockedTx(tx, chain[0].productId)
     return { ok: true as const, productId: id }
   })
+
+  await recostFromBase(siteId, chain[0].productId)
+  return created
+}
+
+/**
+ * Recost the whole ladder from its base, after a rung has just been added.
+ *
+ * A NEW PACK IS BORN AT ZERO. `lastCost` above is `input.costExcl ?? 0`, and
+ * the Refer tab deliberately offers no cost box — "the factor already decides
+ * the answer", per the note on the product form's own cascade. But nothing was
+ * running that cascade on this path: the answer the factor decides was never
+ * written, so a box of 12 sat at 0.00 next to a single costing 120.00 until
+ * somebody happened to re-save the BASE product, which is the one screen a
+ * person setting up pack sizes has no reason to open.
+ *
+ * A zero cost is not a cosmetic blank. It is the figure margin is measured
+ * against, so every sale of the pack reported 100% GP, and every report
+ * downstream inherited it.
+ *
+ * Cascading from the base rather than costing the new rung directly, because
+ * the rung may have been inserted UNDER existing packs — a case added below a
+ * pallet moves the pallet's cost too. The walk climbs the whole chain and
+ * writes each rung as base × its own pack size, which is what it already does
+ * when the base is saved from the product form.
+ *
+ * `.catch()` for the reason the form's call has one: a cost that could not be
+ * recomputed must not undo a link that was created successfully. The rung
+ * exists; the next save of the base will price it.
+ */
+async function recostFromBase(siteId: number, baseId: number): Promise<void> {
+  const { cascadeCompositionCosts } = await import('./productComposition')
+  await cascadeCompositionCosts(siteId, baseId).catch(() => 0)
 }
 
 /**
@@ -858,7 +918,7 @@ export async function createReferRange(
   const joining = existingIds.length > 0 ? await referGroupMethod(siteId, existingIds[0]) : null
   const method: ReferMethod = joining ?? (input.method === 'normal' ? 'normal' : 'subtract')
 
-  return siteTransaction(siteId, async (tx) => {
+  const built = await siteTransaction(siteId, async (tx) => {
     const ids: number[] = []
     let created = 0
 
@@ -948,6 +1008,18 @@ export async function createReferRange(
 
     return { ok: true as const, productIds: ids, created }
   })
+
+  /*
+   * The wizard DOES offer a cost box per rung, so its packs are not born at
+   * zero the way addReferRung's are — but a cost left blank still lands at 0,
+   * and a cost typed against a pack is exactly the contradiction the note
+   * below calls out: the factor already decides it. Recosting from the base
+   * settles both cases the same way the product form does.
+   */
+  if (built.ok && built.productIds.length) {
+    await recostFromBase(siteId, built.productIds[0])
+  }
+  return built
 }
 
 /**

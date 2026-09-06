@@ -226,8 +226,12 @@ export default function GettingStartedClient({
               value={filter}
               onChange={(v) => setFilter(v as 'all' | 'todo')}
               options={[
-                { value: 'all', label: 'All steps' },
-                { value: 'todo', label: `To do (${remaining.length})` },
+                { value: 'all', label: 'All steps', icon: <Icons.List size={15} /> },
+                {
+                  value: 'todo',
+                  label: `To do (${remaining.length})`,
+                  icon: <Icons.Clock size={15} />,
+                },
               ]}
             />
           }

@@ -2183,7 +2183,7 @@ export type StorefrontTheme = {
  * default rather than trusted — `red; background: url(…)` must never survive.
  */
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
-export const DEFAULT_BRAND_COLOUR = '#2f6fed'
+export const DEFAULT_BRAND_COLOUR = '#1890cd'
 
 /**
  * Ready-made brand colours, so choosing one is a click rather than a colour

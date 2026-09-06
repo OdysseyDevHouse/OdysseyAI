@@ -20,6 +20,7 @@ export function SettingRow({
   description,
   children,
   htmlFor,
+  nested = false,
 }: {
   /** Small glyph in the tinted tile. Use an icon from '@/components/ui/icons'. */
   icon?: ReactNode
@@ -41,9 +42,24 @@ export function SettingRow({
    * for a Switch, which carries its own accessible name.
    */
   htmlFor?: string
+  /**
+   * A setting that only exists because of the one above it — "how many
+   * decimals", under "allow decimal fractions".
+   *
+   * Drawn indented on a tinted ground rather than as a peer, because a
+   * dependent question read as a sibling is a question the user answers
+   * without knowing what it depends on. The tint carries the relationship on
+   * its own, which is why such a row needs no icon and no sentence explaining
+   * that it belongs to the switch above.
+   */
+  nested?: boolean
 }) {
   return (
-    <div className="flex items-center gap-4 border-b border-border px-6 py-4 last:border-b-0">
+    <div
+      className={`flex items-center gap-4 border-b border-border py-4 last:border-b-0 ${
+        nested ? 'bg-surface-2 pl-16 pr-6' : 'px-6'
+      }`}
+    >
       {/* BEFORE the icon tile and outside it. The tile is a fixed 36px disc
           sized for one glyph, so anything sharing it gets crushed — putting a
           drag handle in `icon` drew the grip on top of the tint. */}

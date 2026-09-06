@@ -92,7 +92,7 @@ console.log('[seed] vat rates')
 
 // ── Departments ──────────────────────────────────────────────────────────
 const deptDefs = [
-  { code: 'GROC', name: 'Groceries', color: '#2f6fed' },
+  { code: 'GROC', name: 'Groceries', color: '#1890cd' },
   { code: 'BEV', name: 'Beverages', color: '#0f7b4f' },
   { code: 'BAKE', name: 'Bakery', color: '#b5730a' },
 ]

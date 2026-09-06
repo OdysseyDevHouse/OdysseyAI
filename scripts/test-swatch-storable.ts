@@ -10,7 +10,7 @@
  *
  *   1. `validateDepartment` demanded `#RRGGBB`, from when the colour control
  *      was a wheel. Once the form moved to the shared SwatchPicker it rejected
- *      all twenty swatches with "Colour must be a hex value like #2f6fed." —
+ *      all twenty swatches with "Colour must be a hex value like #1890cd." —
  *      a message naming a format no screen can produce.
  *   2. `patchDepartment` was updated to `tile-1…7` when the palette became
  *      tokens. The palette later moved to `cat-*` and it went stale the same
@@ -133,7 +133,7 @@ async function main() {
       missing.join(', '),
     )
   }
-  check('a quick key does not take a hex colour', !ALL_SWATCH_TOKENS.has('#2f6fed'))
+  check('a quick key does not take a hex colour', !ALL_SWATCH_TOKENS.has('#1890cd'))
   check('a quick key refuses an invented token', !ALL_SWATCH_TOKENS.has('cat-nonsense'))
 
   /* ── AND THE PRODUCT TILE COLOUR ───────────────────────────────────────

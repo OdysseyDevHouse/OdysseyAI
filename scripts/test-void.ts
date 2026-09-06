@@ -82,17 +82,14 @@ async function main() {
     'INSERT INTO product_location_stock (product_id, location_id, stock_on_hand) SELECT id, (SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1), stock_on_hand FROM products WHERE id=? ON DUPLICATE KEY UPDATE stock_on_hand=VALUES(stock_on_hand)',
     [widget])
 
+  /* Opens at ZERO: addSerials now brings in the quantity it captures, so the
+     hand-written opening movement this fixture used to need would count both
+     phones twice. Capturing the two serials below is the arrival. */
   const s = await siteExecute(SITE,
     `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, selling_vat_rate_id, visible_in_pos)
-     VALUES (?,?,'serial',2,4000,4000,?,1)`,
+     VALUES (?,?,'serial',0,4000,4000,?,1)`,
     [`VDS${stamp}`, 'Void test phone', vat?.id ?? null])
   const phone = s.insertId
-  await siteExecute(SITE,
-    "INSERT INTO stock_movements (product_id, location_id, movement_type, qty_change, qty_after, unit_cost_excl, source, user_id, user_name) VALUES (?,(SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1),'opening',2,2,4000,'opening',1,'Void Test')",
-    [phone])
-  await siteExecute(SITE,
-    'INSERT INTO product_location_stock (product_id, location_id, stock_on_hand) SELECT id, (SELECT id FROM stock_locations WHERE is_main=1 LIMIT 1), stock_on_hand FROM products WHERE id=? ON DUPLICATE KEY UPDATE stock_on_hand=VALUES(stock_on_hand)',
-    [phone])
   await addSerials(SITE, actor, phone, [`VS-${stamp}-A`, `VS-${stamp}-B`], { costExcl: 4000 })
 
   const account = await getTenderByCode(SITE, 'ACCOUNT')

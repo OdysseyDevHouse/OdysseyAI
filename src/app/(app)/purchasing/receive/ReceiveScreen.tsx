@@ -1248,20 +1248,54 @@ function SerialCapture({
 
   return (
     <div className="my-1.5 rounded-control border border-border bg-surface-2 p-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Icons.Barcode size={15} className="text-muted" />
-          <span className="text-sm font-medium text-ink">Serial numbers</span>
-          {!whole ? (
-            <Badge tone="danger">whole units only</Badge>
-          ) : short === 0 ? (
-            <Badge tone="success">{serials.length} of {qtyReceived}</Badge>
-          ) : (
-            <Badge tone="warning">
-              {serials.length} of {qtyReceived} — {short > 0 ? `${short} still to scan` : `${-short} too many`}
-            </Badge>
-          )}
-        </div>
+      <div className="flex items-center gap-2">
+        <Icons.Barcode size={15} className="text-muted" />
+        <span className="text-sm font-medium text-ink">Serial numbers</span>
+        {!whole ? (
+          <Badge tone="danger">whole units only</Badge>
+        ) : short === 0 ? (
+          <Badge tone="success">{serials.length} of {qtyReceived}</Badge>
+        ) : (
+          <Badge tone="warning">
+            {serials.length} of {qtyReceived} — {short > 0 ? `${short} still to scan` : `${-short} too many`}
+          </Badge>
+        )}
+      </div>
+
+      {/*
+        The two inputs sit together on one row, packed LEFT — the same shape
+        BatchCapture below uses, and for the same reason.
+
+        Warranty until used to be pushed to the far edge by a `justify-between`
+        on the heading row, which put it a whole screen away from the serial box
+        it belongs with and left it floating above nothing. On a wide grid that
+        reads as a stray control rather than as part of this line's capture.
+
+        `items-end` is what actually lines the two boxes up: the fields have
+        labels of different lengths above them, so aligning the TOPS would leave
+        the inputs themselves at different heights. Bottom-aligned, the two
+        boxes share a baseline.
+      */}
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <Field label="Serial number" className="w-full max-w-md">
+          <Input
+            value={entry}
+            placeholder="Scan or type a serial, then press Enter"
+            onChange={(e) => {
+              // A scanner that sends its whole payload at once, including the
+              // separators, is handled here rather than waiting for Enter.
+              if (/[\n,;\t]/.test(e.target.value)) take(e.target.value)
+              else setEntry(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return
+              // Swallowed so a scanner's trailing Enter takes the serial instead
+              // of submitting the receipt half-captured.
+              e.preventDefault()
+              take(entry)
+            }}
+          />
+        </Field>
 
         <Field label="Warranty until" className="w-44">
           <Input
@@ -1270,27 +1304,6 @@ function SerialCapture({
             onChange={(e) => onChange({ warrantyUntil: e.target.value })}
           />
         </Field>
-      </div>
-
-      <div className="mt-3 max-w-md">
-        <Input
-          value={entry}
-          placeholder="Scan or type a serial, then press Enter"
-          aria-label="Serial number"
-          onChange={(e) => {
-            // A scanner that sends its whole payload at once, including the
-            // separators, is handled here rather than waiting for Enter.
-            if (/[\n,;\t]/.test(e.target.value)) take(e.target.value)
-            else setEntry(e.target.value)
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return
-            // Swallowed so a scanner's trailing Enter takes the serial instead
-            // of submitting the receipt half-captured.
-            e.preventDefault()
-            take(entry)
-          }}
-        />
       </div>
 
       {serials.length > 0 && (

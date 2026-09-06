@@ -263,6 +263,10 @@ export {
   // revoke list showing a call icon beside "Tiaan's iPhone" is the wrong
   // picture next to the right words.
   Smartphone,
+  // The slab between the two: the storefront builder previews a page at three
+  // widths, and a bar reading Computer / Tablet / Phone needs all three shapes
+  // or none. Terminal is the desk, Smartphone the hand, this the lap.
+  Tablet,
   Star,
   File as FileIcon,
   FileImage,

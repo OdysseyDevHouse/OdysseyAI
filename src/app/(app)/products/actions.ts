@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { toProductTab, DEFAULT_PRODUCT_TAB } from '@/lib/productTabs'
 import {
   requireSiteId,
   requireCapability,
@@ -297,6 +298,7 @@ function readInput(form: FormData): ProductInput {
     changeDescription: flag(form, 'changeDescription'),
     askPriceAtSale: flag(form, 'askPriceAtSale'),
     allowFractions: flag(form, 'allowFractions'),
+    qtyDecimals: num(form, 'qtyDecimals'),
     chargePctSubtotal: flag(form, 'chargePctSubtotal'),
     nonGpProduct: flag(form, 'nonGpProduct'),
     maxDiscountPct: num(form, 'maxDiscountPct'),
@@ -561,7 +563,16 @@ export async function saveProductAction(
      made a filtered worklist unusable. */
   const back = safeReturnTo(form.get('returnTo'))
   const from = back ? `&from=${encodeURIComponent(back)}` : ''
-  redirect(`/products/${result.id}?saved=1${from}`)
+
+  /* And the tab it was saved from, for the same reason: the redirect remounts
+     the form, so without carrying this every save dropped you back on General.
+     Correcting a serial number or a supplier line meant clicking back to the
+     tab each time. General is the default, so it needs no parameter — the form
+     validates whatever comes back anyway. */
+  const savedTab = toProductTab(String(form.get('tab') ?? ''))
+  const tab = savedTab === DEFAULT_PRODUCT_TAB ? '' : `&tab=${savedTab}`
+
+  redirect(`/products/${result.id}?saved=1${from}${tab}`)
 }
 
 export async function archiveProductAction(form: FormData): Promise<void> {

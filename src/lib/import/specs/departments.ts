@@ -152,8 +152,8 @@ export const departmentSpec: ImportSpec<DepartmentDraft> = {
       key: 'color',
       label: 'Colour',
       aliases: ['Colour', 'Color'],
-      hint: 'Hex, like #2f6fed. Used on till tiles and reports.',
-      example: '#2f6fed',
+      hint: 'Hex, like #1890cd. Used on till tiles and reports.',
+      example: '#1890cd',
       // Checked here rather than left to validateDepartment, so a whole file of
       // colours in some other notation is reported on the review screen instead
       // of failing row by row after the writing has already started.
@@ -161,7 +161,7 @@ export const departmentSpec: ImportSpec<DepartmentDraft> = {
         const value = cell.text.trim()
         const hex = value.startsWith('#') ? value : `#${value}`
         if (!/^#[0-9a-fA-F]{6}$/.test(hex)) {
-          return { kind: 'problem', reason: `"${value}" is not a colour. Write it as #2f6fed.` }
+          return { kind: 'problem', reason: `"${value}" is not a colour. Write it as #1890cd.` }
         }
         return { kind: 'value', value: hex.toLowerCase() }
       },

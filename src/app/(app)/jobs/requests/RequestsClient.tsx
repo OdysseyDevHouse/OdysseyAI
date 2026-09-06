@@ -174,11 +174,11 @@ export default function RequestsClient({
               value={active}
               onChange={(v) => router.push(`/jobs/requests?status=${v}`)}
               options={[
-                { value: 'new', label: 'Waiting' },
-                { value: 'accepted', label: 'Accepted' },
-                { value: 'rejected', label: 'Turned down' },
-                { value: 'spam', label: 'Junk' },
-                { value: 'all', label: 'Everything' },
+                { value: 'new', label: 'Waiting', icon: <Icons.Clock size={15} /> },
+                { value: 'accepted', label: 'Accepted', icon: <Icons.StatusSuccess size={15} /> },
+                { value: 'rejected', label: 'Turned down', icon: <Icons.Ban size={15} /> },
+                { value: 'spam', label: 'Junk', icon: <Icons.Trash size={15} /> },
+                { value: 'all', label: 'Everything', icon: <Icons.LayoutGrid size={15} /> },
               ]}
               aria-label="Which requests"
             />

@@ -672,8 +672,8 @@ function CaptureModal({
             <SegmentedControl
               aria-label="Direction"
               options={[
-                { value: 'out', label: 'Money out' },
-                { value: 'in', label: 'Money in' },
+                { value: 'out', label: 'Money out', icon: <Icons.SortDesc size={15} /> },
+                { value: 'in', label: 'Money in', icon: <Icons.SortAsc size={15} /> },
               ]}
               value={direction}
               onChange={setDirection}
@@ -784,8 +784,16 @@ function TransferModal({
             <SegmentedControl
               aria-label="Direction"
               options={[
-                { value: 'to', label: `Out of ${accountName}` },
-                { value: 'from', label: `Into ${accountName}` },
+                {
+                  value: 'to',
+                  label: `Out of ${accountName}`,
+                  icon: <Icons.ArrowRight size={15} />,
+                },
+                {
+                  value: 'from',
+                  label: `Into ${accountName}`,
+                  icon: <Icons.ArrowLeft size={15} />,
+                },
               ]}
               value={direction}
               onChange={setDirection}
