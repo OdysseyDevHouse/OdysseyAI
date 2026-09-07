@@ -6,6 +6,7 @@ import {
   Accordion,
   ActionTile,
   Badge,
+  BarcodeShapeDiagram,
   BrandLockup,
   BrandMark,
   CategoryTile,
@@ -14,6 +15,7 @@ import {
   BulkOptionsDialog,
   Button,
   Callout,
+  TransientCallout,
   SetupText,
   DeepPanel,
   QuoteCard,
@@ -157,6 +159,12 @@ import { LineOptionsModal } from '@/app/(pos)/pos/LineOptionsModal'
 import InstructionsModal from '@/app/(pos)/pos/InstructionsModal'
 import { ReceiptModal } from '@/app/(pos)/pos/ReceiptModal'
 import { VoidReasonModal } from '@/app/(pos)/pos/VoidReasonModal'
+import ProductSearchModal from '@/components/products/ProductSearchModal'
+import type {
+  ProductSearchRequest,
+  ProductSearchResponse,
+} from '@/components/products/productSearchActions'
+import type { ProductSearchRow } from '@/components/products/productSearchColumns'
 import type { VoidType } from '@/lib/site/posVoids'
 import { SplitPreview } from './SplitPreview'
 import { ReceiptReturnPreview } from './ReceiptReturnPreview'
@@ -222,6 +230,7 @@ export default function StyleGuidePage() {
         <ReasonPickerSection />
         <TileSwatchSection />
         <GeneratedPictureSection />
+        <BarcodeShapeSection />
         <ToastSection />
         <PrintDocumentSection />
         <MenuSection />
@@ -231,6 +240,7 @@ export default function StyleGuidePage() {
         <TableControlsSection />
         <DataTableSection />
         <SelectionSection />
+        <ProductSearchSection />
         <ModalSection />
         <DrawerSection />
         <PinPadSection />
@@ -1225,7 +1235,7 @@ function DeepPanelSection() {
     <Card>
       <CardHeader
         title="Deep surfaces"
-        description="The two places the app goes DARKER than its canvas instead of paler. Both are for a screen read from three feet away by somebody standing up, which is a different problem from a back-office table read at arm's length — and both are rare on purpose: the effect is entirely that they are the darkest thing in the viewport, so a second one in the same view cancels the first."
+        description="The two places the app goes SATURATED instead of pale — one blue gradient, light at the top left to deep at the bottom right, shared by both so they read as one family on a screen carrying both. They are for a screen read from three feet away by somebody standing up, which is a different problem from a back-office table read at arm's length, and both are rare on purpose: the effect is entirely that they are the one strong colour in the viewport, so a second one in the same view cancels the first."
       />
       <Row>
         <Spec
@@ -1287,7 +1297,29 @@ function CalloutSection() {
           Posting is blocked until the February period is reopened.
         </Callout>
       </CardBody>
+      <CardHeader
+        title="Callouts that clear themselves"
+        description="<TransientCallout> — the same banner, gone after five seconds. For a save confirmation, which has done its whole job the moment it is read. Never for a danger or a warning: those must stay until the condition is fixed."
+      />
+      <CardBody className="flex flex-col items-start gap-3">
+        <TransientCalloutDemo />
+      </CardBody>
     </Card>
+  )
+}
+
+/** Keyed off a counter so the button can replay a banner that has already gone. */
+function TransientCalloutDemo() {
+  const [run, setRun] = useState(0)
+  return (
+    <>
+      {run > 0 && (
+        <TransientCallout key={run} tone="success" title="Product saved." className="w-full" />
+      )}
+      <Button variant="secondary" onClick={() => setRun((n) => n + 1)}>
+        Save something
+      </Button>
+    </>
   )
 }
 
@@ -1804,13 +1836,63 @@ function LoaderSection() {
   )
 }
 
+function BarcodeShapeSection() {
+  /* Live rather than static: the whole point of the component is that it
+     redraws as the lengths change, so the demo has to let that be tried. */
+  const [pluLength, setPluLength] = useState(4)
+  const [valueLength, setValueLength] = useState(5)
+  return (
+    <Card>
+      <CardHeader
+        title="Barcode shape diagram"
+        description="BarcodeShapeDiagram — draws a scale barcode segment by segment from a sample label, so four abstract lengths can be checked as a picture. Used in the shape editor on Setup → Scale barcodes."
+      />
+      <CardBody className="flex flex-col gap-4">
+        <div className="rounded-card border border-border bg-surface-2 p-4">
+          <BarcodeShapeDiagram
+            shape={{ prefix: '60', pluLength, hasCheckDigit: true, valueLength, decimals: 2 }}
+          />
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <Field label="Stock code length" htmlFor="sg-plu">
+            <NumberInput
+              id="sg-plu"
+              className="w-24"
+              value={pluLength}
+              onChange={(e) => setPluLength(Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Value length" htmlFor="sg-val">
+            <NumberInput
+              id="sg-val"
+              className="w-24"
+              value={valueLength}
+              onChange={(e) => setValueLength(Number(e.target.value))}
+            />
+          </Field>
+        </div>
+        <p className="text-sm text-muted">
+          Set the value length to 0 and the &ldquo;Ignored&rdquo; segment disappears — with no fixed
+          width the till takes every digit left over, so nothing is skipped.
+        </p>
+      </CardBody>
+    </Card>
+  )
+}
+
 function ToastSection() {
   const toast = useToast()
+  /* The case this section exists to prove. A toast raised from inside a Modal
+     used to paint BEHIND the dialog backdrop — dimmed and easy to miss, and
+     worst exactly when a save was refused and the toast held the only reason.
+     The tray is a top-layer popover now; open this and press Save to see it
+     land over the dialog rather than under it. */
+  const [overModal, setOverModal] = useState(false)
   return (
     <Card>
       <CardHeader
         title="Toasts"
-        description="useToast() — the standard outcome message for any action (saved, sent, failed). Auto-dismisses; errors linger longer."
+        description="useToast() — the standard outcome message for any action (saved, sent, failed). Auto-dismisses; errors linger longer. A toast raised by a dialog stacks OVER it."
       />
       <CardBody className="flex flex-wrap gap-2">
         <Button variant="secondary" onClick={() => toast.success('Product saved.')}>
@@ -1822,6 +1904,33 @@ function ToastSection() {
         <Button variant="secondary" onClick={() => toast.info('Export queued — we will email it.')}>
           toast.info
         </Button>
+        <Button variant="secondary" onClick={() => setOverModal(true)}>
+          from inside a modal
+        </Button>
+
+        <Modal
+          open={overModal}
+          onClose={() => setOverModal(false)}
+          title="A refused save"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setOverModal(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => toast.error('That will not fit — the toast must be readable over this dialog.')}
+              >
+                Save
+              </Button>
+            </>
+          }
+        >
+          <p className="text-sm text-muted">
+            Press Save. The toast appears bottom-right, over this dialog rather than behind its
+            backdrop — the dialog stays open so the message can be read against the form it is
+            about.
+          </p>
+        </Modal>
       </CardBody>
     </Card>
   )
@@ -2450,6 +2559,240 @@ function SelectionSection() {
   )
 }
 
+/**
+ * The shared product picker.
+ *
+ * Fed FIXTURES rather than the live action, which is what `search` is for. The
+ * Style Guide is how a dialog gets looked at in this app, and a preview wired
+ * to the real catalogue shows whatever the store it was opened in happens to
+ * stock — six rows in one shop, nothing at all in a fresh one. These eight rows
+ * are chosen to show every state the grid has a form for: an out-of-stock badge,
+ * a below-minimum one, a negative pile, a variant parent with no price, an
+ * archived row and a healthy one.
+ */
+function ProductSearchSection() {
+  const [single, setSingle] = useState(false)
+  const [multi, setMulti] = useState(false)
+  const toast = useToast()
+
+  return (
+    <Card>
+      <CardHeader
+        title="Product search"
+        description="<ProductSearchModal /> — the products grid in a dialog, for every screen that puts a product on a document. Sortable columns, the advanced filter and a column set of its own (list key 'productSearch', never 'products')."
+      />
+      <Row>
+        <Spec
+          name="<ProductSearchModal onPick>"
+          note="Click a product's NAME to choose it — the dialog closes itself. The commonest case by a distance: someone opened this to add a thing, found the thing, and wants to be back on their document."
+        />
+        <Button variant="secondary" onClick={() => setSingle(true)}>
+          <Icons.Search size={15} />
+          Pick one product
+        </Button>
+      </Row>
+      <Row>
+        <Spec
+          name="<ProductSearchModal onPickMany>"
+          note="Pass onPickMany as well and tick boxes appear, with shift-click ranges and select-all from DataTable. The selection survives paging and re-searching, so two things ticked in Bakery are still ticked after searching 'milk'. Omit it and the boxes never render — a picker offering a selection it will ignore is worse than one that never offered it."
+        />
+        <Button variant="secondary" onClick={() => setMulti(true)}>
+          <Icons.Checked size={15} />
+          Pick several
+        </Button>
+      </Row>
+
+      <ProductSearchModal
+        open={single}
+        onClose={() => setSingle(false)}
+        onPick={(p) => toast.success(`Picked ${p.description}`)}
+        search={demoProductSearch}
+      />
+
+      <ProductSearchModal
+        open={multi}
+        onClose={() => setMulti(false)}
+        onPick={(p) => toast.success(`Picked ${p.description}`)}
+        onPickMany={(items) => toast.success(`Picked ${items.length} products`)}
+        search={demoProductSearch}
+      />
+    </Card>
+  )
+}
+
+/**
+ * A catalogue of eight, filtered and sorted in the browser.
+ *
+ * Enough of the real action's contract to drive the dialog honestly: the search
+ * term and the department narrow the rows, the sort re-orders them, and the
+ * lookups come back on the first call exactly as they do from the server. What
+ * it does NOT do is compile the advanced filter, which is SQL — the panel opens
+ * and applies, and its chips appear, but eight fixture rows cannot answer it.
+ */
+async function demoProductSearch(
+  request: ProductSearchRequest,
+): Promise<ProductSearchResponse> {
+  const term = (request.search ?? '').trim().toLowerCase()
+
+  let rows = DEMO_PRODUCTS.filter(
+    (p) =>
+      (!term ||
+        p.description.toLowerCase().includes(term) ||
+        p.code.toLowerCase().includes(term) ||
+        (p.barcode ?? '').includes(term)) &&
+      (request.departmentId == null || p.departmentId === request.departmentId) &&
+      (!request.productType || p.productType === request.productType),
+  )
+
+  const direction = request.direction === 'desc' ? -1 : 1
+  rows = [...rows].sort((a, b) => {
+    const key = request.sort === 'code' ? 'code' : 'description'
+    return a[key].localeCompare(b[key]) * direction
+  })
+
+  /* Paged, so the pager under the grid is a working control rather than a
+     decoration. `total` is the count BEFORE the slice — it is what the pager
+     counts pages from, and returning the page's own length would report one
+     page however many there are. */
+  const total = rows.length
+  const size = request.pageSize ?? 50
+  const page = Math.max(request.page ?? 1, 1)
+  rows = rows.slice((page - 1) * size, page * size)
+
+  return {
+    rows,
+    total,
+    lookups: request.withLookups
+      ? {
+          departments: [
+            { id: 1, label: 'Bakery' },
+            { id: 2, label: 'Dairy' },
+            { id: 3, label: 'Hardware' },
+          ],
+          departmentPaths: { 1: 'Bakery', 2: 'Dairy', 3: 'Hardware' },
+          productTypes: [
+            { id: 'normal', name: 'Normal product' },
+            { id: 'service', name: 'Service' },
+          ],
+          /* Empty: the advanced filter compiles to SQL against the report
+             catalog, and a fixture list cannot honour a condition it hands
+             back. The panel still opens — it is fed the real fields on a real
+             screen — and showing it fields it would then ignore here would be
+             a demo that lies about what the control does. */
+          filterFields: [],
+          /* Wider than the picker's own default, so the Columns button has a
+             real catalogue to offer. `canSetColumns` is false below, which
+             means the picker is fed only what the STORE shows — correct, and
+             with a four-id store set it would be a demo of a control with four
+             options and nothing to demonstrate. */
+          storeColumns: [
+            'description',
+            'barcode',
+            'department',
+            'productType',
+            'cost',
+            'sellExcl',
+            'price',
+            'gp',
+            'stock',
+            'minStock',
+            'packSize',
+            'lastSold',
+          ],
+          costBasis: 'last',
+          /* True, so the demo's cost and margin columns are drawn rather than
+             stripped. On a real screen this comes from `products.cost`, and a
+             role without it never sees those options at all — which is correct
+             there and would make this a demo of a picker with the interesting
+             columns missing. */
+          showCost: true,
+          /* False on purpose. True would put this demo's ticks through the real
+             action and write them to the store's list_columns row — a Style
+             Guide that changes what every user of the shop sees is a trap, and
+             the device-only path is the one worth showing anyway. */
+          canSetColumns: false,
+        }
+      : undefined,
+  }
+}
+
+/** One row per state the grid draws differently. See the section's note. */
+const DEMO_PRODUCTS = [
+  demoProduct({ id: 1, code: 'BR-001', description: 'Sourdough loaf', departmentId: 1, barcode: '6001234500018', stockOnHand: 42, cost: 18.5, priceIncl: 34.99 }),
+  demoProduct({ id: 2, code: 'BR-014', description: 'Seeded rye', departmentId: 1, barcode: '6001234500025', stockOnHand: 4, belowMinimum: true, cost: 21, priceIncl: 39.99 }),
+  demoProduct({ id: 3, code: 'DA-100', description: 'Full cream milk 2L', departmentId: 2, barcode: '6001234500032', stockOnHand: 0, cost: 24, priceIncl: 32.99 }),
+  demoProduct({ id: 4, code: 'DA-118', description: 'Butter 500g', departmentId: 2, barcode: '6001234500049', stockOnHand: -3, cost: 62, priceIncl: 89.99 }),
+  demoProduct({ id: 5, code: 'HW-220', description: 'Cotton work shirt', departmentId: 3, hasVariants: true, variantCount: 12, stockOnHand: 96 }),
+  demoProduct({ id: 6, code: 'HW-450', description: 'Claw hammer 450g', departmentId: 3, barcode: '6001234500063', stockOnHand: 17, cost: 88, priceIncl: 159.99 }),
+  demoProduct({ id: 7, code: 'HW-451', description: 'Claw hammer 900g', departmentId: 3, barcode: '6001234500070', stockOnHand: 6, cost: 121, priceIncl: 219.99 }),
+  demoProduct({ id: 8, code: 'DA-902', description: 'Buttermilk 1L (discontinued)', departmentId: 2, stockOnHand: 2, isArchived: true, cost: 19, priceIncl: 27.99 }),
+
+  /* Filler, to more than one screenful.
+   *
+   * Not padding for its own sake: eight rows fit any window, so a fixture of
+   * eight can never show the case the layout actually has to get right — the
+   * grid scrolling INSIDE the dialog while the toolbar and the pager stay put.
+   * With eight rows the dialog looked correct and was not, and the measurement
+   * that caught it needed rows past the fold to catch anything. */
+  ...Array.from({ length: 54 }, (_, i) =>
+    demoProduct({
+      id: 100 + i,
+      code: 'GR-' + String(100 + i),
+      description: 'Grocery line ' + String(i + 1).padStart(2, '0'),
+      departmentId: (i % 3) + 1,
+      barcode: '600123460' + String(1000 + i),
+      stockOnHand: (i * 7) % 40,
+      cost: 10 + (i % 17),
+      priceIncl: 19.99 + (i % 23),
+    }),
+  ),
+]
+
+/** Fills in everything the grid reads but this demo has no opinion about. */
+function demoProduct(
+  over: Partial<DemoRow> & Pick<DemoRow, 'id' | 'code' | 'description'>,
+): DemoRow {
+  const cost = over.cost ?? null
+  const priceIncl = over.priceIncl ?? null
+  const sellExcl = priceIncl === null ? null : Math.round((priceIncl / 1.15) * 100) / 100
+  const gpValue = cost === null || sellExcl === null ? null : Math.round((sellExcl - cost) * 100) / 100
+  return {
+    barcode: null,
+    departmentId: null,
+    productType: 'normal',
+    imageColor: null,
+    hasImage: false,
+    hasVariants: false,
+    variantCount: 0,
+    parentId: null,
+    isArchived: false,
+    costIncl: cost === null ? null : Math.round(cost * 1.15 * 100) / 100,
+    sellExcl,
+    gpValue,
+    gp: gpValue === null || sellExcl === null || sellExcl === 0 ? null : Math.round((gpValue / sellExcl) * 1000) / 10,
+    maxDiscountPct: 0,
+    stockOnHand: 0,
+    belowMinimum: false,
+    minStock: 5,
+    maxStock: 60,
+    packSize: 1,
+    packDescription: 'Each',
+    packWeight: 0,
+    weightDescription: null,
+    lastSold: '04 Sep 2026',
+    lastPurchase: '28 Aug 2026',
+    lastAdjust: '',
+    lastStockTake: '01 Jul 2026',
+    edited: '02 Sep 2026',
+    created: '14 Feb 2024',
+    ...over,
+    cost,
+    priceIncl,
+  }
+}
+
+type DemoRow = ProductSearchRow
+
 function ModalSection() {
   const [open, setOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -2831,7 +3174,7 @@ function NumPadSection() {
         <Spec name='layout="plaque"' note="the biggest figure, for a dialog whose only subject is the amount" />
         <Spec
           name="the deep plaque"
-          note="every layout sits on it — the same dark block the till's opening float wears, so the figure is in one place on one ground wherever a cashier meets it"
+          note="every layout sits on it — the same blue block the till's opening float wears, so the figure is in one place on one ground wherever a cashier meets it"
         />
         <Spec name="suffix" note='the unit ON the figure — "%" — never a leading one; R goes first' />
         <Spec

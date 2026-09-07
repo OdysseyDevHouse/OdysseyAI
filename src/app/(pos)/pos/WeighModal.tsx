@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Button, Field, Modal, NumberInput } from '@/components/ui'
-import { formatMoney } from '@/lib/decimals'
+import { formatMoney, qtyDecimalsOf, roundQty } from '@/lib/decimals'
 import type { TillProduct } from '@/lib/site/tillSearch'
 
 /**
@@ -33,6 +33,21 @@ export function WeighModal({
   // A fresh product means a fresh entry — never inherit the last item's weight.
   useEffect(() => setWeight(0), [product.id])
 
+  /*
+   * ── A SCALE ITEM THAT DOES NOT ALLOW FRACTIONS ────────────────────────────
+   *
+   * `qtyDecimalsOf` answers 0 for one, and a weight box that rounds every entry
+   * to a whole number is not a weight box. The two switches disagree — somebody
+   * has marked a product "sold by weight" and left fractions off — and this is
+   * the screen where that shows up, with a customer waiting.
+   *
+   * The prompt still works: it takes whole units, which is what the product file
+   * actually says, and `roundQty` below makes the box say so rather than
+   * accepting 0.3 and quietly ringing up 0. Refusing to open would be worse — it
+   * would take the product off sale over a settings mistake.
+   */
+  const places = qtyDecimalsOf(product)
+
   const valid = Number.isFinite(weight) && weight > 0
 
   return (
@@ -46,9 +61,21 @@ export function WeighModal({
         <Field label="Weight">
           <NumberInput
             autoFocus
-            precision={3}
+            /*
+             * The product's own places, not a hardcoded three.
+             *
+             * Three was both too few and too many: a product set to 4 decimals
+             * had its fourth place shown away while the state still held it, and
+             * one set to 2 displayed a third place it cannot be sold in. The
+             * blur rounding below is what makes the display honest — `precision`
+             * alone only formats, it never writes back.
+             */
+            precision={places}
             value={weight || ''}
             onChange={(e) => setWeight(Number(String(e.target.value).replace(',', '.')) || 0)}
+            /* Settled on blur so the box and the line agree. Rounding per
+               keystroke would stop 0.3 ever reaching 0.375. */
+            onBlur={() => setWeight(roundQty(weight, product))}
             className="text-right"
           />
         </Field>
@@ -64,7 +91,9 @@ export function WeighModal({
           <Button variant="secondary" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="success" disabled={!valid} onClick={() => onConfirm(weight)}>
+          {/* Rounded here too: the button can be pressed without the box ever
+              blurring, and the weight this hands back becomes the line. */}
+          <Button variant="success" disabled={!valid} onClick={() => onConfirm(roundQty(weight, product))}>
             Add to sale
           </Button>
         </div>

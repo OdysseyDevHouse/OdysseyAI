@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Button, Field, Input, NumberInput, Icons } from '@/components/ui'
-import { formatMoney } from '@/lib/decimals'
+import { formatMoney, qtyDecimalsOf, roundQty } from '@/lib/decimals'
 import type { TillProduct } from '@/lib/site/tillSearch'
 
 /**
@@ -31,6 +31,17 @@ import type { TillProduct } from '@/lib/site/tillSearch'
  * a product and a quantity to the same `add` the tiles call, so a price rung up
  * here and one rung up at a touch till cannot disagree.
  */
+/**
+ * The quantity label, naming what this product will actually accept.
+ *
+ * Whole units get said in words rather than as "0 decimals", which reads like a
+ * setting rather than like an instruction to the person typing.
+ */
+function qtyLabel(product: TillProduct): string {
+  const places = qtyDecimalsOf(product)
+  return places === 0 ? 'Quantity (whole units)' : `Quantity (${places} decimals)`
+}
+
 export default function TradeEntryPane({
   onLookup,
   onAdd,
@@ -109,7 +120,11 @@ export default function TradeEntryPane({
       void lookup()
       return
     }
-    onAdd(found, qty)
+    /* Rounded here as well as on blur, because Enter commits without ever
+       blurring the box — see the note on onBlur. `lineFromProduct` rounds again
+       on the way into the basket; this one is so the counterhand and the line
+       agree about what was just added. */
+    onAdd(found, roundQty(qty, found))
     /* Straight back to an empty code box at quantity one — the state the next
        line starts from. A pane that kept the last quantity would put 12 of the
        next item on the document the moment somebody typed a code and pressed
@@ -151,12 +166,36 @@ export default function TradeEntryPane({
         </div>
 
         <div className="w-28 shrink-0">
-          <Field label="Quantity">
+          {/* Named with the limit once a product is in hand, the way the till's
+              line editor names it. A counterhand typing 3.5 into a box labelled
+              "Quantity (whole units)" can see why it will land as 4, rather than
+              watching a number change on its own. Before the lookup there is no
+              product to have a rule, so the plain label stands. */}
+          <Field label={found ? qtyLabel(found) : 'Quantity'}>
             <NumberInput
               value={qty}
               min={0}
+              /* The product's own places once one is found. `step="any"` was
+                 inert anyway — NumberInput renders type="text", so min/step have
+                 never constrained anything here; the rounding below is what
+                 actually holds. */
               step="any"
-              onChange={(e) => setQty(Number(e.target.value) || 0)}
+              onChange={(e) => setQty(Number(String(e.target.value).replace(',', '.')) || 0)}
+              /*
+               * Rounded when the box is LEFT, not per keystroke.
+               *
+               * Rounding as they type would fight the caret — "1.2" of a
+               * two-decimal product becomes 1.2 and the next keystroke cannot
+               * reach 1.25. On blur the number is settled, so correcting it
+               * there is the first honest moment.
+               *
+               * `commit` rounds again rather than trusting this: Enter fires
+               * without a blur, and the counter's whole point is that a line is
+               * entered without the hands leaving the keyboard.
+               */
+              onBlur={() => {
+                if (found) setQty(roundQty(qty, found))
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault()

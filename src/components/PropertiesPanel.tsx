@@ -248,7 +248,7 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
       {/* A grid rather than SettingRows: these are paired value + unit fields,
           and each pair reads as one setting rather than two. */}
       <SettingGroup title="Weight and size">
-        <div className="grid gap-5 px-6 py-5 sm:grid-cols-2">
+        <div className="grid gap-5 px-6 py-5 sm:grid-cols-3">
           <div>
             <label htmlFor="packWeight" className="block text-sm font-medium text-ink">
               Pack weight
@@ -280,6 +280,10 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
               ))}
             </Select>
           </div>
+
+          {/* Keeps each value + unit pair on its own row while every control
+              stays one column wide, matching the dimension boxes below. */}
+          <div aria-hidden className="hidden sm:block" />
 
           <div>
             <label htmlFor="packSize" className="block text-sm font-medium text-ink">
@@ -316,12 +320,16 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
             </Select>
           </div>
 
+          {/* Keeps each value + unit pair on its own row while every control
+              stays one column wide, matching the dimension boxes below. */}
+          <div aria-hidden className="hidden sm:block" />
+
           {/* Spans the grid and splits into three: length, width and height are
               one setting, so they share a heading and a single hint rather than
               repeating "in millimetres" three times. */}
-          <div className="sm:col-span-2">
+          <div className="sm:col-span-3">
             <span className="block text-sm font-medium text-ink">Dimensions</span>
-            <div className="mt-1.5 grid gap-3 sm:grid-cols-3">
+            <div className="mt-1.5 grid gap-5 sm:grid-cols-3">
               <div>
                 <label htmlFor="lengthMm" className="mb-1 block text-xs text-muted">
                   Length (mm)
@@ -368,18 +376,16 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
             <label htmlFor="prepTimeMinutes" className="block text-sm font-medium text-ink">
               Preparation time
             </label>
-            <div className="mt-1.5 flex items-center gap-2">
-              <NumberInput
-                id="prepTimeMinutes"
-                name="prepTimeMinutes"
-                precision={0}
-                defaultValue={props.prepTimeMinutes}
-                className="text-right"
-              />
-              <span className="shrink-0 text-sm text-muted">minutes</span>
-            </div>
+            <NumberInput
+              id="prepTimeMinutes"
+              name="prepTimeMinutes"
+              precision={0}
+              defaultValue={props.prepTimeMinutes}
+              className="mt-1.5 text-right"
+            />
             <p className="mt-1 text-xs text-muted">
-              How long this product takes to prepare, for kitchen and online-order timing.
+              How long this product takes to prepare, in minutes, for kitchen and online-order
+              timing.
             </p>
           </div>
         </div>

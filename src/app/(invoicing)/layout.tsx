@@ -47,6 +47,14 @@ import InvoicingLicenceGate from './InvoicingLicenceGate'
  * would put a module three consumers depend on inside one of them.
  */
 
+/* Overrides the root layout's 'Odyssey Back Office'. The whole point of this
+   route group is that it is NOT the back office — see the note above — and a
+   trade counter running it beside an office tab should be able to tell the two
+   apart from the tab strip alone. */
+export const metadata = {
+  title: 'Odyssey Invoicing',
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function InvoicingLayout({ children }: { children: React.ReactNode }) {

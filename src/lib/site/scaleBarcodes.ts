@@ -109,16 +109,20 @@ export function validateScaleRule(input: ScaleRuleInput): string | null {
   if (!Number.isInteger(input.decimals) || input.decimals < 0 || input.decimals > 3) {
     return 'Decimals must be between 0 and 3.'
   }
-  /* 0 is "any length" rather than a length of zero — the shape a rule carried
-     over from the old single setting has, because that setting never recorded
-     one. Anything else must at least have room for what it describes. */
-  if (!Number.isInteger(input.valueLength) || input.valueLength < 0 || input.valueLength > 18) {
-    return 'The value length must be between 0 and 18.'
+  /* 0 is "the digits left over" rather than a width of zero — the shape a rule
+     carried over from the old single setting has, because that setting never
+     recorded one. */
+  if (!Number.isInteger(input.valueLength) || input.valueLength < 0 || input.valueLength > 12) {
+    return 'The value length must be between 0 and 12.'
   }
   if (input.valueLength > 0) {
-    const needed = input.prefix.trim().length + input.pluLength + (input.hasCheckDigit ? 1 : 0) + 1
-    if (input.valueLength < needed) {
-      return `A barcode of ${input.valueLength} digits has no room for a prefix, a ${input.pluLength}-digit stock code and a value.`
+    /* The whole shape has to fit a barcode a scanner can send. Checked against
+       18 — the widest `parseVariableBarcode` accepts — rather than 13, because
+       a shop with a longer in-store label is not wrong, only unusual. */
+    const total =
+      input.prefix.trim().length + input.pluLength + input.valueLength + (input.hasCheckDigit ? 1 : 0)
+    if (total > 18) {
+      return `A prefix, a ${input.pluLength}-digit stock code and a ${input.valueLength}-digit value need ${total} digits, which is longer than any barcode.`
     }
   }
   return null
@@ -127,9 +131,17 @@ export function validateScaleRule(input: ScaleRuleInput): string | null {
 /**
  * Would this rule take barcodes off one already saved?
  *
- * Two rules sharing a prefix AND a length is not an error — a shop may be mid
- * way through replacing a scale — but it is worth saying out loud, because the
- * second one can never fire and nothing else would ever mention it.
+ * Matching is by longest prefix, and a tie is broken by `position` — so of two
+ * rules sharing a prefix EXACTLY, only the earlier one can ever fire. The
+ * second is dead configuration: it sits on the screen looking as though it
+ * works, and nothing anywhere would ever mention that it does not.
+ *
+ * Keyed on the prefix alone. It used to also compare `valueLength`, which was
+ * defensible while that field meant the barcode's TOTAL length — two rules on
+ * `20` reading a 12- and a 13-digit label really were distinct, because a
+ * mismatched length rejected the code and let the next rule try. Now that the
+ * field is the value's own width, nothing about it makes a rule selectable:
+ * both rules match the same barcodes and the first one always wins.
  */
 export async function shadowedBy(
   siteId: number,
@@ -138,14 +150,7 @@ export async function shadowedBy(
 ): Promise<ScaleRule | null> {
   const all = await listScaleRules(siteId)
   const prefix = input.prefix.trim()
-  return (
-    all.find(
-      (r) =>
-        r.id !== excludeId &&
-        r.prefix === prefix &&
-        r.valueLength === input.valueLength,
-    ) ?? null
-  )
+  return all.find((r) => r.id !== excludeId && r.prefix === prefix) ?? null
 }
 
 export async function createScaleRule(siteId: number, input: ScaleRuleInput): Promise<SaveResult> {
@@ -156,7 +161,7 @@ export async function createScaleRule(siteId: number, input: ScaleRuleInput): Pr
   if (clash) {
     return {
       ok: false,
-      error: `A rule for prefix ${clash.prefix} at that length already exists. Edit it rather than adding a second — the second could never be reached.`,
+      error: `A rule for prefix ${clash.prefix} already exists. Edit it rather than adding a second — the second could never be reached.`,
     }
   }
 
@@ -196,7 +201,7 @@ export async function updateScaleRule(
   if (clash) {
     return {
       ok: false,
-      error: `A rule for prefix ${clash.prefix} at that length already exists.`,
+      error: `Another rule already uses prefix ${clash.prefix}. Only the first of two rules sharing a prefix can ever fire.`,
     }
   }
 

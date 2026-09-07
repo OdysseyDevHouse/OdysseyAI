@@ -5,13 +5,18 @@ import { Quote } from './icons'
  * DeepPanel — a plaque, not a card.
  *
  * Everything else in the app is a pale surface on a paler canvas. This is the
- * opposite: a dark block that pulls the eye to ONE thing on a screen that has
- * exactly one thing worth reading. It was built for the till's opening float,
- * which is read from three feet away by somebody standing at a counter — at
- * that distance a large figure in `ink` on `surface-2` is just more page.
+ * opposite: a saturated block that pulls the eye to ONE thing on a screen that
+ * has exactly one thing worth reading. It was built for the till's opening
+ * float, which is read from three feet away by somebody standing at a counter —
+ * at that distance a large figure in `ink` on `surface-2` is just more page.
+ *
+ * It wears the same blue gradient as `QuoteCard`, light to deep. The two are
+ * one family: a cashier meeting both on the till gate should see two panels of
+ * the same product, not one navy and one blue. The quote card keeps the mark
+ * behind its text; the plaque carries nothing but the figure.
  *
  * Use it sparingly — as a rule, once in a viewport. Two plaques is no plaque:
- * the whole effect is that it is the darkest thing on the screen.
+ * the whole effect is that it is the one saturated thing on the screen.
  *
  * The ONE standing exception is a number pad: `NumPadDisplay` and `PinPad`'s
  * entry box wear this same plaque, and a screen carrying a pad carries exactly

@@ -39,11 +39,23 @@ export function toPosMode(value: unknown): PosMode {
     : 'retail'
 }
 
-/** What the mode is called on a settings screen. */
+/**
+ * What the mode is called on a settings screen.
+ *
+ * Named for the SCREEN a device opens, not for the trade it serves. These
+ * used to describe the shop — "Retail counter", "Tables", "Trade counter" —
+ * which read well on its own but not beside the menu rows that open the same
+ * three screens ("Open retail POS", "Open hospitality POS"). Somebody setting
+ * a machine's default had to work out that "Tables" was the thing "Open
+ * hospitality POS" opens, from two vocabularies that never appear together.
+ *
+ * One name per screen, wherever it is named. The hint below still says what
+ * the shop DOES, which is what the description was carrying anyway.
+ */
 export const POS_MODE_LABELS: Record<PosMode, string> = {
-  retail: 'Retail counter',
-  hospitality: 'Tables',
-  invoicing: 'Trade counter',
+  retail: 'Retail POS',
+  hospitality: 'Hospitality POS',
+  invoicing: 'Invoicing POS',
 }
 
 /**

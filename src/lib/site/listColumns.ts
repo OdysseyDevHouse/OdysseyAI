@@ -22,8 +22,16 @@ import { siteQueryOne, siteExecute } from '../siteDb'
 
 type Row = RowDataPacket & Record<string, unknown>
 
-/** Which list. One row per screen; namespaced like the localStorage keys. */
-export type ListKey = 'products' | 'customers' | 'suppliers'
+/**
+ * Which list. One row per screen; namespaced like the localStorage keys.
+ *
+ * `productSearch` is the pop-up picker, and it is deliberately NOT `products`.
+ * The two answer different questions: the catalogue screen is where somebody
+ * audits cost and margin; the picker is where somebody adds a line to a
+ * document. Sharing one row would mean that hiding GP% while pricing also hid
+ * it while invoicing — which is precisely what the picker was asked not to do.
+ */
+export type ListKey = 'products' | 'customers' | 'suppliers' | 'productSearch'
 
 /**
  * The store's visible set, or null when it has never chosen.

@@ -27,10 +27,14 @@
 --     check digit would then stop scanning altogether, and the till refusing a
 --     real product at a queue is worse than accepting a mis-keyed one that will
 --     fail to find a product anyway.
---   · `value_length` validates the barcode's total length rather than slicing
---     the value out of it. The value is still everything between the PLU and
---     the check digit — see parseVariableBarcode, which has read them that way
---     since before this table existed and reads existing labels correctly.
+--   · `value_length` is how many digits hold the price or weight, counted back
+--     from the END of the barcode — past the trailing check digit, if any.
+--     Counted from the end because a scale prints digits BETWEEN the stock code
+--     and the value that mean nothing to a till: on a real Avery label,
+--     2 12345 6 01599 6, the middle 6 is a second check digit guarding the
+--     stock code. Reading forward would price it as R6015.99 instead of R15.99.
+--     0 means "everything after the stock code", which is what a rule migrated
+--     from the old single setting gets.
 --   · `decimals` replaces the divisor: 2 means the embedded figure is in cents,
 --     3 that it is in grams. Stored as the legacy screen shows it, because a
 --     shopkeeper reading their own scale's manual is told a decimal count, not
@@ -52,9 +56,10 @@ CREATE TABLE IF NOT EXISTS scale_barcode_rules (
   plu_length      TINYINT UNSIGNED NOT NULL DEFAULT 5,
   -- Is the last digit a check digit, and therefore not part of the value.
   has_check_digit TINYINT(1)   NOT NULL DEFAULT 1,
-  -- The barcode's total length. 0 means "do not check", which is what a rule
-  -- migrated from the old single setting gets: that setting never recorded one,
-  -- and inventing 13 here would refuse a 12-digit label that scans today.
+  -- How many digits hold the value, counted back from the end. 0 means "use
+  -- whatever is left after the stock code", which is what a rule migrated from
+  -- the old single setting gets: that setting never recorded a width, and
+  -- inventing one here would re-read every label a shop scans today.
   value_length    TINYINT UNSIGNED NOT NULL DEFAULT 0,
   -- 2 = the embedded figure is in cents, 3 = grams.
   decimals        TINYINT UNSIGNED NOT NULL DEFAULT 2,

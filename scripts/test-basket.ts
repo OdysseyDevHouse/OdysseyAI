@@ -363,6 +363,124 @@ function main() {
     )
   }
 
+  /* ── Decimal fractions ───────────────────────────────────────────────────
+   *
+   * The product-properties switch, enforced on the OPENING quantity of a line
+   * and not only on the second scan that merges into it. The bug these cover:
+   * `lineFromProduct` used to write `qty` raw, so a whole-unit product held 1.5
+   * for as long as nobody scanned it again.
+   */
+
+  {
+    const line = lineFromProduct(product({ allowFractions: false }), 1.5, 0)
+    ok(
+      '*** a whole-unit product cannot open a line at 1.5 ***',
+      line.qty === 2,
+      `got ${line.qty}`,
+    )
+  }
+
+  {
+    // 0.4 rounds to 0, and a zero-quantity line is REFUSED at the tender — so
+    // the sale would fail naming a line the cashier sees nothing wrong with.
+    // A quantity that was asked for at all becomes at least one unit.
+    const line = lineFromProduct(product({ allowFractions: false }), 0.4, 0)
+    ok(
+      '*** 0.4 of a whole-unit product is ONE, never a rounded-away zero ***',
+      line.qty === 1,
+      `got ${line.qty}`,
+    )
+  }
+
+  {
+    // And the direction survives, or a return would become a sale.
+    const line = lineFromProduct(product({ allowFractions: false }), -0.4, 0)
+    ok(
+      '  a −0.4 refund becomes −1, not +1',
+      line.qty === -1,
+      `got ${line.qty}`,
+    )
+  }
+
+  {
+    const line = lineFromProduct(product({ allowFractions: false }), 0, 0)
+    ok(
+      '  but a genuine zero stays zero',
+      line.qty === 0,
+      `got ${line.qty}`,
+    )
+  }
+
+  {
+    const line = lineFromProduct(
+      product({ allowFractions: true, qtyDecimals: 2 } as Partial<TillProduct>),
+      1.2345,
+      0,
+    )
+    ok(
+      '*** a two-decimal product opens at 1.23, not 1.2345 ***',
+      line.qty === 1.23,
+      `got ${line.qty}`,
+    )
+  }
+
+  {
+    const line = lineFromProduct(
+      product({ allowFractions: true, qtyDecimals: 4 } as Partial<TillProduct>),
+      1.2345,
+      0,
+    )
+    ok(
+      '  a four-decimal product keeps all four',
+      line.qty === 1.2345,
+      `got ${line.qty}`,
+    )
+  }
+
+  {
+    // A refund is a negative quantity, and rounding must not straighten it out.
+    const line = lineFromProduct(
+      product({ allowFractions: true, qtyDecimals: 2 } as Partial<TillProduct>),
+      -1.256,
+      0,
+    )
+    ok(
+      '  a REFUND keeps its sign through the rounding',
+      line.qty === -1.26,
+      `got ${line.qty}`,
+    )
+  }
+
+  {
+    // The whole point of the setting: a scale barcode fired at a product nobody
+    // meant to sell by weight must not put 1.234 of a tin on the slip.
+    let lines = addToBasket([], product({ allowFractions: false }), 1.234)
+    ok(
+      '*** a weighed scan of a whole-unit product lands as ONE unit ***',
+      lines.length === 1 && lines[0].qty === 1,
+      `got ${lines[0]?.qty}`,
+    )
+    // And the merge path agrees with the opening path — the two used to differ.
+    lines = addToBasket(lines, product({ allowFractions: false }), 1.234)
+    ok(
+      '  and a second one makes two, not 2.468',
+      lines[0].qty === 2,
+      `got ${lines[0].qty}`,
+    )
+  }
+
+  {
+    // Stepping was already correct; this pins it against the new rounding so a
+    // later change cannot make the two disagree.
+    let lines = addToBasket([], product({ allowFractions: false }))
+    lines = stepQty(lines, lines[0].key, 0.5)
+    ok(
+      '  − and + still step a whole-unit product by whole units',
+      lines[0].qty === 2,
+      `got ${lines[0].qty}`,
+    )
+  }
+
   console.log(fails === 0 ? '\nAll basket checks passed.' : `\n${fails} check(s) failed.`)
   process.exit(fails === 0 ? 0 : 1)
 }

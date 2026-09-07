@@ -67,13 +67,21 @@ export function Modal({
    */
   bodyFills?: boolean
   /**
-   * A taller body, for a bodyFills dialog that also carries a fixed bar.
+   * More height, for a `bodyFills` or `bodyPins` dialog that needs it.
    *
-   * 70vh is right when the whole height belongs to the content. A dialog with a
-   * pinned toolbar spends a fixed ~250px of it on touch-size keys, and what is
-   * left of 70vh is not enough to read the content above them. Opt-in rather
-   * than raised for everyone: a short dialog stretched to 85vh is a lot of empty
-   * panel.
+   * With `bodyFills`: 70vh is right when the whole height belongs to the
+   * content. A dialog with a pinned toolbar spends a fixed ~250px of it on
+   * touch-size keys, and what is left of 70vh is not enough to read the content
+   * above them.
+   *
+   * With `bodyPins`: swaps the 72vh cap for the window's own height less the
+   * chrome, the same ceiling `bodyGrows` uses. For a pinned dialog whose
+   * scrolling child is the POINT — a long grid under a short set of controls —
+   * where a fraction leaves the leftover as empty desktop above and below.
+   *
+   * Opt-in in both cases rather than raised for everyone: a short dialog
+   * stretched to the window is a lot of empty panel, and on the till the
+   * fraction is what keeps the tender keys inside the fold.
    */
   bodyTall?: boolean
   /**
@@ -213,8 +221,21 @@ export function Modal({
                    72vh, not 78: the panel also carries a header and a footer,
                    and at 78vh on a 1366x768 till the footer's own button landed
                    one pixel below the fold — which is a button nobody can press
-                   to finish a sale. */
-                'flex max-h-[72vh] min-h-0 flex-col'
+                   to finish a sale.
+
+                   `bodyTall` swaps that fraction for the same window-relative
+                   ceiling `bodyGrows` uses — the window's height less the
+                   header, the footer and the panel's own margin. 72vh is a
+                   SAFE fraction rather than a correct one: it leaves whatever
+                   the chrome did not need as empty desktop, which on a 900px
+                   screen measured 150px of unused panel above and below a grid
+                   that was scrolling. Opt-in rather than raised for everyone
+                   because the fraction is what keeps the till's tender keys
+                   inside the fold on a 1366x768 screen, and that is a button
+                   nobody can press to finish a sale. */
+                `flex min-h-0 flex-col ${
+                  bodyTall ? 'max-h-[calc(100dvh-13rem)]' : 'max-h-[72vh]'
+                }`
               : bodyFills
                 ? /* The body owns the height and its children do the scrolling. `min-h-0`
                      because a flex child will not shrink below its content without it —

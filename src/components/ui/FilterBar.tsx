@@ -17,13 +17,20 @@ import { Close, Filter } from './icons'
 export function FilterBar({
   children,
   clearHref,
+  onClearAll,
   inToolbar = false,
   className = '',
 }: {
   /** <FilterChip>s. Falsy children are fine — an unset filter renders nothing. */
   children: ReactNode
-  /** Href that clears every filter. Omit to leave out the "Clear all" link. */
+  /** Href that clears every filter. Omit both this and `onClearAll` to leave out "Clear all". */
   clearHref?: string
+  /**
+   * Clear every filter, for a strip whose filters live in React state rather
+   * than the URL — see the same pair on FilterChip. Ignored when `clearHref`
+   * is given.
+   */
+  onClearAll?: () => void
   /**
    * The strip is the second row of a TableToolbar rather than a band of its
    * own on the page.
@@ -49,11 +56,20 @@ export function FilterBar({
     >
       <Filter size={14} className="text-faint" aria-hidden />
       {chips}
-      {clearHref && chips.length > 1 && (
-        <Link href={clearHref} className="ml-1 text-xs text-muted transition hover:text-ink">
-          Clear all
-        </Link>
-      )}
+      {chips.length > 1 &&
+        (clearHref ? (
+          <Link href={clearHref} className="ml-1 text-xs text-muted transition hover:text-ink">
+            Clear all
+          </Link>
+        ) : onClearAll ? (
+          <button
+            type="button"
+            onClick={onClearAll}
+            className="ml-1 text-xs text-muted transition hover:text-ink"
+          >
+            Clear all
+          </button>
+        ) : null)}
     </div>
   )
 }
@@ -69,26 +85,41 @@ export function FilterChip({
   label,
   value,
   clearHref,
+  onClear,
 }: {
   label: string
   value: string
-  /** Omit for a filter that cannot be cleared on its own, e.g. a locked scope. */
+  /**
+   * Where clearing this one filter goes, for a list whose filters live in the
+   * URL. Omit BOTH this and `onClear` for a filter that cannot be cleared on
+   * its own, e.g. a locked scope.
+   */
   clearHref?: string
+  /**
+   * Clear this one filter, for a list holding its filters in React state — the
+   * product search dialog. Same chip, same cross, same aria; only what the
+   * cross does differs. Ignored when `clearHref` is given, so a caller that
+   * passes both still navigates rather than doing two things at once.
+   */
+  onClear?: () => void
 }) {
+  const dismissClass = 'rounded-pill p-0.5 transition hover:bg-brand/15'
+  const dismissLabel = `Clear ${label.toLowerCase()} filter`
+
   return (
     <span className="inline-flex items-center gap-1.5 rounded-pill bg-brand-soft py-1 pr-1 pl-2.5 text-xs text-brand">
       <span>
         <span className="opacity-70">{label}:</span> {value}
       </span>
-      {clearHref && (
-        <Link
-          href={clearHref}
-          aria-label={`Clear ${label.toLowerCase()} filter`}
-          className="rounded-pill p-0.5 transition hover:bg-brand/15"
-        >
+      {clearHref ? (
+        <Link href={clearHref} aria-label={dismissLabel} className={dismissClass}>
           <Close size={12} />
         </Link>
-      )}
+      ) : onClear ? (
+        <button type="button" aria-label={dismissLabel} className={dismissClass} onClick={onClear}>
+          <Close size={12} />
+        </button>
+      ) : null}
     </span>
   )
 }

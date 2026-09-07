@@ -24,6 +24,10 @@ import WindowSessionMarker from '@/components/WindowSessionMarker'
 /* The till is installable, and its manifest is scoped to /pos so installing it
    does not put the whole back office behind a cache. */
 export const metadata = {
+  /* Overrides the root layout's 'Odyssey Back Office'. A cashier with the till
+     and the office open in two tabs has only the tab strip to tell them apart,
+     and this window is not the back office. */
+  title: 'Odyssey Point of Sale',
   manifest: '/pos-manifest.json',
 }
 

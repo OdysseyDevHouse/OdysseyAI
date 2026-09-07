@@ -35,6 +35,13 @@ const VIEW_CAPABILITY: Record<ListKey, Capability> = {
   products: 'products.view',
   customers: 'customers.view',
   suppliers: 'suppliers.view',
+  /* The search pop-up reads the same rows as the catalogue, so it takes the
+     same capability. It does NOT currently remember a filter — the dialog
+     opens fresh every time, because someone reaching for it a second time is
+     nearly always looking for something unrelated to the first. The entry is
+     here so the map stays total and so remembering is a one-line change rather
+     than a permission question. */
+  productSearch: 'products.view',
 }
 
 export async function rememberListFiltersAction(

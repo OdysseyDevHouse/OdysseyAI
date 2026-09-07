@@ -1,4 +1,5 @@
 import { round, roundQty, DEFAULT_QTY_DECIMALS } from './decimals'
+import { lineTotals } from './documentMath'
 import { adjustPerUnit, type ChosenOption } from './instructionRules'
 import type { TillProduct } from './site/tillSearch'
 
@@ -47,6 +48,21 @@ export type BasketLine = {
    * shelf figure to differ from.
    */
   shelfPriceIncl: number | null
+  /**
+   * This line is priced as a PERCENTAGE of the rest of the document (006).
+   *
+   * `unitPriceIncl` still holds money — the recomputed charge — so every total,
+   * VAT figure and discount downstream reads the line exactly as it reads any
+   * other. The percentage itself lives in `chargePct` below, because the money
+   * has to be re-derived whenever the lines it charges on change.
+   *
+   * Carried on the line rather than looked up for the same reason
+   * `qtyDecimals` is: a parked sale recalled tomorrow must behave the way it
+   * did when it was rung, not the way the product has since been reconfigured.
+   */
+  chargePctSubtotal: boolean
+  /** The percentage, when `chargePctSubtotal`. Zero otherwise. */
+  chargePct: number
   allowFractions: boolean
   /**
    * Decimal places this product's quantity may carry, when it allows fractions.
@@ -236,6 +252,21 @@ export function returnablePrice(
   return productType === 'returnable' ? -Math.abs(priceIncl) : priceIncl
 }
 
+/**
+ * A rounded quantity that never became zero by being rounded.
+ *
+ * `asked` is the figure before rounding, and it is what decides the direction:
+ * a −0.4 handed back must round to −1 rather than to +1, or a refund would turn
+ * into a sale of the thing being returned.
+ *
+ * A caller that genuinely asked for zero gets zero — the guard is against
+ * rounding LOSING a line, not against a caller that meant nothing.
+ */
+function atLeastOneUnit(rounded: number, asked: number): number {
+  if (rounded !== 0 || asked === 0) return rounded
+  return asked < 0 ? -1 : 1
+}
+
 export function lineFromProduct(
   product: TillProduct,
   qty: number,
@@ -256,14 +287,72 @@ export function lineFromProduct(
     description: product.description,
     productType: product.productType,
     departmentId: product.departmentId,
-    qty,
-    // A scanned price wins: a variable-weight barcode carries the money in it.
-    unitPriceIncl: charged,
+    /*
+     * ── THE OPENING QUANTITY OBEYS THE PRODUCT TOO ──────────────────────────
+     *
+     * It used to be written raw, and that left the rule enforced on the SECOND
+     * unit but not the first: `addToBasket` rounds when it merges into an
+     * existing line, so scanning a weighed item twice was corrected while
+     * scanning it once was not. A whole-unit product could therefore hold 1.5
+     * as long as nobody scanned it again.
+     *
+     * Rounded HERE rather than at each caller because this is where every add
+     * path in the till converges — a scan, a tile, a quick key, a weigh, a lot
+     * prompt, a variant pick, an instruction dialog, and the trade counter's
+     * typed quantity. A guard at any one of those is a guard the next entry
+     * point will not have.
+     *
+     * `roundQty` reads the flag first, so a whole-unit product rounds to 0
+     * places: a scale barcode fired at a product nobody meant to sell by weight
+     * puts a whole unit on the line instead of 1.234 of one.
+     *
+     * The sign survives, which matters for a refund: `round` is symmetric, so a
+     * −1.25 on a two-decimal product stays −1.25 rather than becoming −1.
+     *
+     * ── AND IT NEVER ROUNDS A LINE AWAY ──────────────────────────────────────
+     *
+     * `roundQty` alone would turn 0.4 of a whole-unit product into 0, and a
+     * zero-quantity line is not a small line: `validateDocument` refuses one, so
+     * the whole sale fails at the tender naming a line the cashier can see
+     * nothing wrong with. That is the failure documented on `addToBasket`'s
+     * merge guard, reached by a different road.
+     *
+     * It is a real case, not a theoretical one — a scale barcode fired at a
+     * product somebody forgot to mark fractional carries a sub-unit weight, and
+     * the customer is standing there. So a quantity that was asked for at all
+     * becomes at least one unit in the direction it was asked for. Only a
+     * genuine zero stays zero.
+     */
+    qty: atLeastOneUnit(roundQty(qty, product), qty),
+    /* A scanned price wins: a variable-weight barcode carries the money in it.
+       A percentage charge opens at nothing — its stored figure is the rate, and
+       `repriceCharges` turns that into money against the rest of the sale. */
+    unitPriceIncl: product.chargePctSubtotal ? 0 : charged,
     discountPct: accountDiscountFor(product, defaultDiscountPct),
     vatRatePct: product.vatRatePct,
     unitCostExcl: product.costExcl,
     maxDiscountPct: product.maxDiscountPct,
     shelfPriceIncl: product.askPriceAtSale ? null : shelf,
+    /*
+     * A percentage charge opens at ZERO money, not at its stored price.
+     *
+     * The stored figure is the PERCENTAGE — 10 means ten percent, not R10 — so
+     * writing it into `unitPriceIncl` would put R10 on the document the instant
+     * the line was added. `repriceCharges` derives the real figure from the
+     * lines it charges on, and runs on every basket change including this one.
+     */
+    chargePctSubtotal: !!product.chargePctSubtotal,
+    /*
+     * `charged`, so a TYPED figure becomes the rate.
+     *
+     * "Ask for the price" and "charge % of subtotal" are contradictory settings
+     * — one says the money is typed, the other says it is derived — and a
+     * product can carry both. The typed figure is read as the RATE, because
+     * that is the only reading under which it changes anything: as money it
+     * would be overwritten by the very next reprice. So 12 typed on a charge
+     * product means 12%.
+     */
+    chargePct: product.chargePctSubtotal ? charged : 0,
     allowFractions: product.allowFractions,
     qtyDecimals: product.qtyDecimals ?? DEFAULT_QTY_DECIMALS,
     instructions: [],
@@ -529,6 +618,58 @@ export function updateBasketLine(
 
 export function removeBasketLine(lines: BasketLine[], key: string): BasketLine[] {
   return lines.filter((l) => l.key !== key)
+}
+
+/**
+ * Re-derives every percentage-charge line from the sale it charges on (006).
+ *
+ * A service charge, gratuity or card fee is not priced in money: the product
+ * carries a RATE, and the money follows whatever else is on the document. So it
+ * cannot be computed once when the line is added — every later change to the
+ * basket moves it, which is why this runs on the whole line list rather than on
+ * one line at a time.
+ *
+ * ── IT NEVER CHARGES ON ANOTHER CHARGE ────────────────────────────────────
+ *
+ * Two ten-percent charges on the same sale would otherwise each include the
+ * other: the first inflates the base the second reads, and adding them in the
+ * other order gives a different answer. That is a total that depends on the
+ * order lines were rung, which is indefensible on a customer's receipt. The
+ * base is therefore the ordinary lines only, so any number of percentage
+ * charges are all taken on the same figure and the sale totals the same however
+ * it was keyed.
+ *
+ * ── AND IT CHARGES ON THE DISCOUNTED FIGURE ───────────────────────────────
+ *
+ * `lineTotalIncl`, not the gross: a service charge on a discounted bill is
+ * taken on what the customer is actually paying. Charging on the pre-discount
+ * figure would quietly claw part of the discount back.
+ *
+ * Returns the same array reference when nothing moved, so a reducer calling
+ * this on every basket change does not re-render a till that did not change.
+ */
+export function repriceCharges(lines: BasketLine[]): BasketLine[] {
+  if (!lines.some((l) => l.chargePctSubtotal)) return lines
+
+  const base = lines.reduce(
+    (sum, l) => (l.chargePctSubtotal ? sum : sum + lineTotals(l).lineTotalIncl),
+    0,
+  )
+
+  let moved = false
+  const next = lines.map((l) => {
+    if (!l.chargePctSubtotal) return l
+    /* Divided by qty because the line still charges qty × unit price like every
+       other line — the whole charge is the unit price when qty is 1, which is
+       what these lines always are, and stays correct if one is ever not. */
+    const whole = round(base * (l.chargePct / 100), 2)
+    const unit = l.qty === 0 ? 0 : round(whole / l.qty, 2)
+    if (unit === l.unitPriceIncl) return l
+    moved = true
+    return { ...l, unitPriceIncl: unit }
+  })
+
+  return moved ? next : lines
 }
 
 /**

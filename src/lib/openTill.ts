@@ -137,6 +137,23 @@ const INVOICING_HREFS = new Set<string>([
   `${INVOICING_HREF}/laybys`,
 ])
 
+/**
+ * Whether an href opens the TILL, query string and all.
+ *
+ * `href === TILL_HREF` is not this test, and the difference is not academic:
+ * every link this file builds carries a parameter. `tillHrefFor()` appends
+ * `?new=`, and the menu appends `?mode=` to offer the retail and hospitality
+ * tills as separate rows — so an equality check answers NO for exactly the
+ * links that most need a `target`, and the till quietly replaces the back
+ * office on those routes while working correctly from the bare one.
+ *
+ * Compares the path only. A parameter changes what the till OPENS WITH; it
+ * never changes that the thing being opened is the till.
+ */
+export function opensTill(href: string): boolean {
+  return href === TILL_HREF || href.startsWith(`${TILL_HREF}?`)
+}
+
 export function opensInInvoicingWindow(href: string): boolean {
   return INVOICING_HREFS.has(href)
 }

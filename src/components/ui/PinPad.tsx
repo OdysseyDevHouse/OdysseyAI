@@ -225,7 +225,7 @@ export function PinPad({
             ))}
           </div>
         ) : (
-          /* THE DEEP PLAQUE, the same dark block NumPadDisplay and the till's
+          /* THE DEEP PLAQUE, the same blue block NumPadDisplay and the till's
              opening float wear. It was a pale `canvas` box, which made the one
              field a cashier is filling in the palest thing on the screen — and
              put the PIN prompt on a different ground from every amount prompt

@@ -145,20 +145,28 @@
   --color-stat-label: #9c5a38;
 
   /* --- Deep surfaces ----------------------------------------------------- */
-  /* A panel that is DARKER than the page rather than lighter — the opening
-     float on the till gate, and anything else that has to read as a figure on
-     a plaque instead of a value in a form. It exists as a token pair because
-     the till is looked at from three feet away by somebody standing up: the
-     one number on the screen has to survive that distance, and `surface-2`
-     under `ink` does not.
+  /* A panel that is SATURATED rather than pale — the opening float on the till
+     gate, and anything else that has to read as a figure on a plaque instead of
+     a value in a form. It exists as a token pair because the till is looked at
+     from three feet away by somebody standing up: the one number on the screen
+     has to survive that distance, and `surface-2` under `ink` does not.
 
-     Note these do NOT invert in dark mode the way every other surface does.
-     A plaque is dark in both themes — that is what makes it a plaque — so the
-     dark overrides only lift it enough to separate it from a dark canvas. */
-  --color-deep: #16233f; /* the plaque itself */
-  --color-deep-2: #1e2f52; /* its lighter end, for a gradient */
+     It carries the SAME blue as the quote card — light at the top left, deep at
+     the bottom right — so the two blocks a cashier meets on one screen read as
+     one family rather than two accidents. The quote card differs from it only
+     in the mark behind its text.
+
+     Note these do NOT invert in dark mode the way every other surface does. A
+     plaque stays this blue in both themes — that is what makes it a plaque — so
+     the dark overrides only take a step down, enough to sit on a dark canvas
+     without glowing. */
+  --color-deep: #1890cd; /* the plaque's light end */
+  --color-deep-2: #1b4fc0; /* its deep end, for a gradient */
   --color-deep-ink: #ffffff; /* the figure on it */
-  --color-deep-muted: #9db2dc; /* its label and caption */
+  /* Lifted from the old navy-era value: on this brighter blue #9db2dc was only
+     just separated from the fill, and the label has to stay legible at arm's
+     length. */
+  --color-deep-muted: #d3e6f7; /* its label and caption */
 
   /* The SAME plaque, refused. A pad whose entry is over a ceiling reddens the
      block it is already on rather than moving the figure onto a pale danger
@@ -551,9 +559,11 @@
        surface. Same job, same warmth, 7.6:1 on the card. */
     --color-stat-label: #d9a077;
 
-    /* Lifted, not inverted — see the note in the light block. */
-    --color-deep: #1b2a49;
-    --color-deep-2: #24375e;
+    /* Deepened, not inverted — see the note in the light block. Same move the
+       quote pair makes below, so the two stay one family in this theme too. */
+    --color-deep: #1877ad;
+    --color-deep-2: #17409e;
+    --color-deep-muted: #cfe2f2;
     --color-danger-deep: #58202a;
     --color-danger-deep-2: #7a2b38;
     /* Pulled DOWN in dark, not up — see the note in the light block. */
@@ -657,9 +667,11 @@
      surface. Same job, same warmth, 7.6:1 on the card. */
   --color-stat-label: #d9a077;
 
-  /* Lifted, not inverted — see the note in the light block. */
-  --color-deep: #1b2a49;
-  --color-deep-2: #24375e;
+  /* Deepened, not inverted — see the note in the light block. Same move the
+     quote pair makes below, so the two stay one family in this theme too. */
+  --color-deep: #1877ad;
+  --color-deep-2: #17409e;
+  --color-deep-muted: #cfe2f2;
   --color-danger-deep: #58202a;
   --color-danger-deep-2: #7a2b38;
   /* Pulled DOWN in dark, not up — see the note in the light block. */
@@ -1044,6 +1056,49 @@ input[type='range'] {
 }
 .pin-shake {
   animation: pin-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* The toast tray, so a message raised BY a dialog is readable OVER it.
+
+   <Modal> and <Drawer> are native <dialog>s opened with showModal(), which puts
+   them in the browser's top layer — above the whole page, where no z-index can
+   reach. A plainly-positioned tray therefore painted every toast behind the
+   modal backdrop: dimmed and easy to miss, and worst precisely when a save was
+   REFUSED and the toast held the only explanation.
+
+   The tray is a `popover="manual"`, which joins that same top layer. Toast.tsx
+   re-shows it whenever the list changes, and the most recently shown top-layer
+   element wins — so a toast clears one modal, a modal stacked on a modal, and a
+   drawer.
+
+   The display rule has to live here rather than in a Tailwind class: [popover]
+   is display:none until shown, so a bare `flex` utility would both fight that
+   and paint the tray on pages where nothing has been raised. Keyed on
+   :popover-open, the tray lays out only while it is actually open. */
+.toast-tray:popover-open {
+  display: flex;
+}
+
+/* A popover carries UA chrome — a border, padding, a background, and an
+   `inset: 0` that centres it — none of which belong on a transparent stack of
+   cards pinned to a corner.
+
+   The corner is set HERE rather than left to `right-5 bottom-5` utilities: the
+   UA sheet's `inset: 0` and a Tailwind `right`/`bottom` are both plain
+   declarations, so which wins comes down to source order in the built stylesheet
+   — and it lost, pinning the tray to the top-left. Stating all four sides in one
+   rule leaves nothing to chance, and 1.25rem is `right-5`/`bottom-5` unchanged. */
+.toast-tray {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  overflow: visible;
+  color: inherit;
+  top: auto;
+  left: auto;
+  right: 1.25rem;
+  bottom: 1.25rem;
 }
 
 /* Drawer: slide in from the edge it is anchored to.

@@ -48,6 +48,8 @@ function member(
     reservedQty: 0,
     availableQty: stock,
     askPriceAtSale: false,
+    changeDescription: false,
+    chargePctSubtotal: false,
     allowFractions: false,
     qtyDecimals: 3,
     scaleItem: false,

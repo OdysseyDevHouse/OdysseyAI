@@ -3,7 +3,14 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { Search, ChevronDown, ChevronLeft, ChevronRight, Lock } from '@/components/ui/icons'
+import {
+  Search,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  ExternalLink,
+} from '@/components/ui/icons'
 import { BrandLockup, BrandMark } from '@/components/ui'
 import GlobalSearch from '@/components/GlobalSearch'
 import SettingAnchor from '@/components/SettingAnchor'
@@ -22,9 +29,9 @@ import {
   type NavModuleKey,
 } from '@/lib/navModules'
 import {
-  TILL_HREF,
   tillLinkProps,
   invoicingLinkProps,
+  opensTill,
   opensInInvoicingWindow,
 } from '@/lib/openTill'
 
@@ -183,7 +190,7 @@ function buildRail(
      * somebody who may only take payments. Its chip then only SELECTS the
      * module, which is the honest thing for it to do.
      */
-    const opensElsewhere = (href: string) => href === TILL_HREF || opensInInvoicingWindow(href)
+    const opensElsewhere = (href: string) => opensTill(href) || opensInInvoicingWindow(href)
     const stays = (href: string | undefined) => !!href && !opensElsewhere(href)
     const home =
       sections.find((s) => stays(s.href) && s.built !== false)?.href ??
@@ -436,6 +443,38 @@ export default function Sidebar({
   /* Memoised so the effect below depends on an array that changes when the
      panel does and not on every render. */
   const panelSections = useMemo(() => current?.sections ?? [], [current])
+
+  /*
+   * The panel, split into the windows that open BESIDE this one and the rows
+   * that replace what is on screen.
+   *
+   * Only ever finds anything in Sales, whose module flattens its items into
+   * top-level sections (see panelFor) — which is what puts the till and the
+   * invoicing register here as plain hrefs. Every other panel splits into the
+   * whole list and an empty group, and NewTabLinks renders nothing for it.
+   *
+   * A section with CHILDREN is never lifted, even if one of its children opens
+   * away: the button is a single destination, and a group is not one.
+   */
+  const { newTabItems, panelRows } = useMemo(() => {
+    const out: NavItem[] = []
+    const rows: NavSection[] = []
+    for (const section of panelSections) {
+      // `built === false` rows are the "not built yet" placeholders, which stay
+      // rows: a dead button is a worse promise than a dimmed line.
+      if (section.href && !section.items?.length && section.built !== false && opensInOwnWindow(section.href)) {
+        out.push({
+          label: section.label,
+          href: section.href,
+          icon: section.icon,
+          built: section.built,
+        })
+        continue
+      }
+      rows.push(section)
+    }
+    return { newTabItems: out, panelRows: rows }
+  }, [panelSections])
   useEffect(() => {
     const active = sectionForPath(pathname, panelSections)
     if (active) {
@@ -685,7 +724,10 @@ export default function Sidebar({
               ran together into one shape and you could not see where the section
               ended and the page inside it began. */}
           <nav aria-label={current.def.label} className="flex-1 space-y-1 overflow-y-auto px-2 pb-2">
-            {panelSections.map((section) => (
+            {/* The windows that open BESIDE this one, first and as buttons.
+                See NewTabLinks for why they are not rows. */}
+            <NewTabLinks items={newTabItems} />
+            {panelRows.map((section) => (
               <SectionRow
                 key={section.label}
                 section={section}
@@ -774,7 +816,7 @@ function ModuleChip({
       {/*
         ONE WORD PER LINE, broken here rather than left to the browser.
 
-        "Back office" fits on one line at 9px — just — and filled the chip
+        "Back office" fits on one line at 10px — just — and filled the chip
         corner to corner, which reads as text that overflowed rather than as a
         caption. "Online store" is a character longer and wrapped, so the rail
         had one chip set on two lines beside another set on one, at different
@@ -783,10 +825,10 @@ function ModuleChip({
 
         `leading-[1.15]` holds the pair tight enough to read as one caption
         rather than as two words that happen to be above each other. No
-        tracking: at 9px in 49px of rail, the space after each letter is the
+        tracking: at 10px in 49px of rail, the space after each letter is the
         difference between "Ticketing" fitting and not.
       */}
-      <span className="w-full px-0.5 text-center text-[9px] font-semibold leading-[1.15]">
+      <span className="w-full px-0.5 text-center text-[10px] font-semibold leading-[1.15]">
         {def.caption.split(' ').map((word) => (
           <span key={word} className="block truncate">
             {word}
@@ -984,7 +1026,7 @@ function SectionRow({
         /* The till and the invoicing window both open BESIDE the back office
            rather than replacing it — see lib/openTill.ts. Promotion can lift
            either onto a section row, so the same rule has to hold here. */
-        {...(section.href === TILL_HREF ? tillLinkProps : {})}
+        {...(opensTill(section.href) ? tillLinkProps : {})}
         {...(opensInInvoicingWindow(section.href) ? invoicingLinkProps : {})}
         className={rowClass}
       >
@@ -1039,6 +1081,91 @@ function SectionRow({
 }
 
 /**
+ * Whether a menu row leaves the back office for a window of its own.
+ *
+ * Asked of lib/openTill.ts rather than answered by a flag on the nav row,
+ * because that file already decides it — it is what hands these links their
+ * `target`. A second copy here could disagree with the first, and the failure
+ * would be silent: a row promoted into the group that then opened in place,
+ * under a heading promising it would not.
+ */
+function opensInOwnWindow(href: string): boolean {
+  return opensTill(href) || opensInInvoicingWindow(href)
+}
+
+/**
+ * The doors out of the back office, grouped under a heading of their own.
+ *
+ * ── WHY THEY ARE GROUPED, NOT DECORATED ───────────────────────────────────
+ *
+ * Every other row in this panel swaps the page you are looking at. These do
+ * not: they open a SECOND WINDOW and leave the back office exactly where it
+ * was. Drawn among their neighbours with nothing to mark them, that difference
+ * was something you could only learn by pressing one — and the surprise lands
+ * on the two rows a shop presses most, at the start of a shift.
+ *
+ * The heading is what says it, once, over both. The rows themselves stay
+ * ORDINARY: same padding, same icon size, same muted label and hover as every
+ * sibling, because they are the same kind of thing — a place you go — and a
+ * filled block would rank them above the rest of the menu rather than merely
+ * setting them apart from it. Position and the heading do the separating; the
+ * trailing arrow repeats the promise per row for anyone scanning past it.
+ *
+ * They are ANCHORS — the `target` is what opens the named window, and
+ * middle-click and "open in new window" keep working.
+ */
+function NewTabLinks({ items }: { items: NavItem[] }) {
+  if (!items.length) return null
+
+  return (
+    <div className="pb-1">
+      {/* Same type as the group headings inside a section, so this reads as
+          another quiet label on the rail rather than as a banner. */}
+      <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-nav-faint">
+        Opens in a new tab
+      </p>
+      {items.map((item) => {
+        const ItemIcon = item.icon
+        return (
+          /* Deliberately not <ButtonLink>, and not the kit at all: this has
+             to render identically to the SectionRow links below it, which are
+             drawn from the nav-* tokens on the dark rail. Any kit control here
+             would be the one row in the panel wearing a different skin. */
+          <Link
+            data-kit-ok
+            key={item.href}
+            href={item.href}
+            /* Spread LAST so the named target cannot be undone above — the
+               whole point of the group is that these open beside, not over. */
+            {...(opensTill(item.href) ? tillLinkProps : {})}
+            {...(opensInInvoicingWindow(item.href) ? invoicingLinkProps : {})}
+            /* The same string SectionRow gives an inactive row. These two are
+               never the "current page" — the page never becomes them, it opens
+               beside — so there is no active branch to carry. */
+            className="relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nav-muted transition hover:bg-nav-surface-2 hover:text-nav-ink"
+          >
+            <ItemIcon size={17} className="shrink-0" />
+            <span className="truncate">{item.label}</span>
+            {/* Pinned to the trailing edge, small and half-lit: it is a
+                property of the link, not a second thing to read. */}
+            <ExternalLink size={12} className="ml-auto shrink-0 opacity-60" />
+          </Link>
+        )
+      })}
+      {/* Closes the group off from the rows below it.
+
+          Now that these wear the ordinary row skin, the heading is doing the
+          separating on its own — and a heading only marks where a group STARTS.
+          Without this, "Cash-up" reads as the third thing that opens in a new
+          tab, which is exactly the promise the heading must not make about a
+          row that replaces the page. `mx-3` so it stops short of the rail edges
+          and reads as a rule between rows rather than as a panel border. */}
+      <div aria-hidden className="mx-3 my-1.5 border-t border-nav-border" />
+    </div>
+  )
+}
+
+/**
  * One child row inside an expanded section.
  */
 function ChildLink({
@@ -1074,7 +1201,7 @@ function ChildLink({
       /* The till and the invoicing window both open BESIDE the back office
          rather than replacing it — see lib/openTill.ts for why each gets its
          own named target. Spread LAST so it cannot be undone above. */
-      {...(item.href === TILL_HREF ? tillLinkProps : {})}
+      {...(opensTill(item.href) ? tillLinkProps : {})}
       {...(opensInInvoicingWindow(item.href) ? invoicingLinkProps : {})}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm transition ${
         /* The whole row takes a fill, and the label goes white and bold.
@@ -1094,6 +1221,14 @@ function ChildLink({
     >
       <ItemIcon size={15} className="shrink-0" />
       <span className="truncate">{item.label}</span>
+      {/* The collapsed rail's flyout draws the till and the invoicing register
+          as rows — it is a dense hover list, and the filled buttons the expanded
+          panel gives them would not fit it. The arrow carries the promise the
+          heading makes up there, so a row that opens a second window is never
+          silent about it whichever way the rail is showing. */}
+      {opensInOwnWindow(item.href) && !itemActive && (
+        <ExternalLink size={12} className="ml-auto shrink-0 opacity-60" />
+      )}
       {/* The amber pip, echoing the rule on the open section above it — the
           rail's one non-blue mark, so "you are here" is the same colour at both
           levels. `ml-auto` pins it to the trailing edge of the filled row. */}

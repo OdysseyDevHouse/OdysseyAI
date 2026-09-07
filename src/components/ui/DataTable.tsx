@@ -67,6 +67,7 @@ export function DataTable<T>({
   onSelectionChange,
   isRowSelectable,
   dense = false,
+  fillHeight = false,
 }: {
   columns: readonly Column<T>[]
   rows: readonly T[]
@@ -96,6 +97,29 @@ export function DataTable<T>({
    * dashboard widgets. Not for a list screen somebody works from all day.
    */
   dense?: boolean
+  /**
+   * Fill the height the CALLER has already bounded, instead of measuring the
+   * room left on screen.
+   *
+   * The default is right for a table on a page: it measures from where it
+   * landed to the bottom of the window, so a wide table's horizontal scrollbar
+   * stays in reach whatever chrome sits above it (see useFitViewport).
+   *
+   * It is wrong inside a dialog whose body is a LAYOUT — a pinned toolbar, the
+   * grid, a pinned pager. There the table must fit its pane, not the window,
+   * and the two are far apart: measured in the product search dialog, a 50-row
+   * page rendered a 2592px table inside a 723px body and overflowed the panel,
+   * because the hook walked past the (non-scrolling) body to the window and
+   * never capped at all. Teaching the hook to stop at any clipping ancestor was
+   * the obvious fix and is a worse one — measured, it cut the products list's
+   * table pane from 613px to 2500px and the suppliers' from 437px to 254px,
+   * because every list page has an `overflow-hidden` wrapper somewhere.
+   *
+   * So the caller says so instead. Pass this only from a container that has
+   * ALREADY bounded the height — a flex child with `min-h-0` inside a fixed
+   * panel — or the table simply grows to its content.
+   */
+  fillHeight?: boolean
 }) {
   const [internalSort, setInternalSort] = useState<SortState | undefined>(undefined)
   /* Anchor for shift-click range selection. A ref, not state: it must not
@@ -207,8 +231,18 @@ export function DataTable<T>({
     /* The frame is static and the box inside it scrolls, so any padding here
        never scrolls under the sticky header — see TABLE_FRAME, which carries no
        gutter so the table sits flush to the Card that holds it. */
-    <div className={TABLE_FRAME}>
-      <div ref={scrollRef} className={TABLE_SCROLLER} style={{ maxHeight: fitCap }}>
+    /* `min-h-0` on the frame when filling: it is a flex child in that mode, and
+       a flex child will not shrink below its content without it — the scroll
+       box would be handed its full content height and overflow the pane it was
+       supposed to fit inside. */
+    <div className={`${TABLE_FRAME}${fillHeight ? ' flex min-h-0 flex-1 flex-col' : ''}`}>
+      <div
+        ref={scrollRef}
+        className={TABLE_SCROLLER}
+        /* Filling: take the pane, and let `min-h-0` above make that mean
+           something. Otherwise: the measured room left on screen. */
+        style={fillHeight ? { flex: '1 1 0%', minHeight: 0 } : { maxHeight: fitCap }}
+      >
         <table className={tableClass}>
           <thead className={TABLE_HEAD_STICKY}>
             <tr className={TABLE_HEAD_ROW}>

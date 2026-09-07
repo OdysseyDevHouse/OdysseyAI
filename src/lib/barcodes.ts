@@ -31,7 +31,22 @@ export type ScaleBarcodeRule = {
   pluLength: number
   /** The last digit is a check digit, so it is not part of the value. */
   hasCheckDigit: boolean
-  /** Total barcode length this rule describes. 0 means "any length". */
+  /**
+   * How many digits hold the price or weight, counted back from the END of the
+   * barcode — past the trailing check digit, when the rule has one.
+   *
+   * Counted from the end rather than forward from the stock code because a
+   * scale is free to print digits BETWEEN the two that mean nothing to a till:
+   * a check digit guarding the stock code, a department number, a filler. On a
+   * real Avery label — 2 12345 6 01599 6 — the middle 6 is exactly that, and
+   * reading forward would fold it into the price and charge R6015.99 for a
+   * R15.99 item. Nothing on screen would say so.
+   *
+   * 0 means "everything between the stock code and the check digit", which is
+   * what a rule carried over from the old three-setting config gets: that
+   * config never recorded a width, and inventing one would re-read every label
+   * a shop scans today.
+   */
   valueLength: number
   /** 2 = the embedded figure is in cents, 3 = grams. */
   decimals: number
@@ -69,14 +84,22 @@ export function rulesByPrecedence(rules: readonly ScaleBarcodeRule[]): ScaleBarc
  *
  * ── WHAT THE VALUE IS ─────────────────────────────────────────────────────
  *
- * Everything between the PLU and the check digit — NOT a fixed slice of
- * `valueLength` digits. That is the reading labels in the wild already have, and
- * changing it would re-interpret every barcode a trading shop scans today.
- * `valueLength` describes the barcode's TOTAL length and is used to reject a
- * code of the wrong size, which is what stops a rule on prefix `2` claiming a
- * plain EAN-13 that happens to start with a 2.
+ * The LAST `valueLength` digits before the check digit. Anything between the
+ * stock code and that slice is skipped without being named, because a scale is
+ * free to print digits there that mean nothing to a till — most commonly a
+ * second check digit guarding the stock code, as on 2 12345 6 01599 6.
  *
- * The check digit is not verified, only skipped. A scale printing a
+ * Reading forward from the stock code instead — "everything up to the check
+ * digit" — folds that middle digit into the price and rings up R6015.99 for a
+ * R15.99 item. There is no exception to catch and nothing on screen to notice;
+ * the first anyone knows is a cash-up that does not balance.
+ *
+ * `valueLength` 0 keeps the leftover-digits reading, for a rule that never
+ * recorded a width. A rule that names one is also length-checked: the barcode
+ * must be long enough to hold prefix + stock code + value + check digit, which
+ * is what stops a rule on prefix `2` claiming a plain EAN-13 starting with 2.
+ *
+ * The check digits are not verified, only skipped. A scale printing a
  * non-standard check digit would otherwise stop scanning altogether, and a till
  * refusing a real product with a queue at the counter is a worse failure than
  * accepting a mis-keyed one — which then finds no product and is refused a
@@ -91,19 +114,27 @@ export function parseVariableBarcode(
 
   const rule = toRule(config)
   if (!rule.prefix || !digits.startsWith(rule.prefix)) return null
-  if (rule.valueLength > 0 && digits.length !== rule.valueLength) return null
 
   const pluLength = Number.isFinite(rule.pluLength) && rule.pluLength > 0 ? rule.pluLength : 5
   const start = rule.prefix.length
   const plu = digits.slice(start, start + pluLength)
-  /* Everything between the PLU and the check digit. `hasCheckDigit` false means
-     the barcode ends at the value, which is a real shape — some in-store label
-     printers emit one — and slicing a digit off it would divide the price by
-     ten without a word. */
-  const raw = rule.hasCheckDigit
-    ? digits.slice(start + pluLength, digits.length - 1)
-    : digits.slice(start + pluLength)
-  if (plu.length !== pluLength || !raw) return null
+  if (plu.length !== pluLength) return null
+
+  /* `hasCheckDigit` false means the barcode ends at the value, which is a real
+     shape — some in-store label printers emit one — and slicing a digit off it
+     would divide the price by ten without a word. */
+  const end = rule.hasCheckDigit ? digits.length - 1 : digits.length
+  const valueLength = Number.isFinite(rule.valueLength) ? rule.valueLength : 0
+
+  /* A named width is taken from the END, so digits the scale prints between the
+     stock code and the value are skipped rather than priced. The slice must not
+     reach back into the stock code, or a barcode shorter than the shape claims
+     would quietly read part of the PLU as money. */
+  const from = valueLength > 0 ? end - valueLength : start + pluLength
+  if (from < start + pluLength) return null
+
+  const raw = digits.slice(from, end)
+  if (!raw) return null
 
   const decimals = Number.isFinite(rule.decimals) && rule.decimals >= 0 ? rule.decimals : 2
   const value = Number(raw) / 10 ** decimals

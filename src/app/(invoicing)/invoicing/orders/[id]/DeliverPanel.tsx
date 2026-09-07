@@ -27,7 +27,7 @@ import {
   TABLE_ROW,
   TABLE_NUMERIC,
 } from '@/components/ui'
-import { formatMoney, formatQty, round } from '@/lib/decimals'
+import { formatMoney, formatQty, round, roundQty, qtyDecimalsOf } from '@/lib/decimals'
 import { saveDetailsAction, deliverAction, cancelOrderAction } from '../actions'
 
 /**
@@ -53,6 +53,11 @@ type Line = {
   unitPriceIncl: number
   onHand: number | null
   available: number | null
+  /* What quantity this line's product takes, joined fresh by getDocument. A
+     part-delivery is a quantity like any other: 0.5 of a whole-unit product is
+     as wrong on a delivery note as it is on an invoice. */
+  allowFractions: boolean
+  qtyDecimals: number
 }
 
 export default function DeliverPanel({
@@ -293,15 +298,32 @@ export default function DeliverPanel({
                           step={1}
                           disabled={line.qtyOutstanding === 0}
                           onChange={(e) => {
-                            const typed = Number(e.target.value) || 0
+                            const typed = Number(String(e.target.value).replace(',', '.')) || 0
                             setQty((c) => ({
                               ...c,
                               // Capped at what is outstanding: the server refuses
                               // more anyway, and a box that accepts an impossible
                               // number wastes the user's time.
-                              [line.id]: Math.max(0, Math.min(round(typed, 3), line.qtyOutstanding)),
+                              //
+                              //
+                              // The CAP is applied per keystroke; the product's
+                              // rounding is not — see onBlur. Rounding as they
+                              // type would settle "1.2" on a two-decimal product
+                              // before the 5 of 1.25 could be reached.
+                              [line.id]: Math.max(0, Math.min(typed, line.qtyOutstanding)),
                             }))
                           }}
+                          /* Rounded to the PRODUCT's places once the box is
+                             left. It was a hardcoded three, which both truncated
+                             a four-decimal product and let a whole-unit one be
+                             part-delivered in halves. */
+                          onBlur={() =>
+                            setQty((c) => ({
+                              ...c,
+                              [line.id]: roundQty(c[line.id] ?? 0, line),
+                            }))
+                          }
+                          precision={qtyDecimalsOf(line)}
                         />
                       </div>
                     </div>

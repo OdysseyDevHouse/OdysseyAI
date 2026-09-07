@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
+  BarcodeShapeDiagram,
   Button,
   Card,
   CardBody,
@@ -135,10 +136,10 @@ export default function ScaleBarcodesClient({ rules }: { rules: ScaleRule[] }) {
       key: 'valueLength',
       header: 'Value length',
       numeric: true,
-      /* 0 means "any length", which is what a rule carried over from the old
-         single setting holds. Shown as a word rather than a nought, because a
-         nought in a length column reads as a mistake. */
-      cell: (r) => <span className="numeric">{r.valueLength || 'Any'}</span>,
+      /* 0 means "whatever digits are left over", which is what a rule carried
+         over from the old single setting holds. Shown as a word rather than a
+         nought, because a nought in a length column reads as a mistake. */
+      cell: (r) => <span className="numeric">{r.valueLength || 'Rest'}</span>,
       sortValue: (r) => r.valueLength,
     },
     {
@@ -262,6 +263,11 @@ export default function ScaleBarcodesClient({ rules }: { rules: ScaleRule[] }) {
         open={draft !== null}
         onClose={() => setDraft(null)}
         title={draft?.id ? 'Edit barcode shape' : 'Add a barcode shape'}
+        /* The picture goes in the SUBHEADER, not at the top of the body: the
+           body scrolls once the form is taller than 60vh, and a diagram that
+           scrolls away is useless exactly when somebody is changing the field
+           that redraws it. The subheader is pinned above the scroll. */
+        subheader={draft && <BarcodeShapeDiagram shape={draft} />}
         footer={
           <>
             <Button variant="secondary" onClick={() => setDraft(null)}>
@@ -303,7 +309,7 @@ export default function ScaleBarcodesClient({ rules }: { rules: ScaleRule[] }) {
 
             <Field
               label="Value length"
-              hint="How many digits the whole barcode has. Leave at 0 to accept any length."
+              hint="How many digits hold the price or weight, counted from the end of the label. Any digits between the stock code and the value — a second check digit, say — are ignored. Leave at 0 to use everything after the stock code."
               htmlFor="sb-len"
             >
               <NumberInput

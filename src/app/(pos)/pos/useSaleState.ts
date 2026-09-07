@@ -8,6 +8,7 @@ import {
   stepQty,
   updateBasketLine,
   withInstructions,
+  repriceCharges,
   withRewards,
   type BasketLine,
   type EarnedReward,
@@ -362,7 +363,29 @@ export type SaleAction =
       docType?: SalesDocType
     }
 
+/**
+ * The reducer, with percentage charges re-derived on the way out (006).
+ *
+ * ── WHY THIS WRAPS RATHER THAN LIVING IN EACH CASE ────────────────────────
+ *
+ * A service charge is priced off the REST of the basket, so every action that
+ * touches a line moves it: ADD, STEP, UPDATE, REMOVE, UNDO, LOAD, the reward
+ * sync, a discount typed into a line modal. Putting the call in each of those
+ * is a list that the next action added to this reducer will not be on — and the
+ * failure mode is silent, a charge that quietly disagrees with the bill it is
+ * charging on.
+ *
+ * `repriceCharges` returns the same array when nothing moved, so a basket with
+ * no percentage line on it — most baskets — passes through untouched and no
+ * extra render happens.
+ */
 export function saleReducer(state: SaleState, action: SaleAction): SaleState {
+  const next = saleReducerInner(state, action)
+  const lines = repriceCharges(next.lines)
+  return lines === next.lines ? next : { ...next, lines }
+}
+
+function saleReducerInner(state: SaleState, action: SaleAction): SaleState {
   switch (action.type) {
     case 'ADD': {
       const qty = action.qty ?? 1

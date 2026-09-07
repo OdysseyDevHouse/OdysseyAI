@@ -7,6 +7,7 @@ import { seedSequence } from './saleNumber'
 import { deviceId } from '../deviceId'
 import { parseVariableBarcode, parseWithRules, type ScaleBarcodeRule } from '../barcodes'
 import { parseGs1, gtinCandidates, lotCaptureFor } from '../gs1'
+import { roundQty } from '../decimals'
 import type { TillProduct } from '../site/tillSearch'
 import type { PendingSchedule } from '../priceSchedules'
 import type { PosMenu } from '../posMenuEngine'
@@ -598,7 +599,12 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
         ...(capture.mode === 'barcode' && gs1.expiryDate
           ? { scannedExpiry: gs1.expiryDate }
           : {}),
-        ...(gs1.weight && hit.variableType !== 'price' ? { scannedQty: gs1.weight } : {}),
+        /* Rounded to the product's own places, mirroring resolveScan on the
+           server — an offline till that read a label more finely than the
+           product allows would sell a quantity the online one refuses. */
+        ...(gs1.weight && hit.variableType !== 'price'
+          ? { scannedQty: roundQty(gs1.weight, hit) }
+          : {}),
       }
     }
   }
@@ -626,7 +632,8 @@ export async function findByCode(siteId: number, code: string): Promise<TillProd
   // shipped treats it as weight, the scale-label default.
   return byPlu.variableType === 'price'
     ? { ...byPlu, scannedPrice: variable.value }
-    : { ...byPlu, scannedQty: variable.value }
+    // The product's places, not the scale rule's — see the GS1 branch above.
+    : { ...byPlu, scannedQty: roundQty(variable.value, byPlu) }
 }
 
 /**

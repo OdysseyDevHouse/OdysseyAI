@@ -2,6 +2,13 @@ import 'server-only'
 import type { PoolConnection } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '@/lib/siteDb'
 import { toNum } from '@/lib/decimals'
+import {
+  insertProductTx,
+  resolveVat,
+  validateProduct,
+  type ProductInput,
+} from '@/lib/site/products'
+import { resolveMasterCode } from '@/lib/site/masterCodes'
 
 /**
  * Product variants — the parent/child grouping and the rules that keep it sane.
@@ -496,4 +503,307 @@ async function siteQueryOneTx(
   const [rows] = await tx.query<never>(sql, params as never)
   const list = rows as unknown as Row[]
   return list.length > 0 ? list[0] : null
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * THE GRID — creating a whole size × colour range in one go.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Why this exists at all.
+ *
+ * attachChild() takes a product that ALREADY EXISTS, which is the right shape
+ * for "I already sell the small, now group it with the medium". It is the
+ * wrong shape for the common case: a shop that has just bought a shoe in five
+ * sizes and three colours has fifteen products that do not exist yet, and the
+ * panel made them create all fifteen by hand and then attach all fifteen by
+ * hand — thirty trips through a form to describe one shoe.
+ *
+ * So this does the whole job at once: name the parent, list the sizes, list
+ * the colours, and every combination is created and attached.
+ *
+ * ── WHY IT IS ONE TRANSACTION ────────────────────────────────────────────
+ *
+ * Fifteen products of which eleven were created is worse than none: the person
+ * cannot tell which four are missing without comparing the grid to the list by
+ * eye, and re-running the wizard would refuse every code that did save. The
+ * refer wizard learned this first (see insertProductTx's note) and this uses
+ * the same machinery for the same reason.
+ *
+ * ── WHY IT DOES NOT CALL attachChild ─────────────────────────────────────
+ *
+ * attachChild opens its own transaction, so fifteen of them cannot be made
+ * atomic by nesting. The variant columns are written directly in the
+ * transaction below instead, which is safe HERE and would not be in general:
+ * every child is a row this function just inserted, so the checks attachChild
+ * makes against an existing product — is it already someone's variant, does it
+ * have variants of its own, does it hold stock — are all answered by
+ * construction. What attachChild enforces that this must still enforce is rule
+ * 6, one combination per group, and the SELECT below covers it against the
+ * children a group already has.
+ */
+
+export type GridRow = {
+  axis1: string
+  axis2: string
+  code: string
+  description: string
+  barcode: string
+  costExcl: number
+  sellIncl: number
+}
+
+export type CreateGridInput = {
+  /** The product that becomes (or already is) the parent. */
+  parentId: number
+  /** Axis labels — 'Size', 'Colour'. Ignored when the group already exists. */
+  axisLabels: string[]
+  rows: GridRow[]
+  /** Which price structure `sellIncl` lands in. Null skips price writing. */
+  priceStructureId: number | null
+}
+
+export type CreateGridResult = { ok: true; created: number } | { ok: false; error: string }
+
+/**
+ * Create every combination in one transaction.
+ *
+ * Reads first, writes second — resolving codes, checking them for clashes and
+ * resolving VAT all happen before the transaction opens, so a grid refused for
+ * a duplicate code is refused before a single row is written. Same order
+ * createReferRange uses.
+ */
+export async function createVariantGrid(
+  siteId: number,
+  input: CreateGridInput,
+  audit?: { source: 'editor' | 'import'; userName: string },
+): Promise<CreateGridResult> {
+  if (input.rows.length === 0) {
+    return { ok: false, error: 'There are no variants to create.' }
+  }
+
+  const parent = await siteQueryOne<Row>(
+    siteId,
+    `SELECT id, code, description, has_variants, parent_id, stock_on_hand,
+            ${INHERITED.join(', ')}
+       FROM products WHERE id = ?`,
+    [input.parentId],
+  )
+  if (!parent) return { ok: false, error: 'That product no longer exists.' }
+
+  /*
+   * The same refusals makeParent makes, made HERE so they are reported before
+   * fifteen codes are resolved and burned out of the auto-number sequence.
+   * makeParent's own checks still run inside the transaction below — this is
+   * the courtesy, that is the guarantee.
+   */
+  if (Number(parent.parent_id ?? 0) > 0) {
+    return {
+      ok: false,
+      error:
+        'This product is already a variant of something else, so it cannot have variants of its own.',
+    }
+  }
+  const alreadyGroup = Number(parent.has_variants) === 1
+  if (!alreadyGroup && Math.abs(toNum(parent.stock_on_hand)) > 0.0005) {
+    return {
+      ok: false,
+      error:
+        'Move this product’s stock onto a variant first — a product with variants cannot hold stock itself.',
+    }
+  }
+
+  const labels = input.axisLabels
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, MAX_AXES)
+  if (!alreadyGroup && labels.length === 0) {
+    return {
+      ok: false,
+      error: 'Name at least one thing that tells the variants apart, such as Size.',
+    }
+  }
+
+  /* ── Every read, before anything is written ─────────────────────────── */
+
+  // Combinations already in the group. Adding brown to a shoe that already has
+  // black and white must not re-create the black ones (rule 6).
+  const existing = await siteQuery<Row>(
+    siteId,
+    'SELECT axis_1_value, axis_2_value FROM products WHERE parent_id = ?',
+    [input.parentId],
+  )
+  const taken = new Set(
+    existing.map((r) => `${String(r.axis_1_value ?? '')} ${String(r.axis_2_value ?? '')}`),
+  )
+
+  const prepared: Array<{ row: GridRow; code: string; input: ProductInput }> = []
+  const seenCodes = new Set<string>()
+
+  for (const row of input.rows) {
+    const axis1 = row.axis1.trim()
+    const axis2 = row.axis2.trim()
+    if (!axis1 && !axis2) {
+      return { ok: false, error: 'Say which variant this is, such as “Medium”.' }
+    }
+    if (taken.has(`${axis1} ${axis2}`)) {
+      return {
+        ok: false,
+        error: `There is already a variant for ${[axis1, axis2].filter(Boolean).join(' / ')}.`,
+      }
+    }
+
+    const code = await resolveMasterCode(siteId, 'product', row.code)
+    if (!code) {
+      return { ok: false, error: `${describeRow(row)} needs a product code.` }
+    }
+    if (seenCodes.has(code.toLowerCase())) {
+      return { ok: false, error: `Product code “${code}” is on more than one variant.` }
+    }
+    seenCodes.add(code.toLowerCase())
+
+    const clash = await siteQueryOne<Row>(
+      siteId,
+      'SELECT id FROM products WHERE code = ? LIMIT 1',
+      [code],
+    )
+    if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
+
+    /*
+     * The child inherits exactly what INHERITED says it must and nothing else.
+     * Price and cost come from the grid — a size 12 genuinely costs more than
+     * a size 6, and that is the most common reason to have variants at all.
+     */
+    const productInput: ProductInput = {
+      code,
+      description: row.description.trim(),
+      barcode: row.barcode?.trim() || null,
+      lastCost: row.costExcl,
+      departmentId: (parent.department_id as number | null) ?? null,
+      brandId: (parent.brand_id as number | null) ?? null,
+      purchaseVatRateId: (parent.purchase_vat_rate_id as number | null) ?? undefined,
+      sellingVatRateId: (parent.selling_vat_rate_id as number | null) ?? undefined,
+      prices:
+        input.priceStructureId === null ? undefined : { [input.priceStructureId]: row.sellIncl },
+    }
+
+    const invalid = validateProduct(productInput)
+    if (invalid) return { ok: false, error: `${describeRow(row)}: ${invalid}` }
+
+    prepared.push({ row, code, input: productInput })
+  }
+
+  // Duplicate barcodes, for the reason createReferRange gives: products.barcode
+  // has no unique index, so a clash would not fail — the till would just ring
+  // up whichever product was created first.
+  const barcodes = prepared.map((p) => p.input.barcode ?? '').filter(Boolean)
+  const doubled = barcodes.find((b, i) => barcodes.indexOf(b) !== i)
+  if (doubled) {
+    return { ok: false, error: `Barcode ${doubled} is on more than one variant.` }
+  }
+  if (barcodes.length > 0) {
+    const clashes = await siteQuery<Row>(
+      siteId,
+      `SELECT code, barcode FROM products WHERE barcode IN (${barcodes.map(() => '?').join(',')})`,
+      barcodes,
+    )
+    if (clashes.length > 0) {
+      return {
+        ok: false,
+        error: `Barcode ${String(clashes[0].barcode)} is already on product ${String(
+          clashes[0].code,
+        )}.`,
+      }
+    }
+  }
+
+  const vat = await resolveVat(siteId, {
+    code: '',
+    description: '',
+    purchaseVatRateId: (parent.purchase_vat_rate_id as number | null) ?? undefined,
+    sellingVatRateId: (parent.selling_vat_rate_id as number | null) ?? undefined,
+  })
+
+  /* ── One transaction ────────────────────────────────────────────────── */
+
+  try {
+    const created = await siteTransaction(siteId, async (tx) => {
+      const locked = await lockProduct(tx, input.parentId)
+
+      /*
+       * Re-checked under the lock, not merely re-stated. Everything above ran
+       * outside the transaction, so between then and now someone else could
+       * have made this product a variant or sold stock onto it. These are the
+       * refusals that count; the ones at the top are the early message.
+       */
+      if (Number(locked.parent_id ?? 0) > 0) {
+        throw new VariantError(
+          'This product is already a variant of something else, so it cannot have variants of its own.',
+        )
+      }
+
+      if (Number(locked.has_variants) !== 1) {
+        if (Math.abs(toNum(locked.stock_on_hand)) > 0.0005) {
+          throw new VariantError(
+            'Move this product’s stock onto a variant first — a product with variants cannot hold stock itself.',
+          )
+        }
+        await tx.execute('UPDATE products SET has_variants = 1 WHERE id = ?', [
+          input.parentId,
+        ] as never)
+        await tx.execute('DELETE FROM product_variant_axes WHERE product_id = ?', [
+          input.parentId,
+        ] as never)
+        for (const [index, label] of labels.entries()) {
+          await tx.execute(
+            'INSERT INTO product_variant_axes (product_id, position, label) VALUES (?,?,?)',
+            [input.parentId, index + 1, label] as never,
+          )
+        }
+      }
+
+      /*
+       * Positions continue from the end of the group, so adding brown to a shoe
+       * that already has black and white appends rather than interleaving — and
+       * MAX + 1 rather than a count, because a group that has had a child
+       * detached has a gap and counting would reuse a position still in use.
+       */
+      const last = await siteQueryOneTx(
+        tx,
+        'SELECT COALESCE(MAX(variant_sort), 0) AS top FROM products WHERE parent_id = ?',
+        [input.parentId],
+      )
+      let sort = Number(last?.top ?? 0) / 10
+
+      for (const ready of prepared) {
+        const childId = await insertProductTx(tx, { ...ready.input, code: ready.code }, vat, audit)
+        sort += 1
+        await tx.execute(
+          `UPDATE products
+              SET parent_id = ?, has_variants = 0,
+                  axis_1_value = ?, axis_2_value = ?, variant_sort = ?
+            WHERE id = ?`,
+          [
+            input.parentId,
+            ready.row.axis1.trim(),
+            ready.row.axis2.trim(),
+            Math.round(sort * 10),
+            childId,
+          ] as never,
+        )
+      }
+
+      return prepared.length
+    })
+
+    return { ok: true, created }
+  } catch (error) {
+    if (error instanceof VariantError) return { ok: false, error: error.message }
+    throw error
+  }
+}
+
+/** "Size 10 / Brown", for an error that points at a row of the grid. */
+function describeRow(row: GridRow): string {
+  return [row.axis1.trim(), row.axis2.trim()].filter(Boolean).join(' / ') || 'This variant'
 }

@@ -18,7 +18,6 @@ import {
   NumberInput,
   PageBody,
   PageHeader,
-  PickerResults,
   type PickableReason,
   ReasonPicker,
   Select,
@@ -36,7 +35,7 @@ import {
   TABLE_TD_INPUT,
   TABLE_TH,
 } from '@/components/ui'
-import { formatMoney, round } from '@/lib/decimals'
+import { formatMoney, round, roundQty, qtyDecimalsOf, DEFAULT_QTY_DECIMALS } from '@/lib/decimals'
 import { deviceId } from '@/lib/deviceId'
 import { documentTotals, lineTotals } from '@/lib/documentMath'
 import {
@@ -49,17 +48,18 @@ import type { SalesDocument } from '@/lib/site/salesDocuments'
 import type { PriceStructure, SalesRep } from '@/lib/site/lookups'
 import type { TenderType } from '@/lib/site/tenderTypes'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
-import { stockNote } from '@/lib/tillProductNotes'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import {
   scanAction,
   searchProductsAction,
-  browseProductsAction,
-  listProductDepartmentsAction,
   voidSaleAction,
   creditWholeSaleAction,
 } from '@/app/(app)/sales/actions'
 import { EmailInvoiceDialog } from '@/app/(app)/sales/EmailInvoiceDialog'
+import ProductSearchModal, {
+  type ProductSearchPick,
+} from '@/components/products/ProductSearchModal'
+import { AskDetailsModal } from '@/app/(pos)/pos/AskDetailsModal'
 import {
   finaliseInvoiceAction,
   getInvoiceCustomerAction,
@@ -96,6 +96,34 @@ type EditorLine = {
   vatRatePct: number
   unitCostExcl: number
   /**
+   * Whether this product may be sold in fractions, and to how many places.
+   *
+   * Both carried on the LINE rather than looked up per keystroke, exactly as
+   * `BasketLine` carries them: the grid re-renders on every character typed
+   * into any cell, and a rule that had to be fetched would either block the
+   * keystroke or arrive after it.
+   *
+   * Read through `qtyDecimalsOf`, never directly — `qtyDecimals` is meaningless
+   * while `allowFractions` is off, and is deliberately left at whatever the
+   * shop last chose so switching fractions off and on again does not lose it.
+   *
+   * A line with no product — free text on a quote — gets the permissive pair:
+   * there is no product file to ask, and a typed description has never had a
+   * quantity rule to break.
+   */
+  allowFractions: boolean
+  qtyDecimals: number
+  /**
+   * Priced as a percentage of the rest of the document (006) — the same pair
+   * `BasketLine` carries, for the same reason and with the same meaning.
+   *
+   * `unitPriceIncl` holds the recomputed MONEY so every total, VAT figure and
+   * export reads this line like any other; `chargePct` holds the rate the money
+   * is derived from. A line with no product is never one of these.
+   */
+  chargePctSubtotal?: boolean
+  chargePct?: number
+  /**
    * The special that PUT this line here — a product given away rather than
    * discounted. See the same field on BasketLine for why a reward has to be a
    * line rather than a percentage.
@@ -129,16 +157,6 @@ const STATUS_TONE: Record<SalesDocument['status'], BadgeTone> = {
   finalised: 'success',
   cancelled: 'neutral',
 }
-
-/**
- * How many products the picker loads at once.
- *
- * Enough that a shop of ordinary size sees its whole catalogue without
- * filtering, and bounded so a chain with fifty thousand lines does not ship all
- * of them to the browser. Past this the dialog says so rather than pretending
- * the list is complete.
- */
-const PICKER_LIMIT = 500
 
 /**
  * One cell of the document's header strip — a glyph beside a field.
@@ -310,6 +328,14 @@ export default function InvoiceEditor({
       discountPct: l.discountPct,
       vatRatePct: l.vatRatePct,
       unitCostExcl: l.unitCostExcl,
+      /* Joined fresh from the product by getDocument, not snapshotted onto the
+         line — so reopening a draft honours the rule as it stands now. The
+         stored `qty` is deliberately NOT re-rounded to it: what was captured is
+         a fact about this document, and silently altering a saved quantity on
+         open would change a figure somebody may already have quoted. A tightened
+         rule bites on the next EDIT, which is where the person is looking. */
+      allowFractions: l.allowFractions,
+      qtyDecimals: l.qtyDecimals,
     })),
   )
 
@@ -324,17 +350,24 @@ export default function InvoiceEditor({
    * customer says "the blue one, 20 mil". This is how you look without knowing
    * the code.
    *
+   * The dialog itself is the SHARED one — components/products/ProductSearchModal
+   * — rather than a picker belonging to this screen. It used to be a search box
+   * over a flat list of 500 rows with a department picker beside it, which
+   * answered "what is this called" and nothing else. The shared one is the
+   * products grid: sortable columns, the advanced filter, a column picker of
+   * its own, and tick boxes for adding several at once.
+   *
    * Kept out of `pending`: that transition disables the whole invoice while a
    * save is in flight, and a search that greys out the grid behind it would
    * make the dialog feel like it was committing something.
    */
   const [searchOpen, setSearchOpen] = useState(false)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [searchDept, setSearchDept] = useState<number | null>(null)
-  const [searchResults, setSearchResults] = useState<TillProduct[]>([])
-  const [searching, setSearching] = useState(false)
-  const [searchDepts, setSearchDepts] = useState<{ id: number; name: string; depth: number }[]>([])
-  const searchInputRef = useRef<HTMLInputElement>(null)
+  /** A product waiting for its typed description and/or price (006). */
+  const [askingDetails, setAskingDetails] = useState<{
+    product: TillProduct
+    description: boolean
+    price: boolean
+  } | null>(null)
 
   const [tendering, setTendering] = useState(false)
   const [receipt, setReceipt] = useState<{
@@ -577,6 +610,13 @@ export default function InvoiceEditor({
           vatRatePct: product.vatRatePct,
           // Costed even though free, so the giveaway shows against the margin.
           unitCostExcl: product.costExcl,
+          /* Whole units, matching the till's reward lines (see `describe` in
+             PosShell). A reward is a count of things given away, decided by the
+             engine rather than typed — and the describe payload carries no
+             fraction rule to consult, so this fails closed rather than
+             inventing permission the product may not grant. */
+          allowFractions: false,
+          qtyDecimals: DEFAULT_QTY_DECIMALS,
           rewardSpecialId: reward.specialId,
         })
       }
@@ -596,6 +636,52 @@ export default function InvoiceEditor({
       return unchanged ? current : [...own, ...granted]
     })
   }, [engineLines, specials, lines, pricingContext])
+
+  /**
+   * Percentage-charge lines re-derived from the rest of the document (006).
+   *
+   * The till does this inside its reducer, which every line change passes
+   * through; this editor has no reducer, so it is an effect over `lines` —
+   * the same shape as the reward reconciliation above, and settling the same
+   * way: an unchanged answer returns the very same array, React bails out of
+   * the re-render, and the effect does not loop.
+   *
+   * The base is the ORDINARY lines only, and it is taken AFTER discounts, for
+   * both of the reasons set out on `repriceCharges`: charges must not compound
+   * on one another, and a service charge is taken on what the customer actually
+   * pays. `effectiveDiscountPct` is used so the base matches the figure the
+   * totals below are built from rather than a second opinion about it.
+   */
+  useEffect(() => {
+    if (!lines.some((l) => l.chargePctSubtotal)) return
+
+    const base = lines.reduce(
+      (sum, l, i) =>
+        l.chargePctSubtotal
+          ? sum
+          : sum +
+            lineTotals({
+              qty: l.qty,
+              unitPriceIncl: l.unitPriceIncl,
+              discountPct: effectiveDiscountPct(l.discountPct, lineSpecials[i]),
+              vatRatePct: l.vatRatePct,
+            }).lineTotalIncl,
+      0,
+    )
+
+    setLines((current) => {
+      let moved = false
+      const next = current.map((l) => {
+        if (!l.chargePctSubtotal) return l
+        const whole = round(base * ((l.chargePct ?? 0) / 100), 2)
+        const unit = l.qty === 0 ? 0 : round(whole / l.qty, 2)
+        if (unit === l.unitPriceIncl) return l
+        moved = true
+        return { ...l, unitPriceIncl: unit }
+      })
+      return moved ? next : current
+    })
+  }, [lines, lineSpecials])
 
   const computed = useMemo(() => {
     const per = lines.map((l, i) =>
@@ -634,14 +720,31 @@ export default function InvoiceEditor({
    * typing a code, and choosing from the search dialog — and only the first has
    * anything to resolve. The dialog already holds the product.
    */
-  function appendLine(found: TillProduct) {
+  /**
+   * Adds a product, asking first for anything its file says is typed here (006).
+   *
+   * Both entry paths — the search dialog and the typed code — converge on
+   * `appendLine`, so the prompt sits in front of it rather than in each caller.
+   * Same reason the till puts its version in `add()`.
+   */
+  function addWithPrompts(found: TillProduct) {
+    const wantsDescription = found.changeDescription
+    const wantsPrice = found.askPriceAtSale
+    if (wantsDescription || wantsPrice) {
+      setAskingDetails({ product: found, description: wantsDescription, price: wantsPrice })
+      return
+    }
+    appendLine(found)
+  }
+
+  function appendLine(found: TillProduct, answers?: { description: string; price: number }) {
     setLines((current) => [
       ...current,
       {
         key: nextKey(),
         productId: found.id,
         productCode: found.code,
-        description: found.description,
+        description: answers?.description ?? found.description,
         productType: found.productType,
         departmentId: found.departmentId,
         // Inherits the line above, which is nearly always right when one
@@ -650,7 +753,19 @@ export default function InvoiceEditor({
         // down the rest of the order rather than snapping back.
         salesRepUserId: current[current.length - 1]?.salesRepUserId ?? defaultRepUserId,
         qty: 1,
-        unitPriceIncl: found.priceIncl,
+        /* A percentage charge opens at nothing: its stored figure is the RATE,
+           and the reprice effect turns that into money against the rest of the
+           document. Otherwise a typed price wins over the shelf one. */
+        unitPriceIncl: found.chargePctSubtotal ? 0 : (answers?.price ?? found.priceIncl),
+        chargePctSubtotal: found.chargePctSubtotal,
+        /* WHAT A TYPED FIGURE MEANS ON A PERCENTAGE CHARGE.
+           "Ask for the price" and "charge % of subtotal" are contradictory
+           settings — one says the money is typed, the other says the money is
+           derived — and a product can carry both. The typed figure is taken as
+           the RATE, because that is the only reading under which it changes
+           anything: treating it as money would be overwritten by the very next
+           reprice. Typing 12 on a charge product therefore means 12%. */
+        chargePct: found.chargePctSubtotal ? (answers?.price ?? found.priceIncl) : 0,
         /*
          * The account's standing discount is the DEFAULT, capped at the
          * product's own ceiling: checkPricing refuses a line above
@@ -663,90 +778,86 @@ export default function InvoiceEditor({
           : 0,
         vatRatePct: found.vatRatePct,
         unitCostExcl: found.costExcl,
+        /* From the product, like the till's `lineFromProduct` does. The search
+           and scan actions have always returned these — the editor simply threw
+           them away here, which is why an invoice would take 0.5 of a product
+           the till refuses to sell in halves. */
+        allowFractions: found.allowFractions,
+        qtyDecimals: found.qtyDecimals ?? DEFAULT_QTY_DECIMALS,
       },
     ])
   }
 
-  /*
-   * Loads the catalogue as the term and department settle.
+  /**
+   * A product chosen in the search dialog, added to the invoice.
    *
-   * Runs with an EMPTY term too — the dialog opens showing the first 500
-   * products, because a picker that shows nothing until you type hides the
-   * catalogue from anyone who does not already know what is in it. Typing and
-   * choosing a department both narrow the same list.
+   * ── WHY THE PICK IS RE-RESOLVED ──────────────────────────────────────────
    *
-   * Debounced because this would otherwise hit the database on every keystroke,
-   * and the sequence guard matters more than the delay: a short term matches far
-   * more rows than a long one, so a slow early request can land after a fast
-   * later one and replace the right answer with a stale list. Only the newest
-   * request is allowed to write.
+   * The dialog hands back a plain product — id, code, description, shelf price
+   * — because it is the shared picker and knows nothing about invoicing. This
+   * screen needs a TillProduct: the price for THIS customer's structure, the
+   * "ask for a description" and "ask for a price" flags, the fraction rules,
+   * the stock note. So the code goes through `scanAction`, which is the same
+   * path the entry box below the grid already uses.
+   *
+   * The alternative — teaching the picker about price structures — would make
+   * every screen that opens it pass one, including the several that have no
+   * customer at all. The round trip is one query against a product the user
+   * has already waited for the list of.
    */
-  useEffect(() => {
-    if (!searchOpen) return
-
-    let live = true
-    setSearching(true)
-    const timer = setTimeout(
-      async () => {
-        try {
-          const found = await browseProductsAction({
-            term: searchTerm.trim(),
-            departmentId: searchDept,
-            priceStructureId,
-            limit: PICKER_LIMIT,
-          })
-          if (live) setSearchResults(found)
-        } catch {
-          if (live) setSearchResults([])
-        } finally {
-          if (live) setSearching(false)
-        }
-      },
-      // No debounce on the very first load — the dialog would otherwise open
-      // empty for a quarter second every time.
-      searchTerm.trim() || searchDept !== null ? 250 : 0,
-    )
-
-    return () => {
-      live = false
-      clearTimeout(timer)
-    }
-  }, [searchOpen, searchTerm, searchDept, priceStructureId])
-
-  /* The department list is the same for the life of the screen, so it is
-     fetched once on first open rather than with every query. */
-  useEffect(() => {
-    if (!searchOpen || searchDepts.length > 0) return
-    let live = true
-    listProductDepartmentsAction()
-      .then((d) => { if (live) setSearchDepts(d) })
-      .catch(() => { if (live) setSearchDepts([]) })
-    return () => { live = false }
-  }, [searchOpen, searchDepts.length])
-
-  function openSearch() {
-    setSearchTerm('')
-    setSearchDept(null)
-    setSearchResults([])
-    setSearchOpen(true)
+  function pickFromSearch(product: ProductSearchPick) {
+    startTransition(async () => {
+      const found = await scanAction(product.code, priceStructureId)
+      if (!found) {
+        /* Name the product, not the code. It was just clicked in a list, so
+           "Nothing found for ABC123" reads as though the click missed. */
+        toast.error(`Could not add ${product.description}.`)
+        return
+      }
+      addWithPrompts(found)
+      toast.success(`Added ${found.description}.`)
+    })
   }
 
   /**
-   * Adds the chosen product and stays open.
+   * Several products, ticked in the dialog and added together.
    *
-   * Capturing an order is nearly always several products in a row, so closing
-   * after each one would mean re-opening and re-typing.
+   * Resolved in ORDER and one at a time rather than in parallel: `appendLine`
+   * inherits the sales rep from the line above it, so the lines have to land in
+   * the order they were picked or the inheritance chains off whichever query
+   * happened to answer first.
+   *
+   * A product that asks for a description or a price still stops and asks. That
+   * makes a bulk add of ten interruptible, which is right — the alternative is
+   * ten lines silently carrying a price of zero.
    */
-  function pickFromSearch(product: TillProduct) {
-    appendLine(product)
-    toast.success(`Added ${product.description}.`)
-    // The term clears so the next one can be typed straight away; the
-    // DEPARTMENT stays, because someone working through one aisle is usually
-    // adding several things from it. Results are left alone — clearing them
-    // would blank the list for the moment it takes to re-query.
-    setSearchTerm('')
-    searchInputRef.current?.focus()
+  function pickManyFromSearch(products: ProductSearchPick[]) {
+    startTransition(async () => {
+      let added = 0
+      const missing: string[] = []
+
+      for (const product of products) {
+        const found = await scanAction(product.code, priceStructureId)
+        if (!found) {
+          missing.push(product.code)
+          continue
+        }
+        addWithPrompts(found)
+        added += 1
+      }
+
+      /* Name the refusals. "8 added" with nothing about the other two leaves
+         the user unable to tell which of the ten they still have to find. */
+      if (missing.length > 0) {
+        toast.info(
+          `${added} added, ${missing.length} could not be — ${missing.slice(0, 3).join(', ')}`,
+        )
+      } else if (added > 0) {
+        toast.success(`Added ${added} product${added === 1 ? '' : 's'}.`)
+      }
+    })
   }
+
 
   function addProduct(code: string) {
     const term = code.trim()
@@ -761,7 +872,7 @@ export default function InvoiceEditor({
         return
       }
 
-      appendLine(found)
+      addWithPrompts(found)
       setEntry('')
       entryRef.current?.focus()
     })
@@ -1230,8 +1341,16 @@ export default function InvoiceEditor({
             action={
               /* Not the primary — Finalise is. Opens the search dialog, because
                  the dashed entry box below already covers the case where the
-                 code is known; this is for when it is not. */
-              <Button variant="secondary" onClick={openSearch} disabled={!editable || pending}>
+                 code is known; this is for when it is not.
+
+                 Just the flag: the dialog clears its own search, filters and
+                 selection every time it opens, so there is nothing to reset
+                 from out here. */
+              <Button
+                variant="secondary"
+                onClick={() => setSearchOpen(true)}
+                disabled={!editable || pending}
+              >
                 <Icons.Plus size={16} />
                 Add product
               </Button>
@@ -1313,13 +1432,37 @@ export default function InvoiceEditor({
 
                       <td className={TABLE_TD_INPUT}>
                         <NumberInput
-                          aria-label={`Quantity for ${line.description}`}
+                          /* Names the rule, so a typist who watches 1.5 become 2
+                             knows why. The till's line editor labels it the same
+                             way. */
+                          aria-label={`Quantity for ${line.description}${
+                            qtyDecimalsOf(line) === 0
+                              ? ' — whole units only'
+                              : ` — up to ${qtyDecimalsOf(line)} decimals`
+                          }`}
                           value={line.qty}
-                          precision={2}
+                          /* The product's own places, not a hardcoded 2. At 2 a
+                             legitimate 1.125kg line displayed as 1.13 while
+                             state still held 1.125 — the box lied about the
+                             number it was holding. */
+                          precision={qtyDecimalsOf(line)}
                           disabled={!editable}
                           onChange={(e) =>
                             patch(line.key, { qty: Number(String(e.target.value).replace(',', '.')) || 0 })
                           }
+                          /*
+                           * Rounded when the cell is LEFT, not per keystroke.
+                           *
+                           * `precision` only formats what is shown — it never
+                           * writes back — so without this the grid displayed a
+                           * rounded figure over unrounded state and SAVED the
+                           * unrounded one. Rounding on blur makes the two agree.
+                           *
+                           * Not per keystroke because that would fight the
+                           * caret: "1.2" on a two-decimal product would settle
+                           * to 1.2 and the next digit could never reach 1.25.
+                           */
+                          onBlur={() => patch(line.key, { qty: roundQty(line.qty, line) })}
                         />
                       </td>
 
@@ -1504,107 +1647,40 @@ export default function InvoiceEditor({
           onFinalise={finalise}
         />
 
-        {/* closeOnBackdrop stays on: nothing here is half-typed work worth
-            protecting — every pick is already on the invoice behind it. */}
-        <Modal
+        {/* Only mounted while a product is being asked about, so its state
+            starts fresh each time — see the same note on the till's copy. */}
+        {askingDetails && (
+          <AskDetailsModal
+            product={askingDetails.product}
+            askDescription={askingDetails.description}
+            askPrice={askingDetails.price}
+            onCancel={() => setAskingDetails(null)}
+            onConfirm={(answers) => {
+              const { product } = askingDetails
+              setAskingDetails(null)
+              appendLine(product, answers)
+            }}
+          />
+        )}
+
+        {/*
+          The shared product picker — the products grid in a dialog.
+
+          Both gestures are wired, because capturing an order is both kinds of
+          job: clicking a name adds that one and closes, which is what happens
+          when the customer asks for a specific thing; ticking a run of rows and
+          pressing Add puts them all on at once, which is what happens with an
+          order sheet in hand.
+        */}
+        <ProductSearchModal
           open={searchOpen}
           onClose={() => setSearchOpen(false)}
+          onPick={pickFromSearch}
+          onPickMany={pickManyFromSearch}
           title="Add a product"
-          description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the invoice."
-          /* Search box, department browse and an unbounded results list — the
-             picker is exactly as tall as the catalogue lets it be. */
-          bodyGrows
-          size="lg"
-          footer={
-            <Button variant="secondary" onClick={() => setSearchOpen(false)}>
-              Done
-            </Button>
-          }
-        >
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-end gap-3">
-              <Field label="Search" className="min-w-64 flex-1">
-                <Input
-                  ref={searchInputRef}
-                  autoFocus
-                  value={searchTerm}
-                  placeholder="Code, barcode or description…"
-                  aria-label="Search products by code, barcode or description"
-                  icon={<Icons.Search size={15} />}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyDown={(e) => {
-                    // Enter takes the first match, so a search that has already
-                    // narrowed to the right thing needs no reach for the mouse.
-                    if (e.key === 'Enter' && searchResults[0]) {
-                      e.preventDefault()
-                      pickFromSearch(searchResults[0])
-                    }
-                  }}
-                />
-              </Field>
-
-              <Field label="Department" className="w-60">
-                <Select
-                  value={searchDept ?? ''}
-                  aria-label="Filter products by department"
-                  onChange={(e) => setSearchDept(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">All departments</option>
-                  {searchDepts.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {/* Non-breaking spaces: a plain one is collapsed inside an
-                          <option>, so a nested list would render flat. */}
-                      {'  '.repeat(d.depth)}
-                      {d.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-
-            {/* A fixed height, so the dialog does not jump as results arrive and
-                a pick never lands on a row that moved under the cursor. */}
-            <div className="min-h-[18rem]">
-              {searching && searchResults.length === 0 ? (
-                <p className="px-1 py-3 text-sm text-muted">Loading products…</p>
-              ) : searchResults.length === 0 ? (
-                <p className="px-1 py-3 text-sm text-muted">
-                  {searchTerm.trim()
-                    ? `Nothing matches “${searchTerm.trim()}”${searchDept !== null ? ' in this department' : ''}.`
-                    : 'No products in this department.'}{' '}
-                  Only products visible at the till are listed here.
-                </p>
-              ) : (
-                <PickerResults
-                  results={searchResults.map((p) => ({
-                    key: p.id,
-                    label: p.description,
-                    // The same stock note the till shows, from the same helper:
-                    // billing for something the shop does not have is the
-                    // mistake this dialog is most likely to cause.
-                    meta: `${p.code}${stockNote(p)}`,
-                    trailing: formatMoney(p.priceIncl),
-                  }))}
-                  onPick={(key) => {
-                    const product = searchResults.find((p) => p.id === Number(key))
-                    if (product) pickFromSearch(product)
-                  }}
-                />
-              )}
-            </div>
-
-            {/* Say so when the list is cut short. A picker that silently shows
-                the first 500 of 40,000 looks like a complete catalogue, and the
-                product someone cannot find is the one they conclude the shop
-                does not sell. */}
-            {searchResults.length >= PICKER_LIMIT && (
-              <p className="px-1 text-xs text-muted">
-                Showing the first <span className="numeric">{PICKER_LIMIT}</span> products. Narrow
-                by department or search to see the rest.
-              </p>
-            )}
-          </div>
-        </Modal>
+          description="Search, filter and sort the catalogue. Click a name to add one, or tick several and add them together."
+          confirmLabel="Add"
+        />
 
         {/*
           WHAT NOW — answered HERE, not in the back office.

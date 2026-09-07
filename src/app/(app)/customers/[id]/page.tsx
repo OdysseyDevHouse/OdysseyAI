@@ -21,6 +21,7 @@ import {
   PageBody,
   Card,
   Callout,
+  TransientCallout,
   Button,
   ButtonLink,
   LinkTabs,
@@ -303,13 +304,13 @@ export default async function CustomerPage({
       {/* One PageBody carries the gutters; the transactions tab renders after
           it because the shared LedgerTab brings its own. */}
       <PageBody className={active === 'transactions' ? 'pb-0' : ''}>
-        {saved === '1' && <Callout tone="success" title="Saved." />}
+        {saved === '1' && <TransientCallout tone="success" title="Saved." />}
         {renamed && (
-          <Callout tone="success" title="Customer code renamed.">
+          <TransientCallout tone="success" title="Customer code renamed.">
             <span className="numeric font-medium">{renamed}</span> is now{' '}
             <span className="numeric font-medium">{customer.code}</span>. Statements and invoices
             already issued keep the old code.
-          </Callout>
+          </TransientCallout>
         )}
         {/* A rename refusal reopens the dialog holding the message. */}
         {error && !renamed && <Callout tone="danger">{error}</Callout>}

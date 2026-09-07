@@ -1,7 +1,7 @@
 import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne } from '../siteDb'
-import { toNum, round, toQtyDecimals } from '../decimals'
+import { toNum, round, toQtyDecimals, roundQty } from '../decimals'
 import { getSettings } from './settings'
 import { duePricesFor } from './priceSchedules'
 import { parseVariableBarcode, parseWithRules } from '../barcodes'
@@ -45,6 +45,28 @@ export type TillProduct = {
    */
   availableQty: number
   askPriceAtSale: boolean
+  /**
+   * The description is written at the counter (006).
+   *
+   * A generic line — "Sundry", "Repair", "Delivery" — whose stored description
+   * names the CATEGORY rather than the thing sold. Every add path prompts for
+   * the real wording, which then rides on the line and onto the document, so
+   * the customer's copy says what they actually bought.
+   *
+   * Shipped on every row for the same reason `hasVariants` is: the guard reads
+   * it on whatever it is handed, and a field present on some reads and absent
+   * on others would pass by accident on exactly the path that skipped it.
+   */
+  changeDescription: boolean
+  /**
+   * Priced as a percentage of the rest of the document (006).
+   *
+   * A service charge or gratuity, whose stored selling price is the PERCENTAGE
+   * rather than money. The line's value is recomputed from the other lines as
+   * they change, and such a line never charges on another percentage line —
+   * two of them would otherwise each inflate the other.
+   */
+  chargePctSubtotal: boolean
   allowFractions: boolean
   /** Decimal places a quantity may carry when fractions are allowed. */
   qtyDecimals: number
@@ -93,6 +115,18 @@ export type TillProduct = {
   scannedQty?: number
   /** Price parsed out of a value-embedded barcode, if the scan carried one. */
   scannedPrice?: number
+  /**
+   * The counter has already answered this product's description/price prompts,
+   * set by the till's details modal on the way back into add() — the
+   * `giftCardCode` mechanism (006).
+   *
+   * Needed because, unlike a weight, the answers can be the SAME as what the
+   * product already said: a cashier who accepts the stored description and a
+   * genuinely free item both hand back values indistinguishable from "not asked
+   * yet". Without an explicit mark the guard would re-open its own modal for
+   * ever on exactly those two cases.
+   */
+  detailsAsked?: boolean
   /**
    * The card a gift-card product is selling, set by the till's card modal on
    * the way into add() — the scannedQty mechanism, carrying capture through
@@ -185,6 +219,8 @@ function mapProduct(r: Row): TillProduct {
     reservedQty,
     availableQty: round(stockOnHand - reservedQty, 3),
     askPriceAtSale: !!r.ask_price_at_sale,
+    changeDescription: !!r.change_description,
+    chargePctSubtotal: !!r.charge_pct_subtotal,
     allowFractions: !!r.allow_fractions,
     qtyDecimals: toQtyDecimals(r.qty_decimals),
     scaleItem: !!r.scale_item,
@@ -327,7 +363,8 @@ const PARAMS = (locationId: number | null, priceStructureId: number | null): unk
 function selectProduct(costBasis: string): string {
   return `
     SELECT p.id, p.code, p.barcode, p.description, p.product_type, p.department_id,
-           p.ask_price_at_sale, p.allow_fractions, p.qty_decimals, p.scale_item, p.variable_type,
+           p.ask_price_at_sale, p.change_description, p.charge_pct_subtotal,
+           p.allow_fractions, p.qty_decimals, p.scale_item, p.variable_type,
            p.max_discount_pct, p.image_color, p.image_icon,
            -- The variant scheme (070). Shipped on every row rather than only
            -- where a group exists: the till's guard in add() reads
@@ -698,7 +735,15 @@ export async function resolveScan(
           : {}),
         // A weighed pack states its own weight; the same decide-at-source rule
         // the scale barcode follows, and never both qty and price.
-        ...(gs1.weight && product.variableType !== 'price' ? { scannedQty: gs1.weight } : {}),
+        /* Rounded to what the PRODUCT allows, not to what the label carries.
+           A GS1 AI 310n weight holds up to six decimals and a scale rule its
+           own count, and neither knows anything about this product — so a
+           two-decimal item scanned off a gram label arrived as 1.234. The
+           basket rounds again on the way into a line; doing it here as well
+           keeps scannedQty itself honest for anything that reads it directly. */
+        ...(gs1.weight && product.variableType !== 'price'
+          ? { scannedQty: roundQty(gs1.weight, product) }
+          : {}),
       }
     }
   }
@@ -752,7 +797,10 @@ export async function resolveScan(
    */
   return product.variableType === 'price'
     ? { ...product, scannedPrice: variable.value }
-    : { ...product, scannedQty: variable.value }
+    // Rounded to the product's own places — the scale RULE's decimals say how to
+    // read the label, which is a different question from how finely this product
+    // may be sold. See the GS1 branch above.
+    : { ...product, scannedQty: roundQty(variable.value, product) }
 }
 
 /* parseVariableBarcode moved to @/lib/barcodes so the OFFLINE till can call it —

@@ -111,10 +111,17 @@ export {
   GeneratedPictureModal,
 } from './GeneratedPicturePicker'
 export { Badge, type BadgeTone } from './Badge'
+/* A scale barcode shape, drawn segment by segment from a sample label — so the
+   four lengths on the setup form can be checked as a picture. */
+export { BarcodeShapeDiagram } from './BarcodeShapeDiagram'
 /* The tinted medallion beside a figure — dashboard bands and anything else that
    lays numbers out in a row. See StatIcon for why it has only one tint. */
 export { StatIcon } from './StatIcon'
 export { Callout, type CalloutTone } from './Callout'
+/* The same banner, for a success that has already served its purpose the moment
+   it is read — it clears itself after five seconds. Never for a danger or a
+   warning: those must stay until the condition is fixed. */
+export { TransientCallout } from './TransientCallout'
 /* Linkifies "…under Setup → Tills" inside a plain-string message. Callout and
    EmptyState already run their text through it, so reach for it directly only
    where a refusal is rendered somewhere other than those two. */

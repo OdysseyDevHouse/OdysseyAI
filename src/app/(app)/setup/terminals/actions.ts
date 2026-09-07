@@ -200,7 +200,7 @@ export async function setTerminalPosModeAction(
   revalidatePath('/pos')
   return {
     ok: true,
-    message: `${terminal?.code ?? 'That till'} now runs the ${POS_MODE_LABELS[mode].toLowerCase()}.`,
+    message: `${terminal?.code ?? 'That till'} now opens ${POS_MODE_LABELS[mode]}.`,
   }
 }
 

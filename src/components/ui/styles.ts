@@ -93,9 +93,13 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   'danger-ghost':
     'border-danger/30 bg-surface text-danger hover:border-danger hover:bg-danger-soft ' +
     'disabled:border-border disabled:text-danger/40',
+  /* `border-border-strong` — the same hairline an input or a select carries.
+     A ghost button almost always stands next to one (a toolbar's search box, a
+     filter bar's dropdowns), and on the faint `border` token it read a step
+     lighter than its neighbours instead of level with them. */
   ghost:
-    'border-border bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink ' +
-    'disabled:bg-surface disabled:text-faint',
+    'border-border-strong bg-surface text-ink-2 hover:bg-surface-2 hover:text-ink ' +
+    'disabled:border-border disabled:bg-surface disabled:text-faint',
   /* A key on a keypad, which `ghost` cannot be: ghost rests on `surface` and so
      disappears into the card it sits on, and `secondary` is brand-tinted, which
      would make every digit compete with the one key that acts. Filled and

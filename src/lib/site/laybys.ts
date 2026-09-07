@@ -398,7 +398,11 @@ export async function createLayby(
           line.description.slice(0, 190),
           line.productType ?? 'normal',
           line.departmentId ?? null,
-          round(line.qty, 3).toFixed(3),
+          // Four, for the column width 250_quantity_four_decimals.sql gave it.
+          // Three silently truncated a product sold to four decimals, so a
+          // layby of 1.2345 kg became 1.234 and the deposit was calculated
+          // against a quantity the customer never agreed to.
+          round(line.qty, 4).toFixed(4),
           round(line.unitPriceIncl, 4).toFixed(4),
           round(line.discountPct ?? 0, 3).toFixed(3),
           c.discountIncl.toFixed(4),

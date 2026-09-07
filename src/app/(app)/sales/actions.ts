@@ -12,6 +12,7 @@ import {
 } from '@/lib/auth'
 import { can, type Capability, type CapabilitySet } from '@/lib/site/permissions'
 import { checkPricing } from '@/lib/site/priceGuard'
+import { checkQuantities } from '@/lib/site/quantityGuard'
 import { verifyOverrideToken } from '@/lib/overrideToken'
 import { createCreditNote, creditableLines, type CreditNoteInput } from '@/lib/site/salesReversal'
 import {
@@ -377,6 +378,13 @@ export async function saveSaleAction(
   )
   if (refused) return { ok: false, error: refused }
 
+  /* The other number on the line, checked for the same reason and at the same
+     boundary. The till's keypad refuses the extra digit and `lineFromProduct`
+     rounds every add, but this action is a public endpoint and the quantity
+     arrives from the client. */
+  const badQty = await checkQuantities(siteId, input.lines)
+  if (badQty) return { ok: false, error: badQty }
+
   /* Validated, not trusted: `docType` arrives from a client, and an unrecognised
      value must not reach saveDraft as a doc type nobody posts. Absent is the
      ordinary case and means an invoice. */
@@ -630,6 +638,12 @@ export async function finaliseSaleAction(
     sale.lines,
   )
   if (refusedPrice) return { ok: false, error: refusedPrice }
+
+  // Likewise repeated on the paying path, and for the stronger reason: this is
+  // where stock moves, so a quantity the product cannot take becomes a stock
+  // movement that cannot be undone by editing a draft.
+  const refusedQty = await checkQuantities(siteId, sale.lines)
+  if (refusedQty) return { ok: false, error: refusedQty }
 
   /* INVOICE, deliberately, and not a parameter like the draft path's.
      This is the action that takes money, and the other document types are

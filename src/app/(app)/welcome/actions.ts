@@ -157,7 +157,7 @@ export async function saveStoreDetailsAction(details: SiteDetails): Promise<Step
     }
   }
 
-  const saved = await updateSiteDetails(ctx.siteId, toSave, ctx.actor.userId)
+  const saved = await updateSiteDetails(ctx.siteId, toSave)
   if (!saved) return { ok: false, error: 'Could not save your store details. Please try again.' }
 
   /* The company name and address are drawn in the app chrome and on every

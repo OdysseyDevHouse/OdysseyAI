@@ -7,7 +7,7 @@ import {
   PageBody,
   PrimaryLink,
   Card,
-  Callout,
+  TransientCallout,
 } from '@/components/ui'
 import { InstructionsTable } from './InstructionsTable'
 
@@ -44,7 +44,10 @@ export default async function InstructionsPage({
 
       <PageBody>
         {(saved || deleted) && (
-          <Callout tone="success" title={saved ? 'Instruction saved.' : 'Instruction deleted.'} />
+          <TransientCallout
+            tone="success"
+            title={saved ? 'Instruction saved.' : 'Instruction deleted.'}
+          />
         )}
 
         <Card>

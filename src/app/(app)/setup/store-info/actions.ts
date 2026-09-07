@@ -3,7 +3,12 @@
 import { revalidatePath } from 'next/cache'
 import { actorFor, requireSite } from '@/lib/auth'
 import { setLogo, clearLogo } from '@/lib/site/documentLogo'
-import { updateSiteDetails, SITE_DETAIL_LIMITS, type SiteDetails } from '@/lib/sites'
+import {
+  updateSiteDetails,
+  isControlUnreachable,
+  SITE_DETAIL_LIMITS,
+  type SiteDetails,
+} from '@/lib/sites'
 import { setSetting } from '@/lib/site/settings'
 
 /**
@@ -90,6 +95,42 @@ function whyLocked(connectionType: string): string | null {
  * security boundary, and it should not be possible to widen it by accident.
  */
 const LOCAL_EDITABLE = ['vatNumber'] as const satisfies readonly (keyof SiteDetails)[]
+
+/**
+ * Was this actually the line being down, or did the control panel answer?
+ *
+ * ── WHY THIS IS NOT "ANY FAILURE MEANS OFFLINE" ─────────────────────────────
+ *
+ * It used to be, and it cost a real afternoon. A save from a local store threw
+ * a FOREIGN KEY error — the app was stamping cp2_sites.updated_by with a SITE
+ * user's id, and that column points at the control panel's own admin table (see
+ * updateSiteDetails in lib/sites.ts) — and the blanket catch below reported it
+ * as "needs an internet connection". The line was perfect. The shop owner was
+ * told to fix their router because of a bug in this repo, and the screen's
+ * standing note said the same thing, so there was nothing to contradict it.
+ *
+ * A message that explains away every failure with the same story is worse than
+ * no message: it is confidently wrong, and it sends the person somewhere the
+ * fault is not. So "offline" has to be EARNED.
+ *
+ * ── AND WHY IT REUSES isControlUnreachable RATHER THAN MATCHING CODES HERE ──
+ *
+ * The obvious version of this check — read `err.code`, compare it to a set of
+ * socket errnos — is wrong twice over, and both ways matter on a DESKTOP build.
+ *
+ *   · mysql2 wraps, so the useful code is often a link or two down a `cause`
+ *     chain rather than on the outermost error.
+ *   · a packaged Electron install never opens the socket at all. pool() throws
+ *     ControlDbUnavailableOnDesktop, which carries no errno, so an errno test
+ *     misses it entirely — and every desktop save would have been reported as
+ *     "please report it" when the honest answer is that this machine needs a
+ *     connection. That is the exact confidently-wrong failure above, moved to a
+ *     different build.
+ *
+ * lib/sites.ts already answers this question correctly for both, walks the
+ * chain, and is what the gate screens use. One definition of "unreachable"
+ * across the app is the point; a second one here would drift from it.
+ */
 
 /** Empty means "not set" — a column holding '' would print as a blank line. */
 function trimToNull(value: FormDataEntryValue | null): string | null {
@@ -218,20 +259,33 @@ export async function saveStoreDetailsAction(form: FormData): Promise<ActionResu
 
     let localChanged: boolean
     try {
-      localChanged = await updateSiteDetails(site.id, merged, ctx.actor.userId)
+      localChanged = await updateSiteDetails(site.id, merged)
     } catch (err) {
+      console.error('[store-info] could not save the VAT number', err)
       /*
        * THE OFFLINE CASE, and the whole reason this field is gated on being
        * online rather than written locally and reconciled later. Reported as
        * what it is: there is nothing wrong with what they typed.
+       *
+       * Only when the line really was down — see isControlUnreachable, and the
+       * note above on why that helper rather than a code test here. Everything else
+       * reached the control panel and was refused there, and telling somebody
+       * to check their connection about it wastes their afternoon.
        */
-      console.error('[store-info] could not save the VAT number', err)
+      if (isControlUnreachable(err)) {
+        return {
+          ok: false,
+          error:
+            'Your VAT number is kept with your store details in the control panel, so this ' +
+            'needs an internet connection. Connect and try again — nothing else on this ' +
+            'screen requires one.',
+        }
+      }
       return {
         ok: false,
         error:
-          'Your VAT number is kept with your store details in the control panel, so this ' +
-          'needs an internet connection. Connect and try again — nothing else on this ' +
-          'screen requires one.',
+          'The control panel refused to save this. Nothing is wrong with what you typed, ' +
+          'and nothing is wrong with your connection — please report it.',
       }
     }
 
@@ -248,7 +302,7 @@ export async function saveStoreDetailsAction(form: FormData): Promise<ActionResu
 
   let changed: boolean
   try {
-    changed = await updateSiteDetails(site.id, parsed.details, ctx.actor.userId)
+    changed = await updateSiteDetails(site.id, parsed.details)
   } catch (err) {
     /*
      * The control database is across a line, even for a cloud site. Reported as
@@ -256,9 +310,17 @@ export async function saveStoreDetailsAction(form: FormData): Promise<ActionResu
      * looking for the mistake — there isn't one.
      */
     console.error('[store-info] could not save site details', err)
+    if (isControlUnreachable(err)) {
+      return {
+        ok: false,
+        error: 'Could not reach the control panel to save this. Check your connection and try again.',
+      }
+    }
     return {
       ok: false,
-      error: 'Could not reach the control panel to save this. Check your connection and try again.',
+      error:
+        'The control panel refused to save this. Nothing is wrong with what you typed, ' +
+        'and nothing is wrong with your connection — please report it.',
     }
   }
 

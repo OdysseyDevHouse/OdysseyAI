@@ -22,6 +22,7 @@ import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { launchChrome } from './lib/cdp-chrome.mjs'
+import { POS_MODE_LABELS } from '../src/lib/posMode.ts'
 
 const BASE = process.env.APP_URL || 'http://localhost:4100'
 const EMAIL = process.env.DEV_LOGIN_EMAIL
@@ -238,23 +239,24 @@ if (before === 'gate' || before === 'blocked') {
 }
 
 console.log('\n── Set THIS till to the trade counter ───────────────────────')
-const set1 = await setMode('Trade counter')
+const set1 = await setMode(POS_MODE_LABELS.invoicing)
 check(`the row control accepted the change (${set1})`, set1 === 'invoicing', String(set1))
 const asInvoicing = await tillMode()
 check('the till now runs invoicing', asInvoicing === 'invoicing', `saw "${asInvoicing}"`)
 
 console.log('\n── And back to the retail counter ───────────────────────────')
-const set2 = await setMode('Retail counter')
+const set2 = await setMode(POS_MODE_LABELS.retail)
 check(`the row control accepted the change (${set2})`, set2 === 'retail', String(set2))
 const asRetail = await tillMode()
 check('the till follows back to retail', asRetail === 'retail', `saw "${asRetail}"`)
 
 /* Restored to whatever it was, so a verification run leaves no trace. `before`
-   is the wordmark word, which maps onto the option labels one-for-one. */
-const RESTORE = { retail: 'Retail counter', hospitality: 'Tables', invoicing: 'Trade counter' }
-if (RESTORE[before] && before !== 'retail') {
-  await setMode(RESTORE[before])
-  console.log(`\nrestored ${TILL} to ${RESTORE[before]}`)
+   is the wordmark word, which is a PosMode key — the same key POS_MODE_LABELS
+   is written on, so the two can no longer drift apart the way the typed-out
+   copies of these labels did. */
+if (POS_MODE_LABELS[before] && before !== 'retail') {
+  await setMode(POS_MODE_LABELS[before])
+  console.log(`\nrestored ${TILL} to ${POS_MODE_LABELS[before]}`)
 }
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`)

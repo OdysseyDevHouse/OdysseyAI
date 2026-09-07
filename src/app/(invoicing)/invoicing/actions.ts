@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { requireActor, requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
 import { checkPricing } from '@/lib/site/priceGuard'
+import { checkQuantities } from '@/lib/site/quantityGuard'
 import {
   saveDraft,
   getDocument,
@@ -166,6 +167,12 @@ export async function saveInvoiceAction(payload: InvoicePayload): Promise<Invoic
     payload.lines,
   )
   if (refused) return { ok: false, error: refused }
+
+  // Same reasoning as the price check above, for the other number on the line:
+  // the grid rounds the cell on blur, but that is a courtesy to the typist and
+  // not the thing that stops a crafted request.
+  const badQty = await checkQuantities(siteId, payload.lines)
+  if (badQty) return { ok: false, error: badQty }
 
   /*
    * ── A SAVED DRAFT MUST BE CALLABLE BY SOMETHING ─────────────────────────

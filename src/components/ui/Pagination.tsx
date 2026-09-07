@@ -3,13 +3,25 @@ import { ChevronLeft, ChevronRight, PageFirst, PageLast } from './icons'
 import { buttonClass } from './styles'
 
 /**
- * Pager for a server-rendered list.
+ * Pager for a list.
  *
- * Links, not buttons, and no client state: the page lives in the URL, so a
- * server component can render this directly and the browser's back button
- * walks the pages. `hrefFor` is what keeps the rest of the query string —
- * search, filters, sort — attached; build it with `hrefBuilder` from
- * lib/searchParams so a page change can never drop a filter.
+ * ── TWO WAYS TO MOVE, ONE PAGER ──────────────────────────────────────────
+ *
+ * `hrefFor` renders LINKS, which is what a server-rendered list wants: the page
+ * lives in the URL, so a server component can render this directly and the
+ * browser's back button walks the pages. Keep the rest of the query string
+ * attached by building the href with `hrefBuilder` from lib/searchParams, so a
+ * page change can never drop a filter.
+ *
+ * `onPage` renders BUTTONS, for a list whose page is React state rather than a
+ * URL — the product search dialog, where the URL belongs to the screen behind
+ * it and rewriting it would put a half-captured document one Back button away
+ * from being lost. Same markup, same skin, same disabled rules; only what a
+ * step does differs.
+ *
+ * Pass exactly one. A pager wired to both would have two ideas about where the
+ * next page comes from, and a screen that navigates AND sets state ends up
+ * rendering page 2 of one list and page 3 of another.
  *
  * Renders nothing at all for a single page. A pager under a five-row table is
  * chrome that says "there is more" when there is not.
@@ -20,6 +32,7 @@ export function Pagination({
   total,
   pageSize,
   hrefFor,
+  onPage,
   className = '',
 }: {
   page: number
@@ -27,7 +40,10 @@ export function Pagination({
   /** Row count across every page, for the "showing x–y of z" line. */
   total?: number
   pageSize?: number
-  hrefFor: (page: number) => string
+  /** Server-rendered list: where each page lives. Pass this or `onPage`. */
+  hrefFor?: (page: number) => string
+  /** Client-held page: what to do with the page stepped to. Pass this or `hrefFor`. */
+  onPage?: (page: number) => void
   className?: string
 }) {
   if (pageCount <= 1) return null
@@ -59,40 +75,66 @@ export function Pagination({
       </p>
 
       <div className="flex items-center gap-1.5">
-        <PageLink href={hrefFor(1)} disabled={first} label="First page">
+        <PageStep to={1} hrefFor={hrefFor} onPage={onPage} disabled={first} label="First page">
           <PageFirst size={16} />
-        </PageLink>
-        <PageLink href={hrefFor(page - 1)} disabled={first} label="Previous page">
+        </PageStep>
+        <PageStep
+          to={page - 1}
+          hrefFor={hrefFor}
+          onPage={onPage}
+          disabled={first}
+          label="Previous page"
+        >
           <ChevronLeft size={16} />
-        </PageLink>
+        </PageStep>
         <span className="px-2 text-[13px] text-muted">
           <span className="numeric text-ink-2">{page}</span> / {pageCount}
         </span>
-        <PageLink href={hrefFor(page + 1)} disabled={last} label="Next page">
+        <PageStep
+          to={page + 1}
+          hrefFor={hrefFor}
+          onPage={onPage}
+          disabled={last}
+          label="Next page"
+        >
           <ChevronRight size={16} />
-        </PageLink>
-        <PageLink href={hrefFor(pageCount)} disabled={last} label="Last page">
+        </PageStep>
+        <PageStep
+          to={pageCount}
+          hrefFor={hrefFor}
+          onPage={onPage}
+          disabled={last}
+          label="Last page"
+        >
           <PageLast size={16} />
-        </PageLink>
+        </PageStep>
       </div>
     </nav>
   )
 }
 
 /**
- * One pager control.
+ * One pager control — a link when the page lives in the URL, a button when it
+ * lives in React state.
  *
- * A disabled step renders as a <span>, not a greyed <a>: there is no such thing
- * as a disabled link, and a link to the page you are already on is a trap for
- * anyone tabbing through.
+ * A disabled step renders as a <span> in BOTH modes, not a greyed <a> or a
+ * disabled <button>: there is no such thing as a disabled link, and a control
+ * pointing at the page you are already on is a trap for anyone tabbing through.
+ * The two modes therefore have exactly one shape between them when they are at
+ * the end of the list, which is what keeps the pager from looking like two
+ * different components on two different screens.
  */
-function PageLink({
-  href,
+function PageStep({
+  to,
+  hrefFor,
+  onPage,
   disabled,
   label,
   children,
 }: {
-  href: string
+  to: number
+  hrefFor?: (page: number) => string
+  onPage?: (page: number) => void
   disabled: boolean
   label: string
   children: React.ReactNode
@@ -107,9 +149,17 @@ function PageLink({
     )
   }
 
+  if (hrefFor) {
+    return (
+      <Link href={hrefFor(to)} aria-label={label} className={skin}>
+        {children}
+      </Link>
+    )
+  }
+
   return (
-    <Link href={href} aria-label={label} className={skin}>
+    <button type="button" aria-label={label} className={skin} onClick={() => onPage?.(to)}>
       {children}
-    </Link>
+    </button>
   )
 }

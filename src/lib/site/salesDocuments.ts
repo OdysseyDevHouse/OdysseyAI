@@ -8,7 +8,7 @@ import {
   MASTER,
   type SitePurpose,
 } from '../siteDb'
-import { round, toNum } from '../decimals'
+import { round, toNum, toQtyDecimals } from '../decimals'
 import { lineTotals, documentTotals, type LineTotals } from '../documentMath'
 import type { ProductTypeId } from '../productTypes'
 
@@ -144,6 +144,19 @@ export type SalesLine = {
    * path from kitchen_sends rather than carried on the document.
    */
   kitchenGroup: string
+  /**
+   * What quantity this line's product may take, as the product file says TODAY.
+   *
+   * Joined rather than stored, so a shop that switches a product to whole units
+   * finds every reopened draft honouring the new rule. Whole units on a line
+   * with no product, on a box read, and on a site that has not run 250 — see
+   * the mapper, which fails closed on all three.
+   *
+   * Read through `qtyDecimalsOf`, never directly: the number is meaningless
+   * while `allowFractions` is off.
+   */
+  allowFractions: boolean
+  qtyDecimals: number
   /** The free-text note on this line. Empty string when there is none. */
   note: string
   /**
@@ -321,6 +334,20 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
     // Joined from the product; absent on a line whose product is gone, which
     // reads as "no heading" rather than as a missing value.
     kitchenGroup: String(r.kitchen_group ?? ''),
+    /*
+     * The product's quantity rule, joined fresh rather than snapshotted — the
+     * same reasoning as `kitchenGroup` above and as `recalledLines` in the till:
+     * this decides what the next EDIT may type, so it should follow the product
+     * file as it stands.
+     *
+     * FAILS CLOSED on absence, which covers three cases at once: a line whose
+     * product has been deleted, a site that has not run 250, and a read from the
+     * shop's box, where `products` does not exist and the join is not even
+     * attempted. In all three the safe answer is whole units — the reading that
+     * refuses a fraction rather than inventing permission for one.
+     */
+    allowFractions: !!r.allow_fractions,
+    qtyDecimals: toQtyDecimals(r.qty_decimals),
     // Likewise tolerant of a site that has not run 167: absent reads null,
     // meaning "no recorded order time", NOT the epoch.
     orderedAt: orderedAtMillis(r.ordered_at),
@@ -464,8 +491,14 @@ export async function getDocument(
          fail with ER_NO_SUCH_TABLE. The box's lines simply carry no group,
          which the mapper already reads as "no heading": a docket printed from
          a box is ungrouped rather than absent. */
+      /* `allow_fractions` / `qty_decimals` are joined from the product for the
+         same reason `kitchen_group` is: they decide what the NEXT edit may
+         type, so they should follow the product file as it stands rather than
+         as it stood when the document was saved. A line whose product has been
+         deleted reads as whole units — see the mapper, which fails closed. */
       purpose === MASTER
-        ? `SELECT l.*, r.name AS sales_rep_name, p.kitchen_group
+        ? `SELECT l.*, r.name AS sales_rep_name, p.kitchen_group,
+                  p.allow_fractions, p.qty_decimals
              FROM sales_document_lines l
              LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
              LEFT JOIN products p ON p.id = l.product_id
@@ -998,12 +1031,35 @@ export async function createBlankDocument(
     return { ok: false, error: 'That is not a document type this shop writes.' }
   }
 
+  /*
+   * ── A BLANK DOCUMENT STARTS ON THE SHOP'S DEFAULT PRICE STRUCTURE ────────
+   *
+   * It used to start on NULL, and a null structure prices everything at zero:
+   * `selectProduct` left-joins `product_prices` on the structure it is given,
+   * so with none there is no row to join and every product resolves at 0.00.
+   * A new invoice therefore rang up the whole catalogue for nothing until
+   * somebody attached a customer, whose structure then arrived and fixed it.
+   *
+   * That was survivable while every line's price was typeable — a person sees
+   * R0.00 next to a loaf of bread and fixes it. It stopped being survivable
+   * with percentage charges (006): a charge line is DERIVED, so it silently
+   * computes a percentage of a zero bill and there is nothing on screen to
+   * correct. "I typed 12 and it added as zero" is this, not the charge.
+   *
+   * The default structure is what an unattached walk-in is charged everywhere
+   * else in the app — see `onlineOrders`, `labels`, and the report catalog,
+   * which all resolve it the same way. A shop with none configured still gets
+   * NULL and behaves exactly as it did before.
+   */
   const result = await siteExecute(
     siteId,
     `INSERT INTO sales_documents
        (doc_type, status, document_date, user_id, user_name, origin,
+        price_structure_id,
         subtotal_excl, vat_total, discount_total, total_incl)
-     VALUES (?,'draft',?,?,?,?,0,0,0,0)`,
+     VALUES (?,'draft',?,?,?,?,
+             (SELECT id FROM price_structures WHERE is_default = 1 AND is_active = 1 ORDER BY id LIMIT 1),
+             0,0,0,0)`,
     [docType, todayIso(), actor.userId, actor.userName.slice(0, 120), origin],
   )
 
@@ -1184,7 +1240,14 @@ export async function saveDraft(
           line.salesRepId ?? null,
           line.sourceLineId ?? null,
           line.salesRepUserId ?? null,
-          round(line.qty, 3).toFixed(3),
+          /* Four, not three: 250_quantity_four_decimals.sql widened this column
+             so a product set to 4 decimals can be sold at the precision it
+             claims. Writing 3 here truncated exactly that product silently —
+             the slip would show 1.2345 while the stock movement recorded 1.234,
+             which is the disagreement that migration exists to prevent. This is
+             the COLUMN width, the same for every line; the product's own rule is
+             enforced upstream by checkQuantities. */
+          round(line.qty, 4).toFixed(4),
           round(line.unitPriceIncl, 4).toFixed(4),
           (line.discountPct ?? 0).toFixed(3),
           computed.discountIncl.toFixed(4),

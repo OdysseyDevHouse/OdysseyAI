@@ -1,0 +1,43 @@
+-- ============================================================================
+-- 002_users_mobile.sql — users.mobile on the box
+-- ============================================================================
+--
+-- ── WHY THIS FILE EXISTS ────────────────────────────────────────────────────
+--
+-- sql/site/223_mobile_and_consent_catchup.sql added `mobile` to `users`. The
+-- box has its own `users` table — created by 001, not derived from the master
+-- like the tab tables are — so a column added to the site's copy does not
+-- reach it. Nothing noticed, because nothing looks.
+--
+-- box-migrate.mjs then MIRRORS user rows from the master, building its INSERT
+-- from the master's column list. The moment that list grew a column the box
+-- lacked, the mirror stopped dead:
+--
+--     Unknown column 'mobile' in 'INSERT INTO'
+--
+-- Which is the whole runner failing, not just this column: the mirror step runs
+-- before box_identity is stamped, so a box that hits this is left without its
+-- staff rows AND without knowing what site it is.
+--
+-- ── WHY A MIGRATION AND NOT A FIX IN THE RUNNER ─────────────────────────────
+--
+-- The tempting fix is to have the runner intersect the master's columns with
+-- the box's and mirror what both have. That would turn a loud failure into a
+-- silent partial copy — the box would come up looking healthy with a column
+-- quietly missing, which is exactly how this drift went unnoticed in the first
+-- place. box-migrate.mjs says so itself, above its CREATE TABLE IF NOT EXISTS:
+-- reshaping an existing box table is deliberately not attempted, and a schema
+-- change reaches the box the same way it reaches anywhere — by adding a
+-- migration. This is that migration.
+--
+-- ── THE SHAPE MATCHES 223 EXACTLY ───────────────────────────────────────────
+--
+-- Same type, same nullability, same position. The mirror REPLACEs whole rows
+-- read from the master, so a box column that merely holds the value under a
+-- different type would round-trip a staff member's number wrong rather than
+-- refuse it.
+
+-- Where a text message reaches this person (PRD 36). Local to the site rather
+-- than copied from upstream — see the column comment in sql/site/041_users_roles.sql.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS mobile VARCHAR(40) NULL AFTER email;

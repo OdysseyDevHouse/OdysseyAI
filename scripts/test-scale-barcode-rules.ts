@@ -23,6 +23,7 @@ import {
   rulesByPrecedence,
   type ScaleBarcodeRule,
 } from '@/lib/barcodes'
+import { segmentScaleBarcode, type ScaleShape } from '@/lib/barcodeShape'
 
 let failures = 0
 function check(name: string, ok: boolean, detail = '') {
@@ -98,12 +99,158 @@ function main() {
     )
   }
 
-  /* ── VALUE LENGTH REJECTS THE WRONG SIZE ──────────────────────────────── */
+  /* ── VALUE LENGTH IS THE VALUE'S OWN WIDTH, TAKEN FROM THE END ─────────
+   *
+   * The case this exists for is a real Avery label:
+   *
+   *     2 | 12345 | 6 | 01599 | 6
+   *     ^   ^       ^   ^       ^
+   *     |   |       |   |       check digit
+   *     |   |       |   the price, five digits
+   *     |   |       a SECOND check digit, guarding the stock code
+   *     |   the stock code
+   *     the prefix
+   *
+   * Reading forward from the stock code — the way this worked before — takes
+   * `601599` and rings up R6015.99 for a R15.99 item. Counting the last five
+   * digits back from the check digit skips the middle one without needing a
+   * field to describe it. */
   {
-    const sized = { ...LEGACY, valueLength: 13 }
-    check('a 13-digit code passes a valueLength of 13', parseVariableBarcode('2012340125007', sized) !== null)
-    check('a 12-digit code is refused', parseVariableBarcode('201234012500', sized) === null)
-    check('valueLength 0 accepts either', parseVariableBarcode('201234012500', LEGACY) !== null)
+    const avery: ScaleBarcodeRule = {
+      prefix: '2', pluLength: 5, hasCheckDigit: true, valueLength: 5, decimals: 2,
+    }
+    const r = parseVariableBarcode('2123456015996', avery)
+    check('the stock code is read from the front', r?.plu === '12345', JSON.stringify(r))
+    check('*** a middle check digit is NOT priced ***', r?.value === 15.99, JSON.stringify(r))
+
+    /* The same digits with valueLength 0 are the old reading, kept for a rule
+       that never named a width. Asserted so the difference between the two is
+       a stated fact rather than something a future change can blur. */
+    const leftover = parseVariableBarcode('2123456015996', { ...avery, valueLength: 0 })
+    check('valueLength 0 still takes everything after the stock code',
+      leftover?.value === 6015.99, JSON.stringify(leftover))
+  }
+  {
+    /* A width that would reach back into the stock code is refused rather than
+       reading part of the PLU as money. */
+    const wide = { ...LEGACY, valueLength: 10 }
+    check('a value wider than the barcode holds is refused',
+      parseVariableBarcode('2012340125007', wide) === null)
+
+    /* And a shorter barcode than the shape describes fails the same way, which
+       is what stops a rule claiming a code it cannot actually read. */
+    const sized = { ...LEGACY, valueLength: 6 }
+    check('a 13-digit code fits a 6-digit value', parseVariableBarcode('2012340125007', sized) !== null)
+    check('an 11-digit code cannot hold prefix + stock + 6 + check',
+      parseVariableBarcode('20123401250', sized) === null)
+  }
+
+  /* ── THE DIAGRAM MUST AGREE WITH THE PARSER ───────────────────────────
+   *
+   * The setup screen draws a shape segment by segment so it can be checked as
+   * a picture. A diagram that disagrees with the parser is worse than none at
+   * all: it would show a shopkeeper a picture confirming the setup is right on
+   * exactly the day it is wrong.
+   *
+   * So the picture's own segments are fed back through parseVariableBarcode and
+   * the two must reach the same money. */
+  {
+    const shapes: ScaleShape[] = [
+      { prefix: '60', pluLength: 4, hasCheckDigit: true, valueLength: 5, decimals: 2 },
+      { prefix: '2', pluLength: 5, hasCheckDigit: true, valueLength: 5, decimals: 2 },
+      { prefix: '20', pluLength: 4, hasCheckDigit: false, valueLength: 6, decimals: 2 },
+      { prefix: '21', pluLength: 3, hasCheckDigit: true, valueLength: 4, decimals: 3 },
+    ]
+    for (const shape of shapes) {
+      const drawn = segmentScaleBarcode(shape)
+      if (!drawn.ok) {
+        check(`diagram draws ${shape.prefix}/${shape.pluLength}/${shape.valueLength}`, false, drawn.reason)
+        continue
+      }
+      // Reassemble the label the picture shows, and read it as the till would.
+      const label = drawn.segments.map((s) => s.digits).join('')
+      const parsed = parseVariableBarcode(label, shape)
+      const stock = drawn.segments.find((s) => s.key === 'stock')!.digits
+      check(
+        `diagram and parser agree on ${label}`,
+        parsed !== null && parsed.plu === stock && parsed.value.toFixed(shape.decimals) === drawn.value,
+        `picture says stock ${stock} / ${drawn.value}; parser says ${JSON.stringify(parsed)}`,
+      )
+      check(
+        `  and the drawn length matches the label (${label.length})`,
+        drawn.total === label.length,
+        `total ${drawn.total} vs ${label.length}`,
+      )
+    }
+  }
+  {
+    /* The screenshot's own example, spelled out: the middle 9 must be drawn as
+       IGNORED rather than folded into the price. */
+    const drawn = segmentScaleBarcode({
+      prefix: '60', pluLength: 4, hasCheckDigit: true, valueLength: 5, decimals: 2,
+    })
+    check(
+      'the skipped digit is drawn as its own segment',
+      drawn.ok && drawn.segments.some((s) => s.tone === 'skipped' && s.key === 'skipped'),
+      drawn.ok ? JSON.stringify(drawn.segments.map((s) => s.key)) : drawn.reason,
+    )
+    /* The skipped digit must not reach the money. Asserted as a RELATIONSHIP
+       rather than against a literal: the sample's magnitude is free to change,
+       but the value must always be exactly the value segment — never the value
+       with the ignored digit stuck on the front, which is the 400x mispricing
+       this whole shape exists to prevent. */
+    if (drawn.ok) {
+      const valueSeg = drawn.segments.find((s) => s.key === 'value')!.digits
+      const skippedSeg = drawn.segments.find((s) => s.key === 'skipped')!.digits
+      check(
+        '*** the ignored digit is NOT part of the price ***',
+        drawn.value === (Number(valueSeg) / 100).toFixed(2),
+        `value segment ${valueSeg} -> ${drawn.value}`,
+      )
+      check(
+        '*** and reading it forward would have been 100x worse ***',
+        Number(skippedSeg + valueSeg) / 100 > Number(drawn.value) * 50,
+        `forward read would be ${(Number(skippedSeg + valueSeg) / 100).toFixed(2)}`,
+      )
+    }
+  }
+  {
+    /* The sample must SCALE with the width, or the field looks inert.
+       An earlier sample was a fixed '000001599' sliced from the end, so five
+       digits and six both read 15.99 — the width control appeared to do nothing
+       on the one diagram whose job is to show what the widths do. */
+    const at4 = segmentScaleBarcode({ prefix: '60', pluLength: 4, hasCheckDigit: true, valueLength: 4, decimals: 2 })
+    const at5 = segmentScaleBarcode({ prefix: '60', pluLength: 4, hasCheckDigit: true, valueLength: 5, decimals: 2 })
+    const at6 = segmentScaleBarcode({ prefix: '60', pluLength: 4, hasCheckDigit: true, valueLength: 6, decimals: 2 })
+    check(
+      'a wider value draws a visibly bigger amount',
+      at4.ok && at5.ok && at6.ok &&
+        Number(at4.value) < Number(at5.value) && Number(at5.value) < Number(at6.value),
+      [at4, at5, at6].map((d) => (d.ok ? d.value : d.reason)).join(' / '),
+    )
+  }
+  {
+    /* valueLength 0 takes everything left over, so by definition NOTHING is
+       skipped — drawing an "Ignored" segment there would be a lie. */
+    const drawn = segmentScaleBarcode({
+      prefix: '20', pluLength: 4, hasCheckDigit: true, valueLength: 0, decimals: 2,
+    })
+    check(
+      'a flexible value draws no skipped segment',
+      drawn.ok && !drawn.segments.some((s) => s.key === 'skipped'),
+      drawn.ok ? JSON.stringify(drawn.segments.map((s) => s.key)) : drawn.reason,
+    )
+  }
+  {
+    /* A half-typed form must say "not yet", not draw a broken picture. */
+    const blank = segmentScaleBarcode({
+      prefix: '', pluLength: 4, hasCheckDigit: true, valueLength: 5, decimals: 2,
+    })
+    check('an empty prefix explains itself rather than drawing', !blank.ok)
+    const huge = segmentScaleBarcode({
+      prefix: '60', pluLength: 7, hasCheckDigit: true, valueLength: 12, decimals: 2,
+    })
+    check('an impossible shape explains itself rather than drawing', !huge.ok)
   }
 
   /* ── AND IT MUST STILL REFUSE ORDINARY BARCODES ───────────────────────── */

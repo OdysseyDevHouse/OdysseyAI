@@ -352,6 +352,29 @@ async function startNextServer() {
   const { config } = require(path.join(appDir, '.next', 'required-server-files.json'))
   process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(config)
 
+  /* ── TELL NEXT WHERE IT IS, OR IT GUESSES AND WAITS ──────────────────────
+   *
+   * A server action that redirects does NOT simply answer with a redirect.
+   * Next fetches the destination from its own server first and streams the
+   * result back, to save the browser a round trip — see
+   * createRedirectRenderResult in next/dist/server/app-render/action-handler.js.
+   *
+   * It needs an origin to fetch, and without this it derives one from the
+   * request's own URL. That origin is whatever the browser asked for, which is
+   * not necessarily what this server is listening on: we bind 127.0.0.1
+   * explicitly (below), while a request for `localhost` resolves ::1 first on
+   * Windows. Nothing is listening there, so the fetch fails.
+   *
+   * It fails SOFT, which is what makes it worth naming here. The catch around
+   * it logs `failed to get redirect response` and falls back to an ordinary
+   * redirect, so the user still arrives — just one connect timeout later, on a
+   * sign-out or any other action that redirects. Thirteen of those were in the
+   * log this was found in, across every session, with nothing visibly broken.
+   *
+   * Set here rather than in runtimeConfig.js because that runs before a port is
+   * chosen, and the value has to name the port we actually listen on. */
+  process.env.__NEXT_PRIVATE_ORIGIN = `http://127.0.0.1:${PORT}`
+
   const nextApp = next({ dev: false, dir: appDir })
   await nextApp.prepare()
   const handle = nextApp.getRequestHandler()

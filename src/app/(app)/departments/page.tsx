@@ -2,7 +2,7 @@ import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listDepartments } from '@/lib/site/departments'
 import { storefrontImagesByIds } from '@/lib/site/storefrontImages'
-import { PageHeader, PageBody, Callout } from '@/components/ui'
+import { PageHeader, PageBody, TransientCallout } from '@/components/ui'
 import { DepartmentsClient } from './DepartmentsClient'
 
 export const dynamic = 'force-dynamic'
@@ -49,7 +49,10 @@ export default async function DepartmentsPage({
 
       <PageBody>
         {(saved || deleted) && (
-          <Callout tone="success" title={saved ? 'Department saved.' : 'Department deleted.'} />
+          <TransientCallout
+            tone="success"
+            title={saved ? 'Department saved.' : 'Department deleted.'}
+          />
         )}
 
         <DepartmentsClient

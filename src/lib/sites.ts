@@ -568,19 +568,38 @@ export const SITE_DETAIL_LIMITS = {
  * cannot then be told its own answer changed. The mirror flows one way, control
  * panel → shop, and this keeps it that way.
  *
+ * ── AND WHY IT DOES NOT STAMP updated_by ───────────────────────────────────
+ *
+ * It used to, with the acting user's id, and that turned every save from this
+ * app into a foreign key violation:
+ *
+ *     Cannot add or update a child row: a foreign key constraint fails
+ *     (`odyssey_tickets`.`cp2_sites`, CONSTRAINT `fk_cp2_sites_updated_by`
+ *      FOREIGN KEY (`updated_by`) REFERENCES `users` (`id`))
+ *
+ * cp2_sites.updated_by points at v2's OWN admin table, `users` — the people who
+ * work the control panel. Every id this app can offer is a row in the SHOP's
+ * users table instead (see actorFor and requireSiteUser in lib/auth.ts), a
+ * different id space that happens to be small integers too. So the write either
+ * threw, or — when the numbers happened to collide — recorded some unrelated
+ * control-panel operator as the author of the shop's edit. Both are wrong.
+ *
+ * There is no id this app could legitimately put there, so it writes none and
+ * leaves the column to the backend that owns it. `updated_at` still moves, so
+ * "when" survives; "who" is answered where the shop's own audit trail lives.
+ * Elsewhere in this repo, control-panel columns that take an actor take a NAME
+ * — see cp2_site_modules.created_by in control/modules.ts — which is exactly
+ * the pattern that avoids borrowing an id across the line.
+ *
  * Returns false when no row moved — an archived site, or an id that is gone.
  */
-export async function updateSiteDetails(
-  siteId: number,
-  details: SiteDetails,
-  updatedBy: number | null = null,
-): Promise<boolean> {
+export async function updateSiteDetails(siteId: number, details: SiteDetails): Promise<boolean> {
   const result = await execute(
     `UPDATE cp2_sites
         SET company_name = ?, trading_name = ?, registration_number = ?, vat_number = ?,
             address1 = ?, address2 = ?, address3 = ?, postal_code = ?,
             phone = ?, email = ?, contact_name = ?,
-            updated_by = COALESCE(?, updated_by), updated_at = NOW()
+            updated_at = NOW()
       WHERE id = ? AND status IN ('active','suspended')`,
     [
       details.companyName,
@@ -594,7 +613,6 @@ export async function updateSiteDetails(
       details.phone,
       details.email,
       details.contactName,
-      updatedBy,
       siteId,
     ],
   )

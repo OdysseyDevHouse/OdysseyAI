@@ -42,6 +42,8 @@ export type RecalledLine = {
   unitCostExcl: number
   maxDiscountPct: number
   shelfPriceIncl: number | null
+  chargePctSubtotal: boolean
+  chargePct: number
   allowFractions: boolean
   qtyDecimals: number
   /**
@@ -161,6 +163,13 @@ export async function basketLinesForDocument(
         product && !product.askPriceAtSale
           ? returnablePrice(line.productType, product.priceIncl)
           : null,
+      /* From the product, like the ceiling above: a percentage charge whose
+         rate the shop has since changed must recompute at the CURRENT rate the
+         moment the recalled bill is touched, exactly as a fresh one would. The
+         money already on the line stands until then — `repriceCharges` runs on
+         the next basket change and moves it. */
+      chargePctSubtotal: product?.chargePctSubtotal ?? false,
+      chargePct: product?.chargePctSubtotal ? product.priceIncl : 0,
       allowFractions: product?.allowFractions ?? false,
       /* From the product, like allowFractions above: the two are one setting,
          and a recalled line rounding to a precision the product no longer

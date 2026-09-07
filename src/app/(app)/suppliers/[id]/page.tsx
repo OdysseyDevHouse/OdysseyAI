@@ -18,6 +18,7 @@ import {
   PageHeader,
   Card,
   Callout,
+  TransientCallout,
   Button,
   ButtonLink,
   LinkTabs,
@@ -141,16 +142,16 @@ export default async function SupplierPage({
 
       {saved === '1' && (
         <div className="px-6 pt-4">
-          <Callout tone="success" title="Saved." />
+          <TransientCallout tone="success" title="Saved." />
         </div>
       )}
       {renamed && (
         <div className="px-6 pt-4">
-          <Callout tone="success" title="Supplier code renamed.">
+          <TransientCallout tone="success" title="Supplier code renamed.">
             <span className="numeric font-medium">{renamed}</span> is now{' '}
             <span className="numeric font-medium">{supplier.code}</span>. Orders and remittances
             already issued keep the old code.
-          </Callout>
+          </TransientCallout>
         </div>
       )}
       {/* A rename refusal reopens the dialog holding the message, so it is not

@@ -6,6 +6,7 @@ import { isLocked } from './periodLocks'
 import { logActivity } from './activityLog'
 import { capabilitiesForRole } from './permissions'
 import { checkPricing } from './priceGuard'
+import { checkQuantities } from './quantityGuard'
 import { saveDraft, getDocument, type LineInput } from './salesDocuments'
 import { finaliseDocument } from './salesPosting'
 import type { CancelledSale, OfflineSale, SyncSaleResult } from '../posOffline/types'
@@ -380,6 +381,31 @@ export async function postOfflineSale(
     })),
   )
   if (priceRefusal) reasons.push(`Priced beyond what ${actorName} may override: ${priceRefusal}`)
+
+  /*
+   * The quantity rule, checked here too — and this is the path where it is most
+   * likely to bite legitimately rather than maliciously.
+   *
+   * An offline till carries its own catalogue, and a shop that tightens a
+   * product to whole units while a till is off the network will have that till
+   * still selling halves until it syncs. So a sale arriving here at a precision
+   * the product no longer allows is usually a real sale rung under yesterday's
+   * rule, not a crafted request.
+   *
+   * Which is exactly why it goes into `reasons` rather than returning: the sale
+   * HAPPENED, the customer has gone, and refusing to record it would lose money
+   * that is already in the drawer. It is flagged for a human, like every other
+   * reason on this path.
+   */
+  const qtyRefusal = await checkQuantities(
+    siteId,
+    sale.lines.map((l) => ({
+      productId: l.productId,
+      description: l.description,
+      qty: l.qty,
+    })),
+  )
+  if (qtyRefusal) reasons.push(`Quantity the product does not allow: ${qtyRefusal}`)
 
   /* 6. Save the draft. The uid rides in the INSERT so uq_offline_uid protects the
         row from the instant it exists — which is also what makes the next few

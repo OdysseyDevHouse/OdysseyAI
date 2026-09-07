@@ -1,5 +1,6 @@
 import {
   Home,
+  Armchair,
   LineChart,
   Table,
   Boxes,
@@ -160,7 +161,21 @@ export const NAV: NavSection[] = [
     label: 'Sales',
     icon: LineChart,
     items: [
-      { label: 'Point of sale', href: '/pos', icon: ShoppingCart, built: true, capability: 'sales.till', description: 'Open the till and serve a customer' },
+      /*
+       * Two rows, one screen behind them.
+       *
+       * `?mode=` is what makes them different — see the note in pos/PosEntry.
+       * A machine INSTALLED as a till never uses these: it opens /pos bare and
+       * gets whatever its terminal record says, which is what the desktop build
+       * boots into. These rows are the back office, where the tab is no terminal
+       * and so has no default of its own to fall back to.
+       *
+       * Named for the screen rather than the trade ("Retail" rather than "the
+       * counter"), matching POS_MODE_LABELS on the till setting so that the row
+       * you press and the default you set are the same words.
+       */
+      { label: 'Open retail POS', href: '/pos?mode=retail', icon: ShoppingCart, built: true, capability: 'sales.till', keywords: 'till pos point of sale counter retail serve customer', description: 'Open the retail till and serve a customer' },
+      { label: 'Open hospitality POS', href: '/pos?mode=hospitality', icon: Armchair, built: true, capability: 'sales.till', keywords: 'till pos point of sale tables tabs restaurant bar hospitality waiter', description: 'Open the table plan and run tabs' },
       /* No Quick keys row: it is a tile on the setup hub, under Store & stock
          with Tills and Rotating menus. It sat here on the argument that a quick
          key is changed BECAUSE of what happened at the till, so it belonged
@@ -172,7 +187,7 @@ export const NAV: NavSection[] = [
          finalised record — the same table under two addresses, where finding an
          invoice meant knowing which of the two it had moved to. Status is a
          filter on this screen now, and /sales redirects here. */
-      { label: 'Invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history quote quotes order orders sales lay-by lay-bys laybys', description: 'Invoices, quotes, orders and lay-bys' },
+      { label: 'Open invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history quote quotes order orders sales lay-by lay-bys laybys', description: 'Invoices, quotes, orders and lay-bys' },
       /* Straight under Invoicing, because it is the end of the same day's work:
          you take the sales, then you count the drawer against them. It sat at
          the foot of the section, below Gift cards, where it read as one of the
@@ -191,8 +206,13 @@ export const NAV: NavSection[] = [
        * Their words moved onto the Invoicing row's `keywords`, so searching the
        * rail for "quote" or "lay-by" still finds the door rather than nothing.
        */
-      { label: 'Reservations', href: '/sales/reservations', icon: CalendarClock, built: true, capability: 'reservations.view', keywords: 'bookings table diary covers restaurant seating guests', description: 'Tonight’s book — who is coming and where they sit' },
-      { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view', description: 'Agreements that bill themselves on a schedule' },
+      { label: 'Online bookings', href: '/sales/reservations', icon: CalendarClock, built: true, capability: 'reservations.view', keywords: 'reservations reservation bookings booking table diary covers restaurant seating guests', description: 'Tonight’s book — who is coming and where they sit' },
+      /* Contracts is NOT a row here any more — it moved to Customers. What a
+         contract is, is a standing agreement WITH somebody: it bills the same
+         account on a schedule, and the questions asked of it (who is on one,
+         what it bills, when it ends) are account questions rather than
+         questions about today's trading. Sales is what happened at the counter
+         today; a contract is a relationship that outlives any one day of it. */
       { label: 'Returns', href: '/sales/returns', icon: Reverse, built: true, capability: 'sales.credit_note', description: 'Take goods back and credit the customer' },
       /*
        * Gift cards sits in Sales, not under Customers.
@@ -304,6 +324,15 @@ export const NAV: NavSection[] = [
       { label: 'Collections', href: '/credit', icon: Bell, built: true, capability: 'customers.view', module: 'customers', description: 'Chase overdue accounts and record the outcome' },
       { label: 'Promises to pay', href: '/credit/promises', icon: Handshake, built: true, capability: 'customers.view', module: 'customers', description: 'What a customer undertook to pay, and by when' },
       { label: 'Statements', href: '/customers/statements', icon: Mail, built: true, capability: 'customers.view', module: 'customers', description: 'Send account statements out to customers' },
+      /* Moved here from Sales. It keeps its OWN capability rather than taking
+         the customers one its neighbours use: who may see a billing agreement
+         is a different question from who may open an account, and rewriting it
+         on the way across would quietly widen or narrow who can reach it.
+         The section's `module` does now gate it, which is the one real
+         consequence of the move: a shop without the customers module loses the
+         row. That is the right answer — a contract bills a customer account,
+         so it has nothing to stand on in a shop that does not keep them. */
+      { label: 'Contracts', href: '/sales/contracts', icon: Repeat, built: true, capability: 'contracts.view', module: 'customers', keywords: 'contract recurring billing agreement subscription schedule', description: 'Agreements that bill themselves on a schedule' },
       /* Loyalty is NOT a row here — it is a section of its own, below. It was
          briefly a tile in the Online Store hub, which stranded any shop that
          had bought loyalty without a storefront. The programme, its tiers and

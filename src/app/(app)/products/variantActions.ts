@@ -9,10 +9,14 @@ import {
   unmakeParent,
   setVariantOrder,
   getGroup,
+  createVariantGrid,
   VariantError,
   type VariantGroup,
+  type CreateGridInput,
 } from '@/lib/site/productVariants'
-import { searchProductsForPicker, type ProductPick } from '@/lib/site/products'
+import { searchProductsForPicker, getProduct, type ProductPick } from '@/lib/site/products'
+import { listPriceStructures } from '@/lib/site/lookups'
+import { getBooleanSetting } from '@/lib/site/settings'
 
 /**
  * The variants panel's server actions.
@@ -126,4 +130,71 @@ export async function searchAttachableAction(
   const { siteId } = await requireCapability('products.edit')
   const rows = await searchProductsForPicker(siteId, { search, exclude: parentId, limit: 20 })
   return rows
+}
+
+/* ── The grid wizard ──────────────────────────────────────────────────── */
+
+/**
+ * What the wizard needs to open: the parent's own code, description, cost and
+ * price, so the grid starts pre-filled rather than blank.
+ *
+ * Read on the server rather than passed down from the product page because the
+ * panel does not have the price structures and would have had to be given them
+ * for this one dialog — and the wizard is opened rarely, while the page renders
+ * on every visit.
+ */
+export type GridSeedData = {
+  code: string
+  description: string
+  costExcl: number
+  sellIncl: number
+  priceStructureId: number | null
+  structureName: string
+  /** True when the site invents product codes, so the code boxes say "Auto". */
+  autoCode: boolean
+}
+
+export async function gridSeedAction(productId: number): Promise<GridSeedData | null> {
+  const { siteId } = await requireCapability('products.edit')
+  const product = await getProduct(siteId, productId)
+  if (!product) return null
+
+  const structures = await listPriceStructures(siteId)
+  const structure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
+
+  // The price the grid pre-fills every row with is the one from the structure
+  // it will WRITE to, so what the person sees offered is what gets saved.
+  const price = product.prices.find((p) => p.priceStructureId === structure?.id)
+
+  return {
+    code: product.code,
+    description: product.description,
+    costExcl: product.lastCost,
+    sellIncl: price?.sellIncl ?? 0,
+    priceStructureId: structure?.id ?? null,
+    structureName: structure?.name ?? 'Selling price',
+    // A suggestion is a convenience: if the setting cannot be read the wizard
+    // should still open, with the derived codes it would have used anyway.
+    autoCode: await getBooleanSetting(siteId, 'autocode_product').catch(() => false),
+  }
+}
+
+export async function createVariantGridAction(
+  input: CreateGridInput,
+): Promise<{ ok: true; created: number } | { ok: false; error: string }> {
+  const { siteId, actor } = await requireCapability('products.edit')
+  try {
+    const result = await createVariantGrid(siteId, input, {
+      source: 'editor',
+      userName: actor.userName,
+    })
+    if (result.ok) revalidatePath(`/products/${input.parentId}`)
+    return result
+  } catch (error) {
+    /* failed() narrows to Result, which carries no created count. Its refusal
+       arm is the one that matters here — a throw created nothing — so the
+       shape is widened rather than the message reinvented. */
+    const refusal = failed(error)
+    return refusal.ok ? { ok: true, created: 0 } : refusal
+  }
 }

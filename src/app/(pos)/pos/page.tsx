@@ -6,6 +6,7 @@ import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { listFieldDefs } from '@/lib/site/customFields'
 import { listSalesReasons } from '@/lib/site/salesReasons'
 import { toDocType } from '@/lib/site/salesDocuments'
+import { POS_MODES, type PosMode } from '@/lib/posMode'
 import { listPriceStructures } from '@/lib/site/lookups'
 import { getNumericSetting, getSetting, getSettings } from '@/lib/site/settings'
 import { taxLabel } from '@/lib/site/taxIdentity'
@@ -52,8 +53,14 @@ export default async function PosPage({
    * rather than dropping somebody at a counter screen with no clue what to
    * press. Absent is the ordinary case — a cashier opening the till to trade —
    * and means an invoice, which is what every till wrote before this existed.
+   *
+   * `?mode=` is a different question — which SCREEN, not which document. A
+   * machine set up as a till answers it from its own terminal record and
+   * needs no parameter; this is for the back office, whose menu offers the
+   * retail and hospitality tills as separate rows and whose browser tab is
+   * no terminal at all. See PosEntry for how the two are reconciled.
    */
-  searchParams: Promise<{ new?: string }>
+  searchParams: Promise<{ new?: string; mode?: string }>
 }) {
   const { site, capabilities } = await requireSiteUser()
   if (!can(capabilities, 'sales.till')) redirect('/not-allowed')
@@ -62,6 +69,15 @@ export default async function PosPage({
   /* Validated here rather than trusted: this is a URL anybody can type, and an
      unrecognised value must open an ordinary till rather than a broken one. */
   const startAs = toDocType(params.new) ?? 'invoice'
+
+  /* Absent is the ordinary case and stays `null` rather than defaulting to a
+     mode here: "nobody asked" has to remain distinguishable from "somebody
+     asked for retail", because only the first defers to the machine. A junk
+     value is dropped for the same reason `new` is — toPosMode() would coerce
+     it to 'retail', which would silently override a hospitality till. */
+  const modeParam = POS_MODES.includes(params.mode as PosMode)
+    ? (params.mode as PosMode)
+    : null
 
   /*
    * Who is standing here, if the server can tell.
@@ -375,6 +391,7 @@ export default async function PosPage({
       /* What this till should open as, when the back office asked for something
          specific. Absent means invoice — see the page signature. */
       startAs={startAs}
+      modeOverride={modeParam}
       initialTables={tables}
       floorRooms={floorRooms}
       visitTypes={visitTypes}

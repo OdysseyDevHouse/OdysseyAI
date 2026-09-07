@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { offlineSession, type OfflineSession } from '@/lib/posOffline/signInOffline'
-import { POS_MODE_WORDMARKS } from '@/lib/posMode'
+import { POS_MODE_WORDMARKS, type PosMode } from '@/lib/posMode'
 import { deviceId } from '@/lib/deviceId'
 import { checkDeviceAction } from './deviceActions'
 import type { DeviceState } from '@/lib/control/deviceMessages'
@@ -80,6 +80,7 @@ export default function PosEntry({
   quickKeyProductNames,
   quickKeyDepartmentNames,
   startAs,
+  modeOverride = null,
   initialTables,
   floorRooms,
   floorFeatures,
@@ -160,6 +161,14 @@ export default function PosEntry({
    */
   /** What the till should open as, when the back office asked. See PosShell. */
   startAs: DraftDocType
+  /**
+   * Which till screen to open, when the URL asked for one.
+   *
+   * `null` — the ordinary case — means nobody asked, and the machine decides
+   * from its own terminal record below. See the note there for why a request
+   * beats the record when one is made.
+   */
+  modeOverride?: PosMode | null
   initialTables: PosTable[]
   /** The drawn floor. Relayed unchanged — this component owns sign-in, not the floor. */
   floorRooms: FloorRoom[]
@@ -321,9 +330,31 @@ export default function PosEntry({
      below because the refusal screen names the product as well — see the long
      note on the mode at that call for what it is and why it is resolved in this
      component at all. */
-  const posMode = serial
+  const terminalMode = serial
     ? (terminals.find((t) => t.deviceId === serial)?.posMode ?? 'retail')
     : 'retail'
+
+  /*
+   * A screen asked for in the URL wins over the one this machine is set to.
+   *
+   * ── WHY THE OVERRIDE IS NOT THE OTHER WAY AROUND ────────────────────────
+   *
+   * The terminal record is the DEFAULT, and it is what the desktop build boots
+   * into: an installed till opens `/pos` with no parameters, matches its own
+   * serial, and lands on the screen the shop set for that machine. Nothing
+   * here changes that, which is the whole point of the setting.
+   *
+   * The parameter is for the back office, whose menu offers the retail and
+   * hospitality tills as two rows. That tab is not a terminal — it matches no
+   * serial and would otherwise always fall back to retail, so the two rows
+   * would open the same screen and one of them would be a lie.
+   *
+   * A request beats the record rather than the reverse because a machine that
+   * IS a till never sends one: the parameter only ever arrives from somebody
+   * who has just pressed a row naming the screen they want, and deferring to
+   * the record there would ignore an explicit choice in favour of a default.
+   */
+  const posMode = modeOverride ?? terminalMode
 
   if (licence.status === 'blocked') {
     return (

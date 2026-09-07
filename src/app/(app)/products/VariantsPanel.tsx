@@ -20,6 +20,7 @@ import {
 } from '@/components/ui'
 import type { VariantGroup } from '@/lib/site/productVariants'
 import type { ProductPick } from '@/lib/site/products'
+import VariantWizard from '@/components/VariantWizard'
 import {
   attachChildAction,
   detachChildAction,
@@ -76,6 +77,10 @@ export default function VariantsPanel({
   // Naming the axes, before the group exists.
   const [axis1, setAxis1] = useState('Size')
   const [axis2, setAxis2] = useState('')
+
+  // The grid wizard, and the older route it did not replace.
+  const [wizardOpen, setWizardOpen] = useState(false)
+  const [manualOpen, setManualOpen] = useState(false)
 
   // Attaching a variant.
   const [search, setSearch] = useState('')
@@ -147,46 +152,83 @@ export default function VariantsPanel({
             sellable, and its stock moves onto the variants.
           </p>
 
-          {/* Labels kept short and equal so the two fields sit on one line at
-              the same height. "And a second thing? (optional)" wrapped to two
-              lines and pushed its input below its neighbour's. */}
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="w-44">
-              <Field label="Varies by" hint="e.g. Size">
-                <Input
-                  value={axis1}
-                  onChange={(e) => setAxis1(e.target.value)}
-                  placeholder="Size"
-                />
-              </Field>
-            </div>
-            <div className="w-44">
-              <Field label="And by (optional)" hint="e.g. Colour">
-                <Input
-                  value={axis2}
-                  onChange={(e) => setAxis2(e.target.value)}
-                  placeholder="Colour"
-                />
-              </Field>
-            </div>
-            {/* Nudged up so it aligns with the inputs rather than the hints
-                sitting under them. */}
-            <div className="mb-6">
-              <Button
-                variant="secondary"
-                disabled={busy || !axis1.trim()}
-                onClick={() =>
-                  run(
-                    () => makeParentAction(productId, [axis1, axis2].filter((a) => a.trim())),
-                    'This product now has variants.',
-                  )
-                }
-              >
-                Set up variants
-              </Button>
-            </div>
+          {/* THE WIZARD IS THE WAY IN, and the plain route is kept beside it
+              rather than replaced.
+
+              Sizes × colours is the job people actually have — a shoe in five
+              sizes and three colours is fifteen products, and the old route
+              made them create all fifteen elsewhere and then attach all
+              fifteen here. But "I already sell the small and the medium, group
+              them" is a real second case, and for that the wizard would be
+              asked to create products that already exist. So: one primary that
+              does the multiplication, one quieter link for the grouping. */}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="primary" disabled={busy} onClick={() => setWizardOpen(true)}>
+              Set up variants
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setManualOpen((o) => !o)}>
+              {manualOpen ? 'Hide' : 'I already have the products'}
+            </Button>
           </div>
+
+          {manualOpen && (
+            <div className="mt-4 border-t border-border pt-4">
+              <p className="mb-3 max-w-prose text-sm text-muted">
+                Name what tells the variants apart, and this product becomes the group. You
+                can then attach the products you already have, one at a time.
+              </p>
+              {/* Labels kept short and equal so the two fields sit on one line at
+                  the same height. "And a second thing? (optional)" wrapped to two
+                  lines and pushed its input below its neighbour's. */}
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-44">
+                  <Field label="Varies by" hint="e.g. Size">
+                    <Input
+                      value={axis1}
+                      onChange={(e) => setAxis1(e.target.value)}
+                      placeholder="Size"
+                    />
+                  </Field>
+                </div>
+                <div className="w-44">
+                  <Field label="And by (optional)" hint="e.g. Colour">
+                    <Input
+                      value={axis2}
+                      onChange={(e) => setAxis2(e.target.value)}
+                      placeholder="Colour"
+                    />
+                  </Field>
+                </div>
+                {/* Nudged up so it aligns with the inputs rather than the hints
+                    sitting under them. */}
+                <div className="mb-6">
+                  <Button
+                    variant="secondary"
+                    disabled={busy || !axis1.trim()}
+                    onClick={() =>
+                      run(
+                        () => makeParentAction(productId, [axis1, axis2].filter((a) => a.trim())),
+                        'This product now has variants.',
+                      )
+                    }
+                  >
+                    Group existing products
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </CardBody>
+
+        {/* Outside CardBody for the reason every self-saving dialog in this app
+            is: it commits its own transaction and carries its own inputs. */}
+        <VariantWizard
+          open={wizardOpen}
+          productId={productId}
+          existingAxes={null}
+          onClose={() => setWizardOpen(false)}
+          onCreated={refresh}
+        />
       </Card>
     )
   }
@@ -204,16 +246,25 @@ export default function VariantsPanel({
           group.children.length === 1 ? 'variant' : 'variants'
         }.`}
         action={
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy || group.children.length > 0}
-            onClick={() =>
-              run(() => unmakeParentAction(productId), 'This product no longer has variants.')
-            }
-          >
-            Turn off variants
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Adding a colour to a shoe that already has five sizes is the
+                same multiplication as setting it up — three more products, not
+                one — so it opens the same wizard rather than the one-at-a-time
+                box below. */}
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => setWizardOpen(true)}>
+              Add variants
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy || group.children.length > 0}
+              onClick={() =>
+                run(() => unmakeParentAction(productId), 'This product no longer has variants.')
+              }
+            >
+              Turn off variants
+            </Button>
+          </div>
         }
       />
       <CardBody>
@@ -232,7 +283,14 @@ export default function VariantsPanel({
           <EmptyState
             icon={<Icons.Package size={22} />}
             title="No variants yet"
-            hint={`Add the first one below — give it the ${axisOne.toLowerCase()} it represents.`}
+            hint={`List the ${axisOne.toLowerCase()}${
+              axisTwo ? ` and ${axisTwo.toLowerCase()}` : ''
+            } you carry and every combination is created at once.`}
+            action={
+              <Button variant="primary" onClick={() => setWizardOpen(true)}>
+                Add variants
+              </Button>
+            }
           />
         ) : (
           <div className="overflow-x-auto">
@@ -432,6 +490,17 @@ export default function VariantsPanel({
           )}
         </div>
       </CardBody>
+
+      {/* The axes are handed down, so the wizard states them rather than
+          offering to rename them — a rename here would rename them for
+          children already on the shelf. */}
+      <VariantWizard
+        open={wizardOpen}
+        productId={productId}
+        existingAxes={group.axes}
+        onClose={() => setWizardOpen(false)}
+        onCreated={refresh}
+      />
     </Card>
   )
 }

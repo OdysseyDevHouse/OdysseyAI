@@ -229,6 +229,7 @@ import { KV } from '@/lib/posOffline/db'
 import { kvPut } from '@/lib/posOffline/store'
 import type { Capability } from '@/lib/site/permissions'
 import type { OfflineSale } from '@/lib/posOffline/types'
+import { AskDetailsModal } from './AskDetailsModal'
 import { WeighModal } from './WeighModal'
 import { LotModal } from './LotModal'
 import { VariantModal } from './VariantModal'
@@ -945,6 +946,19 @@ export default function PosShell({
   const [lineOptions, setLineOptions] = useState<BasketLine | null>(null)
   /** A scale item waiting for its weight — see the guard in add(). */
   const [weighing, setWeighing] = useState<TillProduct | null>(null)
+  /**
+   * A product waiting for its typed description and/or price (006).
+   *
+   * Carries the qty for the same reason `lotting` does: the modal does not
+   * change it, so it has to hand back the one it was opened with or a "3" typed
+   * before the scan becomes a 1.
+   */
+  const [askingDetails, setAskingDetails] = useState<{
+    product: TillProduct
+    qty: number
+    description: boolean
+    price: boolean
+  } | null>(null)
   /** A gift-card product waiting for its card and amount (147). */
   const [giftSelling, setGiftSelling] = useState<TillProduct | null>(null)
   /** The balance-enquiry prompt, behind its quick key. */
@@ -1578,6 +1592,9 @@ export default function PosShell({
           unitCostExcl: product.costExcl,
           maxDiscountPct: 0,
           shelfPriceIncl: 0,
+          // A giveaway is a thing handed over, never a percentage of the bill.
+          chargePctSubtotal: false,
+          chargePct: 0,
           // A reward is handed over in whole units, so fractions are off and
           // the precision below never gets asked about — it is set to the
           // default rather than left out because the line has to be complete.
@@ -1989,6 +2006,28 @@ export default function PosShell({
      */
     if (product.scaleItem && product.scannedQty == null) {
       setWeighing(product)
+      return
+    }
+
+    /*
+     * A product whose file asks for its description or its price says so BEFORE
+     * the line exists (006) — the WeighModal pattern, for the same reason.
+     *
+     * `scannedPrice != null` skips the price half: a variable-price barcode
+     * already carries the money, and asking again for a figure the barcode
+     * states would be a prompt on every scan of exactly the products that
+     * needed no prompt.
+     *
+     * Both switches were saved and neither was read until now. The price one
+     * mattered most: `checkPricing` exempts these products from the override
+     * guard precisely BECAUSE typing the price is the normal path — so with no
+     * prompt, the flag switched off the safety net and left the stored price in
+     * place. See AskDetailsModal.
+     */
+    const wantsDescription = product.changeDescription
+    const wantsPrice = product.askPriceAtSale && product.scannedPrice == null
+    if ((wantsDescription || wantsPrice) && !product.detailsAsked) {
+      setAskingDetails({ product, qty, description: wantsDescription, price: wantsPrice })
       return
     }
 
@@ -7613,6 +7652,37 @@ export default function PosShell({
             // scannedQty carries the confirmed weight back through add(), so
             // the guard passes and the product's questions still get asked.
             add({ ...product, scannedQty: w }, w)
+          }}
+        />
+      )}
+
+      {askingDetails && (
+        <AskDetailsModal
+          product={askingDetails.product}
+          askDescription={askingDetails.description}
+          askPrice={askingDetails.price}
+          onCancel={() => setAskingDetails(null)}
+          onConfirm={({ description, price }) => {
+            const { product, qty, price: askedPrice } = askingDetails
+            setAskingDetails(null)
+            /*
+             * Back through add(), so every guard below this one still runs — a
+             * priced-at-sale product that is also batch-tracked gets its lot
+             * prompt next, for free.
+             *
+             * The typed price rides in on `scannedPrice`, which is already the
+             * "this line's price is settled" channel every add path honours, and
+             * `detailsAsked` stops the guard re-opening on the way back in.
+             */
+            add(
+              {
+                ...product,
+                description,
+                ...(askedPrice ? { scannedPrice: price } : {}),
+                detailsAsked: true,
+              },
+              qty,
+            )
           }}
         />
       )}

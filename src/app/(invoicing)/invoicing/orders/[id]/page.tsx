@@ -233,6 +233,8 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             unitPriceIncl: line.unitPriceIncl,
             onHand: line.productId ? (availability.get(line.productId)?.onHand ?? null) : null,
             available: line.productId ? (availability.get(line.productId)?.available ?? null) : null,
+            allowFractions: line.allowFractions,
+            qtyDecimals: line.qtyDecimals,
           }))}
         />
 

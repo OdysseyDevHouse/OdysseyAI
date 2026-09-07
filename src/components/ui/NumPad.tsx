@@ -240,7 +240,7 @@ export function NumPadDisplay({
    * drop, a discount — where the figure and the pad under it are the whole
    * screen.
    *
-   * All three sit on the SAME deep plaque — the dark block `DeepPanel` gives
+   * All three sit on the SAME deep plaque — the blue block `DeepPanel` gives
    * the till's opening float. They differ in how the label and figure are
    * arranged and at what size, never in what they are drawn on: a cashier
    * meets several of these on one till, and three different grounds meant the

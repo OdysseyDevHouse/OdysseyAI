@@ -125,6 +125,7 @@
     "test:recurring-journals": "tsx --conditions=react-server --env-file=.env scripts/test-recurring-journals.ts",
     "test:customer-addresses": "tsx --conditions=react-server --env-file=.env scripts/test-customer-addresses.ts",
     "test:customer-pricing": "tsx --conditions=react-server --env-file=.env scripts/test-customer-pricing.ts",
+    "test:quantity-guard": "tsx --conditions=react-server --env-file=.env scripts/test-quantity-guard.ts",
     "test:accounting": "tsx --conditions=react-server --env-file=.env scripts/test-accounting.ts",
     "test:group-reporting": "tsx --conditions=react-server --env-file=.env scripts/test-group-reporting.ts",
     "test:multi-site-reports": "tsx --conditions=react-server --env-file=.env scripts/test-multi-site-reports.ts",
@@ -327,6 +328,7 @@
     "test:saved-baskets": "tsx --conditions=react-server --env-file=.env scripts/test-saved-baskets.ts",
     "test:stock-holds": "tsx --conditions=react-server --env-file=.env scripts/test-stock-holds.ts",
     "test:variants": "tsx --conditions=react-server --env-file=.env scripts/test-variants.ts",
+    "test:variant-grid": "tsx --conditions=react-server --env-file=.env scripts/test-variant-grid.ts",
     "test:variant-till": "tsx --conditions=react-server --env-file=.env scripts/test-variant-till.ts",
     "test:pos-unlock": "tsx --conditions=react-server --env-file=.env --env-file=.env.local scripts/test-pos-unlock.ts",
     "test:conditions": "tsx scripts/test-conditions.ts",
@@ -348,7 +350,9 @@
     "test:box-handover": "tsx scripts/test-box-handover.ts",
     "test:table-autosave": "tsx scripts/test-table-autosave.ts",
     "test:db-provision": "node scripts/test-db-provision.mjs",
-    "test:special-fanout": "tsx --conditions=react-server --env-file=.env scripts/test-special-fanout.ts"
+    "test:special-fanout": "tsx --conditions=react-server --env-file=.env scripts/test-special-fanout.ts",
+    "test:product-properties": "tsx scripts/test-product-properties.ts",
+    "test:blank-document-pricing": "tsx --conditions=react-server --env-file=.env scripts/test-blank-document-pricing.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

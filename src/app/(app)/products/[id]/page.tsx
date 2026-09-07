@@ -19,7 +19,7 @@ import { listRecipe } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
-import { ButtonLink, Callout, PageBody, PageHeader } from '@/components/ui'
+import { ButtonLink, Callout, PageBody, PageHeader, TransientCallout } from '@/components/ui'
 import { Plus } from '@/components/ui/icons'
 import { listImages } from '@/lib/site/productImages'
 import { getSetting } from '@/lib/site/settings'
@@ -277,13 +277,13 @@ export default async function EditProductPage({
       />
 
       <PageBody>
-        {saved === '1' && <Callout tone="success" title="Product saved." />}
+        {saved === '1' && <TransientCallout tone="success" title="Product saved." />}
         {renamed && (
-          <Callout tone="success" title="Stock code renamed.">
+          <TransientCallout tone="success" title="Stock code renamed.">
             <span className="numeric font-medium">{renamed}</span> is now{' '}
             <span className="numeric font-medium">{product.code}</span>. Documents already issued
             keep the old code.
-          </Callout>
+          </TransientCallout>
         )}
         {warn && <Callout tone="warning" title="Not every store followed">{warn}</Callout>}
         {/* A rename refusal is shown inside the dialog instead, so it is not

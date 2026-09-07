@@ -269,7 +269,11 @@ export async function deliverOrder(
     const line = byId.get(delivery.lineId)
     if (!line) return { ok: false, error: 'That line is not on this order.' }
 
-    const qty = round(delivery.qty, 3)
+    /* Four, for the column width — see 250_quantity_four_decimals.sql. At three
+       a four-decimal product's delivery was rounded before it was compared to
+       what is outstanding, so a line could never be fully delivered: the last
+       0.0005 stayed on the order for ever. */
+    const qty = round(delivery.qty, 4)
     if (qty < 0) return { ok: false, error: 'A delivery cannot be negative. Credit the invoice instead.' }
     if (qty > line.qtyOutstanding) {
       return {
@@ -337,7 +341,7 @@ export async function deliverOrder(
           line.description,
           line.productType,
           line.departmentId,
-          qty.toFixed(3),
+          qty.toFixed(4),
           line.unitPriceIncl.toFixed(4),
           line.discountPct.toFixed(3),
           totals.discountIncl.toFixed(4),
@@ -353,7 +357,7 @@ export async function deliverOrder(
       // reservation: reserved = Σ(qty − qty_delivered).
       await tx.execute(
         'UPDATE sales_document_lines SET qty_delivered = qty_delivered + ? WHERE id = ?',
-        [qty.toFixed(3), line.id] as never,
+        [qty.toFixed(4), line.id] as never,
       )
     }
 
