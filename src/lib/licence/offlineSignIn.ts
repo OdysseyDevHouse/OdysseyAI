@@ -82,12 +82,17 @@ export async function rememberForOffline(
 
     await siteExecute(
       siteId,
+      /* UTC_TIMESTAMP() rather than NOW() throughout: verifyOffline compares
+         both of these columns against Date.now(), and the site pool reads
+         DATETIMEs back as UTC. A local-time stamp on a UTC+2 host lands two
+         hours in the future — which silently ADDS two hours to the staleness
+         window this column exists to enforce. */
       `INSERT INTO offline_signin (user_id, verifier, iterations, confirmed_at)
-       VALUES (?, ?, ?, NOW())
+       VALUES (?, ?, ?, UTC_TIMESTAMP())
        ON DUPLICATE KEY UPDATE
          verifier = VALUES(verifier),
          iterations = VALUES(iterations),
-         confirmed_at = NOW(),
+         confirmed_at = UTC_TIMESTAMP(),
          /* A successful online sign-in clears the offline lockout: the person
             has just proved who they are by a stronger route than the one that
             locked them out. */
@@ -167,7 +172,7 @@ async function noteFailure(siteId: number, userId: number, current: number): Pro
       siteId,
       `UPDATE offline_signin
           SET failed_attempts = ?,
-              locked_until = ${lock ? `DATE_ADD(NOW(), INTERVAL ${LOCKOUT_MINUTES} MINUTE)` : 'NULL'}
+              locked_until = ${lock ? `DATE_ADD(UTC_TIMESTAMP(), INTERVAL ${LOCKOUT_MINUTES} MINUTE)` : 'NULL'}
         WHERE user_id = ?`,
       /* Zeroed on lockout rather than left at the ceiling, matching the till's
          rule: the lockout IS the punishment, and the next window starts fresh

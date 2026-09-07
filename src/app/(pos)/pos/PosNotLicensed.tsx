@@ -54,7 +54,7 @@ export default function PosNotLicensed({
            till's module on the subline. It is also drawn in ink rather than
            dark navy, which retires the `.logo-plate` workaround this screen
            needed to stay visible in dark mode. */
-        <BrandLockup size="lg" sub={modeName} />
+        <BrandLockup size="xl" sub={modeName} />
       }
       reason={reason}
       message={message}

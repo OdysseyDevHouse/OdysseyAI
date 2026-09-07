@@ -14,9 +14,8 @@ import { moduleLabelFor } from './control/moduleMessages'
 import { verifyPassword, hashPassword } from './password'
 import { getSite, getSiteForUser, listSitesForUser, type Site } from './sites'
 import { opensHere, wrongShellMessage } from './siteOpensHere'
-import { siteExecute } from './siteDb'
 import { getTillSession } from './tillSession'
-import { getUserByControlId, getUser, type SiteUser } from './site/users'
+import { getUser, resolveLocalUser, type SiteUser } from './site/users'
 import {
   capabilitiesForRole,
   can,
@@ -177,11 +176,21 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   if (!valid) {
     // Count the failure and lock once the threshold is crossed. Done in one
     // statement so two racing attempts can't both read the same old count.
+    /* ── UTC_TIMESTAMP(), NOT NOW() ────────────────────────────────────────
+     *
+     * The pool reads every DATETIME back as UTC (`timezone: 'Z'` in db.ts),
+     * while NOW() writes the database server's LOCAL time. On a UTC+2 host the
+     * stamp therefore comes back two hours in the future, and because the check
+     * above is made in JavaScript rather than in SQL, a 15-minute lockout keeps
+     * the account out for 2h15m — long past "try again shortly", with nothing
+     * on any screen to explain it.
+     *
+     * Same skew, same fix, as pending_started_at in control/subscriptions.ts. */
     await execute(
       `UPDATE cp2_users
           SET failed_attempts = failed_attempts + 1,
               locked_until = CASE WHEN failed_attempts + 1 >= ?
-                                  THEN DATE_ADD(NOW(), INTERVAL ? MINUTE)
+                                  THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
                                   ELSE locked_until END
         WHERE id = ?`,
       [MAX_FAILED_ATTEMPTS, LOCK_MINUTES, user.id],
@@ -448,11 +457,13 @@ export async function completeTotpSignIn(code: string): Promise<SignInResult> {
   const { verifySignInCode } = await import('./twoFactor')
   const good = await verifySignInCode(user.id, code)
   if (!good) {
+    /* UTC_TIMESTAMP() for the reason given in signIn above — this lock is read
+       back by the same JavaScript comparison. */
     await execute(
       `UPDATE cp2_users
           SET failed_attempts = failed_attempts + 1,
               locked_until = CASE WHEN failed_attempts + 1 >= ?
-                                  THEN DATE_ADD(NOW(), INTERVAL ? MINUTE)
+                                  THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
                                   ELSE locked_until END
         WHERE id = ?`,
       [MAX_FAILED_ATTEMPTS, LOCK_MINUTES, user.id],
@@ -758,41 +769,6 @@ export async function requireActor(): Promise<{
 }
 
 /**
- * Gives a control account a local row on first sight.
- *
- * The site's first user is made an owner — a brand-new store has nobody to
- * grant permissions, so somebody has to arrive holding them. Everyone
- * afterwards arrives with NO role, because by then there IS an owner who can
- * decide, and defaulting a stranger into permissions nobody chose is how a
- * back door gets left open.
- */
-async function adoptControlUser(
-  siteId: number,
-  controlUserId: number,
-  name: string,
-  email: string,
-): Promise<SiteUser> {
-  await siteExecute(
-    siteId,
-    `INSERT INTO users (name, email, control_user_id, user_type, role_id, is_active)
-     SELECT ?, ?, ?, 'back_office',
-            CASE WHEN (SELECT COUNT(*) FROM users u2) = 0
-                 THEN (SELECT id FROM roles WHERE is_owner = 1 LIMIT 1)
-                 ELSE NULL END,
-            1
-       FROM DUAL
-      WHERE NOT EXISTS (SELECT 1 FROM users u3 WHERE u3.control_user_id = ?)`,
-    [name, email, controlUserId, controlUserId],
-  )
-
-  const user = await getUserByControlId(siteId, controlUserId)
-  // The INSERT is guarded against duplicates, so a null here means the row was
-  // created by a concurrent request and then read back — never a real absence.
-  if (!user) throw new Error(`Could not create a site user for control account ${controlUserId}`)
-  return user
-}
-
-/**
  * The site, the local user record, and what that user may do.
  *
  * This is the one place a request's permissions are decided, and it is
@@ -831,10 +807,11 @@ export async function requireSiteUser(): Promise<{
     user = await getUser(site.id, session.userId)
     if (!user) redirect('/login')
   } else {
-    user = await getUserByControlId(site.id, session.userId)
-    if (!user) {
-      user = await adoptControlUser(site.id, session.userId, session.name, session.email)
-    }
+    /* Resolved from the ADDRESS this session signed in with, not from the link
+       alone: the two are written in different databases and can end up naming
+       different people, and obeying a crossed link means signing somebody in
+       under another person's name and role. See resolveLocalUser. */
+    user = await resolveLocalUser(site.id, session.userId, session.name, session.email)
   }
 
   if (!user.isActive) redirect('/select-site?inactive=1')

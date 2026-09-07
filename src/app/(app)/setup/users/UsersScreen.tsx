@@ -27,6 +27,7 @@ import {
   type Column,
 } from '@/components/ui'
 import type { SiteUser, UserType } from '@/lib/site/users'
+import type { UserSiteAccess } from '@/lib/controlUsers'
 import {
   saveUserAction,
   clearPinAction,
@@ -39,6 +40,8 @@ import {
 type Role = { id: number; name: string; isOwner: boolean }
 type Rep = { id: number; name: string }
 type SiteOption = { id: number; name: string; code: string }
+/** Keyed by control account id — see accessForControlUsers. */
+type AccessMap = Record<number, UserSiteAccess>
 
 /**
  * The people list.
@@ -57,6 +60,7 @@ export default function UsersScreen({
   roles,
   reps,
   sites,
+  access,
   currentSiteId,
   currentUserId,
 }: {
@@ -64,6 +68,7 @@ export default function UsersScreen({
   roles: Role[]
   reps: Rep[]
   sites: SiteOption[]
+  access: AccessMap
   currentSiteId: number
   currentUserId: number
 }) {
@@ -364,6 +369,7 @@ export default function UsersScreen({
           roles={roles}
           reps={reps}
           sites={sites}
+          access={access}
           currentSiteId={currentSiteId}
           onClose={() => {
             setAdding(false)
@@ -384,6 +390,7 @@ function UserForm({
   roles,
   reps,
   sites,
+  access,
   currentSiteId,
   onClose,
 }: {
@@ -391,9 +398,14 @@ function UserForm({
   roles: Role[]
   reps: Rep[]
   sites: SiteOption[]
+  access: AccessMap
   currentSiteId: number
   onClose: () => void
 }) {
+  /* What this person may open TODAY. Absent for somebody being added, and for
+     an existing user whose control account is on stores this administrator
+     cannot see — in which case the untickable ones are left alone on save. */
+  const granted = user?.controlUserId ? access[user.controlUserId] : undefined
   const [name, setName] = useState(user?.name ?? '')
   const [email, setEmail] = useState(user?.email ?? '')
   const [mobile, setMobile] = useState(user?.mobile ?? '')
@@ -403,10 +415,17 @@ function UserForm({
   const [pin, setPin] = useState('')
   const [password, setPassword] = useState('')
   const [isActive, setIsActive] = useState(user?.isActive ?? true)
+  /* Their real grant, not every store on the tick list. Pre-ticking all of them
+     meant that opening this form to change a PIN and pressing Save handed that
+     person every branch — the save writes whatever is ticked. A user with no
+     grant yet starts on the store being administered. */
   const [siteIds, setSiteIds] = useState<number[]>(
-    user?.controlUserId ? sites.map((s) => s.id) : [currentSiteId],
+    granted?.siteIds.length ? granted.siteIds : [currentSiteId],
   )
-  const [controlRole, setControlRole] = useState<'owner' | 'manager' | 'staff'>('staff')
+  // Likewise: defaulting to staff quietly demoted every manager on any save.
+  const [controlRole, setControlRole] = useState<'owner' | 'manager' | 'staff'>(
+    granted?.role ?? 'staff',
+  )
   const [error, setError] = useState<string | null>(null)
 
   const [pending, startTransition] = useTransition()
@@ -433,7 +452,13 @@ function UserForm({
           ? {
               password: password.trim() || null,
               siteIds,
-              defaultSiteId: siteIds[0] ?? null,
+              /* Whichever store they already open by default, as long as they
+                 still may. Sending siteIds[0] moved somebody's default store on
+                 every save, so they landed somewhere new after signing in. */
+              defaultSiteId:
+                granted?.defaultSiteId && siteIds.includes(granted.defaultSiteId)
+                  ? granted.defaultSiteId
+                  : siteIds[0] ?? null,
               role: controlRole,
             }
           : undefined,

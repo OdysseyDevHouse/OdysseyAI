@@ -77,12 +77,15 @@ export async function signInForSetup(email: string, password: string): Promise<S
 
   if (!(await verifyPassword(password, user.password_hash))) {
     /* One statement, so two racing attempts cannot both read the same old
-       count — the same reason lib/auth.ts writes it this way. */
+       count — the same reason lib/auth.ts writes it this way. UTC_TIMESTAMP()
+       for the same reason too: the check above is a JavaScript comparison and
+       the pool reads DATETIMEs as UTC, so NOW() on a UTC+2 host would stretch
+       a 15-minute lockout to 2h15m. */
     await execute(
       `UPDATE cp2_users
           SET failed_attempts = failed_attempts + 1,
               locked_until = CASE WHEN failed_attempts + 1 >= ?
-                                  THEN DATE_ADD(NOW(), INTERVAL ? MINUTE)
+                                  THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
                                   ELSE locked_until END
         WHERE id = ?`,
       [MAX_FAILED_ATTEMPTS, LOCK_MINUTES, user.id],

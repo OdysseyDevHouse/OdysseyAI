@@ -104,7 +104,7 @@ function TabBar({
 
      overflow-y-hidden alongside overflow-x-auto on purpose: without pinning the
      vertical axis, `overflow-x-auto` implies `overflow-y: auto` and the browser
-     shows a stray vertical scrollbar for the 1px the borders add. */
+     shows a stray vertical scrollbar for the 2px the borders add. */
   return (
     <div
       role="tablist"
@@ -112,11 +112,11 @@ function TabBar({
       className={`flex items-stretch overflow-x-auto overflow-y-hidden ${className}`}
     >
       {/* The rule runs in from the left edge of whatever the bar sits in… */}
-      <div className="w-6 shrink-0 border-b border-nav-accent" aria-hidden />
+      <div className="w-6 shrink-0 border-b-2 border-nav-accent" aria-hidden />
       {children}
       {/* …and out to the right edge. flex-1 so it takes all the slack, which is
           what makes the rule reach the edge at any number of tabs. */}
-      <div className="flex-1 border-b border-nav-accent" aria-hidden />
+      <div className="flex-1 border-b-2 border-nav-accent" aria-hidden />
     </div>
   )
 }
@@ -143,14 +143,14 @@ function TabBar({
    beside a 17.63:1 label, not the thing being read.
 
    An active tab trades its BOTTOM border for a top and two sides. An inactive
-   one still declares `border-t`, in transparent — the border has to occupy its
-   1px whether or not it paints, or every label would jump upward the moment its
-   tab lost selection. */
+   one still declares `border-t-2`, in transparent — the border has to occupy
+   its 2px whether or not it paints, or every label would jump upward the moment
+   its tab lost selection. */
 function tabClass(active: boolean) {
   return `flex items-center gap-2 border-nav-accent px-4 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition ${
     active
-      ? 'rounded-t-control border-t border-r border-b-0 border-l text-ink'
-      : 'border-t border-t-transparent border-b text-muted hover:text-ink'
+      ? 'rounded-t-control border-t-2 border-r-2 border-b-0 border-l-2 text-ink'
+      : 'border-t-2 border-t-transparent border-b-2 text-muted hover:text-ink'
   }`
 }
 

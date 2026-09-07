@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { Card } from './Card'
+import { StatIcon } from './StatIcon'
 import { Search } from './icons'
 import { CONTROL, CONTROL_H } from './styles'
 
@@ -82,17 +83,6 @@ export function StatTile({
     danger: 'text-danger',
   }[tone]
 
-  /* The medallion behind the glyph. A `-soft` fill rather than the saturated
-     base: it has to sit under an icon at 20px and stay a background, and the
-     full-strength tone at that size competes with the figure it labels. */
-  const medallionClass = {
-    default: 'bg-brand-soft text-brand',
-    positive: 'bg-success-soft text-success-ink',
-    success: 'bg-success-soft text-success-ink',
-    warning: 'bg-warning-soft text-warning-ink',
-    danger: 'bg-danger-soft text-danger-ink',
-  }[iconTone ?? tone]
-
   const compact = density === 'compact'
 
   /*
@@ -108,13 +98,13 @@ export function StatTile({
    */
   const body = (
     <div className={`flex items-center ${compact ? 'gap-2.5' : 'gap-3.5'}`}>
+      {/* The medallion is StatIcon's, not this file's — see StatIcon for why
+          there is only one of them. `round` keeps the circle these tiles have
+          always worn. */}
       {icon && (
-        <span
-          aria-hidden
-          className={`flex ${compact ? 'size-9' : 'size-11'} shrink-0 items-center justify-center rounded-pill ${medallionClass}`}
-        >
+        <StatIcon tone={iconTone ?? tone} size={compact ? 'md' : 'lg'} round>
           {icon}
-        </span>
+        </StatIcon>
       )}
       {icon && (
         <span aria-hidden className={`${compact ? 'h-7' : 'h-9'} w-px shrink-0 bg-border`} />

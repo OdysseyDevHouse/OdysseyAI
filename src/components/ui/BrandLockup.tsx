@@ -28,6 +28,36 @@ import Image from 'next/image'
  * the name. Putting the module there means a shop running tables sees its own
  * product named in the shape it already knows from the box and the invoice.
  */
+/**
+ * The globe alone.
+ *
+ * ── WHY THE MARK CAN BE DETACHED ────────────────────────────────────────────
+ *
+ * The note above says the arrangement lives in one place and a caller only picks
+ * the WORD. That still holds for anything that draws the lockup. The back-office
+ * chrome does not: it is two columns, a module rail and the menu beside it, and
+ * the mark belongs to the rail — it names the product, which does not change —
+ * while the name and its subline belong to the panel, which does.
+ *
+ * So the pair may be split, but only through here and its partner `mark={false}`
+ * below, rather than by a screen reaching for /logo-icon.svg and setting its own
+ * size. One image, no proportions to preserve: the height is the caller's, since
+ * a lone mark has nothing to hold a relationship WITH.
+ */
+export function BrandMark({ className = 'h-8' }: { className?: string }) {
+  return (
+    <Image
+      src="/logo-icon.svg"
+      alt=""
+      aria-hidden
+      width={1902}
+      height={1726}
+      unoptimized
+      className={`w-auto shrink-0 object-contain ${className}`}
+    />
+  )
+}
+
 export function BrandLockup({
   /**
    * The word on the subline — the module, or the company.
@@ -52,11 +82,17 @@ export function BrandLockup({
    * the dashboard and is not the heading of anything.
    */
   as = 'span',
+  /**
+   * Whether to draw the globe. Off only where something else already has —
+   * see `BrandMark`, which is the only supported way to draw it elsewhere.
+   */
+  mark = true,
 }: {
   sub?: string
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl'
   className?: string
   as?: 'span' | 'h1'
+  mark?: boolean
 }) {
   const s = SIZES[size]
   const Name = as === 'h1' ? 'h1' : 'span'
@@ -86,17 +122,8 @@ export function BrandLockup({
       {/* Decorative beside the wordmark text, so no alt of its own.
           Vector artwork: the mark is set at 28–56px here but is also the thing
           a rail or a till renders on a HiDPI panel, and the raster it replaced
-          softened at every one of those steps. `width`/`height` are the SVG's
-          own viewBox, present only so Next reserves the right aspect box. */}
-      <Image
-        src="/logo-icon.svg"
-        alt=""
-        aria-hidden
-        width={1902}
-        height={1726}
-        unoptimized
-        className={`${s.mark} w-auto shrink-0 object-contain`}
-      />
+          softened at every one of those steps. */}
+      {mark && <BrandMark className={s.mark} />}
       <span className="flex min-w-0 flex-col gap-1">
         {/* Set in the LOGO's own treatment, not the UI stack: it sits directly
             against the mark and the two have to read as one lockup.
@@ -114,8 +141,15 @@ export function BrandLockup({
 
             `text-brand` on the WRAPPER, not on the word: the rules are
             `bg-current`, so colouring the parent carries the letters and both
-            rules together and there is one place to change it. */}
-        <span className={`flex items-center text-brand ${s.rules}`}>
+            rules together and there is one place to change it.
+
+            `.wordmark-subline` is the hook a caller repaints through, the
+            partner to `.wordmark-lockup` on the name above — the back-office
+            rail sets the subline amber, because there it names the MODULE
+            rather than the company and has to be found at a glance. It is on
+            the wrapper for the same reason `text-brand` is: overriding the word
+            alone would leave the two rules the old colour. */}
+        <span className={`wordmark-subline flex items-center text-brand ${s.rules}`}>
           {/* `flex-1`, not a fixed width: the rules take whatever the word does
               not, so the pair always reaches the ends of the row and the
               subline stays centred under the name however long the module is.
@@ -136,7 +170,7 @@ export function BrandLockup({
 }
 
 /**
- * The three sizes, as whole class strings.
+ * The four sizes, as whole class strings.
  *
  * The subline is roughly half the name's size at every step — the ratio measured
  * off the artwork — held here rather than left to each caller, because a subline
@@ -163,7 +197,22 @@ const SIZES = {
     sub: { short: 'text-[9px]', mid: 'text-[8px]', long: 'text-[7px]' },
     rules: 'gap-1',
   },
+  /* The step the back office's menu panel is set at. It exists because the gap
+     between `md` and `xl` was the whole of the useful range and nothing sat in
+     it: at `md` a centred lockup read as a caption floating in a 240px panel,
+     and at `xl` it was a banner. Added rather than reached around with a
+     font-size at the call site — a lockup whose proportions are decided by its
+     caller is the thing this file was written to stop. */
   lg: {
+    mark: 'h-10',
+    name: 'text-2xl',
+    sub: { short: 'text-[12px]', mid: 'text-[10px]', long: 'text-[9px]' },
+    rules: 'gap-1.5',
+  },
+  /* The hero: a sign-in door, a till that will not open, the invoicing counter.
+     Was called `lg` — renamed when the step above it was inserted, so the scale
+     still reads small-to-large rather than having a number wedged into it. */
+  xl: {
     mark: 'h-14',
     name: 'text-3xl',
     sub: { short: 'text-[15px]', mid: 'text-[13px]', long: 'text-[11px]' },

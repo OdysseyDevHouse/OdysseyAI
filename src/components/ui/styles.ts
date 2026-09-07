@@ -55,6 +55,11 @@ export type ButtonVariant =
 export type ButtonSize =
   | 'md'
   | 'sm'
+  /* Lighter than `sm`, for an affordance INSIDE another element's heading —
+     the dashboard's "View more", which sits in a card header beside the title
+     rather than in a toolbar. At `sm` it read as the heaviest thing in the
+     header and pulled the eye off the title it belongs to. */
+  | 'xs'
   | 'touch'
   | 'touch-lg'
   | 'pad'
@@ -122,6 +127,15 @@ const BUTTON_SIZE: Record<ButtonSize, { text: string; icon: string }> = {
   sm: {
     text: 'h-control-sm px-3 rounded-control text-[13px] font-medium',
     icon: 'h-control-sm w-control-sm rounded-control text-sm font-medium',
+  },
+  /* One step under the column headings it sits above: TABLE_TH is 13px, this
+     is 12px, so the control reads as lighter than the data rather than
+     competing with it. Deliberately BELOW the 36px control height and its
+     32px inline cousin — this is not something a finger hunts for on a till,
+     it is a link-weight action inside a heading a mouse is already near. */
+  xs: {
+    text: 'h-7 px-2.5 rounded-control text-xs font-medium',
+    icon: 'h-7 w-7 rounded-control text-xs font-medium',
   },
   /* Type steps up with the box. A 56px button wearing 14px text reads as a
      small button that has been stretched, which is exactly how the till's
@@ -457,6 +471,29 @@ export const TABLE_NUMERIC = 'numeric text-right whitespace-nowrap'
 
 /** The <table> element itself. */
 export const TABLE = 'w-full border-collapse text-sm'
+
+/**
+ * The same table one type step down — 12px body, 11px headings.
+ *
+ * For a table that is not the SUBJECT of its screen but a panel on one: the
+ * dashboard's ranked tables, which sit seven-deep in a grid of widgets and are
+ * read as a shape ("the top three are food") rather than a list of values to be
+ * worked through. At 14px those tables were the loudest text on a screen whose
+ * headline is the trading figures, and each widget showed one row fewer for it.
+ *
+ * NOT a general "compact" mode, and not for a list screen. /products is a table
+ * somebody reads for half an hour and edits from; shrinking that is how a
+ * back office ends up unreadable to the people who spend all day in it. If a
+ * table is the reason its screen exists, it stays at TABLE.
+ *
+ * Both halves move together. Dropping the body alone would leave headings
+ * larger than the values under them, which reads as a table whose data has been
+ * demoted rather than one that is simply smaller.
+ */
+export const TABLE_DENSE = 'w-full border-collapse text-xs'
+
+export const TABLE_TH_DENSE =
+  'border-b border-border bg-surface-2 px-4 pt-2.5 pb-2 text-left align-top text-[11px] font-normal leading-tight whitespace-nowrap text-muted'
 
 /**
  * A body row. Hand-built tables must use this rather than `divide-y` on the

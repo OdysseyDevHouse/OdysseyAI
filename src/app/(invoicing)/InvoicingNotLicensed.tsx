@@ -46,7 +46,7 @@ export default function InvoicingNotLicensed({
 }) {
   return (
     <DeviceNotLicensed
-      wordmark={<BrandLockup size="lg" sub="Invoicing" />}
+      wordmark={<BrandLockup size="xl" sub="Invoicing" />}
       reason={reason}
       message={message}
       offer={offer}

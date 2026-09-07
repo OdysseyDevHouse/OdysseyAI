@@ -15,6 +15,8 @@ import {
   updateUser,
   clearPin,
   getUser,
+  getUserByEmail,
+  getUserByControlId,
   linkControlAccount,
   type UserInput,
 } from '@/lib/site/users'
@@ -58,22 +60,64 @@ export async function saveUserAction(
   if (!ctx) return DENIED
   const { site, user: actor } = ctx
 
+  const email = input.email?.trim().toLowerCase() ?? ''
+  const existing = userId ? await getUser(site.id, userId) : null
+  if (userId && !existing) return { ok: false, error: 'That user no longer exists.' }
+
+  /* ── ONE PERSON, ONE ROW ──────────────────────────────────────────────────
+   *
+   * Adding somebody who is already on this store used to go through: a second
+   * local row was inserted, and only then did `linkControlAccount` collide with
+   * `uq_user_control` and throw. The save reported a failure while leaving the
+   * duplicate behind — a row carrying a PIN, so it worked at the till, with no
+   * control account, so it could never reach the back office. That is how one
+   * name ends up on this screen twice.
+   *
+   * Caught here, before anything is written, and the message says which person
+   * to edit instead. */
+  if (email) {
+    const clash = await getUserByEmail(site.id, email)
+    if (clash && clash.id !== userId) {
+      return {
+        ok: false,
+        error: `${clash.name} already uses ${email} on this store. Edit them rather than adding a second user.`,
+      }
+    }
+  }
+
   // A back-office user needs an account in the control database to sign in
   // with. That is a DIFFERENT database with no shared transaction, so the two
   // halves are written in sequence and reconciled by control_user_id — the
   // control row first, because a local row pointing at nothing is recoverable
   // (the next save links it) while a control account nobody can see is not.
   let controlUserId: number | null = null
+  let adopted = false
 
   if (input.userType === 'back_office') {
     if (!input.control) {
       return { ok: false, error: 'Choose at least one store this person may open.' }
     }
 
-    const email = input.email?.trim().toLowerCase() ?? ''
-    const existing = userId ? await getUser(site.id, userId) : null
-    const linked =
-      existing?.controlUserId ?? (email ? (await findControlAccountByEmail(email))?.id ?? null : null)
+    let linked = existing?.controlUserId ?? null
+    let claimedByEmail = false
+    if (linked === null && email) {
+      const account = await findControlAccountByEmail(email)
+      if (account) {
+        /* The address belongs to an account that exists upstream. It may
+           already be held by somebody on this store under a DIFFERENT email —
+           the local row is the authority on who is who here — and linking
+           would then break `uq_user_control` the same way as above. */
+        const held = await getUserByControlId(site.id, account.id)
+        if (held && held.id !== userId) {
+          return {
+            ok: false,
+            error: `That back office account is already used by ${held.name} on this store.`,
+          }
+        }
+        linked = account.id
+        claimedByEmail = true
+      }
+    }
 
     const provisioned = await provisionControlAccount(actor.controlUserId ?? 0, linked, {
       email,
@@ -83,9 +127,11 @@ export async function saveUserAction(
       defaultSiteId: input.control.defaultSiteId,
       role: input.control.role,
       isActive: input.isActive,
+      claimedByEmail,
     })
     if (!provisioned.ok) return provisioned
     controlUserId = provisioned.controlUserId
+    adopted = provisioned.adopted
   }
 
   const result = userId
@@ -101,7 +147,11 @@ export async function saveUserAction(
   return {
     ok: true,
     id: result.id,
-    message: userId ? 'User saved.' : `${input.name.trim()} can now sign in.`,
+    message: adopted
+      ? `${input.name.trim()} can open this store with the back office account they already have.`
+      : userId
+        ? 'User saved.'
+        : `${input.name.trim()} can now sign in.`,
   }
 }
 

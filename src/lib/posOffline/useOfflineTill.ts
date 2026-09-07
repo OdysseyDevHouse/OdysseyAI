@@ -49,6 +49,25 @@ export type OfflineTillState = {
   pendingReturns: number
   /** Returns the server refused in a way that needs a person. */
   failedReturns: number
+  /**
+   * A shift this till opened OFFLINE that the office has not seen yet (252).
+   *
+   * Not money, and not counted with the takings — but a cash-up cannot be done
+   * against it at all, because the shift it would close does not exist on the
+   * server. Almost always 0 or 1: a till opens one drawer at a time.
+   */
+  pendingShifts: number
+  /**
+   * Drawer movements queued and not yet delivered.
+   *
+   * The sharpest version of the argument `pendingReturns` makes. A queued payout
+   * is money that has ALREADY left the drawer with no sale behind it, so an
+   * expected figure computed before it lands reports the drawer SHORT by its
+   * value — and recounting never finds it, because the notes really are gone.
+   */
+  pendingMovements: number
+  /** Movements the server refused in a way that needs a person. */
+  failedMovements: number
   /** Hours since the catalog last refreshed. */
   catalogAgeHours: number | null
   productsHeld: number
@@ -82,6 +101,9 @@ export function useOfflineTill(siteId: number, enabled = true): OfflineTill {
     failed: 0,
     pendingReturns: 0,
     failedReturns: 0,
+    pendingShifts: 0,
+    pendingMovements: 0,
+    failedMovements: 0,
     catalogAgeHours: null,
     productsHeld: 0,
     canSellOffline: false,
@@ -145,6 +167,15 @@ export function useOfflineTill(siteId: number, enabled = true): OfflineTill {
          short by its value, and recounting never finds it. */
       pendingReturns: counts.pendingReturns,
       failedReturns: counts.failedReturns,
+      /* Separate again, and for the sharper version of the same reason. A queued
+         drawer MOVEMENT is money that has already left the drawer with no sale
+         behind it, so a cash-up run before it arrives reports the drawer short by
+         its value — and recounting never finds it, because the notes really are
+         gone. The shift count is the milder case: not money, but a shift that has
+         not landed is a cash-up that cannot be done at all. */
+      pendingShifts: counts.pendingShifts,
+      pendingMovements: counts.pendingMovements,
+      failedMovements: counts.failedMovements,
     }))
   }, [siteId])
 

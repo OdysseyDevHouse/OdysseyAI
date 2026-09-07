@@ -101,10 +101,24 @@ cd C:\inetpub\odyssey_ai\app
 node --env-file=.env scripts\tickets-migrate.mjs --dry-run
 node --env-file=.env scripts\tickets-migrate.mjs
 
+# EVERY active site's trading database
+node --env-file=.env scripts\migrate-all-sites.mjs
+
 # One site's trading database
 node --env-file=.env scripts\site-migrate.mjs <siteId> --probe
 node --env-file=.env scripts\site-migrate.mjs <siteId>
 ```
+
+`migrate-all-sites.mjs` is the one to run after a publish. It reads the active
+sites out of `cp2_sites`, skips any without a provisioned database, and runs
+`site-migrate.mjs` against each in its own process — so one site failing does
+not stop the rest. Both runners are ledger-backed, so it is safe to run every
+time: a site that is up to date costs one indexed `SELECT`.
+
+It does **not** apply `sql/tickets/`. It reports what is pending there and
+exits 1, because of the `cp2_devices` warning above — the control database is
+still a deliberate step. `--probe` checks every site's connection without
+migrating; `--only=1,2,3` limits the run.
 
 ## When it does not work
 

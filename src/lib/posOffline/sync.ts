@@ -3,13 +3,18 @@
 import { posStore } from './store'
 import { pendingCancellations, markCancellationSynced } from './cancelOffline'
 import type {
+  OfflineMovement,
   OfflineReturn,
   OfflineSale,
+  OfflineShift,
+  OutboxMovement,
   OutboxReturn,
   OutboxSale,
+  OutboxShift,
   PosSyncState,
   SyncResponse,
 } from './types'
+import { currentShift, setCurrentShift } from './shiftOffline'
 
 /**
  * The loop that gets a shift's takings onto the books.
@@ -86,21 +91,47 @@ export async function syncCounts(
   cancellations: number
   pendingReturns: number
   failedReturns: number
+  pendingShifts: number
+  pendingMovements: number
+  failedMovements: number
 }> {
   const store = posStore(siteId)
-  const [pending, failed, cancelled, retPending, retFailed] = await Promise.all([
-    store.outboxCount('pending'),
-    store.outboxCount('failed'),
-    store.outboxCancelledUnsyncedCount(),
-    store.returnCount('pending'),
-    store.returnCount('failed'),
-  ])
+  const [pending, failed, cancelled, retPending, retFailed, shiftPending, movePending, moveFailed] =
+    await Promise.all([
+      store.outboxCount('pending'),
+      store.outboxCount('failed'),
+      store.outboxCancelledUnsyncedCount(),
+      store.returnCount('pending'),
+      store.returnCount('failed'),
+      /*
+       * Shifts and movements opened offline (252), each on its own number and
+       * for the reason the header above gives about returns: these are not
+       * takings and folding them into `pending` would make the one figure a
+       * cashier must not cash up against mean three different things.
+       *
+       * A queued MOVEMENT is the one that changes a cash-up: it is money that has
+       * already left the drawer, so an expected figure computed before it arrives
+       * reports the drawer short by its value and no amount of recounting finds
+       * it — exactly the argument for counting queued refunds separately.
+       *
+       * A failed SHIFT is deliberately not counted. Its consequence is real but
+       * it is not outstanding WORK: the till has stopped trying, the sales that
+       * named it have posted with no shift, and what is needed is somebody
+       * looking at the outbox screen rather than a number on a chip.
+       */
+      store.shiftCount('pending').catch(() => 0),
+      store.movementCount('pending').catch(() => 0),
+      store.movementCount('failed').catch(() => 0),
+    ])
   return {
     pending,
     failed,
     cancellations: cancelled,
     pendingReturns: retPending,
     failedReturns: retFailed,
+    pendingShifts: shiftPending,
+    pendingMovements: movePending,
+    failedMovements: moveFailed,
   }
 }
 
@@ -203,7 +234,30 @@ async function flushBatch(siteId: number): Promise<number> {
      the ordering note in the sync route. A till with nothing but returns pending
      still has work to do. */
   const returns = await pendingReturns(siteId, BATCH_SIZE)
-  if (batch.length === 0 && cancellations.length === 0 && returns.length === 0) return 0
+  /*
+   * Shifts opened offline, and the drawer movements on them (252).
+   *
+   * Sent in the SAME request rather than one of their own, and that is the whole
+   * design: a sale carries the uid of a shift that may not exist on the server
+   * yet, so the two must be judged together or the sale banks nowhere. The route
+   * sequences them — shifts, sales, returns, movements, cancellations — because
+   * the order is a correctness requirement and a client's flush sequence is the
+   * wrong place to keep one.
+   *
+   * A till with nothing but a queued shift still has work to do, which is why
+   * both count towards the "anything to send" test below.
+   */
+  const shifts = await posStore(siteId).shiftPending(BATCH_SIZE)
+  const movements = await posStore(siteId).movementPending(BATCH_SIZE)
+  if (
+    batch.length === 0 &&
+    cancellations.length === 0 &&
+    returns.length === 0 &&
+    shifts.length === 0 &&
+    movements.length === 0
+  ) {
+    return 0
+  }
 
   let response: Response
   try {
@@ -211,8 +265,10 @@ async function flushBatch(siteId: number): Promise<number> {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        shifts: shifts.map(stripShiftLocalFields),
         sales: batch.map(stripLocalFields),
         returns: returns.map(stripReturnLocalFields),
+        movements: movements.map(stripMovementLocalFields),
         cancellations,
       }),
     })
@@ -244,6 +300,59 @@ async function flushBatch(siteId: number): Promise<number> {
 
   const store = posStore(siteId)
   let accepted = 0
+
+  /*
+   * Shifts first, and the ID IS THE POINT.
+   *
+   * A shift that posts comes back with the id the server gave it, and the row is
+   * stamped with it — that is what lets everything afterwards stop naming the
+   * shift by uid. Where this is the shift the till is CURRENTLY on, the stored
+   * pointer is upgraded too, so the next sale carries a real id and the next
+   * cash-up has something to close.
+   *
+   * `adopted` is a SUCCESS that the cashier still needs to know about: a shift was
+   * already open on this drawer, so that one was used and the float counted here
+   * was not added. Recorded on the row rather than raised as an error, because
+   * nothing is wrong with the takings — see `postOfflineShift` for why adopting is
+   * the only answer that keeps them reconcilable.
+   */
+  for (const result of payload.shifts ?? []) {
+    const entry = shifts.find((s) => s.shiftUid === result.shiftUid)
+    if (!entry) continue
+
+    if (result.ok) {
+      accepted += 1
+      await store.shiftUpdate(result.shiftUid, {
+        status: 'synced',
+        syncedAt: new Date().toISOString(),
+        lastError: null,
+        shiftId: result.shiftId ?? null,
+        adopted: result.adopted,
+      })
+      /* Only if this is still the shift being sold against. A till that cashed up
+         and reopened while its queue drained must not have yesterday's id written
+         over today's pointer. */
+      const held = await currentShift(siteId)
+      if (result.shiftId && held.uid === result.shiftUid) {
+        await setCurrentShift(siteId, { id: result.shiftId, uid: result.shiftUid })
+      }
+      continue
+    }
+
+    /*
+     * A refused shift is `failed` where the server says so, and the consequence is
+     * worth stating: the sales naming its uid post with a NULL shift, which
+     * `finaliseDocument` accepts. Their money reaches the books and reaches no
+     * reconciliation. That is the honest end for a shift the server will never
+     * take, and it is strictly better than holding the sales back — but it is
+     * exactly why the outbox screen has to show this row to a human.
+     */
+    await store.shiftUpdate(result.shiftUid, {
+      status: result.retryable === false ? 'failed' : 'pending',
+      attempts: entry.attempts + 1,
+      lastError: result.error ?? 'The server would not open this shift.',
+    })
+  }
 
   for (const result of payload.results) {
     const entry = batch.find((s) => s.saleUid === result.saleUid)
@@ -309,6 +418,36 @@ async function flushBatch(siteId: number): Promise<number> {
   }
 
   /*
+   * Drawer movements, on the same terms as everything above.
+   *
+   * One case is its own: a movement whose shift did not arrive comes back
+   * RETRYABLE rather than failed, because the shift will be there on the next
+   * attempt — usually the batch was simply cut short. The money genuinely left
+   * the drawer, so discarding the record over a temporary ordering problem would
+   * turn a payout into an unexplained variance.
+   */
+  for (const result of payload.movements ?? []) {
+    const entry = movements.find((m) => m.movementUid === result.movementUid)
+    if (!entry) continue
+
+    if (result.ok) {
+      accepted += 1
+      await store.movementUpdate(result.movementUid, {
+        status: 'synced',
+        syncedAt: new Date().toISOString(),
+        lastError: null,
+      })
+      continue
+    }
+
+    await store.movementUpdate(result.movementUid, {
+      status: result.retryable === false ? 'failed' : 'pending',
+      attempts: entry.attempts + 1,
+      lastError: result.error ?? 'The server would not record this movement.',
+    })
+  }
+
+  /*
    * Cancellations that reached the audit trail are stamped, not deleted — the row
    * stays as this till's own record of what it cancelled. One that was refused stays
    * unstamped and goes again, because a cancellation nobody can see is exactly the
@@ -346,6 +485,18 @@ function stripReturnLocalFields(entry: OutboxReturn): OfflineReturn {
   return ret
 }
 
+/** The same, for a queued shift. `shiftId` and `adopted` are answers, not requests. */
+function stripShiftLocalFields(entry: OutboxShift): OfflineShift {
+  const { status, attempts, lastError, syncedAt, shiftId, adopted, ...shift } = entry
+  return shift
+}
+
+/** And for a drawer movement. */
+function stripMovementLocalFields(entry: OutboxMovement): OfflineMovement {
+  const { status, attempts, lastError, syncedAt, ...movement } = entry
+  return movement
+}
+
 /* ── Pruning ─────────────────────────────────────────────────────────────── */
 
 /**
@@ -371,6 +522,19 @@ export async function pruneSynced(siteId: number): Promise<void> {
      into something that could later be loosened for one table and not the other. A
      pending or failed return is the only record that money left the drawer. */
   await store.returnPruneSynced(cutoff)
+  /*
+   * Shifts and movements on the same terms, and written out for the same reason:
+   * the `.equals('synced')` predicate is repeated verbatim per table rather than
+   * abstracted into something that could later be loosened for one and not another.
+   *
+   * A shift is pruned even though its id may still be referenced by a sale row —
+   * which is fine, because that sale has by then been stamped with a real shift on
+   * the server. What must never be pruned is a PENDING one: it is what a queued
+   * sale's uid resolves through, and deleting it would strand that sale's takings
+   * in no reconciliation at all.
+   */
+  await store.shiftPruneSynced(cutoff)
+  await store.movementPruneSynced(cutoff)
 }
 
 /* ── The engine ──────────────────────────────────────────────────────────── */

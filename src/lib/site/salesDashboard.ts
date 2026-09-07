@@ -44,6 +44,8 @@ export type SalesKpis = {
   saleCount: number
   avgSaleValue: number
   avgItemsPerSale: number
+  /** Units sold across the period — the total `avgItemsPerSale` is the mean of. */
+  itemCount: number
 }
 
 export type HourBucket = { hour: number; turnover: number; saleCount: number }
@@ -67,6 +69,20 @@ export type SalesDashboardData = {
   compareKpis: SalesKpis | null
   /** Human label for the comparison, e.g. "vs May 2026". */
   compareLabel: string
+  /**
+   * The same period NAMED rather than compared — "July", "12 July".
+   *
+   * The KPI notes read as sentences ("+7.4% on July"), and "on vs July 2026" is
+   * what comes out of reusing `compareLabel` for that. Formatted here, beside
+   * the label it belongs with, rather than by unpicking the other string in the
+   * browser.
+   *
+   * The year is dropped when it is the current one, because the comparison is
+   * always the month before and naming its year is noise eleven months in
+   * twelve. December against November keeps it, which is the one time it is
+   * genuinely ambiguous.
+   */
+  compareShort: string
   perHour: HourBucket[]
   perDay: DayBucket[]
   tenderTypes: TenderBucket[]
@@ -95,6 +111,7 @@ const EMPTY_KPIS: SalesKpis = {
   saleCount: 0,
   avgSaleValue: 0,
   avgItemsPerSale: 0,
+  itemCount: 0,
 }
 
 /**
@@ -154,6 +171,23 @@ const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
+
+/**
+ * The comparison period as a bare name — "July", "12 July", "November 2025".
+ *
+ * The pair with `compareLabelFor`: that one answers "compared with what", this
+ * one answers "when", and the KPI notes need the second because they put it in
+ * a sentence. Both read the same range, so they cannot name different months.
+ */
+function compareShortFor(range: DateRange): string {
+  const from = parseIso(range.from)
+  const month = MONTHS[from.getUTCMonth()]
+  const year = from.getUTCFullYear()
+  const suffix = year === new Date().getUTCFullYear() ? '' : ` ${year}`
+
+  if (range.from === range.to) return `${from.getUTCDate()} ${month}${suffix}`
+  return `${month}${suffix}`
+}
 
 /** "vs May 2026", "vs 12 May 2026", or "vs same period in May 2026". */
 function compareLabelFor(range: DateRange): string {
@@ -226,6 +260,11 @@ async function kpisFor(siteId: number, range: DateRange): Promise<SalesKpis> {
     saleCount,
     avgSaleValue: saleCount === 0 ? 0 : round(toNum(docs?.total) / saleCount, 2),
     avgItemsPerSale: saleCount === 0 ? 0 : round(units / saleCount, 2),
+    // The raw total as well as the average. The tile prints both, and
+    // multiplying the average back out would not give this number — it is
+    // rounded to two places, so 21 895 units over 9 123 sales comes back as
+    // 21 894.9. A figure shown to the user is queried, not reconstructed.
+    itemCount: units,
   }
 }
 
@@ -346,6 +385,7 @@ export async function getSalesDashboard(
 ): Promise<SalesDashboardData> {
   const comparison = previousMonth(range)
   const compareLabel = compareLabelFor(comparison)
+  const compareShort = compareShortFor(comparison)
 
   const exceptionsPromise = opts.includeExceptions ? exceptionReport(siteId, range) : null
 
@@ -449,6 +489,7 @@ export async function getSalesDashboard(
     // rendering a meaningless "100% up".
     compareKpis: compareRaw.saleCount === 0 && compareRaw.turnoverIncl === 0 ? null : compareRaw,
     compareLabel,
+    compareShort,
     perHour,
     perDay,
     tenderTypes,

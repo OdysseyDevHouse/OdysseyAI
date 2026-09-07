@@ -130,6 +130,20 @@
   --color-danger-ink: #b42318;
   --color-danger-soft: #fdeceb;
 
+  /* --- Stat labels -------------------------------------------------------- */
+  /* The caption above a headline figure — the KPI tiles and the rates band.
+     Warm rather than grey ON PURPOSE, and it is the only place in the app that
+     uses this colour: a strip of six big black numbers has no reading order,
+     and a label that is merely muted disappears under the figure it names.
+     A warm caption gives the band a horizontal line the eye can run along, and
+     keeps every label as one recognisable class of text.
+
+     Not warning/amber, even though it sits near it. Amber MEANS something here
+     — 'needs attention' — and a KPI label is never in a state. Its own token
+     so the two can never be confused, and so restyling the captions cannot
+     silently repaint every warning badge in the app. 5.4:1 on white.
+  --color-stat-label: #9c5a38;
+
   /* --- Deep surfaces ----------------------------------------------------- */
   /* A panel that is DARKER than the page rather than lighter — the opening
      float on the till gate, and anything else that has to read as a figure on
@@ -231,6 +245,18 @@
      reads as "inside Products → on Products" rather than as two equal
      selections competing down the rail. */
   --color-nav-child-active: #3c446c;
+
+  /* The MODULE RAIL — the 64px strip of three-letter chips left of the menu.
+     A step darker than the panel beside it, and that step is the whole point:
+     the rail says which PRODUCT you are in and the panel says which screen, so
+     they have to read as two surfaces rather than as one wide menu. A border
+     alone could not carry that — the eye reads a 1px rule between two identical
+     fills as a fold in one panel, not as two.
+
+     Defined here with the rest of the rail's colours, and for the same reason:
+     the nav does not follow the page's theme, so this cannot be borrowed from a
+     themed token that would invert underneath it. */
+  --color-nav-rail: #0a1130;
 
 
   /* --- Tile swatches ------------------------------------------------------ */
@@ -521,6 +547,10 @@
     --color-danger-ink: #fca5a5;
     --color-danger-soft: #33191a;
 
+    /* Lifted and softened: the light theme's terracotta goes to mud on a dark
+       surface. Same job, same warmth, 7.6:1 on the card. */
+    --color-stat-label: #d9a077;
+
     /* Lifted, not inverted — see the note in the light block. */
     --color-deep: #1b2a49;
     --color-deep-2: #24375e;
@@ -622,6 +652,10 @@
   --color-danger: #f87171;
   --color-danger-ink: #fca5a5;
   --color-danger-soft: #33191a;
+
+  /* Lifted and softened: the light theme's terracotta goes to mud on a dark
+     surface. Same job, same warmth, 7.6:1 on the card. */
+  --color-stat-label: #d9a077;
 
   /* Lifted, not inverted — see the note in the light block. */
   --color-deep: #1b2a49;

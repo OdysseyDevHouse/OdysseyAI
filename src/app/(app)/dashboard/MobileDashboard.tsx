@@ -1,46 +1,53 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Button,
-  Card,
-  CardHeader,
-  DateRangeField,
-  EmptyState,
-  Icons,
-  Skeleton,
-  type DateRange,
-} from '@/components/ui'
+import { Button, Card, CardHeader, EmptyState, Icons, type DateRange } from '@/components/ui'
 import type { SalesDashboardData } from '@/lib/site/salesDashboard'
 import type { DashboardOverview } from '@/lib/site/dashboardOverview'
-import { WIDGETS, type KpiId, type WidgetId } from './widgets'
-import { KPI_BY_ID, KpiTile } from './KpiTile'
-import { widgetBody, widgetNote } from './WidgetBody'
+import { defaultHidden, type WidgetId } from './widgets'
+import { AttentionList } from './OverviewWidgets'
+import { PhoneHero } from './PhoneHero'
+import { PhoneKpiGrid } from './PhoneKpiGrid'
+import { PhonePerHour } from './PhonePerHour'
+import { PhoneRankings } from './PhoneRankings'
+import { PhonePeriod, periodLabel, rangeFor, type PeriodKey } from './PhonePeriod'
 
 /**
  * The dashboard, on a phone.
  *
- * ── WHY THIS EXISTS INSTEAD OF A BREAKPOINT ON THE GRID ─────────────────────
+ * ── WHY THIS IS A COMPOSITION AND NOT THE DESKTOP STACKED ───────────────────
  *
- * The desktop dashboard is a `react-grid-layout` canvas the user arranges
- * themselves: sixty columns, one breakpoint, positions saved per browser. That
- * is right for a mouse and unusable on a phone, and not marginally so —
- * measured at 390px it gives the narrowest widget ONE pixel, pushes six widgets
- * off the side of the screen and overflows horizontally.
+ * It used to be the widget registry in one column: every visible panel, in
+ * registry order, each in its own card. That was the right first move — it
+ * could not disagree with the desktop, because it WAS the desktop — but it
+ * produced a screen fourteen cards long whose first answer to "how are we
+ * trading" was somewhere around the fourth scroll.
  *
- * Adding a phone breakpoint to the grid would be worse than it sounds. The
- * layout is a saved user preference, so a phone re-flowing it would silently
- * rewrite the arrangement that person built at their desk — and drag-to-resize
- * on a touch screen fights the scroll it sits inside. So the phone does not get
- * a narrower grid. It gets no grid: one column, in registry order, no drag.
+ * A phone dashboard is read standing up, in a few seconds, usually to settle
+ * one question. So the order here is editorial rather than registry: the
+ * headline figure, then the figures that qualify it, then when the shop was
+ * busy, then what needs doing, then who is selling. Each is a section rather
+ * than a card with a title, because a stack of fourteen titled cards is a
+ * filing cabinet and this is meant to be a page.
  *
- * ── WHAT IT DELIBERATELY SHARES ─────────────────────────────────────────────
+ * ── WHAT IS STILL SHARED, AND IT IS EVERYTHING THAT MATTERS ─────────────────
  *
- * Everything that decides a NUMBER. The same two endpoints, the same widget
- * registry, and — via WidgetBody — the same rendering for every widget body.
- * Only the arrangement differs, which is the only thing that should: two copies
- * of the widget switch would eventually be two answers to what the shop took,
- * and nobody would know which screen was lying.
+ * The same two endpoints, the same `KPI_DEFS`, the same `insights.ts`, the same
+ * charts, the same `AttentionList`, the same detail modal. Nothing here decides
+ * a number. That was the original file's rule and it survives intact: two
+ * copies of the widget switch would eventually be two answers to what the shop
+ * took, and nobody would know which screen was lying.
+ *
+ * What is NOT shared any more is the arrangement and the selection — which is
+ * the only thing that should differ, and is the whole reason this file exists.
+ *
+ * ── HOW A SECTION IS STILL SWITCHED OFF ─────────────────────────────────────
+ *
+ * Each section names the widget it is made of, and asks the same two questions
+ * the stacked version did: may this user see it, and does the DEFAULT layout
+ * hide it. So a figure switched off for a role stays off on the phone, and the
+ * two screens still open on the same set of numbers. What the phone ignores is
+ * this browser's saved ARRANGEMENT, because there is no grid here to arrange.
  */
 
 const EMPTY: SalesDashboardData = {
@@ -52,9 +59,11 @@ const EMPTY: SalesDashboardData = {
     saleCount: 0,
     avgSaleValue: 0,
     avgItemsPerSale: 0,
+    itemCount: 0,
   },
   compareKpis: null,
   compareLabel: 'vs last month',
+  compareShort: 'last month',
   perHour: [],
   perDay: [],
   tenderTypes: [],
@@ -65,17 +74,11 @@ const EMPTY: SalesDashboardData = {
   hasData: false,
 }
 
-/** This month, which is what somebody opening the app on the floor means. */
-function thisMonth(): DateRange {
-  const now = new Date()
-  const first = new Date(now.getFullYear(), now.getMonth(), 1)
-  const iso = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  return { from: iso(first), to: iso(now) }
-}
-
 export function MobileDashboard({ visibleWidgets }: { visibleWidgets: WidgetId[] }) {
-  const [range, setRange] = useState<DateRange>(thisMonth)
+  /* This month, which is what somebody opening the app on the floor means. */
+  const [period, setPeriod] = useState<PeriodKey>('month')
+  const [range, setRange] = useState<DateRange>(() => rangeFor('month'))
+
   const [data, setData] = useState<SalesDashboardData>(EMPTY)
   const [overview, setOverview] = useState<DashboardOverview | null>(null)
   const [loading, setLoading] = useState(true)
@@ -135,34 +138,32 @@ export function MobileDashboard({ visibleWidgets }: { visibleWidgets: WidgetId[]
 
   useEffect(loadOverview, [loadOverview])
 
-  const shown = (id: WidgetId) => visibleWidgets.includes(id)
+  const offByDefault = defaultHidden()
+  const shown = (id: WidgetId) => visibleWidgets.includes(id) && !offByDefault.includes(id)
 
-  /* KPIs first and separately: six small figures that read as a strip, not as
-     six cards a screen tall each. Everything else follows in registry order,
-     which is the order the desktop's default layout uses — so somebody who
-     knows the desktop finds things where they expect them. */
-  const kpiIds = WIDGETS.filter((w) => KPI_BY_ID.has(w.id as KpiId) && shown(w.id)).map(
-    (w) => w.id as KpiId,
-  )
-  const panelIds = WIDGETS.filter((w) => !KPI_BY_ID.has(w.id as KpiId) && shown(w.id)).map(
-    (w) => w.id,
-  )
+  /* Widget id to ranking dimension, in reading order. Products first because
+     it is the list somebody opens this card for. */
+  const RANKINGS = [
+    { widget: 'topProducts', dimension: 'products' },
+    { widget: 'topDepartments', dimension: 'departments' },
+    { widget: 'topCashiers', dimension: 'cashiers' },
+  ] as const
+  const availableRankings = RANKINGS.filter((r) => shown(r.widget)).map((r) => r.dimension)
 
   return (
     <div className="flex flex-col gap-4 p-4">
-      {/* Chrome gets room even here — it is the part that gets tapped. */}
-      <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
-        <DateRangeField label="Sales period" value={range} onChange={setRange} />
-        <Button
-          variant="ghost"
-          size="touch"
-          onClick={loadOverview}
-          disabled={refreshing}
-          className="w-full"
-        >
-          <Icons.Refresh size={16} />
-          {refreshing ? 'Refreshing…' : 'Refresh'}
-        </Button>
+      {/* The period is the one control on the screen, and everything below it
+          answers to it — so it sits at the top and stays there while the
+          figures under it scroll. */}
+      <div className="sticky -top-4 z-10 -mx-4 -mt-4 border-b border-border bg-canvas px-4 py-3">
+        <PhonePeriod
+          period={period}
+          range={range}
+          onChange={(nextPeriod, nextRange) => {
+            setPeriod(nextPeriod)
+            setRange(nextRange)
+          }}
+        />
       </div>
 
       {error && (
@@ -175,52 +176,70 @@ export function MobileDashboard({ visibleWidgets }: { visibleWidgets: WidgetId[]
         </Card>
       )}
 
-      {/* Two across: a KPI is one number and a sparkline, and at 390px two of
-          them still clear the 14px floor for readable type. One across would
-          make six taps of scrolling out of a glance. */}
-      <div className="grid grid-cols-2 gap-3">
-        {kpiIds.map((id) => {
-          const def = KPI_BY_ID.get(id)
-          if (!def) return null
-          return (
-            <KpiTile
-              key={id}
-              def={def}
-              kpis={data.kpis}
-              compareKpis={data.compareKpis}
-              compareLabel={data.compareLabel}
-              perDay={data.perDay}
-              loading={loading}
+      {shown('kpis') && (
+        <PhoneHero
+          kpis={data.kpis}
+          compareKpis={data.compareKpis}
+          compareShort={data.compareShort}
+          perDay={shown('perDay') ? data.perDay : []}
+          periodLabel={periodLabel(period, range)}
+          loading={loading}
+        />
+      )}
+
+      {shown('kpis') && <PhoneKpiGrid data={data} loading={loading} />}
+
+      {shown('perHour') && <PhonePerHour data={data} loading={loading} />}
+
+      {/* Second, not last: it is the only section on the screen that asks the
+          reader to DO something, and a list of jobs under a ranking of products
+          is a list nobody reaches. */}
+      {shown('attention') && (
+        <Card>
+          {/* Refresh lives HERE rather than beside the period, which is where it
+              started. It reloads the overview and nothing else — the sales
+              figures already refetch when the period changes — so on the period
+              bar it was a button that appeared to refresh the screen while
+              refreshing one card of it. It also cost the fifth segment about
+              fifty pixels, which is what clipped "Custom". */}
+          <CardHeader
+            title="Needs attention"
+            description="As at today"
+            action={
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Check again"
+                onClick={loadOverview}
+                disabled={refreshing}
+              >
+                <Icons.Refresh size={16} />
+              </Button>
+            }
+          />
+          {overview ? (
+            <AttentionList items={overview.attention} />
+          ) : (
+            <EmptyState
+              icon={<Icons.Info size={22} />}
+              title={overviewError ? "Couldn't load this" : 'Loading…'}
+              hint={overviewError ?? 'Checking accounts, shelves and tills.'}
             />
-          )
-        })}
-      </div>
+          )}
+        </Card>
+      )}
 
-      {panelIds.map((id) => {
-        const widget = WIDGETS.find((w) => w.id === id)
-        if (!widget) return null
-        const note = widgetNote(id, overview)
-        return (
-          <Card key={id}>
-            <CardHeader title={widget.title} description={note ?? undefined} />
-            {/* No fixed height, unlike the grid: a card sized to its content is
-                the whole reason this scrolls properly. A table that would
-                overflow scrolls inside its own box rather than the page. */}
-            <div className="overflow-x-auto">
-              {loading && !overview ? (
-                <div className="flex flex-col gap-2 p-4">
-                  <Skeleton className="h-4 w-2/3" />
-                  <Skeleton className="h-4 w-1/2" />
-                </div>
-              ) : (
-                widgetBody(id, { data, overview, overviewError })
-              )}
-            </div>
-          </Card>
-        )
-      })}
+      <PhoneRankings
+        products={data.topProducts}
+        departments={data.topDepartments}
+        cashiers={data.topCashiers}
+        available={[...availableRankings]}
+        range={range}
+        loading={loading}
+      />
 
-      {!loading && !error && kpiIds.length === 0 && panelIds.length === 0 && (
+      {!loading && !error && !shown('kpis') && !shown('perHour') && !shown('attention') && availableRankings.length === 0 && (
         <Card>
           <EmptyState
             icon={<Icons.Info size={22} />}

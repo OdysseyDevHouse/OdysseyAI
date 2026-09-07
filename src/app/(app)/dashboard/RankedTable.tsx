@@ -54,7 +54,26 @@ function marginTone(value: number): 'danger' | 'warning' | 'success' {
   return 'success'
 }
 
-export function RankedTable({ rows, config }: { rows: RankedRow[]; config: TableConfig }) {
+export function RankedTable({
+  rows,
+  config,
+  dense = false,
+}: {
+  rows: RankedRow[]
+  config: TableConfig
+  /**
+   * One type step down, for the DASHBOARD WIDGET only.
+   *
+   * The same table appears twice: as a panel in a grid of a dozen widgets, and
+   * as the whole content of the "View more" modal. In the widget it is glanced
+   * at — the top three, the shape of the column — and at 14px it was the
+   * loudest text on a screen whose headline is the trading figures. In the
+   * modal it is the thing the user opened, read down and sorted, so it stays at
+   * full size. Same table, two jobs; the size follows the job rather than the
+   * component.
+   */
+  dense?: boolean
+}) {
   const columns: Column<RankedRow>[] = [
     {
       key: 'label',
@@ -128,6 +147,7 @@ export function RankedTable({ rows, config }: { rows: RankedRow[]; config: Table
       columns={columns}
       rows={rows}
       getRowKey={(r) => r.key}
+      dense={dense}
       empty={{
         title: config.emptyTitle,
         hint: 'Nothing was sold in this period. Try a wider date range.',

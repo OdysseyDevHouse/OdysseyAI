@@ -6,6 +6,7 @@ import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
 import TopBar from '@/components/TopBar'
 import { MobileTopBar } from '@/components/MobileTopBar'
+import { PhoneNav } from '@/components/PhoneNav'
 import { isPhoneLayout, isPhoneRequest } from '@/lib/phoneLayout'
 import { isMobileShell } from '@/lib/mobileShell'
 import { headers } from 'next/headers'
@@ -237,19 +238,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             its own answer for where an A4 invoice goes. Renders nothing and
             swallows every failure. */}
         <DeviceHeartbeat />
-        <MobileTopBar
-          granted={[...capabilities.granted]}
-          isOwner={capabilities.isOwner}
-          modules={menuModules}
-          hiddenAreas={hiddenAreaKeys}
-          gettingStartedHidden={gettingStartedHidden}
-          userName={user.name}
-          siteName={site.displayName}
-          unreadNotifications={unread}
-          /* Browsers only. In the app the WebView has no address bar to get
-              back from — see the prop's own note on MobileTopBar. */
-          onChooseLayout={(await isMobileShell()) ? undefined : setLayoutPreference}
-        />
+        <MobileTopBar siteName={site.displayName} unreadNotifications={unread} />
         {/* min-h-0 so the pane scrolls instead of the children being crushed —
             a flex column hands its children infinite height otherwise. */}
         {/* `relative` for the same reason as the desktop shell below — a static
@@ -262,6 +251,22 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </PrecisionProvider>
           </ToastProvider>
         </main>
+        {/* After <main>, not inside it: the bar is a sibling of the scroll pane
+            so it stays put while the page moves under it, and the pane's own
+            height already accounts for it. A fixed-position bar over a
+            scrolling pane would cover the last row of every list. */}
+        <PhoneNav
+          granted={[...capabilities.granted]}
+          isOwner={capabilities.isOwner}
+          modules={menuModules}
+          hiddenAreas={hiddenAreaKeys}
+          gettingStartedHidden={gettingStartedHidden}
+          userName={user.name}
+          siteName={site.displayName}
+          /* Browsers only. In the app the WebView has no address bar to get
+              back from — see the prop's own note on PhoneNav. */
+          onChooseLayout={(await isMobileShell()) ? undefined : setLayoutPreference}
+        />
       </div>
     )
   }
@@ -292,7 +297,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           }))}
           currentSiteId={site.id}
           userName={user.name}
-          userEmail={session.email}
+          /* Both halves off the SAME row. Reading the name locally and the
+             address off the session let the corner show one person's name
+             above another's email whenever the two had drifted apart — which
+             is how a crossed control_user_id was first spotted. The session
+             address is only the fallback for a local sign-in, where there is
+             no control account and the row may carry no address at all. */
+          userEmail={user.email ?? session.email}
           roleName={user.roleName}
           unreadNotifications={unread}
           /* Only a HANDSET that chose this layout is offered the way back. On a

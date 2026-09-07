@@ -176,6 +176,10 @@ New-Item -ItemType Directory -Path (Join-Path $app 'electron') -Force | Out-Null
 Copy-Item (Join-Path $root 'scripts\tickets-migrate.mjs') (Join-Path $app 'scripts')
 Copy-Item (Join-Path $root 'scripts\site-migrate.mjs')    (Join-Path $app 'scripts')
 Copy-Item (Join-Path $root 'scripts\box-migrate.mjs')     (Join-Path $app 'scripts') -ErrorAction SilentlyContinue
+# Drives site-migrate.mjs once per active site, so a publish does not depend on
+# somebody remembering the id of every shop. It spawns the runner beside it by
+# absolute path, so both must be staged or neither works.
+Copy-Item (Join-Path $root 'scripts\migrate-all-sites.mjs') (Join-Path $app 'scripts')
 # Diagnostics. Answers "does the SITE connection see this table" - which the
 # migration ledger cannot (see sql/site/098_restore_products.sql) and a
 # control-credentials check does not ask.

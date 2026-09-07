@@ -192,6 +192,17 @@ function exceptionText(reasons: readonly string[]): string | null {
 export async function postOfflineSale(
   siteId: number,
   sale: OfflineSale,
+  /**
+   * Turns a shift uid into the id it was given, for a sale that banked into a
+   * shift OPENED OFFLINE and so had no id to name at the time.
+   *
+   * Passed in rather than looked up here, and by the route rather than by this
+   * module, because the route is what posted the shifts a moment earlier and is
+   * the only thing that holds the map. Optional: the box's flush and every
+   * existing caller send sales whose shift was already numbered, and they behave
+   * exactly as they did.
+   */
+  resolveShiftUid?: (uid: string) => number | undefined,
 ): Promise<SyncSaleResult> {
   /* 1. Structure. Before the claim: a malformed payload must not consume a uid. */
   const invalid = validateOfflineSale(sale)
@@ -440,7 +451,23 @@ export async function postOfflineSale(
     })),
     customerId: sale.customerId ?? null,
     documentNumber: sale.documentNumber,
-    shiftId: sale.shiftId ?? null,
+    /*
+     * The uid WINS where it is set.
+     *
+     * A sale rung up after a mid-outage reboot carries a shiftUid and a null
+     * shiftId, because the shift it banked into did not exist on the server yet.
+     * A sale from before the reboot carries the id and no uid. Preferring the uid
+     * costs nothing for the second case and is the whole mechanism for the first.
+     *
+     * An unresolvable uid falls through to null — "belongs to no shift", which
+     * `finaliseDocument` has always treated as legitimate. That is the honest
+     * answer when the shift was rejected outright: the sale is real and posts,
+     * and it is better on the books unreconciled than not on the books at all.
+     */
+    shiftId:
+      (sale.shiftUid && resolveShiftUid ? resolveShiftUid(sale.shiftUid) : undefined) ??
+      sale.shiftId ??
+      null,
     /*
      * Do not refuse this sale over a lot that cannot be found (234).
      *

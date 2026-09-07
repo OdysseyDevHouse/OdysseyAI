@@ -95,8 +95,22 @@ export type OfflineSale = {
   /** Attribution only. The server re-derives this person's capabilities. */
   operatorUserId: number
   operatorName: string
-  /** The shift that took the cash, when the till knew it. */
+  /** The shift that took the cash, when the till knew its id. */
   shiftId: number | null
+  /**
+   * The shift that took the cash, when it had no id yet.
+   *
+   * A shift opened OFFLINE has no server id until it syncs, so a sale rung up
+   * after a mid-outage reboot can only name it by uid. The server resolves this
+   * to a real id — the shift posts first, in the same batch — and `shiftId` is
+   * ignored where this is set.
+   *
+   * OPTIONAL, and load-bearing in the same way `declaredTips` is: a sale queued
+   * before this shipped has no such field, and the outbox is the one store whose
+   * rows cannot be recreated. Absent means "use `shiftId`", which is exactly what
+   * every existing queued sale wants.
+   */
+  shiftUid?: string | null
   /** When the money changed hands, from the till's own clock. ISO. */
   takenAt: string
   /** YYYY-MM-DD. Governs the VAT period. */
@@ -157,10 +171,82 @@ export type OfflineSale = {
   }[]
 }
 
+/* ── A shift opened offline ──────────────────────────────────────────────── */
+
+/**
+ * A drawer a till opened with no network.
+ *
+ * ── WHY THIS CARRIES SO LITTLE ────────────────────────────────────────────
+ *
+ * Opening a shift needs one fact the server cannot supply — the float somebody
+ * COUNTED — and nothing else. The mode, the cash-up number, the till's code and
+ * the unique index all resolve server-side at sync, exactly as they do for a
+ * shift opened in the back office. So this is the counted float, who counted it,
+ * which drawer, and when.
+ *
+ * Contrast `OfflineSale`, which carries its own totals for the server to check
+ * against. There is nothing to check here: a float is a count, not an arithmetic
+ * claim, and the server has no independent way to know what was in the drawer.
+ */
+export type OfflineShift = {
+  /** UUIDv4, minted by the till. THE idempotency key — unique in the database. */
+  shiftUid: string
+  /**
+   * Which drawer. Null in user-mode cash-up, where the shift belongs to a person
+   * and their own float travels with them — see 055.
+   */
+  terminalId: number | null
+  /** When the drawer was opened, from the till's clock. ISO. */
+  openedAt: string
+  /** What was counted into it. */
+  openingFloat: number
+  /** Attribution. The server re-derives this person's rights, as it does for a sale. */
+  operatorUserId: number
+  operatorName: string
+}
+
+/**
+ * Money in or out of a drawer, recorded with the line down.
+ *
+ * ── IT NAMES ITS SHIFT ONE OF TWO WAYS, NEVER BOTH ───────────────────────
+ *
+ * `shiftId` where the shift was already open before the outage, so the till knows
+ * its id. `shiftUid` where the shift was itself opened offline and has no id yet —
+ * it is being created by the same batch that carries this. Exactly one is set;
+ * neither is not a legitimate state, unlike a SALE, which may honestly belong to
+ * no shift. A payout that left no drawer is not a payout.
+ */
+export type OfflineMovement = {
+  /** UUIDv4, minted by the till. Unique in the database (252). */
+  movementUid: string
+  shiftId: number | null
+  shiftUid: string | null
+  /** Which drawer it physically left. Only record of it in user mode. */
+  terminalId: number | null
+  type: 'payout' | 'payin' | 'drop'
+  /** Always POSITIVE. The server signs it — a payout and a drop both take money out. */
+  amount: number
+  reason: string
+  /** From the till's clock. ISO. */
+  takenAt: string
+  operatorUserId: number
+  operatorName: string
+}
+
 /* ── One request ─────────────────────────────────────────────────────────── */
 
 export type SyncRequest = {
   deviceId: string
+  /**
+   * Shifts opened offline. Posted FIRST, before anything else in the batch.
+   *
+   * Not a preference. A sale carrying `shiftUid` cannot be banked until the shift
+   * that uid names exists, and a movement is `ON DELETE CASCADE` from a shift that
+   * must therefore already be there. The order lives on the server for the reason
+   * the route's header gives: it is a correctness requirement, and a client's
+   * flush sequence is the wrong place to keep one.
+   */
+  shifts?: OfflineShift[]
   /** Oldest first, and at most BATCH_SIZE. */
   sales: OfflineSale[]
   /**
@@ -175,6 +261,17 @@ export type SyncRequest = {
    * Cancellations still come last, after both — see the sync route.
    */
   returns?: OfflineReturn[]
+  /**
+   * Drawer movements. Posted after the shifts they belong to, before the
+   * cancellations that close the batch.
+   *
+   * After the SALES as well, which is arbitrary in arithmetic — a payout and a
+   * sale touch different tables and neither figure depends on the other — and
+   * deliberate in the ledger: `listDrawerMovements` and the sale register are
+   * both read by somebody working out why a drawer is short, and both reading in
+   * the order the shop traded is worth more than the microsecond it costs.
+   */
+  movements?: OfflineMovement[]
 }
 
 export type SyncSaleResult = {
@@ -197,10 +294,44 @@ export type SyncSaleResult = {
   retryable?: boolean
 }
 
+export type SyncShiftResult = {
+  shiftUid: string
+  ok: boolean
+  /** The real shift id — present on success, INCLUDING a duplicate or an adoption. */
+  shiftId?: number
+  /** This uid had already been delivered. The till stops queueing it. */
+  duplicate?: boolean
+  /**
+   * A shift was ALREADY OPEN on this drawer, so that one was used instead.
+   *
+   * Success, not failure: the takings are banked and reconcilable, which is the
+   * whole point. But the float this till counted was NOT added — the drawer was
+   * already counted once — and the till surfaces that rather than reporting a
+   * clean open, because the cashier believed they were starting a shift and were
+   * not. See `postOfflineShift`, and the activity-log entry it writes.
+   */
+  adopted?: boolean
+  error?: string
+  retryable?: boolean
+}
+
+export type SyncMovementResult = {
+  movementUid: string
+  ok: boolean
+  id?: number
+  duplicate?: boolean
+  error?: string
+  retryable?: boolean
+}
+
 export type SyncResponse = {
+  /** One per shift sent. Read FIRST by the till — a sale's uid resolves through it. */
+  shifts?: SyncShiftResult[]
   results: SyncSaleResult[]
   /** One per return sent, in the same shape and with the same retry contract. */
   returns?: SyncReturnResult[]
+  /** One per drawer movement sent, with the same retry contract as a sale. */
+  movements?: SyncMovementResult[]
   /** One per cancellation sent, so the till knows which reached the audit trail. */
   cancelled?: { saleUid: string; ok: boolean; error?: string }[]
 }
@@ -250,6 +381,43 @@ export type OutboxSale = OfflineSale & {
    * it reads a cancelled document that kept its number.
    */
   numberBurnt?: boolean
+}
+
+/* ── The shift and movement queues, as the till holds them ───────────────── */
+
+/**
+ * A shift opened offline, waiting to be delivered.
+ *
+ * ── THIS IS NOT A CACHE, AND IT IS NOT QUITE MONEY EITHER ────────────────
+ *
+ * An outbox sale is money: the customer left with the goods and the row is the
+ * only record. A queued shift is not money, but losing one costs more than a
+ * refresh — every sale that banked into it would arrive naming a uid that never
+ * posts, and the server would have to bank them nowhere. So it is kept on outbox
+ * terms rather than catalog terms: nothing prunes a pending one, and a failure
+ * is held for a human rather than dropped.
+ *
+ * `shiftId` is filled in on the way back. That is what lets the till stop naming
+ * the shift by uid — for movements, and for anything else that wants the real id
+ * once the network returns.
+ */
+export type OutboxShift = OfflineShift & {
+  status: OutboxStatus
+  attempts: number
+  lastError: string | null
+  syncedAt: string | null
+  /** The server's id, once it has one. Null while the shift is still local. */
+  shiftId: number | null
+  /** The server used a shift that was already open. See `SyncShiftResult.adopted`. */
+  adopted?: boolean
+}
+
+/** A drawer movement waiting to be delivered. Same terms as the shift above. */
+export type OutboxMovement = OfflineMovement & {
+  status: OutboxStatus
+  attempts: number
+  lastError: string | null
+  syncedAt: string | null
 }
 
 /* ── A return taken offline ──────────────────────────────────────────────── */

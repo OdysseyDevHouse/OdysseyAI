@@ -595,3 +595,54 @@ export function TenderMixChart({ data }: { data: TenderBucket[] }) {
     </div>
   )
 }
+
+/**
+ * The per-day bars under the phone's headline figure.
+ *
+ * ── WHY NOT TurnoverPerDayChart AT A SMALLER HEIGHT ─────────────────────────
+ *
+ * Because that chart is mostly things a strip this size cannot carry: two axes,
+ * a grid, a legend of three entries and a dashed average rule. Shrunk to 56px
+ * they do not become smaller — they become illegible, and an unreadable axis is
+ * worse than none because it still costs the pixels.
+ *
+ * What survives shrinking is the SHAPE: which days were big, whether the month
+ * is climbing or fading, where the quiet stretch was. So this draws only that,
+ * and the sentence underneath it — from `perDayTakeaway` — says in words the
+ * one fact the axis would have been consulted for.
+ *
+ * No tooltip either. There is no hover on a phone, and a tap target 4px wide is
+ * not one; the reader who wants a specific day opens the per-day widget.
+ */
+export function PerDayBars({ data }: { data: DayBucket[] }) {
+  const colors = useChartColors()
+
+  if (!data.some((d) => d.turnover !== 0)) return null
+
+  const rows = data.map((d) => ({ turnover: d.turnover, weekend: isWeekend(d.date) }))
+  const weekdayFill = colors.series[0]
+  const weekendFill = colors.series[5]
+
+  return (
+    <div className="h-14 w-full" aria-hidden="true">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={rows} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+          {/* No domain floor: a strip whose bars all reach the top says the
+              month was flat, which is exactly what a shared scale from zero
+              tells the truth about. */}
+          {/* maxBarSize, or a short period draws slabs: Recharts divides the
+              width by the number of readings, so a month with two trading days
+              in it becomes two 180px blocks — the loudest thing on a screen
+              whose headline is supposed to be the figure above them. Capped, a
+              sparse period reads as a few thin marks against empty space,
+              which is also the truth about it. */}
+          <Bar dataKey="turnover" radius={[2, 2, 0, 0]} maxBarSize={10} isAnimationActive={false}>
+            {rows.map((row, i) => (
+              <Cell key={i} fill={row.weekend ? weekendFill : weekdayFill} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}

@@ -1,8 +1,9 @@
 'use client'
 
 import Dexie, { type Table } from 'dexie'
-import type { OutboxReturn, OutboxSale } from './types'
+import type { OutboxMovement, OutboxReturn, OutboxSale, OutboxShift } from './types'
 import type { TillProduct } from '../site/tillSearch'
+import type { OfflineCustomer } from '../site/tillCustomers'
 
 /**
  * The till's local database.
@@ -121,7 +122,10 @@ export type LocalDraft = {
 
 export class PosDatabase extends Dexie {
   products!: Table<TillProduct, number>
+  customers!: Table<OfflineCustomer, number>
   outbox!: Table<OutboxSale, string>
+  shifts!: Table<OutboxShift, string>
+  movements!: Table<OutboxMovement, string>
   parked!: Table<LocalParkedSale, string>
   returns!: Table<OutboxReturn, string>
   drafts!: Table<LocalDraft, string>
@@ -137,6 +141,12 @@ export class PosDatabase extends Dexie {
      * customers ride in `kv` as single documents rather than as tables: they are
      * read whole on every load and never queried by field, so an indexed table
      * would buy nothing and cost a migration each time their shape changed.
+     *
+     * ⚠ CUSTOMERS OUTGREW THAT and became a table at version 7 — a whole-document
+     * read is right for a dozen tenders and wrong for twenty thousand accounts
+     * looked up by code while somebody waits. The sentence above is left as the
+     * reasoning that applied when this version shipped; the criterion it states
+     * is still the right one, and it is the criterion that moved them.
      *
      * `products` IS a table — it is 20,000 rows queried by code and barcode, which
      * is exactly what an index is for.
@@ -255,6 +265,73 @@ export class PosDatabase extends Dexie {
       drafts: 'key',
       kv: 'key',
     })
+
+    /*
+     * Version 7 — the customer file.
+     *
+     * A TABLE and not a `kv` document, which is the one interesting decision
+     * here. Departments, tenders and specials ride in `kv` because they are read
+     * whole on every load and never queried by field; customers are neither.
+     * They are up to 20,000 rows, and the only thing the till ever does with them
+     * is look one up by code, by name or by phone while somebody waits at a
+     * counter. That is what an index is for, and it is exactly why `products` is
+     * a table too.
+     *
+     * Indexed on `code` because a scanned or typed account code is the fast path
+     * and must be exact; on `name` and `phone` because they are what a cashier
+     * has when the customer cannot remember their code. `name` also gives Dexie
+     * an ordered cursor, so the picker's opening list costs no sort.
+     *
+     * NOT indexed on `id`... except as the primary key, which it is. A customer
+     * id is what an outbox row carries, so resolving one back to a name has to be
+     * a point read.
+     *
+     * No `upgrade()`, matching versions 4 and 6: there is nothing to transform
+     * because there was nothing here, and catalog schema 10 forces a full load
+     * that fills it. `outbox` and `returns` restated untouched — the version-2
+     * invariant stands and always will: a pending row is real money.
+     */
+    this.version(7).stores({
+      products: 'id, code, barcode, *barcodes, departmentId, parentId',
+      customers: 'id, code, name, phone',
+      outbox: 'saleUid, status, takenAt',
+      parked: 'uid, parkedAt',
+      returns: 'returnUid, status, takenAt',
+      drafts: 'key',
+      kv: 'key',
+    })
+
+    /*
+     * Version 8 — a shift opened offline, and the drawer movements on it (252).
+     *
+     * ── THESE BELONG WITH THE OUTBOX, NOT WITH THE CATALOG ─────────────────
+     *
+     * Neither is a cache. A queued shift is not money the way a pending sale is,
+     * but losing one costs far more than a refresh: every sale that banked into
+     * it arrives at the server naming a uid that never posts, and those takings
+     * then belong to no reconciliation — the exact hole the feature closes.
+     * A queued MOVEMENT is closer still to money: a R50 payout that never
+     * arrives is R50 the cash-up reports as a variance nobody can explain.
+     *
+     * So both inherit the version-2 invariant: nothing prunes a pending row, and
+     * a failure is held for a human rather than dropped.
+     *
+     * Indexed on `status` so the flush finds pending rows without reading the
+     * whole queue, and on the time each happened because both flush OLDEST
+     * FIRST — a shift must reach the server before the movements hanging off it,
+     * and both before the batch is judged.
+     */
+    this.version(8).stores({
+      products: 'id, code, barcode, *barcodes, departmentId, parentId',
+      customers: 'id, code, name, phone',
+      outbox: 'saleUid, status, takenAt',
+      shifts: 'shiftUid, status, openedAt',
+      movements: 'movementUid, status, takenAt',
+      parked: 'uid, parkedAt',
+      returns: 'returnUid, status, takenAt',
+      drafts: 'key',
+      kv: 'key',
+    })
   }
 }
 
@@ -320,7 +397,19 @@ export const KV = {
   pendingPrices: 'pendingPrices',
   /** Operators who may sign in here, with their verifiers. */
   operators: 'operators',
-  /** The shift to bank into. */
+  /**
+   * The shift to bank into: { id, uid }.
+   *
+   * ⚠ THE SHAPE GAINED A FIELD, AND BOTH HALVES ARE LOAD-BEARING.
+   *
+   * It used to be { id } alone. A shift opened OFFLINE has no server id until it
+   * syncs (252), so it is named by `uid` instead — and a sale rung up against it
+   * carries that uid rather than an id. Once the shift posts, the sync loop fills
+   * `id` in, and everything that wants a real shift number has one.
+   *
+   * A row written by an older build has `uid` undefined, which reads correctly as
+   * "this shift came from the server", and is why nothing needs migrating.
+   */
   shift: 'shift',
   /** The shop's own till buttons, so an offline reload still opens on them. */
   quickKeys: 'quickKeys',
@@ -367,4 +456,20 @@ export const KV = {
    * to yesterday's queue until something unrelated happened to touch a product.
    */
   printing: 'printing',
+  /**
+   * What the till knows ABOUT its customer file — never the customers.
+   *
+   * { total, overLimit, credit }. The rows are a table; this is the audit beside
+   * it, and it is what lets the picker tell three states apart that all look like
+   * an empty table from the inside:
+   *
+   *   · the shop genuinely has no customers,
+   *   · the book is too large to hold offline (`overLimit`), so none was sent,
+   *   · this till has never synced since the feed existed.
+   *
+   * A picker that could not tell them apart would say "no matches" to a cashier
+   * standing in front of an account customer, which is the failure this whole
+   * feed exists to remove.
+   */
+  customerMeta: 'customerMeta',
 } as const

@@ -127,11 +127,15 @@ export async function signInCustomer(
 
   if (!good) {
     const attempts = Number(row.failed_attempts) + 1
+    /* UTC_TIMESTAMP() because the check above is a JavaScript comparison and
+       the pool reads DATETIMEs back as UTC — NOW() on a UTC+2 host would stamp
+       the lock two hours ahead and hold the customer out for 2h15m. Same skew
+       as cp2_users.locked_until; see the note in lib/auth.ts. */
     await customerExecute(
       siteId,
       `UPDATE customer_logins
           SET failed_attempts = ?,
-              locked_until = ${attempts >= MAX_ATTEMPTS ? `DATE_ADD(NOW(), INTERVAL ${LOCK_MINUTES} MINUTE)` : 'NULL'}
+              locked_until = ${attempts >= MAX_ATTEMPTS ? `DATE_ADD(UTC_TIMESTAMP(), INTERVAL ${LOCK_MINUTES} MINUTE)` : 'NULL'}
         WHERE id = ?`,
       [attempts, row.id],
     )

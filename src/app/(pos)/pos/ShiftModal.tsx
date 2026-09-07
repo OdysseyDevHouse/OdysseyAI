@@ -23,6 +23,11 @@ import {
   tillCloseShiftAction,
   type TillShiftStatus,
 } from './shiftActions'
+import {
+  currentShift,
+  openShiftOffline,
+  type LocalShift,
+} from '@/lib/posOffline/shiftOffline'
 
 /**
  * The shift, from the till: start one, or cash up.
@@ -58,20 +63,66 @@ import {
 export default function ShiftModal({
   open,
   online,
+  siteId,
   terminalId,
+  operatorUserId,
+  operatorName,
   pendingSales,
+  pendingMovements = 0,
   onClose,
   onShiftChanged,
   onDeclare,
 }: {
   open: boolean
   online: boolean
+  /**
+   * Whose queue an offline shift joins — and whether offline opening is offered
+   * at all.
+   *
+   * ── OPTIONAL, AND THE ABSENCE IS THE FEATURE ────────────────────────────
+   *
+   * The till passes these three. The INVOICING counter (InvoicingChrome) reuses
+   * this same dialog and cannot: it has no site id and no operator id, because it
+   * has no offline sale queue either — there is no posStore keyed to it and
+   * nothing that would ever flush one.
+   *
+   * Queueing a shift there would write a row into a store nothing drains, which
+   * is worse than refusing: the counter would believe it had opened a drawer, and
+   * the office would never hear about it. So without them the dialog behaves
+   * exactly as it did before offline opening existed — one sentence saying to
+   * come back when the line is up.
+   */
+  siteId?: number
   terminalId: number | null
+  /**
+   * Who is counting the float.
+   *
+   * Needed only offline, where there is no session for the server to read it
+   * from — a queued shift carries its own attribution, exactly as a queued sale
+   * does, and the server re-resolves the person on arrival.
+   */
+  operatorUserId?: number
+  operatorName?: string
   /** Outbox depth — a close while sales are still queued is warned about. */
   pendingSales: number
+  /**
+   * Drawer movements queued and not yet delivered (252).
+   *
+   * Its own figure and its own warning, because it is wrong in the OPPOSITE
+   * direction: queued sales make the drawer read over, a queued payout makes it
+   * read short. See the same pair in DeclarationModal.
+   */
+  pendingMovements?: number
   onClose: () => void
-  /** Fires with the open shift's id (or null) so the shell can stash KV.shift. */
-  onShiftChanged: (shiftId: number | null) => void
+  /**
+   * Fires with the shift the till is now on, so the shell can stash KV.shift.
+   *
+   * `uid` rather than an id for one opened OFFLINE (252), which has no server id
+   * until it syncs. Both halves are passed because they describe one drawer: a
+   * till holding an id from one shift beside a uid from another would bank its
+   * sales into whichever the server resolved first.
+   */
+  onShiftChanged: (shift: { id: number | null; uid: string | null } | null) => void
   /**
    * Hands off to the DETAILED cash-up.
    *
@@ -86,6 +137,14 @@ export default function ShiftModal({
   const [pending, startTransition] = useTransition()
   const [status, setStatus] = useState<TillShiftStatus | null>(null)
   const [loading, setLoading] = useState(false)
+  /**
+   * The shift this till is on when there is no server to ask.
+   *
+   * Read from the till's own store rather than from `status`, which is a server
+   * answer and is null offline. Null means the till is on no drawer — the state
+   * this dialog can now do something about.
+   */
+  const [localShift, setLocalShift] = useState<LocalShift | null>(null)
 
   /* Two faces since the drawer movements left for their own keys: the home
      board, and the quick count. */
@@ -107,24 +166,76 @@ export default function ShiftModal({
           return
         }
         setStatus(result)
-        onShiftChanged(result.shift?.id ?? null)
+        onShiftChanged(result.shift ? { id: result.shift.id, uid: null } : null)
       })
       .finally(() => setLoading(false))
   }
 
   useEffect(() => {
-    if (!open || !online) return
+    if (!open) return
     setFace({ kind: 'home' })
     setFloatEntry('')
     setCounts({})
     setVarianceNote('')
     setCloseRefusal(null)
+    /*
+     * OFFLINE THIS DIALOG NOW HAS A JOB.
+     *
+     * It used to return here and show one sentence saying to come back when the
+     * line was up. That was honest about cashing up and wrong about OPENING: a
+     * shop whose line went down before anybody opened the till could not open one
+     * all day, so every sale it took banked into no shift — real invoices, in a
+     * real drawer, that no cash-up would ever account for.
+     *
+     * So the pad is offered offline and the queue takes the shift (252). Cashing
+     * up still is not, and never will be: `closeShift` freezes EXPECTED beside
+     * counted, and expected is a sum over sales that POSTED — which for this till
+     * are sitting in its own outbox.
+     */
+    if (!online) {
+      /* No site id means no offline queue — see the prop's own note. The dialog
+         then keeps its old behaviour rather than offering a pad that would write
+         into a store nothing drains. */
+      if (siteId === undefined) return
+      void currentShift(siteId)
+        .then((shift) => setLocalShift(shift.id || shift.uid ? shift : null))
+        .catch(() => setLocalShift(null))
+      return
+    }
     reload()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, online])
+  }, [open, online, siteId])
 
   function openShiftNow() {
     startTransition(async () => {
+      if (!online && siteId !== undefined) {
+        /*
+         * Queued, and the till starts trading against it immediately.
+         *
+         * It does NOT check whether a shift is already open on this drawer — it
+         * cannot, because that is a fact about the server. `postOfflineShift`
+         * settles it on arrival by adopting whatever is already there, which is
+         * the only answer that keeps the takings reconcilable, and records the
+         * float counted here in the activity log rather than adding it.
+         */
+        const queued = await openShiftOffline(siteId, {
+          terminalId,
+          openingFloat: numPadValue(floatEntry),
+          operatorUserId: operatorUserId ?? 0,
+          operatorName: operatorName ?? '',
+        })
+        if (!queued.ok) {
+          toast.error(queued.error)
+          return
+        }
+        setFloatEntry('')
+        setLocalShift({ id: null, uid: queued.shiftUid })
+        onShiftChanged({ id: null, uid: queued.shiftUid })
+        toast.success('Shift opened on this till. It will reach the office when the line is back.')
+        onClose()
+        return
+      }
+
       const result = await tillOpenShiftAction(terminalId, numPadValue(floatEntry))
       if (!result.ok) {
         toast.error(result.error)
@@ -212,10 +323,43 @@ export default function ShiftModal({
       }
     >
       {!online ? (
-        <Callout tone="brand" title="Cash management needs the connection">
-          Sales keep working offline and queue safely on this till. Open or cash up the shift
-          when the line is back.
-        </Callout>
+        siteId === undefined ? (
+          /* A counter with no offline queue. Unchanged from before this feature,
+             and deliberately so — see the `siteId` prop's note. */
+          <Callout tone="brand" title="Cash management needs the connection">
+            Open or cash up the shift when the line is back.
+          </Callout>
+        ) : localShift ? (
+          /* On a shift already — so the only thing missing is the cash-up, and
+             saying WHY is the point. "Needs the connection" invites a cashier to
+             wait for one; the real reason is that the expected figure is a sum
+             over sales this till has not delivered, and no amount of waiting at
+             this dialog changes that. */
+          <Callout tone="brand" title="Cashing up needs the connection">
+            This till is on a shift and sales are queueing against it safely. Cashing up
+            compares the drawer with what was rung up, and that sum lives on the server —
+            so it waits for the line. Payouts and pay-ins still work.
+          </Callout>
+        ) : (
+          /* ── No shift, no line: count the float in anyway ─────────────── */
+          <div className="flex flex-col items-center gap-4">
+            <Callout tone="warning" title="This till is on no shift">
+              Every sale rung up now would belong to no cash-up. Open one here — it is
+              recorded on this till and sends itself when the line is back.
+            </Callout>
+            <p className="text-sm text-muted">
+              Count the float INTO the drawer before trading — a float that is wrong at the
+              start makes every variance wrong in the same direction.
+            </p>
+            <div className="w-64">
+              <NumPadDisplay label="Opening float" value={floatEntry} />
+              <NumPad value={floatEntry} onChange={setFloatEntry} />
+            </div>
+            <Button variant="primary" disabled={pending} onClick={openShiftNow}>
+              {pending ? 'Opening…' : 'Open the shift'}
+            </Button>
+          </div>
+        )
       ) : loading && !status ? (
         <p className="py-8 text-center text-sm text-muted">Reading the shift…</p>
       ) : !status ? null : !status.canCashup ? (
@@ -245,6 +389,15 @@ export default function ShiftModal({
             <Callout tone="warning" title={`${pendingSales} sale${pendingSales === 1 ? '' : 's'} still to send`}>
               The expected figure excludes them — send the outbox before cashing up, or the
               drawer will read over by their whole value.
+            </Callout>
+          )}
+          {pendingMovements > 0 && (
+            <Callout
+              tone="warning"
+              title={`${pendingMovements} drawer movement${pendingMovements === 1 ? '' : 's'} still to send`}
+            >
+              The expected figure does not know about them yet, so the drawer will read
+              SHORT by their value — the opposite way round to the sales above.
             </Callout>
           )}
           <p className="text-sm text-muted">

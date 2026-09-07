@@ -132,6 +132,7 @@ export default function DeclarationModal({
   shiftId,
   terminalId,
   pendingSales,
+  pendingMovements = 0,
   onClose,
   onFinalized,
 }: {
@@ -142,6 +143,22 @@ export default function DeclarationModal({
   terminalId: number | null
   /** Outbox depth. A close while sales are queued reads over by their value. */
   pendingSales: number
+  /**
+   * Drawer movements queued and not yet delivered (252).
+   *
+   * Warned about SEPARATELY from the sales, and in the opposite direction, which
+   * is the whole reason it is its own prop. Queued sales make the drawer read
+   * OVER, because the expected figure has not counted takings that are physically
+   * there. A queued payout makes it read SHORT, because the expected figure has
+   * not been reduced by money that has physically gone.
+   *
+   * Two warnings that both said "send the outbox" would be one warning. Two that
+   * say which way the drawer will be wrong are what a person signing off needs.
+   *
+   * Optional: the back office renders this dialog with no till outbox at all —
+   * see the header — and 0 is the honest answer there.
+   */
+  pendingMovements?: number
   onClose: () => void
   /** Fires once the shift is signed off, so the shell can drop its KV.shift. */
   onFinalized: () => void
@@ -867,6 +884,21 @@ export default function DeclarationModal({
             >
               The expected figures exclude them — send the outbox before signing off, or the
               drawer will read over by their whole value.
+            </Callout>
+          )}
+
+          {/* The other direction, and said as its own warning for that reason.
+              A queued payout is money that has LEFT the drawer without the
+              expected figure knowing, so the count comes up short — the opposite
+              error to the one above, and recounting never finds it. */}
+          {!signed && pendingMovements > 0 && (
+            <Callout
+              tone="warning"
+              title={`${pendingMovements} drawer movement${pendingMovements === 1 ? '' : 's'} still to send`}
+            >
+              A payout or pay-in was recorded while the line was down. Until it reaches the
+              office the expected figure does not know about it, so the drawer will read
+              short by its value — send the outbox before signing off.
             </Callout>
           )}
 

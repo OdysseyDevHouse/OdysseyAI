@@ -28,12 +28,12 @@ import {
   GRID_COLS,
   WIDGETS,
   defaultLayout,
+  defaultHidden,
   loadPrefs,
   savePrefs,
-  type KpiId,
   type WidgetId,
 } from './widgets'
-import { KPI_BY_ID, KpiTile } from './KpiTile'
+import { KpiStrip } from './KpiStrip'
 import {
   SalesPerHourChart,
   SalesCountPerDayChart,
@@ -103,9 +103,11 @@ const EMPTY: SalesDashboardData = {
     saleCount: 0,
     avgSaleValue: 0,
     avgItemsPerSale: 0,
+    itemCount: 0,
   },
   compareKpis: null,
   compareLabel: 'vs last month',
+  compareShort: 'last month',
   perHour: [],
   perDay: [],
   tenderTypes: [],
@@ -323,9 +325,14 @@ export function SalesDashboard({
 
   const resetLayout = useCallback(() => {
     const fresh = defaultLayout()
+    const off = defaultHidden()
     setLayout(fresh)
-    setHidden([])
-    savePrefs({ layout: fresh, hidden: [] })
+    setHidden(off)
+    /* "Reset to default" means the default, which includes what the default has
+       switched off — not "turn everything on". A reset that lit up fourteen
+       panels the shop had never asked for would read as the button breaking
+       the dashboard rather than restoring it. */
+    savePrefs({ layout: fresh, hidden: off })
   }, [])
 
   /* Hidden by the user, or never available to this role — the grid cannot tell
@@ -465,28 +472,31 @@ export function SalesDashboard({
             onLayoutChange={onLayoutChange}
           >
             {WIDGETS.filter((w) => shown(w.id)).map((w) => {
-              // Undefined for the charts and tables, which take the Card path
-              // below. The map is keyed by KpiId, so this is the lookup that
-              // decides which of the two a widget is.
-              const kpi = KPI_BY_ID.get(w.id as KpiId)
-
-              // A KPI tile is its own card, so it gets no Card chrome. In edit
-              // mode the whole tile is the drag handle — it has no header to
-              // grab. That does not swallow the resize corner: the grid's own
-              // drag cancels on `.react-resizable-handle`, so the handle inside
-              // this element still resizes rather than dragging.
-              if (kpi) {
+              /*
+               * The headline band brings its own chrome and takes no Card
+               * header — its six cells are already labelled, and a title bar
+               * reading "Trading figures" over them would repeat itself and
+               * cost the band the ~40px that lets it stay two grid rows tall.
+               *
+               * In edit mode the whole band is the drag handle, since it has no
+               * header to grab. That does not swallow the resize corner: the
+               * grid's own drag cancels on `.react-resizable-handle`, so the
+               * handle inside this element still resizes rather than dragging.
+               *
+               * All six figures or none: the band has one switch, like the
+               * rates band under it, so there is nothing per-figure to pass
+               * down.
+               */
+              if (w.id === 'kpis') {
                 return (
                   <div
                     key={w.id}
                     className={editing ? 'widget-drag cursor-move rounded-card ring-1 ring-brand' : ''}
                   >
-                    <KpiTile
-                      def={kpi}
+                    <KpiStrip
                       kpis={data.kpis}
                       compareKpis={data.compareKpis}
-                      compareLabel={data.compareLabel}
-                      perDay={data.perDay}
+                      compareShort={data.compareShort}
                       loading={loading}
                     />
                   </div>
@@ -558,11 +568,15 @@ export function SalesDashboard({
                             {dimension && (
                               <Button
                                 variant="ghost"
-                                size="sm"
+                                /* One step under the column headings below it —
+                                   see the `xs` note in styles.ts. In a card
+                                   header the button is an aside to the title,
+                                   not the toolbar of a screen. */
+                                size="xs"
                                 onClick={() => setDetail(dimension)}
                               >
                                 View more
-                                <Icons.ArrowRight size={14} />
+                                <Icons.ArrowRight size={12} />
                               </Button>
                             )}
                           </span>

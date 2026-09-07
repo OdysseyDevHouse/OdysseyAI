@@ -97,6 +97,8 @@ export function ExceptionsTable({ rows }: { rows: ExceptionRow[] | null }) {
       columns={COLUMNS}
       rows={rows}
       getRowKey={(r) => r.userId}
+      /* Dense like every other table in the widget grid — see RankedTable. */
+      dense
       empty={{
         icon: <Icons.Check size={22} />,
         title: 'Nothing to flag',

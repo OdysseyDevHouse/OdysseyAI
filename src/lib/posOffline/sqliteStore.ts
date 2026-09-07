@@ -4,7 +4,8 @@ import { CapacitorSQLite, SQLiteConnection, type SQLiteDBConnection } from '@cap
 import type { TillProduct } from '../site/tillSearch'
 import type { LocalDraft, LocalParkedSale } from './db'
 import type { PosStore } from './store'
-import type { OutboxReturn, OutboxSale } from './types'
+import type { OutboxMovement, OutboxReturn, OutboxSale, OutboxShift } from './types'
+import type { OfflineCustomer } from '../site/tillCustomers'
 
 /**
  * The Android till's store: a real file, not a browser's to discard.
@@ -80,6 +81,28 @@ CREATE TABLE IF NOT EXISTS product_aliases (
 CREATE INDEX IF NOT EXISTS aliases_barcode ON product_aliases (barcode);
 CREATE INDEX IF NOT EXISTS aliases_product ON product_aliases (product_id);
 
+/*
+ * The customer file. A cache, exactly as products are — losing it costs a
+ * refresh and nothing else.
+ *
+ * The three searchable columns are stored FOLDED TO LOWER CASE beside the
+ * document, rather than searched with LIKE ... COLLATE NOCASE. SQLite's NOCASE
+ * collation folds ASCII only, so a shop with an account under "Müller" or "ÉCLAIR"
+ * would match on Dexie (JavaScript's toLowerCase is Unicode-aware) and miss here —
+ * two engines, two answers, and only on the customers whose names are hardest to
+ * type. Folding in JavaScript on the way IN makes both stores fold identically by
+ * construction.
+ */
+CREATE TABLE IF NOT EXISTS customers (
+  id         INTEGER PRIMARY KEY,
+  code_lc    TEXT,
+  name_lc    TEXT,
+  phone_lc   TEXT,
+  doc        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS customers_code ON customers (code_lc);
+CREATE INDEX IF NOT EXISTS customers_name ON customers (name_lc);
+
 CREATE TABLE IF NOT EXISTS kv (
   key   TEXT PRIMARY KEY,
   value TEXT
@@ -104,6 +127,33 @@ CREATE TABLE IF NOT EXISTS returns (
   doc        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS returns_status ON returns (status);
+
+/* A shift opened with no network (252). Not money itself, but a pending row
+   here is what a queued sale's shiftUid names — lose it and those takings post
+   to no reconciliation. So nothing in this file deletes a pending one, exactly
+   as for the outbox above. */
+CREATE TABLE IF NOT EXISTS shifts (
+  shift_uid TEXT PRIMARY KEY,
+  status    TEXT NOT NULL,
+  opened_at TEXT,
+  synced_at TEXT,
+  doc       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS shifts_status ON shifts (status);
+CREATE INDEX IF NOT EXISTS shifts_opened ON shifts (opened_at);
+
+/* A payout, pay-in or drop recorded with the line down. Closer to money than
+   the shift it hangs on: a R50 payout that never arrives is R50 the cash-up
+   reports as a variance nobody can explain. */
+CREATE TABLE IF NOT EXISTS movements (
+  movement_uid TEXT PRIMARY KEY,
+  status       TEXT NOT NULL,
+  taken_at     TEXT,
+  synced_at    TEXT,
+  doc          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS movements_status ON movements (status);
+CREATE INDEX IF NOT EXISTS movements_taken ON movements (taken_at);
 
 CREATE TABLE IF NOT EXISTS parked (
   uid       TEXT PRIMARY KEY,
@@ -221,6 +271,40 @@ function productValues(p: TillProduct): unknown[] {
   ]
 }
 
+const CUSTOMER_COLUMNS = 'id, code_lc, name_lc, phone_lc, doc'
+
+/**
+ * Folded on the way in, so both engines fold the same way.
+ *
+ * See the table's own comment: SQLite's NOCASE is ASCII-only and JavaScript's
+ * `toLowerCase` is not, so doing this in SQL would make an accented name findable
+ * on one till and not on the one beside it.
+ */
+function customerValues(c: OfflineCustomer): unknown[] {
+  return [
+    c.id,
+    (c.code ?? '').toLowerCase(),
+    (c.name ?? '').toLowerCase(),
+    (c.phone ?? '').toLowerCase(),
+    JSON.stringify(c),
+  ]
+}
+
+function customerStatements(
+  customers: readonly OfflineCustomer[],
+): { statement: string; values: unknown[] }[] {
+  const set: { statement: string; values: unknown[] }[] = []
+  for (const group of chunk(customers, CHUNK_ROWS)) {
+    set.push({
+      statement: `INSERT OR REPLACE INTO customers (${CUSTOMER_COLUMNS}) VALUES ${group
+        .map(() => '(?,?,?,?,?)')
+        .join(',')}`,
+      values: group.flatMap(customerValues),
+    })
+  }
+  return set
+}
+
 function aliasesOf(p: TillProduct): string[] {
   const raw = (p as unknown as { barcodes?: unknown }).barcodes
   return Array.isArray(raw) ? raw.map((c) => String(c)) : []
@@ -279,9 +363,35 @@ export function sqliteStore(siteId: number): PosStore {
   const db = () => connect(siteId)
 
   return {
-    async applyCatalog({ full, products, deletedIds, kv }) {
+    async applyCatalog({
+      full,
+      products,
+      deletedIds,
+      customersSent = false,
+      customers = [],
+      closedCustomerIds = [],
+      kv,
+    }) {
       const d = await db()
       const set: { statement: string; values: unknown[] }[] = []
+
+      /* Guarded on `customersSent`, not on `customers.length` — the same
+         distinction the Dexie store draws, and for the same reason: an empty
+         array from a server that has no customer feed must not empty a book this
+         till was right to be holding. */
+      if (customersSent) {
+        if (full) {
+          set.push({ statement: 'DELETE FROM customers', values: [] })
+        } else {
+          for (const group of chunk(closedCustomerIds, CHUNK_ROWS)) {
+            set.push({
+              statement: `DELETE FROM customers WHERE id IN (${group.map(() => '?').join(',')})`,
+              values: [...group],
+            })
+          }
+        }
+        set.push(...customerStatements(customers))
+      }
 
       if (full) {
         set.push({ statement: 'DELETE FROM products', values: [] })
@@ -397,6 +507,52 @@ export function sqliteStore(siteId: number): PosStore {
         await d.rollbackTransaction().catch(() => {})
         throw err
       }
+    },
+
+    /* ── Customers ────────────────────────────────────────────────────── */
+
+    async customerCount() {
+      const res = await (await db()).query('SELECT COUNT(*) AS n FROM customers')
+      return Number(rowsOf(res)[0]?.n ?? 0)
+    },
+
+    async customerById(id) {
+      const res = await (await db()).query('SELECT doc FROM customers WHERE id = ? LIMIT 1', [id])
+      return firstDoc<OfflineCustomer>(res)
+    },
+
+    async customerByCode(code) {
+      /* Against the folded column, with the needle folded the same way. See the
+         table's comment: the fold happens in JavaScript on both engines so an
+         accented code cannot resolve on one till and not the next. */
+      const res = await (await db()).query(
+        'SELECT doc FROM customers WHERE code_lc = ? LIMIT 1',
+        [code.toLowerCase()],
+      )
+      return firstDoc<OfflineCustomer>(res)
+    },
+
+    async customerSearch(needle, limit) {
+      if (limit <= 0) return []
+      const like = '%' + escapeLike(needle.toLowerCase()) + '%'
+      const res = await (await db()).query(
+        `SELECT doc FROM customers
+           WHERE code_lc LIKE ? ESCAPE '\\'
+              OR name_lc LIKE ? ESCAPE '\\'
+              OR phone_lc LIKE ? ESCAPE '\\'
+           ORDER BY name_lc LIMIT ?`,
+        [like, like, like, limit],
+      )
+      return docsOf<OfflineCustomer>(res)
+    },
+
+    async customerFirstPage(limit) {
+      if (limit <= 0) return []
+      const res = await (await db()).query(
+        'SELECT doc FROM customers ORDER BY name_lc LIMIT ?',
+        [limit],
+      )
+      return docsOf<OfflineCustomer>(res)
     },
 
     async kvGet<T>(key: string): Promise<T | null> {
@@ -530,6 +686,106 @@ export function sqliteStore(siteId: number): PosStore {
     async returnPruneSynced(before) {
       const res = await (await db()).run(
         "DELETE FROM returns WHERE status = 'synced' AND IFNULL(synced_at, '') < ?",
+        [before],
+      )
+      return Number(res.changes?.changes ?? 0)
+    },
+
+    /* ── The shift queue ──────────────────────────────────────────────── */
+
+    async shiftPut(row) {
+      await (await db()).run(
+        'INSERT OR REPLACE INTO shifts (shift_uid, status, opened_at, synced_at, doc) VALUES (?,?,?,?,?)',
+        [row.shiftUid, row.status, row.openedAt, row.syncedAt ?? null, JSON.stringify(row)],
+      )
+    },
+
+    async shiftGet(shiftUid) {
+      const res = await (await db()).query('SELECT doc FROM shifts WHERE shift_uid = ? LIMIT 1', [
+        shiftUid,
+      ])
+      return firstDoc<OutboxShift>(res)
+    },
+
+    async shiftUpdate(shiftUid, changes) {
+      const d = await db()
+      /* Read, merge, write — the same shape `returnUpdate` uses. The document
+         column holds the whole row, so a partial update has to go through it
+         rather than through the promoted columns beside it. */
+      const res = await d.query('SELECT doc FROM shifts WHERE shift_uid = ? LIMIT 1', [shiftUid])
+      const row = firstDoc<OutboxShift>(res)
+      if (!row) return
+      const next = { ...row, ...changes }
+      await d.run(
+        'INSERT OR REPLACE INTO shifts (shift_uid, status, opened_at, synced_at, doc) VALUES (?,?,?,?,?)',
+        [next.shiftUid, next.status, next.openedAt, next.syncedAt ?? null, JSON.stringify(next)],
+      )
+    },
+
+    async shiftPending(limit) {
+      const res = await (await db()).query(
+        "SELECT doc FROM shifts WHERE status = 'pending' ORDER BY opened_at ASC LIMIT ?",
+        [limit],
+      )
+      return docsOf<OutboxShift>(res)
+    },
+
+    async shiftCount(status) {
+      const res = await (await db()).query('SELECT COUNT(*) AS n FROM shifts WHERE status = ?', [
+        status,
+      ])
+      return Number(rowsOf(res)[0]?.n ?? 0)
+    },
+
+    async shiftPruneSynced(before) {
+      const res = await (await db()).run(
+        "DELETE FROM shifts WHERE status = 'synced' AND IFNULL(synced_at, '') < ?",
+        [before],
+      )
+      return Number(res.changes?.changes ?? 0)
+    },
+
+    /* ── Drawer movements ─────────────────────────────────────────────── */
+
+    async movementPut(row) {
+      await (await db()).run(
+        'INSERT OR REPLACE INTO movements (movement_uid, status, taken_at, synced_at, doc) VALUES (?,?,?,?,?)',
+        [row.movementUid, row.status, row.takenAt, row.syncedAt ?? null, JSON.stringify(row)],
+      )
+    },
+
+    async movementUpdate(movementUid, changes) {
+      const d = await db()
+      const res = await d.query('SELECT doc FROM movements WHERE movement_uid = ? LIMIT 1', [
+        movementUid,
+      ])
+      const row = firstDoc<OutboxMovement>(res)
+      if (!row) return
+      const next = { ...row, ...changes }
+      await d.run(
+        'INSERT OR REPLACE INTO movements (movement_uid, status, taken_at, synced_at, doc) VALUES (?,?,?,?,?)',
+        [next.movementUid, next.status, next.takenAt, next.syncedAt ?? null, JSON.stringify(next)],
+      )
+    },
+
+    async movementPending(limit) {
+      const res = await (await db()).query(
+        "SELECT doc FROM movements WHERE status = 'pending' ORDER BY taken_at ASC LIMIT ?",
+        [limit],
+      )
+      return docsOf<OutboxMovement>(res)
+    },
+
+    async movementCount(status) {
+      const res = await (await db()).query('SELECT COUNT(*) AS n FROM movements WHERE status = ?', [
+        status,
+      ])
+      return Number(rowsOf(res)[0]?.n ?? 0)
+    },
+
+    async movementPruneSynced(before) {
+      const res = await (await db()).run(
+        "DELETE FROM movements WHERE status = 'synced' AND IFNULL(synced_at, '') < ?",
         [before],
       )
       return Number(res.changes?.changes ?? 0)

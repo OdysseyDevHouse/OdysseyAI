@@ -12,8 +12,10 @@ import {
   TABLE_NUMERIC,
   TABLE_ROW,
   TABLE_SCROLLER,
+  TABLE_DENSE,
   TABLE_TD,
   TABLE_TH,
+  TABLE_TH_DENSE,
 } from './styles'
 import { useFitViewport } from './useFitViewport'
 
@@ -64,6 +66,7 @@ export function DataTable<T>({
   selectedKeys,
   onSelectionChange,
   isRowSelectable,
+  dense = false,
 }: {
   columns: readonly Column<T>[]
   rows: readonly T[]
@@ -86,6 +89,13 @@ export function DataTable<T>({
   onSelectionChange?: (next: ReadonlySet<string>) => void
   /** Rows that cannot be picked — a closed account in a statement run, say. */
   isRowSelectable?: (row: T) => boolean
+  /**
+   * One type step down — see TABLE_DENSE.
+   *
+   * For a table that is a PANEL on a screen rather than the screen itself: the
+   * dashboard widgets. Not for a list screen somebody works from all day.
+   */
+  dense?: boolean
 }) {
   const [internalSort, setInternalSort] = useState<SortState | undefined>(undefined)
   /* Anchor for shift-click range selection. A ref, not state: it must not
@@ -182,6 +192,13 @@ export function DataTable<T>({
     setSelection(next)
   }
 
+  /* Resolved once. The alternative — a ternary at each of the five places a
+     th or td is written — is five chances for one of them to be missed, and a
+     table with one column at the wrong size is worse than one that is all
+     slightly large. */
+  const tableClass = dense ? TABLE_DENSE : TABLE
+  const thClass = dense ? TABLE_TH_DENSE : TABLE_TH
+
   if (rows.length === 0 && empty) {
     return <EmptyState title={empty.title} hint={empty.hint} icon={empty.icon} action={empty.action} />
   }
@@ -192,11 +209,11 @@ export function DataTable<T>({
        gutter so the table sits flush to the Card that holds it. */
     <div className={TABLE_FRAME}>
       <div ref={scrollRef} className={TABLE_SCROLLER} style={{ maxHeight: fitCap }}>
-        <table className={TABLE}>
+        <table className={tableClass}>
           <thead className={TABLE_HEAD_STICKY}>
             <tr className={TABLE_HEAD_ROW}>
               {selectable && (
-                <th scope="col" className={`${TABLE_TH} w-px`}>
+                <th scope="col" className={`${thClass} w-px`}>
                   <Checkbox
                     checked={allSelected}
                     /* Some-but-not-all. `indeterminate` is a DOM property with no
@@ -221,7 +238,7 @@ export function DataTable<T>({
                           : 'descending'
                         : undefined
                     }
-                    className={`${TABLE_TH} ${column.numeric ? 'text-right' : ''} ${
+                    className={`${thClass} ${column.numeric ? 'text-right' : ''} ${
                       column.width ?? ''
                     }`}
                   >

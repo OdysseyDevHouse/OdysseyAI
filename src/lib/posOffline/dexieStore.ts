@@ -3,7 +3,8 @@
 import type { TillProduct } from '../site/tillSearch'
 import { posDb, type KvRow, type LocalDraft, type LocalParkedSale } from './db'
 import type { PosStore } from './store'
-import type { OutboxReturn, OutboxSale } from './types'
+import type { OutboxMovement, OutboxReturn, OutboxSale, OutboxShift } from './types'
+import type { OfflineCustomer } from '../site/tillCustomers'
 
 /**
  * The IndexedDB store, behind `PosStore`.
@@ -38,15 +39,36 @@ export function dexieStore(siteId: number): PosStore {
   return {
     /* ── Catalog ──────────────────────────────────────────────────────── */
 
-    async applyCatalog({ full, products, deletedIds, kv }) {
+    async applyCatalog({
+      full,
+      products,
+      deletedIds,
+      customersSent = false,
+      customers = [],
+      closedCustomerIds = [],
+      kv,
+    }) {
       const d = db()
-      await d.transaction('rw', d.products, d.kv, async () => {
+      await d.transaction('rw', d.products, d.customers, d.kv, async () => {
         if (full) {
           await d.products.clear()
           await d.products.bulkPut(products)
         } else {
           if (products.length > 0) await d.products.bulkPut(products)
           if (deletedIds.length > 0) await d.products.bulkDelete(deletedIds)
+        }
+        /* Guarded on `customersSent`, not on `customers.length`. A full load from
+           a server that sent no customer file at all must leave the table alone;
+           clearing it on an empty array would empty the book every time a till on
+           this build talked to a server on the old one. */
+        if (customersSent) {
+          if (full) {
+            await d.customers.clear()
+            await d.customers.bulkPut(customers)
+          } else {
+            if (customers.length > 0) await d.customers.bulkPut(customers)
+            if (closedCustomerIds.length > 0) await d.customers.bulkDelete(closedCustomerIds)
+          }
         }
         await d.kv.bulkPut(kv as KvRow[])
       })
@@ -110,6 +132,42 @@ export function dexieStore(siteId: number): PosStore {
           await d.products.put({ ...product, stockOnHand: product.stockOnHand - delta.qty })
         }
       })
+    },
+
+    /* ── Customers ────────────────────────────────────────────────────── */
+
+    customerCount() {
+      return db().customers.count()
+    },
+
+    customerById(id) {
+      return db().customers.get(id)
+    },
+
+    customerByCode(code) {
+      return db().customers.where('code').equalsIgnoreCase(code).first()
+    },
+
+    customerSearch(needle, limit) {
+      const lowered = needle.toLowerCase()
+      /* A scan, and knowingly. Dexie can only use an index for a PREFIX, and the
+         server matches the middle of a name — so an indexed query here would
+         find a different set of people than the same search box does online,
+         which is a worse failure than a scan of a book capped at 20,000 rows. */
+      return db()
+        .customers.filter(
+          (c: OfflineCustomer) =>
+            c.code.toLowerCase().includes(lowered) ||
+            c.name.toLowerCase().includes(lowered) ||
+            (c.phone ?? '').toLowerCase().includes(lowered),
+        )
+        .limit(limit)
+        .toArray()
+    },
+
+    customerFirstPage(limit) {
+      /* `name` is indexed, so this is an ordered cursor rather than a sort. */
+      return db().customers.orderBy('name').limit(limit).toArray()
     },
 
     /* ── kv ───────────────────────────────────────────────────────────── */
@@ -219,6 +277,71 @@ export function dexieStore(siteId: number): PosStore {
         .equals('synced')
         .filter((row: OutboxReturn) => (row.syncedAt ?? '') < before)
         .delete()
+    },
+
+    /* ── The shift queue ──────────────────────────────────────────────── */
+
+    async shiftPut(row) {
+      await db().shifts.put(row)
+    },
+
+    shiftGet(shiftUid) {
+      return db().shifts.get(shiftUid)
+    },
+
+    async shiftUpdate(shiftUid, changes) {
+      await db().shifts.update(shiftUid, changes)
+    },
+
+    async shiftPending(limit) {
+      /* `sortBy` then `slice`, matching the sale queue above: Dexie cannot order
+         by one field while filtering on another index, and the ORDER is what
+         matters — a shift has to reach the server before the sales on it. */
+      const rows = await db().shifts.where('status').equals('pending').sortBy('openedAt')
+      return rows.slice(0, limit)
+    },
+
+    shiftCount(status) {
+      return db().shifts.where('status').equals(status).count()
+    },
+
+    async shiftPruneSynced(before) {
+      const stale = await db()
+        .shifts.where('status')
+        .equals('synced')
+        .filter((s: OutboxShift) => (s.syncedAt ?? '') < before)
+        .toArray()
+      await db().shifts.bulkDelete(stale.map((s) => s.shiftUid))
+      return stale.length
+    },
+
+    /* ── Drawer movements ─────────────────────────────────────────────── */
+
+    async movementPut(row) {
+      await db().movements.put(row)
+    },
+
+    async movementUpdate(movementUid, changes) {
+      await db().movements.update(movementUid, changes)
+    },
+
+    async movementPending(limit) {
+      const rows = await db().movements.where('status').equals('pending').sortBy('takenAt')
+      return rows.slice(0, limit)
+    },
+
+    movementCount(status) {
+      return db().movements.where('status').equals(status).count()
+    },
+
+    async movementPruneSynced(before) {
+      const stale = await db()
+        .movements.where('status')
+        .equals('synced')
+        .filter((m: OutboxMovement) => (m.syncedAt ?? '') < before)
+        .toArray()
+      await db().movements.bulkDelete(stale.map((m) => m.movementUid))
+      return stale.length
     },
 
     /* ── Parked ───────────────────────────────────────────────────────── */

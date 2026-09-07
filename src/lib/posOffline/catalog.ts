@@ -19,6 +19,10 @@ import type { TillInstructionGroup } from '../site/instructions'
    `server-only`, and erasing the import at compile time keeps it out of the
    browser bundle while both halves share one definition of the shape. */
 import type { VariantAxis } from '../site/productVariants'
+/* Type-only for the same reason as the two above: `tillCustomers.ts` is
+   `server-only`, and erasing the import keeps the customer SQL out of the browser
+   bundle while both halves share one definition of what a customer is offline. */
+import type { OfflineCustomer } from '../site/tillCustomers'
 
 /**
  * Pulling the shop down onto the till, and keeping it current.
@@ -85,8 +89,13 @@ import type { VariantAxis } from '../site/productVariants'
  * delta because it is a new stored KEY: a till on 8 has no slot to patch it
  * into, and would go on using the browser's print dialog for every document
  * with nothing on screen to say why.
+ *
+ * 10 added the customer file. A new STORE (Dexie version 7, and the `customers`
+ * table on SQLite), so a till on 9 has nowhere to put one and a delta has
+ * nothing to patch. It holds no customers and its picker asks the server, which
+ * is what every till did before this and is not wrong — only online-only.
  */
-const SCHEMA = 9
+const SCHEMA = 10
 
 export type CatalogMeta = {
   /** What to send as `?since=`. The server's clock. */
@@ -96,6 +105,40 @@ export type CatalogMeta = {
   productCount: number
   schema: number
   siteId: number
+}
+
+/**
+ * What the till knows about its customer file, as opposed to the file itself.
+ *
+ * Its own key rather than folded into `CatalogMeta`, because the two answer
+ * different questions and one of them is allowed to be missing. A till whose
+ * products loaded and whose customers did not is a normal, working till — the
+ * products are what it SELLS from — and a shape reporting both through one record
+ * would have to invent a customer count for it.
+ */
+export type CustomerMeta = {
+  /** How many the till holds. Never null: zero is a real answer. */
+  count: number
+  /**
+   * What the SERVER says a full feed would hold — the audit figure, the same
+   * device `productTotal` is. See the count check at the end of `refreshCatalog`.
+   */
+  total: number
+  /**
+   * The book is larger than a till may hold, so NONE was sent.
+   *
+   * Distinct from `count === 0`, and the distinction is the whole reason this
+   * field exists: an empty table means "this shop has no accounts", and this
+   * means "this shop has too many to carry". A picker must say different things
+   * about them, and a cashier must never be told an account does not exist
+   * because it did not fit.
+   */
+  overLimit: boolean
+  /**
+   * Whether the rows carry debtors figures — the shop's own
+   * `pos_offline_account_sales` decision, as it stood at the last sync.
+   */
+  credit: boolean
 }
 
 export type CatalogSettings = Record<string, string | null>
@@ -125,6 +168,16 @@ type CatalogResponse = {
   productTotal?: number
   products: TillProduct[]
   deletedIds: number[]
+  /**
+   * The customer file. All four are OPTIONAL, which is what a till talking to a
+   * schema-9 server reads: `customers` ABSENT means "this server has no feed",
+   * which is not the same as an empty book. `customersSent` at the store is the
+   * flag that keeps the two apart.
+   */
+  customers?: OfflineCustomer[]
+  customerTotal?: number
+  customersOverLimit?: boolean
+  closedCustomerIds?: number[]
   departments: {
     id: number
     parentId: number | null
@@ -266,10 +319,24 @@ export async function refreshCatalog(
   // The server's own verdict wins over our delta request: see reloadProducts.
   const full = !body.delta || body.reloadProducts || body.schema !== SCHEMA
 
+  /*
+   * Whether this response carried a customer file AT ALL.
+   *
+   * `Array.isArray` rather than a length check, and the difference is the whole
+   * point: a schema-9 server sends no `customers` key at all, while an empty delta
+   * from a schema-10 one sends an empty array. Treating those the same would empty
+   * a till's customer book every time it happened to reach an older server —
+   * which, during a rolling deploy, is a thing that happens.
+   */
+  const customersSent = Array.isArray(body.customers)
+
   await posStore(siteId).applyCatalog({
     full,
     products: body.products,
     deletedIds: body.deletedIds,
+    customersSent,
+    customers: body.customers ?? [],
+    closedCustomerIds: body.closedCustomerIds ?? [],
     /* Everything below is read whole on every load and never queried by field, so
        it rides in `kv` as single documents — an indexed table would buy nothing and
        cost a migration each time one of these shapes changed. */
@@ -316,6 +383,30 @@ export async function refreshCatalog(
 
   const productCount = await posStore(siteId).productCount()
   const now = new Date().toISOString()
+
+  /*
+   * The customer audit, written only where this response actually carried one.
+   *
+   * Left alone otherwise, so a till that reaches an older server mid-deploy goes
+   * on reporting what it knows rather than an empty book it was never sent.
+   *
+   * `credit` is read off the first ROW rather than from a field of its own, and
+   * the server sends no such field deliberately: `credit` is present or absent per
+   * customer, so the rows already answer the question and a second field would be
+   * a second thing that can disagree with them. No rows means the question does
+   * not arise — there is nobody to sell to on account either way — so the previous
+   * answer stands rather than being reset to false.
+   */
+  if (customersSent) {
+    const sent = body.customers ?? []
+    const previous = await kvGet<CustomerMeta>(siteId, KV.customerMeta)
+    await kvPut(siteId, KV.customerMeta, {
+      count: await store.customerCount(),
+      total: body.customerTotal ?? 0,
+      overLimit: Boolean(body.customersOverLimit),
+      credit: sent.length > 0 ? sent[0].credit !== undefined : (previous?.credit ?? false),
+    } satisfies CustomerMeta)
+  }
 
   await kvPut(siteId, KV.catalogMeta, {
     cursor: body.serverTime,
@@ -367,6 +458,33 @@ export async function refreshCatalog(
     !forceFull &&
     typeof body.productTotal === 'number' &&
     productCount !== body.productTotal
+  ) {
+    return refreshCatalog(siteId, true)
+  }
+
+  /*
+   * The same audit for the customer file, and it is not merely symmetry.
+   *
+   * A product can only leave the feed by being archived or hidden, and both of
+   * those are UPDATES that a delta sees. A customer can be DELETED — `customers.ts`
+   * really does `DELETE FROM customers` for an account that never traded — and a
+   * row that is simply gone leaves no `updated_at` behind for `closedCustomerIds`
+   * to report. The count is the only thing that ever notices, so without this a
+   * till would go on offering a deleted account until its next full load.
+   *
+   * Skipped where the book is over the limit: the server sent none ON PURPOSE, so
+   * a disagreement is the expected state there and re-asking would loop.
+   *
+   * ONCE, never in a loop — `forceFull` on the retry suppresses both this and the
+   * product check above on the way back.
+   */
+  if (
+    !full &&
+    !forceFull &&
+    customersSent &&
+    !body.customersOverLimit &&
+    typeof body.customerTotal === 'number' &&
+    (await store.customerCount()) !== body.customerTotal
   ) {
     return refreshCatalog(siteId, true)
   }

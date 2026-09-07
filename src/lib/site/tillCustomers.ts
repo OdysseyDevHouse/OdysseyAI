@@ -330,3 +330,223 @@ export async function getTillCustomer(
   const [customer] = await mapWithSpend(siteId, [row])
   return customer
 }
+
+/* ── The offline feed ────────────────────────────────────────────────────── */
+
+/**
+ * Ceiling on one customer feed.
+ *
+ * Smaller than the product limit (50,000) and for a different reason. A product
+ * file is what a till SELLS FROM, and a shop past that limit cannot trade
+ * offline at all; a customer file is an attachment to a sale, and a till that
+ * holds none still takes every cash sale it took before this existed. So this is
+ * sized to "the debtors book a counter actually recognises" rather than to
+ * "everything".
+ *
+ * A shop past it gets NO customers offline rather than a partial book — see
+ * `customersForTill`, which refuses rather than truncating. A silently truncated
+ * book is the worst outcome available: the cashier searches, finds nothing, and
+ * concludes the customer is not on the system.
+ */
+export const OFFLINE_CUSTOMER_LIMIT = 20_000
+
+/**
+ * A customer as a till holds it with no network.
+ *
+ * ── WHY NOT SIMPLY `TillCustomer` ─────────────────────────────────────────
+ *
+ * Because the credit half is CONDITIONAL, and a shape that always carries
+ * `balance: number` cannot say "not shipped". Zero is a real credit position —
+ * `creditBlockedReason` reads a zero limit as "no credit granted" — so a till
+ * that received zeros because its shop never opted in would show the cashier a
+ * confident, wrong answer instead of falling back to the server.
+ *
+ * `credit` being ABSENT is therefore load-bearing. It means the shop has not
+ * turned on `pos_offline_account_sales`, the debtors figures never left the
+ * server, and the till must not pretend to know them. See `offlineCustomer()`
+ * in lib/posOffline/customers.ts, the only thing that turns one of these back
+ * into a `TillCustomer`.
+ *
+ * ── WHAT IS DELIBERATELY NOT HERE ─────────────────────────────────────────
+ *
+ * Email, address, notes, the rep, the statement cycle. None of it appears on a
+ * slip or changes what may be sold, and the header of /api/pos/catalog makes the
+ * argument in full: what ships is enough to put a name on a slip, price a trade
+ * account correctly, and — where the shop asked for it — decide whether credit
+ * may be extended. Nothing more.
+ */
+export type OfflineCustomer = {
+  id: number
+  code: string
+  name: string
+  /** Never `closed` — those are excluded from the feed entirely. */
+  status: string
+  accountType: AccountType
+  paymentTermsDays: number
+  vatNumber: string | null
+  phone: string | null
+  /** ALREADY TRANSLATED to this store's own ids — see priceStructureTranslation. */
+  priceStructureId: number | null
+  discountPct: number
+  groupId: number | null
+  /**
+   * The debtors figures, present ONLY where the shop allows offline account
+   * sales. Absent is not "zero"; it is "the till was never told".
+   */
+  credit?: {
+    creditLimit: number
+    dailyLimit: number
+    monthlyLimit: number
+    balance: number
+    spend: PeriodSpend
+  }
+}
+
+/** Whether a status may be sold to at all. Closed accounts never ship. */
+const FEED_STATUS = "c.status <> 'closed'"
+
+/**
+ * How many customers a full feed would hold.
+ *
+ * The counterpart of `tillCatalogTotal` for products, and it exists for exactly
+ * the same reason: a till whose one full load came back short can never fill the
+ * gap from deltas alone, because the missing rows predate every cursor that
+ * follows.
+ *
+ * It is also the ONLY defence against a hard delete. `customers.ts` really does
+ * `DELETE FROM customers` for an account that never traded, and a vanished row
+ * leaves no `updated_at` behind for any delta to find.
+ */
+export async function tillCustomerTotal(siteId: number): Promise<number> {
+  const row = await customerQueryOne<Row>(
+    siteId,
+    `SELECT COUNT(*) AS n FROM customers c WHERE ${FEED_STATUS}`,
+  )
+  return Number(row?.n ?? 0)
+}
+
+/**
+ * Customers the till should forget: closed since the cursor.
+ *
+ * Closing is the SOFT path and the only one a delta can see. A hard delete is
+ * covered by the count audit instead — a blunter instrument, costing one extra
+ * full load, but the only one available for a row that is simply gone.
+ */
+export async function customersClosedSince(siteId: number, cutoff: string): Promise<number[]> {
+  const rows = await customerQuery<Row>(
+    siteId,
+    `SELECT id FROM customers
+      WHERE updated_at >= ? - INTERVAL 60 SECOND
+        AND status = 'closed'`,
+    [cutoff],
+  ).catch(() => [])
+  return rows.map((r) => Number(r.id))
+}
+
+/**
+ * The customer file a till trades on with no network.
+ *
+ * ── THE DELTA IS KEYED ON `updated_at`, AND THE SPEND RIDES ALONG ─────────
+ *
+ * Period spend is not a column — it is a SUM over `sales_tenders` — so a naive
+ * reading says a products-style delta would ship a stale figure, exactly as it
+ * would have for prices (`pricesChangedSince` exists for that fault).
+ *
+ * It does not, and the reason is worth stating because it is not obvious.
+ * Anything that moves an account's spend also moves its BALANCE: both are driven
+ * by tenders that post to the debtor, and `customers.balance` is denormalised on
+ * the row with ON UPDATE CURRENT_TIMESTAMP. So a customer whose spend changed is
+ * a customer whose row changed, and the delta carries them. A settlement moves
+ * the balance without moving the spend, which sends a row that did not need
+ * sending — harmless, and the right direction to be wrong in.
+ *
+ * ── AND THE CURSOR COMES FROM THE CALLER'S DATABASE ───────────────────────
+ *
+ * Under a shared customer file these rows live in the group primary's database
+ * rather than the caller's, while `since` was minted from the caller's NOW().
+ * Comparable because sharing REQUIRES one MariaDB instance (015) — the same
+ * precondition `accountSpendFor` leans on to fan out across members. Were that
+ * ever relaxed, this comparison is one of the things that breaks silently.
+ */
+export async function customersForTill(
+  siteId: number,
+  options: { cutoff: string | null; withCredit: boolean },
+): Promise<{ customers: OfflineCustomer[]; total: number; overLimit: boolean }> {
+  const total = await tillCustomerTotal(siteId)
+
+  /*
+   * Past the ceiling: no customers, rather than the first 20,000 by name.
+   *
+   * A truncated book is worse than an empty one. With none, the till knows it
+   * has none and says so; with the A-to-K of a book that runs to Z, a cashier
+   * searches for Zulu, finds nothing, concludes the account does not exist, and
+   * rings the sale up as cash.
+   */
+  if (total > OFFLINE_CUSTOMER_LIMIT) return { customers: [], total, overLimit: true }
+
+  const rows = await customerQuery<Row>(
+    siteId,
+    `${SELECT_CUSTOMER}
+      WHERE ${FEED_STATUS}
+        ${options.cutoff ? 'AND c.updated_at >= ? - INTERVAL 60 SECOND' : ''}
+      ORDER BY c.name ASC
+      LIMIT ${OFFLINE_CUSTOMER_LIMIT}`,
+    options.cutoff ? [options.cutoff] : [],
+  )
+
+  /*
+   * Through `mapWithSpend`, the same function the online picker uses, rather
+   * than a second projection of the same columns. That is the whole reason this
+   * lives beside the online reads instead of in the route: the offline row and
+   * the online row must not be able to disagree about a customer's price
+   * structure or discount, and a copy is what drifts.
+   *
+   * It measures spend only for accounts that actually carry a cap, so a book of
+   * 20,000 with a dozen capped accounts costs a dozen accounts' worth of SUM.
+   */
+  const mapped = await mapWithSpend(siteId, rows)
+
+  return {
+    customers: mapped.map((c) => project(c, options.withCredit)),
+    total,
+    overLimit: false,
+  }
+}
+
+/**
+ * Strips a `TillCustomer` down to what may leave the building.
+ *
+ * The DERIVED fields — availableCredit, overLimit, remainingDaily,
+ * remainingMonthly, creditBlockedReason — are deliberately not sent even when
+ * credit is. They are pure functions of the four figures beside them, and a till
+ * that received both could hold a position whose halves disagree. The till
+ * recomputes them from the same `creditRules` the server used, which is the
+ * arrangement that makes the two sides agree by construction rather than by
+ * both being careful.
+ */
+function project(customer: TillCustomer, withCredit: boolean): OfflineCustomer {
+  const base: OfflineCustomer = {
+    id: customer.id,
+    code: customer.code,
+    name: customer.name,
+    status: customer.status,
+    accountType: customer.accountType,
+    paymentTermsDays: customer.paymentTermsDays,
+    vatNumber: customer.vatNumber,
+    phone: customer.phone,
+    priceStructureId: customer.priceStructureId,
+    discountPct: customer.discountPct,
+    groupId: customer.groupId,
+  }
+  if (!withCredit) return base
+  return {
+    ...base,
+    credit: {
+      creditLimit: customer.creditLimit,
+      dailyLimit: customer.dailyLimit,
+      monthlyLimit: customer.monthlyLimit,
+      balance: customer.balance,
+      spend: customer.spend,
+    },
+  }
+}

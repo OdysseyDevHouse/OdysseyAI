@@ -1,5 +1,7 @@
 'use client'
 
+import type { ReactNode } from 'react'
+import { Icons, StatIcon } from '@/components/ui'
 import type { SalesDashboardData } from '@/lib/site/salesDashboard'
 import { money, count, decimal } from './format'
 import { secondaryStats, plural } from './insights'
@@ -42,6 +44,21 @@ export function SecondaryStrip({
   // an empty-state message that has already said it better.
   if (stats.tradingDays === 0) return null
 
+  /*
+   * The sale count is the one figure here with a period to compare against —
+   * the other three are rates, and the payload carries no trading-day count for
+   * last month to divide them by. So it gets the comparison and they keep their
+   * divisors, which is the more useful line for each of them anyway.
+   *
+   * This is also why the count sits at the head of the band rather than up in
+   * the KPI row: it is the number every rate beside it is derived from.
+   */
+  const base = data.compareKpis?.saleCount ?? null
+  const salesDelta =
+    base === null || base === 0
+      ? null
+      : ((stats.saleCount - base) / base) * 100
+
   return (
     <div
       /* h-full so the band fills the grid cell it was given rather than sizing
@@ -51,19 +68,34 @@ export function SecondaryStrip({
         loading ? 'opacity-40' : ''
       }`}
     >
-      <Rate label="Total sales" value={count(stats.saleCount)} hint="finalised in the period" />
+      <Rate
+        label="Total sales"
+        icon={<Icons.ShoppingCart size={16} />}
+        value={count(stats.saleCount)}
+        hint={
+          salesDelta === null
+            ? 'finalised in the period'
+            : `${salesDelta >= 0 ? '+' : '-'}${Math.abs(salesDelta).toFixed(1)}%`
+        }
+        /* The only coloured hint in the band: it is the only one that is a
+           verdict rather than a divisor. "31 trading days" is not good news. */
+        tone={salesDelta === null ? 'flat' : salesDelta >= 0 ? 'up' : 'down'}
+      />
       <Rate
         label="Turnover per day"
+        icon={<Icons.BarChart size={16} />}
         value={money(stats.turnoverPerDay)}
         hint={plural(stats.tradingDays, 'trading day')}
       />
       <Rate
         label="Turnover per hour"
+        icon={<Icons.Clock size={16} />}
         value={money(stats.turnoverPerHour)}
         hint={`${plural(stats.tradingHours, 'hour')} a day`}
       />
       <Rate
         label="Sales per day"
+        icon={<Icons.Users size={16} />}
         value={decimal(stats.salesPerDay, 0)}
         hint={`${decimal(stats.salesPerHour)} an hour`}
       />
@@ -71,29 +103,61 @@ export function SecondaryStrip({
   )
 }
 
+const HINT_TONE = {
+  up: 'text-success',
+  down: 'text-danger',
+  flat: 'text-muted',
+} as const
+
 /**
- * One cell of the strip: label, figure, and what it was divided by.
+ * One cell of the strip: medallion, caption, figure and what it was divided by.
  *
- * Label and value sit on ONE line, which is what separates this row from the
- * KPI tiles above it and is the whole reason it can be a single band rather
- * than a second row of cards. The KPI tiles are the headline and are stacked
- * and large; these are the working rates behind them and read as a list.
+ * The same shape as a headline cell above it — icon, caption, figure — because
+ * the two bands are one block and a reader should not have to switch reading
+ * habits halfway down it. What separates them is weight: the headline figure is
+ * text-2xl and stacked, this one is text-base with its divisor beside it, so
+ * the top band reads as the answer and this one as the working.
  *
  * The hint is not filler — it is the denominator. "R2 796 per hour" is an
  * unreadable figure until you know it means an average open hour of a twelve
  * hour day, and a rate whose divisor is invisible is a rate nobody can check.
+ * It sits against the figure rather than at the far edge, because a divisor
+ * separated from its numerator by a column of white is read as a fourth
+ * unrelated fact.
  */
-function Rate({ label, value, hint }: { label: string; value: string; hint: string }) {
+function Rate({
+  label,
+  icon,
+  value,
+  hint,
+  tone = 'flat',
+}: {
+  label: string
+  icon: ReactNode
+  value: string
+  hint: string
+  tone?: keyof typeof HINT_TONE
+}) {
   return (
     /* Rules on the top and left of every cell, clipped away at the band's own
        edges by the container's `overflow-hidden` and a negative offset. This is
        the one divider scheme that survives BOTH grid shapes: at four columns it
        draws three vertical rules, and at two it draws one vertical and one
        horizontal, without either count being written down anywhere. */
-    <div className="-ml-px -mt-px flex flex-wrap content-center items-baseline gap-x-2 gap-y-0.5 border-l border-t border-border px-4 py-3">
-      <span className="text-xs font-medium text-muted">{label}</span>
-      <span className="numeric ml-auto text-base font-semibold text-ink">{value}</span>
-      <span className="w-full text-xs text-muted lg:w-auto lg:basis-full">{hint}</span>
+    <div className="-ml-px -mt-px flex items-center gap-3 overflow-hidden border-l border-t border-border px-4 py-3">
+      <StatIcon>{icon}</StatIcon>
+
+      <div className="min-w-0 flex-1">
+        {/* The same warm caption as the headline band above, so the two read as
+            one block rather than as a strip and an unrelated table. */}
+        <div className="truncate text-xs font-medium text-stat-label">{label}</div>
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="numeric text-base font-semibold text-ink">{value}</span>
+          <span className={`truncate text-xs ${HINT_TONE[tone]}`} title={hint}>
+            {hint}
+          </span>
+        </div>
+      </div>
     </div>
   )
 }

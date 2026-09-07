@@ -55,6 +55,15 @@ export type OfflineFinaliseInput = {
   terminal: { id: number; code: string } | null
   operator: { userId: number; name: string }
   shiftId: number | null
+  /**
+   * The shift this banks into when it was opened OFFLINE and has no id yet (252).
+   *
+   * Null on every ordinary sale, where `shiftId` is the answer. Both come from
+   * one read — see `bankingShift` in PosShell — because they describe one drawer
+   * and a sale carrying an id from one shift beside a uid from another would bank
+   * into whichever the server resolved first.
+   */
+  shiftUid?: string | null
   customer: { id: number | null; name: string; vatNumber: string | null; phone: string | null }
   priceStructureId: number | null
   lines: OfflineSaleLine[]
@@ -143,6 +152,7 @@ export async function finaliseOffline(
     operatorUserId: input.operator.userId,
     operatorName: input.operator.name,
     shiftId: input.shiftId,
+    shiftUid: input.shiftUid ?? null,
     takenAt: new Date().toISOString(),
     documentDate: todayIso(),
     priceStructureId: input.priceStructureId,
@@ -379,9 +389,20 @@ export async function returnOffline(
  * out", which it already treats as legitimate.
  */
 export async function currentShiftId(siteId: number): Promise<number | null> {
-  const shift = await kvGet<{ id: number } | null>(siteId, KV.shift)
+  const shift = await kvGet<{ id: number | null } | null>(siteId, KV.shift)
   return shift?.id ?? null
 }
+
+/*
+ * ⚠ THE ID IS NO LONGER THE WHOLE ANSWER.
+ *
+ * A shift opened offline (252) has no server id until it syncs, so it is named by
+ * uid instead and this returns null for it — correctly, because there IS no id.
+ * Anything banking a sale must read `currentShift` in `shiftOffline.ts`, which
+ * returns both halves; this stays for the callers that genuinely need a server
+ * id and cannot use a uid, of which `recordVoidAction` is one — it is a server
+ * action, so it only ever runs when the shift is already numbered.
+ */
 
 /*
  * ── STILL TO COME: cancelling an offline sale before it syncs ──────────────

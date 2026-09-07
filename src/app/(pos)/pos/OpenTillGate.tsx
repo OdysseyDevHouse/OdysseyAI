@@ -235,7 +235,7 @@ export default function OpenTillGate({
            * the greeting's own parts the logo read as the first line of the
            * sentence rather than the mark above it.
            */}
-          <BrandLockup size="lg" sub={modeName} className="mb-8" />
+          <BrandLockup size="xl" sub={modeName} className="mb-8" />
 
           {/* The rule and the day. A weekday matters more at a till than it
               looks — a rota that changes by day gets checked on the way in. */}

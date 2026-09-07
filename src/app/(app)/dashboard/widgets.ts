@@ -4,9 +4,10 @@ import type { LayoutItem } from 'react-grid-layout'
  * The widget registry — the single source of truth for what the dashboard can
  * show, what each widget is called, and where it sits by default.
  *
- * Each KPI is its OWN widget rather than one "KPI strip" widget, so a store
- * that never looks at average items per sale can hide that one tile and give
- * the room to something it does look at.
+ * A widget is the unit the grid lays out AND the unit the panel switches. The
+ * two headline rows are each ONE widget rather than ten — see the note at the
+ * `kpis` entry for why a band of figures cannot be built out of separate grid
+ * items — and everything below them is one widget per panel.
  */
 
 /**
@@ -21,14 +22,12 @@ import type { LayoutItem } from 'react-grid-layout'
 export const GRID_COLS = 60
 
 export type WidgetId =
-  | 'turnoverIncl'
-  | 'turnoverExcl'
-  | 'grossProfit'
-  | 'saleCount'
-  | 'avgSaleValue'
-  | 'avgItemsPerSale'
-  /* The rates band under the KPI tiles — one widget, not four. See
-     SecondaryStrip for why these four do not get a tile each. */
+  /* The headline band. ONE widget — the six figures inside it are cells, not
+     widgets: they are not laid out, and they switch on and off together. See
+     the note at the `kpis` entry in WIDGETS. */
+  | 'kpis'
+  /* The rates band under it — one widget, not four. See SecondaryStrip for why
+     these four do not get a tile each. */
   | 'rates'
   | 'perHour'
   | 'perDay'
@@ -65,12 +64,65 @@ export type WidgetId =
  */
 export type WidgetScope = 'range' | 'asAt'
 
+/**
+ * What SHAPE a widget is, shown as a pill beside its name in the panel.
+ *
+ * The catalogue is past twenty entries, and a plain list of titles makes
+ * somebody read every one to find "the turnover chart". The pill answers
+ * "what will this look like on my dashboard" before the title has to.
+ *
+ * Deliberately about form, not subject — the group heading already says the
+ * subject. A dashboard is chosen by shape as much as by topic: a store that
+ * wants two more charts and no more tables can now see which is which.
+ */
+export type WidgetKind = 'kpi' | 'graph' | 'table' | 'list'
+
+/**
+ * Which section of the widget panel a widget is listed under.
+ *
+ * Grouping only — it changes nothing about the layout, and a widget can sit
+ * anywhere on the grid regardless of the section it was switched on from.
+ */
+export type WidgetGroup = 'trading' | 'backOffice' | 'jobs'
+
+/**
+ * The sections, in the order the panel lists them.
+ *
+ * Trading first because it is what the dashboard is for and what everyone has;
+ * job cards last because a shop without the module never sees the section at
+ * all — the panel drops a group whose every widget is out of reach.
+ */
+export const WIDGET_GROUPS: { id: WidgetGroup; title: string; note: string }[] = [
+  { id: 'trading', title: 'Trading', note: 'What the shop sold in the period above' },
+  { id: 'backOffice', title: 'Back office', note: 'Money owed, money held, stock to order — as at today' },
+  { id: 'jobs', title: 'Job cards', note: 'The job board, as at today' },
+]
+
 export type WidgetDef = {
   id: WidgetId
   title: string
+  /** Its section in the widget panel. Listing only — see WidgetGroup. */
+  group: WidgetGroup
+  /** Its shape, shown as a pill in the panel. See WidgetKind. */
+  kind: WidgetKind
   default: Pick<LayoutItem, 'x' | 'y' | 'w' | 'h' | 'minW' | 'minH'>
   /** Fixed-size widgets can be dragged but not resized. */
   resizable?: boolean
+  /**
+   * OFF until somebody turns it on, rather than absent.
+   *
+   * The difference from `capability`/`module` matters: those say the widget
+   * could never fill, and it is not offered at all. This one says the widget
+   * works fine and most shops do not want it on the first screen they see
+   * every morning — the job board, the ageings, what is in the tills. They are
+   * listed in the Widgets panel with their switch off, one click from being
+   * back, and they keep their place in the default layout so turning one on
+   * puts it where it belongs instead of at the bottom.
+   *
+   * The bar for setting this is "a real shop, asked, said no". It is not a way
+   * to ship a widget nobody thought through.
+   */
+  hiddenByDefault?: boolean
   /** Defaults to 'range', so the twelve original widgets need no entry. */
   scope?: WidgetScope
   /**
@@ -90,106 +142,82 @@ export type WidgetDef = {
 }
 
 /**
- * The KPI ids, in the order they appear — one row, so the order is the reading
- * order, left to right.
+ * The cells of the headline band, in the order they appear — one row, so the
+ * order is the reading order, left to right.
  *
  * Money first and widening: what was taken, what of it is the shop's, what was
- * made on it. Then the shape of the trade behind that money — how big a basket,
- * how full, and how many. Sales sits last rather than beside the money because
- * it is a count, not an amount, and the eye should reach the four money figures
- * without stepping over it.
+ * made on it, and at what margin. Then the shape of the basket behind that
+ * money — how big, and how full.
+ *
+ * The sale COUNT is not on this row. It is the denominator under the average
+ * sale and the items per sale rather than a headline of its own, and it opens
+ * the rates band immediately below, beside the per-day and per-hour readings
+ * that are the only useful things to divide it by. Its old tile went to the GP
+ * percentage, which had been riding in brackets on the gross profit figure and
+ * so had no comparison of its own.
  */
 export const KPI_IDS = [
   'turnoverIncl',
   'turnoverExcl',
   'grossProfit',
+  'grossProfitPct',
   'avgSaleValue',
   'avgItemsPerSale',
-  'saleCount',
 ] as const
 
 export type KpiId = (typeof KPI_IDS)[number]
 
-const KPI_TITLES: Record<KpiId, string> = {
-  turnoverIncl: 'Turnover incl',
-  turnoverExcl: 'Turnover excl',
-  grossProfit: 'Gross profit',
-  saleCount: 'Sales',
-  avgSaleValue: 'Average sale',
-  avgItemsPerSale: 'Items per sale',
-}
+/* The cells' own LABELS live in KpiStrip, beside the value each one formats.
+   They were briefly duplicated here for the widget panel, which no longer
+   lists them — and a title kept in two files is a title that disagrees with
+   itself the first time one is reworded. */
 
-// Six KPIs, ALL SIX to a row.
+/*
+ * ONE BAND, not six tiles — and this is the third time the width of these
+ * figures has been rethought, so the reasoning is worth writing down.
+ *
+ * They were six widgets: six cards, each with its own border and its own 20px
+ * of grid gutter on either side. That made six objects across the top of a
+ * screen whose entire job is to be glanced at, and no two of them lined up —
+ * every gap was a little step for the eye to climb over.
+ *
+ * A headline strip reads as ONE band cut into cells. The figures sit on a
+ * common baseline, the hairlines between them are a divider rather than a
+ * frame, and the row scans left to right in a single movement. That look is
+ * simply not reachable from six grid items: react-grid-layout puts a fixed
+ * gutter between every cell it lays out, so as long as the tiles are separate
+ * widgets they cannot touch.
+ *
+ * So the band is the widget. It is what moves, resizes and hides, exactly like
+ * the rates band underneath it — same argument, one step earlier: six readings
+ * of one period's trade only mean anything read together.
+ *
+ * The band switches ALL OR NOTHING, like the rates band under it. There was a
+ * switch per figure for a while, on the argument that a store which never looks
+ * at items-per-sale should be able to drop that cell. It came out again: six
+ * extra switches, indented under a seventh that already turns the row off, is
+ * most of the reason the panel had become a wall of toggles — and hiding one
+ * cell of six makes the band's own proportions worse, not better. The row is
+ * one thought; it goes on or off as one.
+ */
+// Two grid rows — 100px — because a cell is now three lines of text and
+// nothing else. This went 4 -> 3 while the tiles still carried a sparkline;
+// dropping the chart (see KpiStrip) took the last 60px with it.
 //
-// The width is the whole history of this file, and it has gone back and forth.
-// Six tiles at a twelfth of the grid once truncated every money figure to
-// "R2 658 …", which is what pushed them to three-and-three at a third each.
-//
-// A sixth (10 of 60 columns, ~196px at a 1600 viewport) works NOW because the
-// tile no longer clips: `valueSize()` in KpiTile steps the figure down a type
-// size as it lengthens, and the Sparkline's height is a ceiling rather than a
-// fixed block, so a shorter tile simply gets a shorter chart. The figures that
-// used to truncate now fit.
-//
-// What it buys is the row underneath: at three-across the tiles ate two rows —
-// 160px twice, plus a gap — before the first chart. One row of KPIs puts the
-// day's trading and the first real chart on the same screen, which is what a
-// dashboard is for.
-const KPI_PER_ROW = 6
-const KPI_W = GRID_COLS / KPI_PER_ROW
-// Three rows — 160px — and the trend chart takes what is left rather than the
-// tile being sized around it.
-//
-// Four rows (220px) gave the chart its full 76px, but six of those is 460px of
-// dashboard before the first real chart, and a KPI tile is a number you glance
-// at. The number, its comparison and a readable trend all fit in 160: the tile
-// spends 104px on text — 16 of top padding, 32 for the header (the icon badge,
-// not the label, sets that height), 30 for the figure, 16 for the comparison,
-// plus the gaps — and the chart takes the ~32px that remain. It is not sized
-// down by hand anywhere; the Sparkline's height is a ceiling and the block
-// shrinks to fit, so a tile dragged taller gets a taller chart for free.
-const KPI_H = 3
+// The arithmetic, so a future change can check it rather than guess: 12px of
+// padding top and bottom, 16 for the caption, 4 gap, 30 for the figure at
+// text-2xl, 6 gap, 16 for the note — 96px of content in a 100px cell. A cell
+// centres its block, so the 4px spare falls evenly above and below rather than
+// pooling under the note.
+const KPI_H = 2
 
 /**
- * The floor a KPI tile can be dragged to.
+ * Height of the headline band. One row of cells, so one band height.
  *
- * A sixth of the grid is ~196px at a 1600px viewport, which is about where a
- * long money figure starts stepping down a type size to stay whole — narrower
- * than that and the tile is showing a shrunken number rather than saving space.
- * Three rows is the floor for the same reason in the other direction: the text
- * alone is 104px and the chart block cannot give up its padding, so a two-row
- * tile (100px) would simply have its bottom clipped by the card.
+ * Still named rather than written as `2` at every y below it, so changing the
+ * band's height moves the whole dashboard with it.
  */
-const KPI_MIN_W = GRID_COLS / 6
-const KPI_MIN_H = 3
-
-const KPI_WIDGETS: WidgetDef[] = KPI_IDS.map((id, i) => ({
-  id,
-  title: KPI_TITLES[id],
-  default: {
-    x: (i % KPI_PER_ROW) * KPI_W,
-    // Wrap onto the next row. Computed rather than hardcoded so changing
-    // KPI_W again cannot silently stack every tile on top of the first.
-    y: Math.floor(i / KPI_PER_ROW) * KPI_H,
-    w: KPI_W,
-    h: KPI_H,
-    minW: KPI_MIN_W,
-    minH: KPI_MIN_H,
-  },
-  // Resizable, like every other widget. They were fixed because the default was
-  // the only size that worked: the figure truncated when narrow and the tile
-  // had no chart to give up when short. Neither is true any more — the figure
-  // steps down instead of clipping and the chart shrinks with the tile — so a
-  // store that wants six small tiles on one row can now just drag them there.
-}))
-
-/**
- * Height of the KPI tiles themselves — now a single row of six.
- *
- * Still computed rather than written as `3`, so putting them back onto two
- * rows is a one-line change to KPI_PER_ROW and every y below follows.
- */
-const KPI_ROWS_H = Math.ceil(KPI_IDS.length / KPI_PER_ROW) * KPI_H
+const KPI_ROWS_H = KPI_H
 
 /**
  * The rates band under the tiles — full width, two rows.
@@ -226,7 +254,22 @@ const FIFTH = GRID_COLS / 5
  * restores. Added to each y so the arrangement survives a change to KPI_H.
  */
 export const WIDGETS: WidgetDef[] = [
-  ...KPI_WIDGETS,
+  {
+    /*
+     * The headline band. Full width, headerless, and first.
+     *
+     * A minW of a half rather than the whole grid: dragged narrower the cells
+     * wrap to three and then to two rows of the same band, which is the shape
+     * the phone already shows. Below half a screen the figures would be
+     * stepping down type sizes to fit, which is the point at which the band
+     * stops being a glance.
+     */
+    id: 'kpis',
+    group: 'trading',
+    kind: 'kpi',
+    title: 'Trading figures',
+    default: { x: 0, y: 0, w: GRID_COLS, h: KPI_H, minW: GRID_COLS / 2, minH: KPI_H },
+  },
   {
     /*
      * The rates band, directly under the tiles it divides.
@@ -238,30 +281,40 @@ export const WIDGETS: WidgetDef[] = [
      * can switch it off.
      */
     id: 'rates',
+    group: 'trading',
+    kind: 'kpi',
     title: 'Rates',
     default: { x: 0, y: KPI_ROWS_H, w: GRID_COLS, h: RATES_H, minW: HALF, minH: RATES_H },
   },
   /*
-   * ── THE ROWS BELOW THE KPIs ─────────────────────────────────────────────
+   * ── THE ROWS BELOW THE HEADLINE BLOCK ───────────────────────────────────
    *
    * Captured from a real arrangement rather than reasoned out a widget at a
    * time, which is why it reads as rows: the whole screen was dragged into
-   * shape and then written down. Six bands, each answering one question:
+   * shape and then written down. Seven bands, each answering one question:
    *
-   *   trend      perDay | perHour              how the money moved
-   *   volume     countPerDay | topProducts     what actually sold
-   *   ranking    topDepartments               (topProducts is double height
-   *                                            and runs beside both)
-   *   people     topCashiers | voidsAndReturns who rang it, and who undid it
-   *   today      attention · reorder · pipeline · tenderTypes
-   *   owed       creditorsAgeing | debtorsAgeing · cashPosition
+   *   trend    perDay | perHour | countPerDay     how the money moved
+   *   sold     topDepartments | topProducts       what actually sold
+   *   people   topCashiers | voidsAndReturns      who rang it, who undid it
+   *   today    attention · reorder · pipeline · tenderTypes
+   *   owed     creditorsAgeing | debtorsAgeing    what is owed
+   *   held     cashPosition                       what is in the tills and banks
+   *   jobs     five counts, then two breakdowns   the job board
    *
-   * The as-at band sits BELOW the trading figures here, not above them. That
-   * is a deliberate reversal of the first arrangement: the action list led,
-   * on the argument that a dashboard should open on what needs doing. In
-   * practice the trading figures are what the screen is opened for every
-   * morning, and the four as-at panels read better as a row of equal quarters
-   * than as one tall box competing with a chart.
+   * THREE CHARTS ACROSS, not two and a stray. The three time charts answer one
+   * question between them — how the money moved through the period — and a
+   * third of the grid is still ~430px, which is a real chart. Read as a row
+   * they compare; split across two bands, as they were, the sales-count chart
+   * sat under a ranked table and looked like a footnote to it.
+   *
+   * The as-at band sits BELOW the trading figures, not above them. That is a
+   * deliberate reversal of the first arrangement: the action list led, on the
+   * argument that a dashboard should open on what needs doing. In practice the
+   * trading figures are what the screen is opened for every morning.
+   *
+   * Every y is written off KPI_BLOCK_H rather than as a number, so a change to
+   * the headline block's height moves the whole page with it instead of
+   * leaving a gap or an overlap at the top.
    */
   {
     /* SIX rows, where every other chart takes five.
@@ -271,23 +324,29 @@ export const WIDGETS: WidgetDef[] = [
        leaving the bars about 120px to draw in. The extra row is the furniture's
        height, so the chart itself is no smaller than it was. */
     id: 'perDay',
+    group: 'trading',
+    kind: 'graph',
     title: 'Turnover per day',
-    default: { x: 0, y: KPI_BLOCK_H, w: HALF, h: 6, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H, w: THIRD, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     /* Beside the daily trend rather than full width below it: the two are the
        same question at two scales — which days, and which hours of a day. */
     id: 'perHour',
+    group: 'trading',
+    kind: 'graph',
     title: 'Sales per hour',
-    default: { x: HALF, y: KPI_BLOCK_H, w: HALF, h: 6, minW: QUARTER, minH: 5 },
+    default: { x: THIRD, y: KPI_BLOCK_H, w: THIRD, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     /* The sale-count series was already in the payload and plotted nowhere.
        Its own chart rather than a second axis on the turnover one: a dual axis
        implies the two lines share a scale, and these do not. */
     id: 'countPerDay',
+    group: 'trading',
+    kind: 'graph',
     title: 'Sales per day',
-    default: { x: 0, y: KPI_BLOCK_H + 6, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: TWO_THIRDS, y: KPI_BLOCK_H, w: THIRD, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     /* DOUBLE height, and the only widget that is. The product ranking is the
@@ -295,13 +354,17 @@ export const WIDGETS: WidgetDef[] = [
        it shows about a dozen lines without scrolling at all, and it runs down
        the right of both the count chart and the department ranking. */
     id: 'topProducts',
+    group: 'trading',
+    kind: 'table',
     title: 'Top products',
-    default: { x: HALF, y: KPI_BLOCK_H + 6, w: HALF, h: 10, minW: QUARTER, minH: 5 },
+    default: { x: HALF, y: KPI_BLOCK_H + 6, w: HALF, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     id: 'topDepartments',
+    group: 'trading',
+    kind: 'table',
     title: 'Top departments',
-    default: { x: 0, y: KPI_BLOCK_H + 11, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 6, w: HALF, h: 6, minW: QUARTER, minH: 5 },
   },
   {
     /*
@@ -312,21 +375,30 @@ export const WIDGETS: WidgetDef[] = [
      * need room for several lines, and the tender donut cannot draw below six.
      */
     id: 'attention',
+    hiddenByDefault: true,
+    group: 'backOffice',
+    kind: 'list',
     title: 'Needs attention',
-    default: { x: 0, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
+    default: { x: 0, y: KPI_BLOCK_H + 17, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
     scope: 'asAt',
   },
   {
     id: 'reorder',
+    hiddenByDefault: true,
+    group: 'backOffice',
+    kind: 'table',
     title: 'Reorder',
-    default: { x: QUARTER, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
+    default: { x: QUARTER, y: KPI_BLOCK_H + 17, w: QUARTER, h: 7, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'purchasing.view',
   },
   {
     id: 'pipeline',
+    hiddenByDefault: true,
+    group: 'backOffice',
+    kind: 'list',
     title: 'Pipeline',
-    default: { x: HALF, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 3 },
+    default: { x: HALF, y: KPI_BLOCK_H + 17, w: QUARTER, h: 7, minW: QUARTER, minH: 3 },
     scope: 'asAt',
     capability: 'sales.view',
   },
@@ -336,20 +408,27 @@ export const WIDGETS: WidgetDef[] = [
        ~60px to draw in, so it rendered nothing at all while its legend and
        total showed fine. minH keeps that floor. */
     id: 'tenderTypes',
+    hiddenByDefault: true,
+    group: 'trading',
+    kind: 'graph',
     title: 'Tender mix',
-    default: { x: THREE_QUARTERS, y: KPI_BLOCK_H + 16, w: QUARTER, h: 7, minW: QUARTER, minH: 6 },
+    default: { x: THREE_QUARTERS, y: KPI_BLOCK_H + 17, w: QUARTER, h: 7, minW: QUARTER, minH: 6 },
   },
   {
     id: 'topCashiers',
+    group: 'trading',
+    kind: 'table',
     title: 'Top cashiers',
-    default: { x: 0, y: KPI_BLOCK_H + 23, w: HALF, h: 5, minW: QUARTER, minH: 5 },
+    default: { x: 0, y: KPI_BLOCK_H + 12, w: HALF, h: 5, minW: QUARTER, minH: 5 },
   },
   {
     /* Beside the cashier ranking, because both answer "who is doing what" —
        one by turnover, one by what they had to undo. */
     id: 'voidsAndReturns',
+    group: 'trading',
+    kind: 'table',
     title: 'Voids and returns',
-    default: { x: HALF, y: KPI_BLOCK_H + 23, w: HALF, h: 5, minW: QUARTER, minH: 4 },
+    default: { x: HALF, y: KPI_BLOCK_H + 12, w: HALF, h: 5, minW: QUARTER, minH: 4 },
     capability: 'reports.view',
   },
   {
@@ -362,15 +441,21 @@ export const WIDGETS: WidgetDef[] = [
      * wrapped, which is what made an earlier version stack them full width.
      */
     id: 'creditorsAgeing',
+    hiddenByDefault: true,
+    group: 'backOffice',
+    kind: 'kpi',
     title: 'Creditors ageing',
-    default: { x: 0, y: KPI_BLOCK_H + 28, w: HALF, h: 4, minW: HALF, minH: 3 },
+    default: { x: 0, y: KPI_BLOCK_H + 24, w: HALF, h: 4, minW: HALF, minH: 3 },
     scope: 'asAt',
     capability: 'suppliers.view',
   },
   {
     id: 'debtorsAgeing',
+    hiddenByDefault: true,
+    group: 'backOffice',
+    kind: 'kpi',
     title: 'Debtors ageing',
-    default: { x: HALF, y: KPI_BLOCK_H + 28, w: HALF, h: 4, minW: HALF, minH: 3 },
+    default: { x: HALF, y: KPI_BLOCK_H + 24, w: HALF, h: 4, minW: HALF, minH: 3 },
     scope: 'asAt',
     capability: 'customers.view',
   },
@@ -378,8 +463,11 @@ export const WIDGETS: WidgetDef[] = [
     /* Under the creditors strip, because both are the same question — what is
        owed, and what there is to pay it with. */
     id: 'cashPosition',
+    hiddenByDefault: true,
+    group: 'backOffice',
+    kind: 'list',
     title: 'Cash position',
-    default: { x: 0, y: KPI_BLOCK_H + 32, w: HALF, h: 4, minW: QUARTER, minH: 3 },
+    default: { x: 0, y: KPI_BLOCK_H + 28, w: HALF, h: 4, minW: QUARTER, minH: 3 },
     scope: 'asAt',
     capability: 'cashbook.view',
   },
@@ -402,8 +490,11 @@ export const WIDGETS: WidgetDef[] = [
    */
   {
     id: 'jobsOpen',
+    hiddenByDefault: true,
+    group: 'jobs',
+    kind: 'kpi',
     title: 'Open jobs',
-    default: { x: 0, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: 0, y: KPI_BLOCK_H + 32, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -420,24 +511,33 @@ export const WIDGETS: WidgetDef[] = [
      * wondering whether the row is missing or the answer is none.
      */
     id: 'jobsUnassigned',
+    hiddenByDefault: true,
+    group: 'jobs',
+    kind: 'kpi',
     title: 'Nobody assigned',
-    default: { x: FIFTH, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH, y: KPI_BLOCK_H + 32, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
   },
   {
     id: 'jobsInProgress',
+    hiddenByDefault: true,
+    group: 'jobs',
+    kind: 'kpi',
     title: 'Work under way',
-    default: { x: FIFTH * 2, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH * 2, y: KPI_BLOCK_H + 32, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
   },
   {
     id: 'jobsAwaitingParts',
+    hiddenByDefault: true,
+    group: 'jobs',
+    kind: 'kpi',
     title: 'Waiting on parts',
-    default: { x: FIFTH * 3, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH * 3, y: KPI_BLOCK_H + 32, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -452,24 +552,33 @@ export const WIDGETS: WidgetDef[] = [
      * the number somebody is supposed to act on.
      */
     id: 'jobsNotInvoiced',
+    hiddenByDefault: true,
+    group: 'jobs',
+    kind: 'kpi',
     title: 'Done, not billed',
-    default: { x: FIFTH * 4, y: KPI_BLOCK_H + 36, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
+    default: { x: FIFTH * 4, y: KPI_BLOCK_H + 32, w: FIFTH, h: KPI_H, minW: FIFTH, minH: 2 },
     scope: 'asAt',
     capability: 'jobs.invoice',
     module: 'job_cards',
   },
   {
     id: 'jobsByStatus',
+    hiddenByDefault: true,
+    group: 'jobs',
+    kind: 'graph',
     title: 'Jobs by stage',
-    default: { x: 0, y: KPI_BLOCK_H + 36 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
+    default: { x: 0, y: KPI_BLOCK_H + 32 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
   },
   {
     id: 'jobsByTechnician',
+    hiddenByDefault: true,
+    group: 'jobs',
+    kind: 'graph',
     title: 'Jobs by technician',
-    default: { x: HALF, y: KPI_BLOCK_H + 36 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
+    default: { x: HALF, y: KPI_BLOCK_H + 32 + KPI_H, w: HALF, h: 6, minW: QUARTER, minH: 4 },
     scope: 'asAt',
     capability: 'jobs.view',
     module: 'job_cards',
@@ -518,8 +627,23 @@ export const ALL_WIDGET_IDS: WidgetId[] = WIDGETS.map((w) => w.id)
    loadPrefs drops a new id into its default slot — but a new FULL-WIDTH band
    landing in a saved layout that still has the turnover chart at that y would
    have the grid shove the charts aside to make room, and an arrangement
-   rearranged by collision is worse than one that was never tuned. */
-export const STORAGE_KEY = 'odyssey-sales-dashboard-v8'
+   rearranged by collision is worse than one that was never tuned.
+   v9: the KPI tiles lost their sparklines and gained a note line, which took
+   them from three grid rows to two, and the sales-count tile was replaced by a
+   GP percentage tile — the count moved into the rates band below. Both halves
+   need the bump. A v8 layout would hold every tile at its old 160px, leaving
+   the 60px of white the change exists to reclaim, and would drop the new
+   grossProfitPct tile into its default slot UNDERNEATH a row that is still
+   full, putting one KPI on a line of its own.
+   v10: the six KPI tiles became ONE band widget, `kpis`. A v9 layout holds six
+   separate tiles at the ids that no longer lay out — loadPrefs drops them —
+   and has nothing at 'kpis', which would drop the band into its default slot
+   on top of a row the saved layout still thinks is occupied.
+   v11: the whole arrangement below the headline block was rebuilt by dragging
+   it and captured back — three time charts on one row, the ranked tables
+   paired, and every band below moved up by the rows that freed. A v10 layout
+   keeps every old position, which is the entire thing this changes. */
+export const STORAGE_KEY = 'odyssey-sales-dashboard-v11'
 
 export type DashboardPrefs = {
   layout: LayoutItem[]
@@ -539,6 +663,23 @@ export function defaultLayout(): LayoutItem[] {
 }
 
 /**
+ * What a dashboard nobody has touched has switched OFF.
+ *
+ * The opening screen is the trading figures and the charts that explain them:
+ * two headline bands, three time charts, four ranked tables. Everything else —
+ * the job board, what is owed, what is held, the action list — is real and one
+ * click away in the Widgets panel, but it is not what the shop opens the app to
+ * look at, and a dashboard that has to be scrolled past to be read is a
+ * dashboard nobody reads.
+ *
+ * Derived from the registry rather than written out here, so a widget added
+ * with `hiddenByDefault` cannot be forgotten in a second list.
+ */
+export function defaultHidden(): WidgetId[] {
+  return WIDGETS.filter((w) => w.hiddenByDefault).map((w) => w.id)
+}
+
+/**
  * Read the saved layout, reconciled against the registry.
  *
  * The merge matters: a widget added in a later release has no saved entry, and
@@ -546,10 +687,10 @@ export function defaultLayout(): LayoutItem[] {
  * the dashboard. Unknown ids are dropped for the mirror-image reason.
  */
 export function loadPrefs(): DashboardPrefs {
-  if (typeof window === 'undefined') return { layout: defaultLayout(), hidden: [] }
+  if (typeof window === 'undefined') return { layout: defaultLayout(), hidden: defaultHidden() }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { layout: defaultLayout(), hidden: [] }
+    if (!raw) return { layout: defaultLayout(), hidden: defaultHidden() }
 
     const parsed = JSON.parse(raw) as Partial<DashboardPrefs>
     const saved = new Map((parsed.layout ?? []).map((l) => [l.i, l]))
@@ -575,7 +716,7 @@ export function loadPrefs(): DashboardPrefs {
     )
     return { layout, hidden }
   } catch {
-    return { layout: defaultLayout(), hidden: [] }
+    return { layout: defaultLayout(), hidden: defaultHidden() }
   }
 }
 

@@ -73,11 +73,11 @@ export function widgetBody(id: WidgetId, { data, overview, overviewError }: Widg
       case 'tenderTypes':
         return <TenderMixChart data={data.tenderTypes} />
       case 'topProducts':
-        return <RankedTable rows={data.topProducts} config={TABLE_CONFIG.products} />
+        return <RankedTable rows={data.topProducts} config={TABLE_CONFIG.products} dense />
       case 'topDepartments':
-        return <RankedTable rows={data.topDepartments} config={TABLE_CONFIG.departments} />
+        return <RankedTable rows={data.topDepartments} config={TABLE_CONFIG.departments} dense />
       case 'topCashiers':
-        return <RankedTable rows={data.topCashiers} config={TABLE_CONFIG.cashiers} />
+        return <RankedTable rows={data.topCashiers} config={TABLE_CONFIG.cashiers} dense />
       case 'voidsAndReturns':
         return <ExceptionsTable rows={data.exceptions} />
 

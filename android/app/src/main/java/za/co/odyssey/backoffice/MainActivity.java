@@ -2,6 +2,7 @@ package za.co.odyssey.backoffice;
 
 import android.graphics.Color;
 import android.os.Bundle;
+import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -147,6 +148,23 @@ public class MainActivity extends BridgeActivity {
       if (request == null || !request.isForMainFrame()) {
         super.onReceivedError(view, request, error);
         return;
+      }
+
+      /* The code and description never reach the person — the page below says
+         what they can act on — but a build that cannot be reached is exactly
+         when somebody needs the real net:: error, and logcat is where they
+         will look for it. */
+      try {
+        Log.w(
+            "Odyssey",
+            "main frame failed: "
+                + request.getUrl()
+                + " code="
+                + (error == null ? "?" : String.valueOf(error.getErrorCode()))
+                + " desc="
+                + (error == null ? "?" : String.valueOf(error.getDescription())));
+      } catch (Exception ignored) {
+        /* Never fail inside an error handler. */
       }
 
       String host = "the server";

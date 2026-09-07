@@ -154,6 +154,21 @@ export type ActivityEntity =
      ask. Where the items went, which tables were involved, and what was moved
      live in `changes`. */
   | 'pos_split'
+  /* A shift whose OPENING did not happen the way the cashier thought it did.
+     entityId is the shift.
+
+     Deliberately narrow. The ordinary life of a shift — opened, movements,
+     cashed up — is already a record: the row itself, `shift_movements`, and the
+     frozen `shift_counts` a manager signs. Copying that into the audit trail
+     would bury the one case that has no other home.
+
+     That case is a shift a till opened OFFLINE arriving to find a drawer already
+     open (252). The takings are banked into the shift that was there, which is
+     the only reconcilable answer, and the float the offline till counted is
+     DISCARDED rather than added — a drawer counted twice is not a drawer holding
+     twice as much. Two people counted one drawer and got different numbers, and
+     the second count exists nowhere else. See `postOfflineShift`. */
+  | 'shift'
   /* A gift card event outside a sale — generation, adjustment, void, the
      expiry sweep. Sales-side traffic already lives on the document's own
      audit; this covers the management actions where a balance moves with no

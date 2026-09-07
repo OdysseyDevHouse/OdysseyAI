@@ -82,7 +82,18 @@ export function CardHeader({
            one word per line. `flex-wrap` lets the toolbar drop to its own row
            when the two cannot share one, and changes nothing for the two or
            three buttons most cards carry. */
-        'flex flex-wrap items-start justify-between gap-4 border-b border-border px-5 py-4',
+        'flex flex-wrap justify-between gap-4 border-b border-border px-5 py-4',
+        /* CENTRED when the title stands alone, TOP-ALIGNED when it has a
+           description under it.
+           A one-line title beside a 32px button is a single row, and
+           `items-start` hung the words above the button's middle — visible on
+           every dashboard widget with a "View more". Once there is a
+           description the block is two lines tall and centring it would float
+           the button against the gap between them, so the two cases genuinely
+           want different alignment rather than one compromise. Decided from
+           the content rather than from a prop, so no call site has to remember
+           which it is. */
+        description ? 'items-start' : 'items-center',
         className,
       ]
         .filter(Boolean)
@@ -90,7 +101,14 @@ export function CardHeader({
     >
       {/* basis-64 with grow: the title keeps a readable width and pushes the
           toolbar onto the next line instead of being crushed by it. */}
-      <div className="flex min-w-0 shrink grow basis-64 items-start gap-3">
+      <div
+        className={`flex min-w-0 shrink grow basis-64 gap-3 ${
+          /* Same rule as the row above, one level in: with no description the
+             icon tile and the single line of title are one row and centre on
+             each other. */
+          description ? 'items-start' : 'items-center'
+        }`}
+      >
         {icon && (
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
             {icon}

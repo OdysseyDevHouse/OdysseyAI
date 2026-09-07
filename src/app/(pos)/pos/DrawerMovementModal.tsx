@@ -16,6 +16,7 @@ import {
   tillShiftStatusAction,
   tillDrawerMovementAction,
 } from './shiftActions'
+import { currentShift, queueDrawerMovement, type LocalShift } from '@/lib/posOffline/shiftOffline'
 
 /**
  * Money in or out of the drawer that is not a sale — as its own key.
@@ -58,7 +59,10 @@ export default function DrawerMovementModal({
   open,
   type,
   online,
+  siteId,
   terminalId,
+  operatorUserId,
+  operatorName,
   onClose,
   /** Fires after a movement lands, so the shell can refresh what it shows. */
   onRecorded,
@@ -67,7 +71,18 @@ export default function DrawerMovementModal({
   /** Which of the three this dialog is being. Null while none is asked for. */
   type: MovementType | null
   online: boolean
+  /** Whose queue an offline movement joins. */
+  siteId: number
   terminalId: number | null
+  /**
+   * Who is moving the money.
+   *
+   * Needed only offline, where there is no session for the server to read it
+   * from — a queued movement carries its own attribution, exactly as a queued
+   * sale does, and the server re-resolves the person on arrival.
+   */
+  operatorUserId: number
+  operatorName: string
   onClose: () => void
   onRecorded?: () => void
 }) {
@@ -75,6 +90,14 @@ export default function DrawerMovementModal({
   const [pending, startTransition] = useTransition()
   const [loading, setLoading] = useState(false)
   const [shiftId, setShiftId] = useState<number | null>(null)
+  /**
+   * The shift this till is on when there is no server to ask.
+   *
+   * A shift opened offline (252) has a uid and no id, so `shiftId` above stays
+   * null for it — which is correct and is also why this cannot simply reuse it.
+   * Null here means the till is on no shift at all, and the pad is refused.
+   */
+  const [localShift, setLocalShift] = useState<LocalShift | null>(null)
   const [canCashup, setCanCashup] = useState(true)
   const [amountEntry, setAmountEntry] = useState('')
   const [reason, setReason] = useState('')
@@ -82,10 +105,34 @@ export default function DrawerMovementModal({
   /* Read on every open, never cached between them: see the note above about
      which shift a movement must land on. */
   useEffect(() => {
-    if (!open || !online || type === null) return
+    if (!open || type === null) return
     setAmountEntry('')
     setReason('')
     setShiftId(null)
+    setLocalShift(null)
+
+    /*
+     * OFFLINE THE TILL ANSWERS FOR ITSELF.
+     *
+     * It used to return here and leave the dialog on its "needs the connection"
+     * face, which meant a payout during an outage was simply not recorded — and
+     * that is the one thing a drawer movement exists to prevent. A cash-up short
+     * by the R50 somebody took out for milk blames the cashier for an errand.
+     *
+     * `canCashup` is left at its default of true on this path, and that is a
+     * deliberate loosening rather than an oversight: the right is checked
+     * server-side when the movement posts, and refusing at the counter would
+     * need a permission read this till cannot make. The same bargain the whole
+     * offline path makes — see the header of `offlineCapability`, which is
+     * explicit that a screen's gating is never the boundary.
+     */
+    if (!online) {
+      void currentShift(siteId)
+        .then((shift) => setLocalShift(shift.id || shift.uid ? shift : null))
+        .catch(() => setLocalShift(null))
+      return
+    }
+
     setLoading(true)
     void tillShiftStatusAction(terminalId)
       .then((result) => {
@@ -98,22 +145,37 @@ export default function DrawerMovementModal({
       })
       .finally(() => setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, online, type, terminalId])
+  }, [open, online, type, terminalId, siteId])
 
   function record() {
-    if (shiftId === null || type === null) return
+    if (type === null) return
+    if (!online && !localShift) return
+    if (online && shiftId === null) return
     startTransition(async () => {
-      const result = await tillDrawerMovementAction(shiftId, {
-        type,
-        amount: numPadValue(amountEntry),
-        reason,
-        terminalId,
-      })
+      /* Queued rather than posted when the line is down. Same payload, same
+         refusals, and a uid that makes the retry safe — a movement has no
+         natural key, so without one a re-flush would take the same R50 out
+         twice. See queueDrawerMovement. */
+      const result = online
+        ? await tillDrawerMovementAction(shiftId!, {
+            type,
+            amount: numPadValue(amountEntry),
+            reason,
+            terminalId,
+          })
+        : await queueDrawerMovement(siteId, {
+            type,
+            amount: numPadValue(amountEntry),
+            reason,
+            terminalId,
+            operatorUserId,
+            operatorName,
+          })
       if (!result.ok) {
         toast.error(result.error)
         return
       }
-      toast.success(MOVEMENT_DONE[type])
+      toast.success(online ? MOVEMENT_DONE[type] : `${MOVEMENT_DONE[type]} It will send when the line is back.`)
       setAmountEntry('')
       setReason('')
       onRecorded?.()
@@ -147,7 +209,7 @@ export default function DrawerMovementModal({
           <Button variant="secondary" onClick={onClose} disabled={pending}>
             Close
           </Button>
-          {online && shiftId !== null && canCashup && (
+          {(online ? shiftId !== null && canCashup : localShift !== null) && (
             <Button
               variant="primary"
               /* Refused here for the same reasons the server refuses it, so the
@@ -163,18 +225,22 @@ export default function DrawerMovementModal({
         </>
       }
     >
-      {!online ? (
-        <Callout tone="brand" title="Moving money needs the connection">
-          A payout has to land on the shift it belongs to, and the shift lives on the server.
-          Sales keep working offline and queue safely on this till.
+      {!online && localShift === null ? (
+        /* Offline AND on no shift. The pad is genuinely refused here, and the
+           reason is the honest one: a movement must land on a drawer, and this
+           till is not on one. Opening a shift offline is possible now (252), so
+           this points at the thing that fixes it rather than at the network. */
+        <Callout tone="warning" title="This till is on no shift">
+          There is no drawer to move money in or out of. Open a shift from the Shift key —
+          it works offline and sends when the line is back.
         </Callout>
-      ) : loading ? (
+      ) : online && loading ? (
         <p className="py-8 text-center text-sm text-muted">Reading the shift…</p>
-      ) : !canCashup ? (
+      ) : online && !canCashup ? (
         <Callout tone="warning" title="This needs the cash-up right">
           Ask a manager — they can move money under their own PIN.
         </Callout>
-      ) : shiftId === null ? (
+      ) : online && shiftId === null ? (
         <Callout tone="warning" title="No shift is open on this till">
           There is no drawer to move money in or out of yet. Open a shift first, and the
           movement will land on it.
@@ -190,6 +256,16 @@ export default function DrawerMovementModal({
            `wide` rather than `lg`: measured, `lg` here came to 556px of body
            against a 560px cap on a 1366×768 till. See the size's own note. */
         <div className="flex flex-col gap-4">
+          {/* Said before the pad, not after the tap. A cashier recording a payout
+              during an outage should know it is queued rather than posted — the
+              money still leaves the drawer either way, and the cash-up they do
+              later is the thing that depends on it having arrived. */}
+          {!online && (
+            <Callout tone="brand" title="Recorded on this till">
+              The line is down, so this is queued against the shift the till is on and sends
+              itself when the connection is back.
+            </Callout>
+          )}
           <NumPadDisplay label="Amount" value={amountEntry} layout="plaque" />
           <NumPad size="wide" value={amountEntry} onChange={setAmountEntry} disabled={pending} />
           <Field label="Reason">

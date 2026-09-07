@@ -236,6 +236,42 @@ async function claimCashupNumber(siteId: number, tx: PoolConnection): Promise<st
 export type OpenResult = { ok: true; shiftId: number } | { ok: false; error: string }
 
 /**
+ * Where a shift came from, when it did not come from this server.
+ *
+ * Absent for every shift opened in the back office or at an online till, which
+ * is almost all of them. Present only for one queued by a till with no network —
+ * see `postOfflineShift`, the sole caller that fills it in.
+ *
+ * Both fields are recorded rather than acted on, and that is the point of a
+ * separate object: nothing about how a shift OPENS changes offline. It takes the
+ * same transaction, the same cash-up number and the same unique index. What
+ * changes is only which moment it claims to have started and what makes a
+ * redelivery a no-op.
+ */
+export type OfflineOrigin = {
+  /**
+   * The till's own idempotency key. UNIQUE in the database (252), so a queue
+   * that retries cannot open a second shift on the same drawer.
+   */
+  shiftUid: string
+  /**
+   * When the drawer was actually opened, from the till's clock.
+   *
+   * Recorded rather than defaulted to now, and this is the one thing here that
+   * would go visibly wrong without it. A shift opened at 07:00 during an outage
+   * and delivered at 09:00 would otherwise claim to have started at 09:00 — two
+   * hours after the sales that banked into it, which are dated by their own
+   * `takenAt`. A cash-up report showing takings from before its own shift began
+   * is the kind of thing nobody can explain afterwards.
+   *
+   * The till's clock is not trusted for anything else, exactly as it is not for
+   * a sale: the document DATE and every derived figure still come from the
+   * server. This dates one drawer, and the alternative is worse.
+   */
+  openedAt: Date
+}
+
+/**
  * Starts a shift.
  *
  * The float is COUNTED, not assumed: a float that is wrong at the start makes
@@ -250,6 +286,7 @@ export async function openShift(
   actor: Actor,
   terminalId: number | null,
   openingFloat: number,
+  offline?: OfflineOrigin,
 ): Promise<OpenResult> {
   if (openingFloat < 0) return { ok: false, error: 'The opening float cannot be negative.' }
 
@@ -301,17 +338,32 @@ export async function openShift(
      */
     const shiftId = await siteTransaction(siteId, async (tx) => {
       const documentNumber = await claimCashupNumber(siteId, tx)
+      /*
+       * The cash-up NUMBER is claimed here even for a shift that opened offline,
+       * so it is allocated in DELIVERY order rather than in trading order.
+       *
+       * Deliberate, and the alternative is worse. A till cannot claim from the
+       * site-wide sequence with no network — 233 says so in as many words — so
+       * the choice is a number allocated late or no number at all. Late means a
+       * cash-up register whose numbers are gapless but not in time order, which
+       * is unusual and completely reconcilable; `opened_at` is the field anyone
+       * sorting by time should be using and it carries the truth.
+       */
       const [res] = await tx.execute(
-        `INSERT INTO shifts (document_number, mode, terminal_id, terminal_code, user_id, user_name, opening_float)
-         VALUES (?,?,?,?,?,?,?)`,
+        `INSERT INTO shifts (document_number, shift_uid, mode, terminal_id, terminal_code, user_id, user_name, opening_float${
+          offline ? ', opened_at' : ''
+        })
+         VALUES (?,?,?,?,?,?,?,?${offline ? ',?' : ''})`,
         [
           documentNumber,
+          offline?.shiftUid ?? null,
           mode,
           mode === 'terminal' ? terminalId : null,
           terminalCode,
           actor.userId,
           actor.userName.slice(0, 120),
           round(openingFloat, 2).toFixed(4),
+          ...(offline ? [offline.openedAt] : []),
         ] as never,
       )
       return (res as { insertId: number }).insertId
@@ -570,6 +622,16 @@ export async function recordDrawerMovement(
      * their own float is a different event from one raiding a till.
      */
     terminalId?: number | null
+    /**
+     * The till's idempotency key, for a movement queued with no network.
+     *
+     * Absent for one recorded at the counter with the line up, which is almost
+     * all of them. UNIQUE in the database (252), and it has to be: a movement has
+     * no natural key — two R50 payouts for "milk" on one shift are an ordinary
+     * thing to happen and must both be recorded — so a retried flush without one
+     * would take R100 out of a drawer that lost R50.
+     */
+    movementUid?: string | null
   },
 ): Promise<MovementResult> {
   if (!input.reason?.trim()) return { ok: false, error: 'Give a reason.' }
@@ -585,10 +647,11 @@ export async function recordDrawerMovement(
 
   const res = await siteExecute(
     siteId,
-    `INSERT INTO shift_movements (shift_id, terminal_id, movement_type, amount, reason, user_id, user_name)
-     VALUES (?,?,?,?,?,?,?)`,
+    `INSERT INTO shift_movements (shift_id, movement_uid, terminal_id, movement_type, amount, reason, user_id, user_name)
+     VALUES (?,?,?,?,?,?,?,?)`,
     [
       shiftId,
+      input.movementUid ?? null,
       input.terminalId ?? shift.terminalId,
       input.type,
       round(signed, 2).toFixed(4),

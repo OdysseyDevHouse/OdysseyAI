@@ -2,7 +2,8 @@
 
 import type { TillProduct } from '../site/tillSearch'
 import type { PosStore } from './store'
-import type { OutboxReturn, OutboxSale } from './types'
+import type { OutboxMovement, OutboxReturn, OutboxSale, OutboxShift } from './types'
+import type { OfflineCustomer } from '../site/tillCustomers'
 
 /**
  * One suite, run against whichever store this machine uses.
@@ -78,6 +79,33 @@ function product(over: Partial<TillProduct> & { id: number }): TillProduct {
   } as unknown as TillProduct
 }
 
+/**
+ * A customer with the fields the store INDEXES, and defaults for the rest.
+ *
+ * No cast, unlike `product` above: an `OfflineCustomer` is a dozen scalar fields
+ * that were chosen precisely because they are all a till needs, so spelling them
+ * out costs a line each and keeps the fixture honest about what travels.
+ *
+ * `credit` is left off by default, which is the shape a shop that has NOT turned
+ * on `pos_offline_account_sales` receives — the common case, and the one whose
+ * absence is load-bearing.
+ */
+function customer(over: Partial<OfflineCustomer> & { id: number }): OfflineCustomer {
+  return {
+    code: `ACC${over.id}`,
+    name: `Customer ${over.id}`,
+    status: 'active',
+    accountType: 'balance_fwd',
+    paymentTermsDays: 30,
+    vatNumber: null,
+    phone: null,
+    priceStructureId: null,
+    discountPct: 0,
+    groupId: null,
+    ...over,
+  }
+}
+
 function sale(over: Partial<OutboxSale> & { saleUid: string }): OutboxSale {
   return {
     status: 'pending',
@@ -89,6 +117,41 @@ function sale(over: Partial<OutboxSale> & { saleUid: string }): OutboxSale {
     tenders: [],
     ...over,
   } as unknown as OutboxSale
+}
+
+function queuedShift(over: Partial<OutboxShift> & { shiftUid: string }): OutboxShift {
+  return {
+    status: 'pending',
+    attempts: 0,
+    lastError: null,
+    syncedAt: null,
+    shiftId: null,
+    terminalId: 1,
+    openedAt: '2026-01-01T06:00:00.000Z',
+    openingFloat: 500,
+    operatorUserId: 7,
+    operatorName: 'Ruth Mbeki',
+    ...over,
+  }
+}
+
+function movement(over: Partial<OutboxMovement> & { movementUid: string }): OutboxMovement {
+  return {
+    status: 'pending',
+    attempts: 0,
+    lastError: null,
+    syncedAt: null,
+    shiftId: null,
+    shiftUid: 'shift-a',
+    terminalId: 1,
+    type: 'payout',
+    amount: 50,
+    reason: 'Milk',
+    takenAt: '2026-01-01T09:00:00.000Z',
+    operatorUserId: 7,
+    operatorName: 'Ruth Mbeki',
+    ...over,
+  }
 }
 
 function refund(over: Partial<OutboxReturn> & { returnUid: string }): OutboxReturn {
@@ -105,7 +168,18 @@ function refund(over: Partial<OutboxReturn> & { returnUid: string }): OutboxRetu
 
 /** Empties every table, so each case starts from a known floor. */
 async function reset(store: PosStore): Promise<void> {
-  await store.applyCatalog({ full: true, products: [], deletedIds: [], kv: [] })
+  await store.applyCatalog({
+    full: true,
+    products: [],
+    deletedIds: [],
+    /* `customersSent` explicitly, because the default is "do not touch the
+       customer file" — which for a RESET is exactly wrong. A case that inherited
+       the previous one's book would pass or fail depending on what ran before it. */
+    customersSent: true,
+    customers: [],
+    closedCustomerIds: [],
+    kv: [],
+  })
   for (const row of await store.outboxRecent()) {
     await store.outboxUpdate(row.saleUid, { status: 'synced', syncedAt: '1970-01-01T00:00:00.000Z' })
   }
@@ -118,6 +192,24 @@ async function reset(store: PosStore): Promise<void> {
     })
   }
   await store.returnPruneSynced('2100-01-01T00:00:00.000Z')
+  /* Shifts and movements, on exactly the terms the sales above are cleared by:
+     mark them delivered, then prune. Nothing here may DELETE a pending row, and
+     the reset has to obey that rule too — a test helper with a shortcut past it
+     is a shortcut somebody copies into the flush. */
+  for (const row of await store.shiftPending(9999)) {
+    await store.shiftUpdate(row.shiftUid, {
+      status: 'synced',
+      syncedAt: '1970-01-01T00:00:00.000Z',
+    })
+  }
+  await store.shiftPruneSynced('2100-01-01T00:00:00.000Z')
+  for (const row of await store.movementPending(9999)) {
+    await store.movementUpdate(row.movementUid, {
+      status: 'synced',
+      syncedAt: '1970-01-01T00:00:00.000Z',
+    })
+  }
+  await store.movementPruneSynced('2100-01-01T00:00:00.000Z')
   for (const row of await store.parkedList()) await store.parkedDelete(row.uid)
   await store.draftDelete('conformance')
 }
@@ -391,6 +483,208 @@ const CASES: Case[] = [
       await store.draftDelete('conformance')
       expect((await store.draftGet('conformance')) === undefined, 'the draft was not removed')
       return 'the in-progress basket survives and can be cleared'
+    },
+  },
+  {
+    name: 'the shift queue flushes oldest first and keeps its server id',
+    async run(store) {
+      /* Written newest FIRST, so a store that returns insertion order rather
+         than opened_at order fails this rather than passing by luck. */
+      await store.shiftPut(queuedShift({ shiftUid: 'b', openedAt: '2026-01-02T06:00:00.000Z' }))
+      await store.shiftPut(queuedShift({ shiftUid: 'a', openedAt: '2026-01-01T06:00:00.000Z' }))
+
+      const pending = await store.shiftPending(10)
+      expect(pending.length === 2, `expected 2 pending shifts, got ${pending.length}`)
+      expect(pending[0].shiftUid === 'a', 'the shift queue did not come back oldest first')
+      expect(pending[0].openingFloat === 500, 'the counted float did not survive the round trip')
+
+      /* The id the server gave it. This is what lets the till stop naming the
+         shift by uid — for its movements, and for its own cash-up. */
+      await store.shiftUpdate('a', { status: 'synced', syncedAt: 'now', shiftId: 412 })
+      const stamped = await store.shiftGet('a')
+      expect(stamped?.shiftId === 412, 'the server id was not stored against the shift')
+      expect(stamped?.status === 'synced', 'the shift was not marked delivered')
+      expect((await store.shiftCount('pending')) === 1, 'the pending count did not fall')
+      return 'oldest first, and a delivered shift carries the id the server gave it'
+    },
+  },
+  {
+    name: 'pruning a shift queue cannot reach a pending row',
+    async run(store) {
+      await store.shiftPut(queuedShift({ shiftUid: 'kept' }))
+      await store.shiftPut(
+        queuedShift({ shiftUid: 'gone', status: 'synced', syncedAt: '1970-01-01T00:00:00.000Z' }),
+      )
+      await store.shiftPut(queuedShift({ shiftUid: 'failed', status: 'failed' }))
+
+      const removed = await store.shiftPruneSynced('2100-01-01T00:00:00.000Z')
+      expect(removed === 1, `prune removed ${removed} rows rather than 1`)
+      expect((await store.shiftGet('kept')) !== undefined, 'prune deleted a PENDING shift')
+      expect((await store.shiftGet('failed')) !== undefined, 'prune deleted a FAILED shift')
+      expect((await store.shiftGet('gone')) === undefined, 'prune left a delivered shift behind')
+      return 'only delivered rows go; a pending shift is what a queued sale resolves through'
+    },
+  },
+  {
+    name: 'drawer movements queue, count and prune on the same terms',
+    async run(store) {
+      await store.movementPut(movement({ movementUid: 'm2', takenAt: '2026-01-01T11:00:00.000Z' }))
+      await store.movementPut(movement({ movementUid: 'm1', takenAt: '2026-01-01T09:00:00.000Z' }))
+
+      const pending = await store.movementPending(10)
+      expect(pending.length === 2, `expected 2 pending movements, got ${pending.length}`)
+      expect(pending[0].movementUid === 'm1', 'movements did not come back oldest first')
+      /* POSITIVE on the wire. The server signs it, because a payout and a drop
+         both take money out while a pay-in adds — signing it here as well would
+         apply the rule twice on one path and never on the other. */
+      expect(pending[0].amount === 50, 'the amount did not survive the round trip')
+      expect(pending[0].shiftUid === 'shift-a', 'the movement lost the shift it names')
+
+      await store.movementUpdate('m1', { status: 'failed', lastError: 'That shift is cashed up.' })
+      expect((await store.movementCount('failed')) === 1, 'a refused movement was not counted')
+      expect((await store.movementCount('pending')) === 1, 'the pending count did not fall')
+
+      await store.movementUpdate('m2', { status: 'synced', syncedAt: '1970-01-01T00:00:00.000Z' })
+      const removed = await store.movementPruneSynced('2100-01-01T00:00:00.000Z')
+      expect(removed === 1, `prune removed ${removed} movements rather than 1`)
+      expect((await store.movementCount('failed')) === 1, 'prune reached a FAILED movement')
+      return 'oldest first, refusals held for a person, and prune reaches only delivered rows'
+    },
+  },
+  {
+    name: 'a catalog with no customer file leaves the one it holds alone',
+    async run(store) {
+      await store.applyCatalog({
+        full: true,
+        products: [],
+        deletedIds: [],
+        customersSent: true,
+        customers: [customer({ id: 1 }), customer({ id: 2 })],
+        closedCustomerIds: [],
+        kv: [],
+      })
+      /* A schema-9 server: no customer key at all, and a FULL load besides. The
+         book must survive it, or a rolling deploy empties every till that happens
+         to reach an old node. */
+      await store.applyCatalog({ full: true, products: [product({ id: 1 })], deletedIds: [], kv: [] })
+      const count = await store.customerCount()
+      expect(count === 2, `a catalog carrying no customer file left ${count} customers instead of 2`)
+      return 'an absent customer feed is not an empty one'
+    },
+  },
+  {
+    name: 'a full customer feed replaces, a delta patches and closes',
+    async run(store) {
+      await store.applyCatalog({
+        full: true,
+        products: [],
+        deletedIds: [],
+        customersSent: true,
+        customers: [customer({ id: 1 }), customer({ id: 2 }), customer({ id: 3 })],
+        closedCustomerIds: [],
+        kv: [],
+      })
+      await store.applyCatalog({
+        full: false,
+        products: [],
+        deletedIds: [],
+        customersSent: true,
+        customers: [customer({ id: 2, name: 'Renamed' })],
+        closedCustomerIds: [3],
+        kv: [],
+      })
+      expect((await store.customerCount()) === 2, 'a customer delta changed the row count wrongly')
+      expect((await store.customerById(1)) !== undefined, 'a delta dropped a customer it never mentioned')
+      expect((await store.customerById(2))?.name === 'Renamed', 'a delta did not apply its update')
+      expect((await store.customerById(3)) === undefined, 'a closed customer was not removed')
+      return 'untouched accounts survived, the named one changed, the closed one went'
+    },
+  },
+  {
+    name: 'customer search matches code, name and phone, mid-string',
+    async run(store) {
+      await store.applyCatalog({
+        full: true,
+        products: [],
+        deletedIds: [],
+        customersSent: true,
+        customers: [
+          customer({ id: 1, code: 'TRD001', name: 'Ndlovu Trading', phone: '0821234567' }),
+          customer({ id: 2, code: 'TRD002', name: 'Van Wyk Bakery', phone: '0119876543' }),
+        ],
+        closedCustomerIds: [],
+        kv: [],
+      })
+      const byName = await store.customerSearch('wyk', 20)
+      expect(byName.length === 1 && byName[0].id === 2, 'a mid-name match was missed')
+      const byPhone = await store.customerSearch('987', 20)
+      expect(byPhone.length === 1 && byPhone[0].id === 2, 'a mid-phone match was missed')
+      const byCode = await store.customerSearch('TRD', 20)
+      expect(byCode.length === 2, `a shared code prefix matched ${byCode.length} rather than 2`)
+      /* Case is the one thing the two engines fold differently if left to SQL —
+         see the `customers` table comment in sqliteStore.ts. */
+      const folded = await store.customerSearch('NDLOVU', 20)
+      expect(folded.length === 1 && folded[0].id === 1, 'search was case-sensitive on this engine')
+      return 'both engines match the middle of all three columns, regardless of case'
+    },
+  },
+  {
+    name: 'customerByCode is exact, and customerFirstPage is by name',
+    async run(store) {
+      await store.applyCatalog({
+        full: true,
+        products: [],
+        deletedIds: [],
+        customersSent: true,
+        customers: [
+          customer({ id: 1, code: 'ZED', name: 'Zulu Hardware' }),
+          customer({ id: 2, code: 'ABE', name: 'Abrahams Motors' }),
+        ],
+        closedCustomerIds: [],
+        kv: [],
+      })
+      expect((await store.customerByCode('ZED'))?.id === 1, 'an exact code did not resolve')
+      expect((await store.customerByCode('zed'))?.id === 1, 'an exact code was case-sensitive')
+      expect((await store.customerByCode('ZE')) === undefined, 'a partial code resolved as an exact one')
+      const page = await store.customerFirstPage(10)
+      expect(page.length === 2, 'the opening list did not return the whole book')
+      expect(page[0].id === 2, 'the opening list was not ordered by name')
+      return 'a scanned code resolves or does not; the list opens alphabetically'
+    },
+  },
+  {
+    name: 'a customer round-trips with its credit position intact',
+    async run(store) {
+      await store.applyCatalog({
+        full: true,
+        products: [],
+        deletedIds: [],
+        customersSent: true,
+        customers: [
+          customer({
+            id: 1,
+            credit: {
+              creditLimit: 5000,
+              dailyLimit: 1000,
+              monthlyLimit: 0,
+              balance: 1234.56,
+              spend: { today: 250, month: 900 },
+            },
+          }),
+          customer({ id: 2 }),
+        ],
+        closedCustomerIds: [],
+        kv: [],
+      })
+      const withCredit = await store.customerById(1)
+      expect(withCredit?.credit?.balance === 1234.56, 'a stored balance did not come back')
+      expect(withCredit?.credit?.spend.today === 250, 'the period spend did not survive the round trip')
+      const without = await store.customerById(2)
+      /* ABSENT, not zeroed. `offlineCustomer()` reads this to decide whether the
+         till may speak about credit at all, so a store that helpfully defaulted it
+         to an empty object would make every till believe it knew. */
+      expect(without?.credit === undefined, 'a customer with no credit came back carrying one')
+      return 'credit survives whole where it was sent, and stays absent where it was not'
     },
   },
   {

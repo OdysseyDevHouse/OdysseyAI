@@ -173,6 +173,12 @@ export const NAV: NavSection[] = [
          invoice meant knowing which of the two it had moved to. Status is a
          filter on this screen now, and /sales redirects here. */
       { label: 'Invoicing', href: '/invoicing', icon: FileText, built: true, capability: 'sales.view', keywords: 'documents invoice credit note receipt tax sale history quote quotes order orders sales lay-by lay-bys laybys', description: 'Invoices, quotes, orders and lay-bys' },
+      /* Straight under Invoicing, because it is the end of the same day's work:
+         you take the sales, then you count the drawer against them. It sat at
+         the foot of the section, below Gift cards, where it read as one of the
+         occasional screens — and it is the one row here that somebody opens at a
+         fixed time every single day. */
+      { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup', description: 'Count a drawer and close off a shift' },
       /*
        * Orders, Quotes and Lay-bys are NOT rows here.
        *
@@ -204,7 +210,6 @@ export const NAV: NavSection[] = [
        * deliberate exception.
        */
       { label: 'Gift cards', href: '/gift-cards', icon: Gift, built: true, capability: 'giftcards.view', keywords: 'gift card voucher stored value balance top up redeem', description: 'Sell, check and manage stored-value cards' },
-      { label: 'Cash-up', href: '/sales/cashup', icon: Coins, built: true, capability: 'sales.cashup', description: 'Count a drawer and close off a shift' },
       /* Tips is NOT here any more — it moved to Staff. It sat beside the cash-up
          because paying tips out happens at the end of a shift, by whoever counts
          the drawer; but what it decides is what a PERSON takes home, which is

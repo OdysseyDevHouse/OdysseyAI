@@ -56,6 +56,11 @@ const {
   subpageMatches,
 } = nodeRequire('../src/lib/nav') as typeof import('../src/lib/nav')
 
+/* The rail's module split, which is a pure function of NAV's section labels. */
+const { NAV_MODULES, unclaimedSections } = nodeRequire(
+  '../src/lib/navModules',
+) as typeof import('../src/lib/navModules')
+
 /* The global search palette's index. Same stub, same reasoning — it hangs the
    section's icon off every hit and nothing here touches one. */
 const { buildPageIndex, searchPages, scorePage } = nodeRequire(
@@ -607,6 +612,45 @@ check('no page is reachable by URL but linked from nowhere', unreachable, [])
 const existing = new Set(routesUnder(APP_DIR))
 const staleAllowlist = Object.keys(UNLINKED).filter((r) => !existing.has(r)).sort()
 check('the allowlist has no stale entries', staleAllowlist, [])
+
+console.log('\nThe rail splits the menu cleanly')
+/*
+ * Three ways the module rail breaks WITHOUT a type error, because every one of
+ * them is a string agreeing with another string:
+ *
+ *   1. a NAV section is renamed, so the module that claimed it by label claims
+ *      nothing — and its panel silently empties into Back-office, which is the
+ *      remainder and swallows anything unclaimed;
+ *   2. two modules claim the same section, so which panel it lands in depends
+ *      on the order NAV_MODULES happens to be written in;
+ *   3. a module's pinned settings row points at a route that is not there.
+ */
+const navLabels = new Set(NAV.map((s) => s.label))
+const claimed = NAV_MODULES.flatMap((m) => m.sections ?? [])
+
+const ghosts = claimed.filter((label) => !navLabels.has(label)).sort()
+check('every claimed section is a real one', ghosts, [])
+
+const claimedTwice = claimed.filter((label, i) => claimed.indexOf(label) !== i).sort()
+check('no section is claimed by two modules', claimedTwice, [])
+
+/* Back-office is the remainder BY DESIGN — see `sections` in navModules.ts — so
+   a new NAV section lands there without an edit. Asserted rather than assumed,
+   because "the panel is empty" and "the panel is the remainder" look identical
+   until somebody opens it. */
+const remainder = unclaimedSections()
+check('back-office keeps the rest', remainder.includes('Dashboard') && remainder.includes('Setup'), true)
+
+/* A module whose sections all resolve to nothing draws a chip onto a blank
+   panel. Not a type error — every label is spelled right — so it takes
+   somebody opening that one module to notice. */
+const claimsNothing = NAV_MODULES.filter(
+  (m) => m.sections && !m.sections.some((label) => navLabels.has(label)),
+).map((m) => m.key)
+check('no module claims only sections that are gone', claimsNothing, [])
+
+const keys = NAV_MODULES.map((m) => m.key)
+check('every module key is unique', keys.filter((k, i) => keys.indexOf(k) !== i), [])
 
 console.log(failures ? `\n${failures} check(s) FAILED\n` : '\nALL PASS\n')
 process.exit(failures ? 1 : 0)

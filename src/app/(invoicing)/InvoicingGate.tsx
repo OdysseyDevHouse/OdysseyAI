@@ -79,7 +79,7 @@ export default function InvoicingGate({ siteName }: { siteName: string }) {
         lockup beside it says which window this is, set exactly as the chrome
         behind this gate sets it, so signing in and being signed in agree.
       */}
-      <BrandLockup size="lg" sub="Invoicing" />
+      <BrandLockup size="xl" sub="Invoicing" />
 
       <Card>
         {/* Sized by the PAD and nothing else — see PosGate for the measurements

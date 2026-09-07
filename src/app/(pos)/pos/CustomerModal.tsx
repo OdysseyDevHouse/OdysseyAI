@@ -17,6 +17,12 @@ import {
 import { formatMoney } from '@/lib/decimals'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
 import { searchCustomersAction, listTillCustomersAction } from '@/app/(app)/sales/actions'
+import {
+  customerFileState,
+  listOfflineCustomers,
+  searchOfflineCustomers,
+  type CustomerFileState,
+} from '@/lib/posOffline/customers'
 
 /**
  * Who is buying.
@@ -36,9 +42,29 @@ import { searchCustomersAction, listTillCustomersAction } from '@/app/(app)/sale
  * balance under a lock and refuses the sale if the headroom has gone since —
  * another till can take an order against the same account while this basket sits
  * open. Nothing here is a permission.
+ *
+ * ── AND IT WORKS WITH THE LINE DOWN ───────────────────────────────────────
+ *
+ * The search falls back to the till's own customer file, which /api/pos/catalog
+ * ships (schema 10). Before that it did not, and the consequence was quieter than
+ * it sounds: `pos_offline_account_sales` existed, a shop could switch it on, and
+ * the tender pad would duly offer Account to a disconnected till — but the only
+ * way to ATTACH the customer was this dialog, and this dialog was a server
+ * action. The setting was live and unusable at the same time.
+ *
+ * ── WHAT AN EMPTY RESULT MEANS IS THE HARD PART ───────────────────────────
+ *
+ * There are now four emptinesses, not two, and telling them apart is most of what
+ * this component does. A search that missed, a shop with no accounts, a till that
+ * has not synced since the feed existed, and a book too large to hold offline all
+ * render as zero rows — and only the first is a spelling problem. A cashier told
+ * "No account found" for an account that exists will ring the sale up as cash,
+ * and nobody discovers it until the customer queries their statement.
  */
 export function CustomerModal({
   open,
+  siteId,
+  online,
   customer,
   walkInName,
   onClose,
@@ -47,6 +73,9 @@ export function CustomerModal({
   onWalkInName,
 }: {
   open: boolean
+  /** Which shop's stored customer file to read when the line is down. */
+  siteId: number
+  online: boolean
   customer: TillCustomer | null
   walkInName: string
   onClose: () => void
@@ -58,6 +87,15 @@ export function CustomerModal({
   const [results, setResults] = useState<TillCustomer[]>([])
   const [searching, setSearching] = useState(false)
   const [name, setName] = useState(walkInName)
+  /**
+   * Why the stored book cannot answer, when it cannot.
+   *
+   * Null while online, because then it is not the book being asked. Resolved
+   * when the dialog opens rather than when a search comes back empty: the
+   * reason is a property of this TILL, not of the search, and reading it on
+   * every keystroke would be the same answer twenty times.
+   */
+  const [fileState, setFileState] = useState<CustomerFileState | null>(null)
 
   // Seeded each time it opens rather than held: a name typed and abandoned should
   // not reappear on the next customer's sale.
@@ -86,14 +124,45 @@ export function CustomerModal({
     const term = query.trim()
     const timer = setTimeout(() => {
       setSearching(true)
-      const lookup = term.length >= 2 ? searchCustomersAction(term) : listTillCustomersAction()
+      /*
+       * Offline: search what is stored. Falling back on a THROW as well as on the
+       * known-offline flag, matching the product search in PosShell and for the
+       * same reason — a lookup that dies mid-keystroke must show the stored book
+       * rather than an empty pane that reads as "no such account".
+       */
+      const offline = () =>
+        term.length >= 2 ? searchOfflineCustomers(siteId, term) : listOfflineCustomers(siteId)
+      const server = () =>
+        term.length >= 2 ? searchCustomersAction(term) : listTillCustomersAction()
+      const lookup = online ? server().catch(offline) : offline()
       lookup
         .then(setResults)
         .catch(() => setResults([]))
         .finally(() => setSearching(false))
     }, 180)
     return () => clearTimeout(timer)
-  }, [open, query])
+  }, [open, query, online, siteId])
+
+  /*
+   * Why the stored book is empty, asked once per opening.
+   *
+   * Only while offline. Online the book is not what is being searched, and
+   * reporting "this till has never synced" beside results that came from the
+   * server would be true and completely beside the point.
+   */
+  useEffect(() => {
+    if (!open || online) {
+      setFileState(null)
+      return
+    }
+    let live = true
+    void customerFileState(siteId).then((state) => {
+      if (live) setFileState(state)
+    })
+    return () => {
+      live = false
+    }
+  }, [open, online, siteId])
 
   return (
     <Modal
@@ -179,11 +248,30 @@ export function CustomerModal({
           </div>
         )}
 
-        {/* Two different emptinesses, and saying which is the whole job of this
-            block: a search that missed is a spelling problem, an empty book is a
-            shop that has not opened an account yet. "No account found" under an
-            untouched search box would read as the first when it is the second. */}
-        {!searching && results.length === 0 && (
+{/* Four different emptinesses, and saying which is the whole job of this
+            block.
+
+            The first two are about the SHOP: a search that missed is a spelling
+            problem, an empty book is a shop that has not opened an account yet.
+            "No account found" under an untouched search box would read as the
+            first when it is the second.
+
+            The other two are about this TILL, and they only arise offline — it
+            has never synced a customer file, or the shop's book is too large to
+            carry one. Both are states in which an account the cashier is looking
+            at ON A CARD genuinely exists and this screen cannot find it, so they
+            are shown as a WARNING rather than as an empty state. An empty state
+            says "there is nothing here"; the truth is "I cannot see it from
+            here", and a cashier who reads the first will tell the customer their
+            account was closed. */}
+        {!searching && results.length === 0 && fileState && !fileState.ok && (
+          <Callout tone="warning" title="Not searchable on this till right now">
+            {fileState.reason} The sale can still go through as a walk-in, or on
+            cash, and the account can be put right in the back office afterwards.
+          </Callout>
+        )}
+
+        {!searching && results.length === 0 && !(fileState && !fileState.ok) && (
           <EmptyState
             icon={<Icons.Users size={26} />}
             title={query.trim().length >= 2 ? 'No account found' : 'No accounts yet'}

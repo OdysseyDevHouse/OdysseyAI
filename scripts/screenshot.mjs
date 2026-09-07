@@ -572,9 +572,19 @@ for (const p of paths) {
        return Math.min(Math.max(tallest, 1000), 12000)
      })()`,
   )
+  // The full-page capture re-states the metrics to grow the viewport to the
+  // whole document — and must not undo SHOT_PHONE while doing it. Widening a
+  // phone shot back to 1600 does not merely photograph it wrongly: the layout
+  // RE-FLOWS at that width, so what came back was the phone shell stretched
+  // across a desktop viewport, which is a screen no handset can produce.
   await send(
     'Emulation.setDeviceMetricsOverride',
-    { width: 1600, height: fullHeight, deviceScaleFactor: 1, mobile: false },
+    {
+      width: PHONE ? 390 : 1600,
+      height: fullHeight,
+      deviceScaleFactor: PHONE ? 2 : 1,
+      mobile: PHONE,
+    },
     sessionId,
   )
   await sleep(400)

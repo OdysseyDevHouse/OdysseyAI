@@ -258,6 +258,8 @@ export function ReorderTable({ reorder }: { reorder: ReorderPanel }) {
       columns={REORDER_COLUMNS}
       rows={reorder.rows}
       getRowKey={(r) => r.productId}
+      /* Dense like every other table in the widget grid — see RankedTable. */
+      dense
       empty={{
         icon: <Icons.Check size={22} />,
         title: 'Nothing below minimum',

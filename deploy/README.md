@@ -35,7 +35,8 @@ deploy\staged\
     node_modules\       only what the build traced — ~1,340 files, not 34,000
     public\
     sql\                tickets + site migrations
-    scripts\            tickets-migrate.mjs, site-migrate.mjs, box-migrate.mjs
+    scripts\            tickets-migrate.mjs, site-migrate.mjs, box-migrate.mjs,
+                        migrate-all-sites.mjs — drives site-migrate per site
     electron\           siteMigrate.js — site-migrate.mjs imports it
     ecosystem.config.js
     .env.example

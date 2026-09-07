@@ -108,7 +108,92 @@ export async function siteGrantsFor(
   }))
 }
 
-export type ProvisionResult = { ok: true; controlUserId: number } | { ok: false; error: string }
+/** What one person may already open, as the edit form needs to show it. */
+export type UserSiteAccess = {
+  siteIds: number[]
+  role: 'owner' | 'manager' | 'staff'
+  defaultSiteId: number | null
+}
+
+/**
+ * The store access these accounts ACTUALLY hold.
+ *
+ * The Users screen used to open its edit form without this and guessed — every
+ * store the administrator could reach, pre-ticked. Saving then wrote that guess
+ * back through `provisionControlAccount`, so editing somebody's PIN handed them
+ * every branch, and their control-panel role was reset to staff on the way past.
+ * A form that can overwrite a grant has to be shown the grant.
+ *
+ * Read for the whole list in one query rather than per row: a store has tens of
+ * users and the alternative is tens of round trips to a remote database to
+ * render one table.
+ *
+ * Scoped to the GRANTER's stores, exactly like `siteGrantsFor` and like the
+ * suspend clause in `provisionControlAccount`. A store this administrator
+ * cannot see stays invisible here and untouched on save.
+ */
+export async function accessForControlUsers(
+  granterUserId: number,
+  controlUserIds: number[],
+): Promise<Record<number, UserSiteAccess>> {
+  const out: Record<number, UserSiteAccess> = {}
+  if (!granterUserId || !controlUserIds.length) return out
+
+  const rows = await query<RowDataPacket & {
+    user_id: number
+    site_id: number
+    site_role: 'owner' | 'manager' | 'staff'
+    is_default: number
+  }>(
+    `SELECT t.user_id, t.site_id, t.site_role, t.is_default
+       FROM cp2_user_sites t
+       INNER JOIN cp2_user_sites g
+               ON g.site_id = t.site_id AND g.user_id = ? AND g.status = 'active'
+      WHERE t.status = 'active'
+        AND t.user_id IN (${controlUserIds.map(() => '?').join(',')})
+      ORDER BY t.is_default DESC, t.site_id ASC`,
+    [granterUserId, ...controlUserIds],
+  )
+
+  for (const r of rows) {
+    // ORDER BY puts the default first, so the first row seen for a person is
+    // the one whose role and site the form should open on.
+    const entry = out[r.user_id] ?? { siteIds: [], role: r.site_role, defaultSiteId: null }
+    entry.siteIds.push(r.site_id)
+    if (r.is_default) entry.defaultSiteId = r.site_id
+    out[r.user_id] = entry
+  }
+  return out
+}
+
+/**
+ * Everybody the control panel says may open this store.
+ *
+ * The other half of the drift: `cp2_user_sites` is written by the control panel
+ * — a different application — so a store's own Users screen only learns about a
+ * new login when that person happens to sign in here. See site/userSync.ts.
+ */
+export async function accountsWithAccessTo(
+  siteId: number,
+): Promise<{ id: number; email: string; fullName: string }[]> {
+  const rows = await query<RowDataPacket & {
+    id: number
+    email: string
+    full_name: string | null
+  }>(
+    `SELECT u.id, u.email, u.full_name
+       FROM cp2_user_sites g
+       INNER JOIN cp2_users u ON u.id = g.user_id
+      WHERE g.site_id = ? AND g.status = 'active' AND u.status = 'active'
+      ORDER BY u.id ASC`,
+    [siteId],
+  )
+  return rows.map((r) => ({ id: r.id, email: r.email, fullName: r.full_name?.trim() || r.email }))
+}
+
+export type ProvisionResult =
+  | { ok: true; controlUserId: number; adopted: boolean }
+  | { ok: false; error: string }
 
 export type ProvisionInput = {
   email: string
@@ -120,6 +205,21 @@ export type ProvisionInput = {
   defaultSiteId: number | null
   role: 'owner' | 'manager' | 'staff'
   isActive: boolean
+  /**
+   * `existingId` was found by EMAIL, not by a link this store already held.
+   *
+   * ── WHY THAT CHANGES WHAT MAY BE WRITTEN ──────────────────────────────────
+   *
+   * A control account can span stores, so the address typed into "add a user"
+   * may belong to somebody who works for a different shop entirely. Without
+   * this flag the save took that account over: it renamed it and, because the
+   * form asks for a password when adding, reset the password of an account the
+   * administrator has never met — after which they could sign in as them.
+   *
+   * So an account reached this way is only ever GRANTED this store. Its name,
+   * status and password stay as their owner set them.
+   */
+  claimedByEmail?: boolean
 }
 
 function validate(input: ProvisionInput, isNew: boolean): string | null {
@@ -128,6 +228,10 @@ function validate(input: ProvisionInput, isNew: boolean): string | null {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return 'That email address does not look right.'
   if (!input.fullName.trim()) return 'Enter a name.'
   if (!input.siteIds.length) return 'Choose at least one store this person may open.'
+
+  if (input.claimedByEmail && input.password !== null) {
+    return 'That email address already has a back office account. Leave the password blank to give them access to this store — an existing account’s password can only be changed by the person who holds it.'
+  }
 
   if (isNew || input.password !== null) {
     const pw = input.password ?? ''
@@ -193,7 +297,7 @@ export async function provisionControlAccount(
         [email, hash, input.fullName.trim(), input.isActive ? 'active' : 'suspended'],
       )
       userId = (res as { insertId: number }).insertId
-    } else {
+    } else if (!input.claimedByEmail) {
       await tx.execute(
         `UPDATE cp2_users SET email = ?, full_name = ?, status = ? WHERE id = ?`,
         [email, input.fullName.trim(), input.isActive ? 'active' : 'suspended', userId],
@@ -237,7 +341,7 @@ export async function provisionControlAccount(
       )
     }
 
-    return { ok: true as const, controlUserId: userId! }
+    return { ok: true as const, controlUserId: userId!, adopted: input.claimedByEmail === true }
   })
 }
 

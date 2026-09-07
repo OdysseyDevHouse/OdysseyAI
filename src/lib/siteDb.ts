@@ -81,7 +81,45 @@ type SiteDbRow = RowDataPacket & {
  */
 function resolveHost(stored: string): string {
   const override = process.env.SITE_DB_HOST_OVERRIDE?.trim()
-  return pinFamily(override || stored)
+  return pinFamily(aliasHost(override || stored))
+}
+
+/**
+ * Names that only resolve on Odyssey's own network, and the address that
+ * reaches the same machine from anywhere.
+ *
+ * cp2_site_databases is shared: live and a developer's laptop read the SAME
+ * rows, so the one host value in them has to work from both places — and
+ * `odpvdb101.odyssey.co.za` does not. Off the network it is `getaddrinfo
+ * ENOTFOUND`, which is not a connection error a person can act on, and it lands
+ * before sign-in: the users table lives in the site database, so the account
+ * that works live cannot be used locally at all.
+ *
+ * SITE_DB_HOST_OVERRIDE is the wrong tool for this. It replaces the host of
+ * EVERY site, so pointing this one name somewhere reachable would drag a store
+ * on a genuinely different server along with it — see the warning in
+ * lib/site/tabRouting.ts about queries silently following it. This rewrites one
+ * name to one address and leaves every other row alone.
+ */
+const HOST_ALIASES: Record<string, string> = {
+  'odpvdb101.odyssey.co.za': '105.30.57.88',
+}
+
+/**
+ * Swaps an internal-only name for its reachable address.
+ *
+ * Applied to the override as well as to the stored value, so setting
+ * SITE_DB_HOST_OVERRIDE to the name does not quietly reintroduce the failure
+ * this exists to remove.
+ *
+ * Set SITE_DB_HOST_ALIASES=off where the alias is the wrong answer — a machine
+ * INSIDE the network whose firewall will not hairpin its own public address.
+ * Names not listed are returned untouched, so this can never redirect a host
+ * nobody wrote down here.
+ */
+function aliasHost(host: string): string {
+  if (process.env.SITE_DB_HOST_ALIASES?.trim().toLowerCase() === 'off') return host
+  return HOST_ALIASES[host.trim().toLowerCase()] ?? host
 }
 
 /**

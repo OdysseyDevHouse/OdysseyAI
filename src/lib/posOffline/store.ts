@@ -1,8 +1,9 @@
 'use client'
 
 import type { TillProduct } from '../site/tillSearch'
+import type { OfflineCustomer } from '../site/tillCustomers'
 import type { KvRow, LocalDraft, LocalParkedSale } from './db'
-import type { OutboxReturn, OutboxSale } from './types'
+import type { OutboxMovement, OutboxReturn, OutboxSale, OutboxShift } from './types'
 import { Capacitor } from '@capacitor/core'
 
 /**
@@ -65,6 +66,32 @@ export interface PosStore {
     full: boolean
     products: TillProduct[]
     deletedIds: number[]
+    /**
+     * The customer file, on the same terms as the products beside it.
+     *
+     * In the SAME call rather than one of its own, and that is the point of
+     * putting it here: a till must not be able to hold products from one sync
+     * and customers from another. The cursor advances once, for both, or not at
+     * all — which is the same guarantee `kv` rides along for.
+     *
+     * ── `customersSent` IS THE WHOLE CONTRACT ──────────────────────────────
+     *
+     * It separates "the server sent an empty delta" — nothing changed, leave the
+     * table exactly as it is — from "the server sent no customer file at all",
+     * which is what a schema-9 server does and what a failed customer read
+     * degrades to. An empty array cannot tell those apart, and conflating them
+     * would empty a till's customer book every time it reached an older server
+     * during a rolling deploy.
+     *
+     * OPTIONAL, defaulting to false, which reads as "this caller is not touching
+     * the customer file". That is the honest default and not a convenience: the
+     * benchmark and conformance harnesses drive this method to exercise the
+     * PRODUCT paths, and a signature that made them name a customer field would
+     * be asking them to state something they have no opinion about.
+     */
+    customersSent?: boolean
+    customers?: OfflineCustomer[]
+    closedCustomerIds?: number[]
     kv: KvRow[]
   }): Promise<void>
 
@@ -102,6 +129,34 @@ export interface PosStore {
    * reading and writing across a gap another sale can land in.
    */
   adjustStock(deltas: readonly { productId: number; qty: number }[]): Promise<void>
+
+  /* ── Customers: a CACHE, exactly as the products are ──────────────────── */
+
+  customerCount(): Promise<number>
+  /** The account an outbox row names, resolved back to a name for a reprint. */
+  customerById(id: number): Promise<OfflineCustomer | undefined>
+  /** An exact account code — a scanned card, or a code typed in full. */
+  customerByCode(code: string): Promise<OfflineCustomer | undefined>
+  /**
+   * The picker's type-ahead: code, name or phone CONTAINING what was typed.
+   *
+   * One method rather than the three-pass shape `productsByCodePrefix` /
+   * `productsByDescription` uses, because the two searches are not the same
+   * problem. A product search runs on every scan against 40,000 rows and its
+   * passes exist to keep the common case off a table scan. A customer search
+   * runs when a cashier deliberately opens a picker, against a book capped at
+   * 20,000, and it must match the middle of a name — `searchCustomersForTill`
+   * uses `LIKE '%needle%'` on all three columns, and an offline picker that
+   * quietly matched only prefixes would find a different set of people than the
+   * same box does online.
+   *
+   * Ordering is the store's, and it is deliberately the SERVER's: an exact code
+   * first, then by name. See `searchOfflineCustomers`, which is where that
+   * lives — this returns rows, not a ranking.
+   */
+  customerSearch(needle: string, limit: number): Promise<OfflineCustomer[]>
+  /** The opening list, before anything is typed. By name, as the server's is. */
+  customerFirstPage(limit: number): Promise<OfflineCustomer[]>
 
   /* ── kv: single documents, read whole, never queried by field ─────────── */
 
@@ -147,6 +202,27 @@ export interface PosStore {
   returnPending(limit: number): Promise<OutboxReturn[]>
   returnCount(status: OutboxReturn['status']): Promise<number>
   returnPruneSynced(before: string): Promise<number>
+
+  /* ── The shift queue: not money, but losing one strands money ─────────
+       A queued shift is what a sale's `shiftUid` names. Lose it and those
+       takings post to no reconciliation, which is the hole 252 closes. So it
+       is kept on outbox terms: nothing here prunes a pending row. ────────── */
+
+  shiftPut(row: OutboxShift): Promise<void>
+  shiftGet(shiftUid: string): Promise<OutboxShift | undefined>
+  shiftUpdate(shiftUid: string, changes: Partial<OutboxShift>): Promise<void>
+  /** Oldest first — a shift must land before the sales and movements on it. */
+  shiftPending(limit: number): Promise<OutboxShift[]>
+  shiftCount(status: OutboxShift['status']): Promise<number>
+  shiftPruneSynced(before: string): Promise<number>
+
+  /* ── Drawer movements: closer to money than the shift they hang on ────── */
+
+  movementPut(row: OutboxMovement): Promise<void>
+  movementUpdate(movementUid: string, changes: Partial<OutboxMovement>): Promise<void>
+  movementPending(limit: number): Promise<OutboxMovement[]>
+  movementCount(status: OutboxMovement['status']): Promise<number>
+  movementPruneSynced(before: string): Promise<number>
 
   /* ── Parked baskets: nobody has paid, so these ARE deletable ──────────── */
 

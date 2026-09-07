@@ -7,6 +7,7 @@ import {
   ActionTile,
   Badge,
   BrandLockup,
+  BrandMark,
   CategoryTile,
   ChoiceTile,
   BulkActionBar,
@@ -92,6 +93,7 @@ import {
   TintButton,
   StoreColumnTable,
   StatStrip,
+  StatIcon,
   StatTile,
   SummaryList,
   SummaryRow,
@@ -112,6 +114,7 @@ import {
   SettingRowsSkeleton,
   TableToolbar,
   ToolbarControl,
+  TabBar,
   Tabs,
   Textarea,
   TextLink,
@@ -198,6 +201,7 @@ export default function StyleGuidePage() {
         <FormSection />
         <FieldGroupSection />
         <BadgeSection />
+        <StatIconSection />
         <SectionTitleSection />
         <CalloutSection />
         <SetupTextSection />
@@ -223,6 +227,7 @@ export default function StyleGuidePage() {
         <MenuSection />
         <ColumnPickerSection />
         <TabsSection />
+        <TabBarSection />
         <TableControlsSection />
         <DataTableSection />
         <SelectionSection />
@@ -345,6 +350,20 @@ function ButtonsSection() {
         <Button variant="danger">
           <Icons.Trash size={16} />
           Delete
+        </Button>
+      </Row>
+      <Row>
+        <Spec
+          name="size"
+          note='md (36px) is the default and what a toolbar wears. sm (32px) is an inline table action. xs (28px, 12px type) is an affordance inside another element&apos;s heading — the dashboard&apos;s "View more" — one step under the column headings beneath it. touch/touch-lg are the till&apos;s and must not appear in the back office.'
+        />
+        <Button variant="secondary">Medium</Button>
+        <Button variant="secondary" size="sm">
+          Small
+        </Button>
+        <Button variant="ghost" size="xs">
+          View more
+          <Icons.ArrowRight size={12} />
         </Button>
       </Row>
       <Row>
@@ -1067,6 +1086,43 @@ function BadgeSection() {
           <Badge solid tone="neutral">
             48 minutes
           </Badge>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+function StatIconSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Stat medallions"
+        description="<StatIcon> — the tinted square that opens a figure in a dashboard band. ONE tint, always brand: colour in this app means state, and a number is not in a state. The glyph carries the difference between cells."
+      />
+      <CardBody className="flex flex-wrap items-center gap-4">
+        <StatIcon>
+          <Icons.Money size={16} />
+        </StatIcon>
+        <StatIcon>
+          <Icons.Percent size={16} />
+        </StatIcon>
+        <StatIcon>
+          <Icons.Clock size={16} />
+        </StatIcon>
+        <StatIcon>
+          <Icons.Boxes size={16} />
+        </StatIcon>
+        <div className="flex items-center gap-3">
+          <StatIcon>
+            <Icons.ShoppingCart size={16} />
+          </StatIcon>
+          <div>
+            <div className="text-xs font-medium text-stat-label">Total sales</div>
+            <div className="flex items-baseline gap-2">
+              <span className="numeric text-base font-semibold text-ink">9 123</span>
+              <span className="text-xs text-muted">finalised in the period</span>
+            </div>
+          </div>
         </div>
       </CardBody>
     </Card>
@@ -1974,6 +2030,74 @@ function TabsSection() {
   )
 }
 
+function TabBarSection() {
+  const [tab, setTab] = useState('home')
+  return (
+    <Card>
+      <CardHeader
+        title="Tab bar"
+        description="<TabBar /> — the phone's bottom navigation. Four destinations and a menu; never actions. Only ever rendered in the phone layout, where it replaces the hamburger drawer"
+      />
+      <CardBody>
+        {/* Boxed to its real width: the bar spans whatever it is given, and at
+            full page width the five tabs look like a toolbar rather than the
+            handset control it is. */}
+        <div className="w-full max-w-[390px] overflow-hidden rounded-card border border-border">
+          <TabBar
+            aria-label="Style guide example"
+            items={[
+              {
+                key: 'home',
+                label: 'Home',
+                icon: <Icons.LayoutGrid size={20} />,
+                onClick: () => setTab('home'),
+                active: tab === 'home',
+              },
+              {
+                key: 'reports',
+                label: 'Reports',
+                icon: <Icons.LineChart size={20} />,
+                onClick: () => setTab('reports'),
+                active: tab === 'reports',
+              },
+              {
+                key: 'stock',
+                label: 'Stock',
+                icon: <Icons.Boxes size={20} />,
+                onClick: () => setTab('stock'),
+                active: tab === 'stock',
+              },
+              {
+                key: 'orders',
+                label: 'Orders',
+                icon: <Icons.PackageOpen size={20} />,
+                onClick: () => setTab('orders'),
+                active: tab === 'orders',
+                badge: 3,
+              },
+              {
+                key: 'more',
+                label: 'More',
+                icon: <Icons.MoreHorizontal size={20} />,
+                onClick: () => setTab('more'),
+                active: tab === 'more',
+              },
+            ]}
+          />
+        </div>
+        <p className="mt-4 text-sm text-muted">
+          Selected: <span className="font-medium text-ink">{tab}</span>. In the app each tab passes{' '}
+          <code className="rounded bg-surface-2 px-1 font-mono text-xs">href</code> and renders as a
+          link; the demo uses{' '}
+          <code className="rounded bg-surface-2 px-1 font-mono text-xs">onClick</code>, which is what
+          the menu tab does. A <code className="rounded bg-surface-2 px-1 font-mono text-xs">badge</code>{' '}
+          past 9 shows as 9+.
+        </p>
+      </CardBody>
+    </Card>
+  )
+}
+
 function TableControlsSection() {
   const [view, setView] = useState('all')
   const [search, setSearch] = useState('')
@@ -2233,6 +2357,12 @@ function DataTableSection() {
           </>
         )}
       />
+      <CardHeader
+        tone="default"
+        title="dense"
+        description="<DataTable dense /> — one type step down (12px body, 11px headings) for a table that is a PANEL on a screen rather than the screen itself: the dashboard widgets. Not for a list screen somebody works from all day — if a table is the reason its screen exists, it stays at the default size."
+      />
+      <DataTable dense columns={PRODUCT_COLUMNS} rows={PRODUCTS} getRowKey={(row) => row.id} />
     </Card>
   )
 }
@@ -4189,6 +4319,7 @@ const TOKENS = [
   { name: 'success', swatch: 'bg-success', note: 'Good / in stock' },
   { name: 'warning', swatch: 'bg-warning', note: 'Needs attention' },
   { name: 'danger', swatch: 'bg-danger', note: 'Destructive / blocked' },
+  { name: 'stat-label', swatch: 'bg-stat-label', note: 'Captions above a headline figure' },
 ]
 
 function LayoutSection() {
@@ -4240,7 +4371,18 @@ function WordmarkSection() {
           <div className="flex flex-wrap items-end gap-8">
             <BrandLockup size="sm" sub="Retail" />
             <BrandLockup sub="Hospitality" />
-            <BrandLockup size="lg" sub="Invoicing" />
+            <BrandLockup size="lg" sub="Back-office" />
+            <BrandLockup size="xl" sub="Invoicing" />
+          </div>
+        </div>
+        <div className="grid gap-2">
+          <Spec
+            name="<BrandMark className> / <BrandLockup mark={false}>"
+            note="The two halves, for chrome that is split across columns — the back office draws the globe on its module rail and the name on the panel beside it, because the mark belongs to the rail (it never changes) and the module on the subline belongs to the panel (it does). The ONLY supported way to separate them; a screen reaching for /logo-icon.svg itself is what this prevents."
+          />
+          <div className="flex flex-wrap items-center gap-8">
+            <BrandMark className="h-9" />
+            <BrandLockup size="lg" mark={false} sub="Back-office" />
           </div>
         </div>
         <div className="grid gap-2">

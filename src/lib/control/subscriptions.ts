@@ -114,9 +114,10 @@ const ATTEMPT_WINDOW_MINUTES = 15
  * and any freshness window silently always true.
  *
  * That is why `pending_started_at` is written with `UTC_TIMESTAMP()` while the
- * rest of the control database still uses NOW(): this is the only column here
- * whose value is compared against `Date.now()` in JavaScript, so it is the only
- * one where the skew is a bug rather than a cosmetic offset.
+ * rest of the control database still uses NOW(): it is compared against
+ * `Date.now()` in JavaScript, which is what makes the skew a bug rather than a
+ * cosmetic offset. `cp2_users.locked_until` is written the same way, and for
+ * the same reason — see the note in lib/auth.ts.
  */
 function startedAtMs(value: unknown): number | null {
   if (value instanceof Date) return value.getTime()

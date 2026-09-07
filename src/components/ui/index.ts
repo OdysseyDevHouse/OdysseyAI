@@ -13,7 +13,7 @@
 
 export { Button, ButtonLink, type ButtonSize, type ButtonVariant } from './Button'
 export { TintButton } from './TintButton'
-export { BrandLockup } from './BrandLockup'
+export { BrandLockup, BrandMark } from './BrandLockup'
 export { PromoArt, type PromoArtKind } from './PromoArt'
 export {
   PosSignInArt,
@@ -47,6 +47,7 @@ export {
 } from './styles'
 export {
   TABLE,
+  TABLE_DENSE,
   TABLE_HEAD_ROW,
   TABLE_FRAME,
   TABLE_HEAD_STICKY,
@@ -58,6 +59,7 @@ export {
   TABLE_TD_INPUT,
   TABLE_TH,
   TABLE_TH_CAPTION,
+  TABLE_TH_DENSE,
   TABLE_TOTAL_ROW,
 } from './styles'
 export { SortableList } from './SortableList'
@@ -109,6 +111,9 @@ export {
   GeneratedPictureModal,
 } from './GeneratedPicturePicker'
 export { Badge, type BadgeTone } from './Badge'
+/* The tinted medallion beside a figure — dashboard bands and anything else that
+   lays numbers out in a row. See StatIcon for why it has only one tint. */
+export { StatIcon } from './StatIcon'
 export { Callout, type CalloutTone } from './Callout'
 /* Linkifies "…under Setup → Tills" inside a plain-string message. Callout and
    EmptyState already run their text through it, so reach for it directly only
@@ -187,6 +192,7 @@ export { BulkActionBar } from './BulkActionBar'
 export { BulkOptionsDialog, type BulkOption, type BulkOptionGroup } from './BulkOptionsDialog'
 
 export { Tabs, LinkTabs, type TabItem } from './Tabs'
+export { TabBar, type TabBarItem } from './TabBar'
 export { Menu, MenuItem, MenuSeparator } from './Menu'
 export { HtmlEditor, type InsertToken } from './HtmlEditor'
 export { Modal, ConfirmModal } from './Modal'

@@ -2,12 +2,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { activeScaleRules } from '@/lib/site/scaleBarcodes'
 import { siteIdForCapability } from '@/lib/auth'
 import { browseForTill, tillCatalogTotal } from '@/lib/site/tillSearch'
+import { customersForTill, customersClosedSince } from '@/lib/site/tillCustomers'
 import { listDepartments } from '@/lib/site/departments'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { liveSpecials } from '@/lib/site/specials'
 import { pendingSchedulesForTill } from '@/lib/site/priceSchedules'
 import { listPriceStructures } from '@/lib/site/lookups'
-import { getSettings } from '@/lib/site/settings'
+import { getSetting, getSettings } from '@/lib/site/settings'
 import { terminalForDevice } from '@/lib/site/terminals'
 import { touchDevice } from '@/lib/site/devices'
 import { printConfigForDevice } from '@/lib/site/documentPrinters'
@@ -34,10 +35,24 @@ export const dynamic = 'force-dynamic'
  *
  * ── WHAT IS DELIBERATELY NOT HERE ─────────────────────────────────────────
  *
- * CUSTOMER BALANCES AND CREDIT LIMITS. The full debtors book in browser IndexedDB
- * is a data-protection exposure with almost no offline payoff, because account
- * sales are refused offline anyway (`offlineCapability.offlineBlockedTender`). What
- * ships is enough to put a name on a slip and nothing more.
+ * CUSTOMER BALANCES AND CREDIT LIMITS, ON A SHOP THAT DID NOT ASK FOR THEM.
+ *
+ * This used to be unconditional, and the reasoning was: the full debtors book in
+ * browser IndexedDB is a data-protection exposure with no offline payoff, because
+ * account sales are refused offline anyway.
+ *
+ * The second half of that stopped being true when `pos_offline_account_sales`
+ * landed — a shop may now decide a disconnected till MAY sell on credit, and
+ * `salesPosting.ts` honours it. But nothing ever shipped a customer to decide it
+ * about, so the setting could be switched on and changed nothing: the picker it
+ * needs is a server action. The flag was live and dead at the same time.
+ *
+ * So the exposure is now the SHOP'S CALL rather than this file's. A shop that has
+ * not opted in gets identity only — a name on a slip, a trade discount, a price
+ * structure — which is what every till held before. A shop that has opted in gets
+ * the four debtors figures beside it, because it asked to make that decision
+ * offline and cannot make it blind. See `OfflineCustomer`, where `credit` being
+ * ABSENT is load-bearing rather than merely empty.
  *
  * COST PRICES beyond what `TillProduct` already carries for margin. Same reasoning:
  * a till does not need the whole product file to sell from it.
@@ -91,7 +106,14 @@ export const dynamic = 'force-dynamic'
 /* 9 added `printing` — this machine's resolved printer setup. A new stored key,
    so a till holding schema 8 must take a full load rather than patch into a
    shape it does not have. */
-const CATALOG_SCHEMA = 9
+/*
+ * 10 added the CUSTOMER FILE. A new store rather than a new key — 20,000 rows
+ * queried by code, name and phone is what a table is for — and a till on 9 has
+ * no such table at all, so there is nothing for a delta to patch into. It holds
+ * no customers and its picker needs the network, which is today's behaviour and
+ * correct; what it must not do is believe an empty book is the shop's book.
+ */
+const CATALOG_SCHEMA = 10
 
 /**
  * Ceiling on one response.
@@ -186,6 +208,18 @@ export async function GET(req: NextRequest) {
      products, and only products, are priced through it, and passing a pending
      promise into a helper made the ordering harder to read than it is. */
   const structures = await listPriceStructures(siteId)
+
+  /*
+   * Whether this shop lets a disconnected till sell on account.
+   *
+   * Read BEFORE the fan-out, and on its own rather than as part of the settings
+   * batch below, because it decides the SHAPE of the customer feed rather than
+   * merely riding along in it — `customersForTill` cannot be started until the
+   * answer is known. It is in the batch as well, which is not duplication: that
+   * copy is stored on the till for a reload with no network, this one is a
+   * decision made here and now.
+   */
+  const offlineAccountSales = (await getSetting(siteId, 'pos_offline_account_sales')) === '1'
   const priceStructure = structures.find((s) => s.isDefault) ?? structures[0] ?? null
 
   const [
@@ -202,6 +236,8 @@ export async function GET(req: NextRequest) {
     instructions,
     variantAxes,
     scaleRules,
+    customerFeed,
+    closedCustomerIds,
   ] = await Promise.all([
     productsSince(siteId, cutoff, priceStructure?.id ?? null, terminal?.stockLocationId ?? null),
     wantsDelta ? removedSince(siteId, cutoff!) : Promise.resolve<number[]>([]),
@@ -259,6 +295,12 @@ export async function GET(req: NextRequest) {
       'lot_capture_strict',
       'sales_number_scope',
       'store_number',
+      /* Whether a disconnected till may sell on account. It arrives as a page
+         prop too, which is the copy the tender pad reads while the session is
+         alive — this one is for the reload with no network, exactly as the quick
+         keys and the menus are. A till whose prop and whose catalog disagreed
+         would offer the Account key on one render and not the next. */
+      'pos_offline_account_sales',
       /* NOT `pos_mode`. It is no longer a shop setting — each till carries its
          own, and this route already knows which till is asking. It is injected
          into the map below, from `terminal`, so the offline shape is unchanged
@@ -298,7 +340,24 @@ export async function GET(req: NextRequest) {
     allVariantAxes(siteId).catch(() => ({})),
     /* The scale barcode shapes this shop reads. Active ones only: a paused rule
        belongs on the setup screen and must never reach a scanner. */
-    activeScaleRules(siteId)
+    activeScaleRules(siteId),
+    /*
+     * The debtors book, or the identity half of it — see `customersForTill`,
+     * which decides which by reading the shop's own setting rather than being
+     * told by this route.
+     *
+     * Tolerant of a failure, unlike the products beside it: a shop whose customer
+     * file cannot be read must still be able to SELL. An empty book means the
+     * picker asks the server, which is where it asked before this feed existed.
+     */
+    customersForTill(siteId, { cutoff, withCredit: offlineAccountSales }).catch(() => ({
+      customers: [],
+      total: 0,
+      overLimit: false,
+    })),
+    wantsDelta
+      ? customersClosedSince(siteId, cutoff!).catch(() => [])
+      : Promise.resolve<number[]>([]),
   ])
 
   // This till's own invoice sequence, so it can number a sale with no server.
@@ -532,6 +591,23 @@ export async function GET(req: NextRequest) {
        * Empty on a shop with no groups, which is most of them.
        */
       variantAxes,
+      /*
+       * The customer file, and the two figures that let the till audit it.
+       *
+       * `customerTotal` is the same device `productTotal` is, and it is here for
+       * the same reason plus one more: `customers.ts` can HARD delete an account
+       * that never traded, and a row that is simply gone leaves no `updated_at`
+       * for `closedCustomerIds` to find. The count is the only thing that ever
+       * notices.
+       *
+       * `customersOverLimit` is not an error. It says the book is larger than a
+       * till should hold, so none was sent — and the till must say "search needs
+       * the network" rather than draw its own conclusion from an empty table.
+       */
+      customers: customerFeed.customers,
+      customerTotal: customerFeed.total,
+      customersOverLimit: customerFeed.overLimit,
+      closedCustomerIds,
     },
     {
       // Never cached by anything in between. A catalog is per-site, per-device and

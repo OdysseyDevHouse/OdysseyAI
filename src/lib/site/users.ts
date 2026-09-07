@@ -120,6 +120,134 @@ export async function getUserByControlId(
   return row ? mapUser(row) : null
 }
 
+/** Every local row carrying an address. More than one is a fault, not a state
+ *  — see `resolveLocalUser` — but the reconciliation has to be able to see it
+ *  rather than pick one at random through a LIMIT 1. */
+async function usersWithEmail(siteId: number, email: string): Promise<SiteUser[]> {
+  const rows = await siteQuery<UserRow>(
+    siteId,
+    `${SELECT_USER} WHERE u.email = ? ORDER BY u.id ASC`,
+    [email.trim().toLowerCase()],
+  )
+  return rows.map(mapUser)
+}
+
+/** The local user holding an email address, or null. Used by the Users screen
+ *  to refuse a second row for somebody who is already on this store. */
+export async function getUserByEmail(siteId: number, email: string): Promise<SiteUser | null> {
+  const rows = await usersWithEmail(siteId, email)
+  return rows[0] ?? null
+}
+
+/**
+ * Which local row is the person who just signed in?
+ *
+ * ── WHY THIS IS NOT SIMPLY `control_user_id` ────────────────────────────────
+ *
+ * The link and the address are written in two different databases by two
+ * different applications, so they can end up describing different people. When
+ * they do, trusting the link alone signs somebody in AS SOMEBODY ELSE: the
+ * screen greets them by the other person’s name and, far worse, hands them the
+ * other person’s role. That happened on a live store — an account linked to the
+ * owner’s row got the owner’s permissions while showing its own email in the
+ * corner, which is the only reason anybody noticed.
+ *
+ * So the ADDRESS decides. It is what the person typed, it is what the password
+ * was checked against upstream, and 041 already describes the local column as a
+ * copy of `cp2_users.email`. `control_user_id` is a cache of that relationship,
+ * and a cache that disagrees with its source is corrected, not obeyed.
+ *
+ *   1. A local row carrying this address IS this person. If it is linked to
+ *      some other account, the link moves — freeing the id first, because
+ *      `uq_user_control` allows only one row to hold it.
+ *   2. Otherwise the link is trusted, but only while it does not contradict:
+ *      a linked row with a DIFFERENT address belongs to somebody else, so the
+ *      link is dropped rather than the row overwritten. Nobody’s name or PIN
+ *      is destroyed by a reconciliation; the row simply stops claiming to be
+ *      an account it is not, and shows on the Users screen as a back-office
+ *      user with no sign-in until somebody corrects its address.
+ *   3. Otherwise there is no row here yet, and one is created.
+ *
+ * The site’s first user is made an owner — a brand-new store has nobody to
+ * grant permissions, so somebody has to arrive holding them. Everyone
+ * afterwards arrives with NO role, because by then there IS an owner who can
+ * decide, and defaulting a stranger into permissions nobody chose is how a
+ * back door gets left open.
+ *
+ * Called from sign-in (auth.ts) and from the Users screen (site/userSync.ts),
+ * so both doors reach the same answer. Every write here is idempotent and
+ * guarded by `uq_user_control`, which is what makes it safe to run on a page
+ * render and during a concurrent sign-in.
+ */
+export async function resolveLocalUser(
+  siteId: number,
+  controlUserId: number,
+  name: string,
+  email: string,
+): Promise<SiteUser> {
+  const address = email.trim().toLowerCase()
+
+  /* ── 1. THE ADDRESS WINS ────────────────────────────────────────────────── */
+  const carrying = address ? await usersWithEmail(siteId, address) : []
+  if (carrying.length) {
+    /* Ordinarily one row. When a duplicate has been left behind by an older
+       save, prefer the one already linked to this account, then an unlinked
+       one, and only then the earliest — so the same person lands on the same
+       row every time rather than alternating between two. */
+    const row =
+      carrying.find((u) => u.controlUserId === controlUserId) ??
+      carrying.find((u) => u.controlUserId === null) ??
+      carrying[0]
+
+    if (row.controlUserId !== controlUserId) {
+      await siteExecute(
+        siteId,
+        'UPDATE users SET control_user_id = NULL WHERE control_user_id = ? AND id <> ?',
+        [controlUserId, row.id],
+      )
+      await linkControlAccount(siteId, row.id, controlUserId, address)
+      return (await getUser(siteId, row.id)) ?? row
+    }
+    return row
+  }
+
+  /* ── 2. NO ROW CARRIES IT: IS THE LINK STILL TRUE? ──────────────────────── */
+  const linked = await getUserByControlId(siteId, controlUserId)
+  if (linked) {
+    const held = (linked.email ?? '').trim().toLowerCase()
+    if (!held) {
+      // A row linked before it had an address — fill it in rather than making
+      // a second one for the same person.
+      await siteExecute(siteId, 'UPDATE users SET email = ? WHERE id = ?', [address, linked.id])
+      return { ...linked, email: address }
+    }
+    if (held === address) return linked
+
+    // It carries somebody else's address. Let go of it; a row is created below.
+    await siteExecute(siteId, 'UPDATE users SET control_user_id = NULL WHERE id = ?', [linked.id])
+  }
+
+  /* ── 3. NOBODY HERE YET ─────────────────────────────────────────────────── */
+  await siteExecute(
+    siteId,
+    `INSERT INTO users (name, email, control_user_id, user_type, role_id, is_active)
+     SELECT ?, ?, ?, 'back_office',
+            CASE WHEN (SELECT COUNT(*) FROM users u2) = 0
+                 THEN (SELECT id FROM roles WHERE is_owner = 1 LIMIT 1)
+                 ELSE NULL END,
+            1
+       FROM DUAL
+      WHERE NOT EXISTS (SELECT 1 FROM users u3 WHERE u3.control_user_id = ?)`,
+    [name, address || null, controlUserId, controlUserId],
+  )
+
+  const created = await getUserByControlId(siteId, controlUserId)
+  // The INSERT is guarded against duplicates, so a null here means the row was
+  // created by a concurrent request and then read back — never a real absence.
+  if (!created) throw new Error(`Could not create a site user for control account ${controlUserId}`)
+  return created
+}
+
 /**
  * Whether a PIN is already taken at this site.
  *

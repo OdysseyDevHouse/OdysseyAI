@@ -16,6 +16,7 @@ import { deviceId } from '@/lib/deviceId'
 import { useOfflineShell } from '@/lib/posOffline/useOfflineShell'
 import { useOfflineTill } from '@/lib/posOffline/useOfflineTill'
 import { finaliseOffline, returnOffline, currentShiftId } from '@/lib/posOffline/finaliseOffline'
+import { bankingShift, currentShift, type LocalShift } from '@/lib/posOffline/shiftOffline'
 import {
   findByCode,
   searchOffline,
@@ -2233,7 +2234,11 @@ export default function PosShell({
       siteId,
       terminal: terminal ? { id: terminal.id, code: terminal.code } : null,
       operator: { userId: operatorUserId, name: operatorName },
-      shiftId: await currentShiftId(siteId),
+      /* Both halves from ONE read. A shift opened offline has a uid and no id;
+         one opened online has the id. The server prefers the uid where it is set
+         — see postOfflineSale — so a sale rung up after a mid-outage reboot banks
+         into the shift this till actually opened rather than into nothing. */
+      ...(await bankingShift(siteId)),
       customer: {
         id: state.customer?.id ?? null,
         // `||` not `??` — an untyped name trims to '', which is not nullish.
@@ -4874,10 +4879,21 @@ export default function PosShell({
    * an offline sale land in the right drawer's reconciliation.
    */
   const noteShift = useCallback(
-    (shiftId: number | null, userName?: string) => {
-      setShiftLabel(shiftId ? `Shift · ${userName ?? 'open'}` : null)
+    (shift: LocalShift | null, userName?: string) => {
+      const shiftId = shift?.id ?? null
+      /*
+       * ON A SHIFT is not the same as HAVING AN ID.
+       *
+       * A shift opened offline (252) has a uid and no id until it syncs, and the
+       * till is genuinely trading on it — so the chip says so, and the gate stays
+       * down. `shiftId` stays null, which is correct rather than convenient:
+       * everything that needs a real shift NUMBER (the detailed cash-up, the void
+       * action) is a server call that cannot run on this till anyway.
+       */
+      const onShift = shift !== null && (shift.id !== null || shift.uid !== null)
+      setShiftLabel(onShift ? `Shift · ${userName ?? 'open'}` : null)
       setShiftId(shiftId)
-      setShiftStatus((s) => (s ? { ...s, open: shiftId !== null } : s))
+      setShiftStatus((s) => (s ? { ...s, open: onShift } : s))
       /*
         NO SHIFT MEANS NOTHING TO MANAGE.
 
@@ -4889,8 +4905,15 @@ export default function PosShell({
         in front of a gate; that guard covers the frame between this and the
         gate appearing, and this covers the state afterwards.
       */
-      if (shiftId === null) setManagingShift(false)
-      void kvPut(siteId, KV.shift, shiftId ? { id: shiftId } : null).catch(() => {})
+      if (!onShift) setManagingShift(false)
+      /* BOTH halves, always. They describe one drawer, and a till holding an id
+         from one shift beside a uid from another would bank its sales into
+         whichever the server happened to resolve first. */
+      void kvPut(
+        siteId,
+        KV.shift,
+        onShift ? { id: shiftId, uid: shift?.uid ?? null } : null,
+      ).catch(() => {})
     },
     [siteId],
   )
@@ -4931,7 +4954,7 @@ export default function PosShell({
     void tillShiftStatusAction(terminal?.id ?? null)
       .then((result) => {
         if ('ok' in result) return
-        noteShift(result.shift?.id ?? null, result.shift?.userName)
+        noteShift(result.shift ? { id: result.shift.id, uid: null } : null, result.shift?.userName)
         setShiftStatus({
           mode: result.mode,
           canCashup: result.canCashup,
@@ -5031,7 +5054,7 @@ export default function PosShell({
     void tillShiftStatusAction(terminal?.id ?? null)
       .then((result) => {
         if ('ok' in result) return
-        noteShift(result.shift?.id ?? null, result.shift?.userName)
+        noteShift(result.shift ? { id: result.shift.id, uid: null } : null, result.shift?.userName)
         setShiftStatus({
           mode: result.mode,
           canCashup: result.canCashup,
@@ -6378,7 +6401,7 @@ export default function PosShell({
           canCashup={closedGate.canCashup}
           online={till.online}
           onOpened={(shiftId) => {
-            noteShift(shiftId, operatorName)
+            noteShift({ id: shiftId, uid: null }, operatorName)
             /* Straight to the floor in hospitality, straight to the basket in
                retail — the same place a sign-in lands, because opening the till
                is the step BEFORE that rather than a detour off it. */
@@ -7083,10 +7106,14 @@ export default function PosShell({
         */
         open={managingShift && !closedGate}
         online={till.online}
+        siteId={siteId}
         terminalId={terminal?.id ?? null}
+        operatorUserId={operatorUserId}
+        operatorName={operatorName}
         pendingSales={till.pending}
+        pendingMovements={till.pendingMovements}
         onClose={() => setManagingShift(false)}
-        onShiftChanged={(shiftId) => noteShift(shiftId, operatorName)}
+        onShiftChanged={(shift) => noteShift(shift, operatorName)}
         onDeclare={() => {
           setManagingShift(false)
           setDeclaringCashup(true)
@@ -7101,12 +7128,15 @@ export default function PosShell({
         open={drawerMovement !== null}
         type={drawerMovement}
         online={till.online}
+        siteId={siteId}
         terminalId={terminal?.id ?? null}
+        operatorUserId={operatorUserId}
+        operatorName={operatorName}
         onClose={() => setDrawerMovement(null)}
         /* The status bar shows the shift's sale count and float; a movement
            changes what the drawer holds, so it is re-read rather than left
            showing the figure from before the payout. */
-        onRecorded={() => noteShift(shiftId, operatorName)}
+        onRecorded={() => void currentShift(siteId).then((s) => noteShift(s, operatorName))}
       />
 
       {/* The detailed cash-up the "Cash up" key opens: notes and coin counted
@@ -7119,6 +7149,7 @@ export default function PosShell({
            unclaimed machine, which the dialog shows rather than guesses. */
         terminalId={terminal?.id ?? null}
         pendingSales={till.pending}
+        pendingMovements={till.pendingMovements}
         onClose={() => setDeclaringCashup(false)}
         onFinalized={() => noteShift(null)}
       />
@@ -7243,6 +7274,8 @@ export default function PosShell({
 
       <CustomerModal
         open={pickingCustomer}
+        siteId={siteId}
+        online={till.online}
         customer={state.customer}
         walkInName={state.customerName}
         onClose={() => setPickingCustomer(false)}
