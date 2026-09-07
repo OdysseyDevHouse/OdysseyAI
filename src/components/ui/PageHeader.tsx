@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { ArrowLeft } from './icons'
-import { buttonClass } from './styles'
+import { buttonClass, EDIT_COLUMN } from './styles'
 
 /** Title block at the top of a screen. One per page, above everything else. */
 export function PageHeader({
@@ -12,6 +12,7 @@ export function PageHeader({
   action,
   backHref,
   backLabel = 'Back',
+  narrow = false,
 }: {
   title: string
   /**
@@ -40,40 +41,60 @@ export function PageHeader({
   backHref?: string
   /** Announced to screen readers; the arrow itself carries no text. */
   backLabel?: string
+  /**
+   * Hold the header's contents to the same centred column the body uses.
+   *
+   * For a screen whose body wears EDIT_COLUMN — the product and instruction
+   * editors. Those cap their content at 1100px and centre it, so a full-bleed
+   * header left the back arrow and the title starting 90px to the LEFT of the
+   * card below them and the Save button ending 90px to the right: the two rows
+   * a person reads as one block, visibly not sharing an edge.
+   *
+   * Opt-in rather than the default because most of the 228 screens using this
+   * are full-width lists, and centring their headers would introduce exactly
+   * the misalignment this fixes, in the other direction.
+   *
+   * The RULE still spans the window — it separates the header from the page,
+   * not the column from the column, and a border stopping at 1100px would read
+   * as a torn edge. Only the contents are held in.
+   */
+  narrow?: boolean
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
-      <div className="flex min-w-0 items-center gap-3">
-        {backHref && (
-          <Link
-            href={backHref}
-            aria-label={backLabel}
-            className="flex size-8 shrink-0 items-center justify-center rounded-control text-muted transition hover:bg-surface-2 hover:text-ink"
-          >
-            <ArrowLeft size={18} />
-          </Link>
-        )}
-        {/* Never shown next to a back arrow — see the prop's note. */}
-        {icon && !backHref && (
-          <span
-            aria-hidden
-            className="flex size-9 shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand"
-          >
-            {icon}
-          </span>
-        )}
-        {/* Title and subtitle on one line: a detail screen's subtitle names the
-            record, so it reads as "Edit product — 2-Hole Punch 22" rather than
-            as a second, competing heading. */}
-        <div className="flex min-w-0 items-baseline gap-2.5">
-          <h1 className="shrink-0 text-lg font-semibold text-ink">{title}</h1>
-          {/* `self-center` so a pill sits on the title's optical centre rather
-              than on its baseline, where its own padding would hang it low. */}
-          {status && <span className="shrink-0 self-center">{status}</span>}
-          {subtitle && <p className="truncate text-sm text-muted">{subtitle}</p>}
+    <div className="border-b border-border px-6 py-4">
+      <div className={`flex items-center justify-between gap-4 ${narrow ? EDIT_COLUMN : ''}`}>
+        <div className="flex min-w-0 items-center gap-3">
+          {backHref && (
+            <Link
+              href={backHref}
+              aria-label={backLabel}
+              className="flex size-8 shrink-0 items-center justify-center rounded-control text-muted transition hover:bg-surface-2 hover:text-ink"
+            >
+              <ArrowLeft size={18} />
+            </Link>
+          )}
+          {/* Never shown next to a back arrow — see the prop's note. */}
+          {icon && !backHref && (
+            <span
+              aria-hidden
+              className="flex size-9 shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand"
+            >
+              {icon}
+            </span>
+          )}
+          {/* Title and subtitle on one line: a detail screen's subtitle names the
+              record, so it reads as "Edit product — 2-Hole Punch 22" rather than
+              as a second, competing heading. */}
+          <div className="flex min-w-0 items-baseline gap-2.5">
+            <h1 className="shrink-0 text-lg font-semibold text-ink">{title}</h1>
+            {/* `self-center` so a pill sits on the title's optical centre rather
+                than on its baseline, where its own padding would hang it low. */}
+            {status && <span className="shrink-0 self-center">{status}</span>}
+            {subtitle && <p className="truncate text-sm text-muted">{subtitle}</p>}
+          </div>
         </div>
+        {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
       </div>
-      {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
     </div>
   )
 }

@@ -12,8 +12,9 @@ export type TabItem<T extends string> = {
 }
 
 /**
- * Tabs — the underline tab bar (as on Edit Product). Use it for every tabbed
- * screen so the active-tab treatment stays identical.
+ * Tabs — the tab bar (as on Edit Product), an amber rule that wraps whichever
+ * tab is open. Use it for every tabbed screen so the active-tab treatment stays
+ * identical.
  *
  * Tabs switch between *sections of one record*. To filter one list into slices,
  * use SegmentedControl instead.
@@ -96,28 +97,60 @@ function TabBar({
   className: string
   ariaLabel?: string
 }) {
-  /* overflow-y-hidden alongside overflow-x-auto on purpose: the tabs use -mb-px
-     to sit their underline on this border, which makes the content 1px taller
-     than the bar. Without pinning the vertical axis, `overflow-x-auto` implies
-     `overflow-y: auto` and the browser shows a stray vertical scrollbar. */
+  /* `items-stretch`, not `items-center`: every cell — the two fillers included
+     — has to reach the full height of the bar, because each one owns the piece
+     of rule that crosses it. Centred, the fillers would collapse to nothing and
+     the line would exist only under the tabs.
+
+     overflow-y-hidden alongside overflow-x-auto on purpose: without pinning the
+     vertical axis, `overflow-x-auto` implies `overflow-y: auto` and the browser
+     shows a stray vertical scrollbar for the 1px the borders add. */
   return (
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={`flex items-center gap-6 overflow-x-auto overflow-y-hidden border-b border-border ${className}`}
+      className={`flex items-stretch overflow-x-auto overflow-y-hidden ${className}`}
     >
+      {/* The rule runs in from the left edge of whatever the bar sits in… */}
+      <div className="w-6 shrink-0 border-b border-nav-accent" aria-hidden />
       {children}
+      {/* …and out to the right edge. flex-1 so it takes all the slack, which is
+          what makes the rule reach the edge at any number of tabs. */}
+      <div className="flex-1 border-b border-nav-accent" aria-hidden />
     </div>
   )
 }
 
-/* -mb-px pulls the active underline onto the bar's own border so the two read
-   as one line rather than a double rule. */
+/* ── THE RULE WRAPS THE OPEN TAB ─────────────────────────────────────────
+   One amber rule runs the full width of whatever the bar sits in and routes
+   AROUND the open tab: in from the left edge, up its left side, over its top,
+   down its right side, and out to the right edge. The open tab is the gap in
+   the line. Every other tab has the rule pass UNDER it and nothing over, so the
+   only thing drawn above the bar's baseline is the box around where you are.
+
+   This replaced a short amber underline stamped beneath the open tab. Both
+   answer "you are here" in the same amber the sidebar marks the open section
+   with, so the colour means one thing in both places; the box just says it
+   with a shape instead of a mark, and reads at a glance on a bar of six tabs
+   where a 60px underline did not.
+
+   The label is `ink` rather than `brand`: on a bar of grey labels the SELECTED
+   one should be the most readable thing there, and the brand blue was actually
+   a step down from black (3.55:1 against white, versus 17.63). A coloured label
+   also reads as a link — the one thing a tab you are already on is not. That
+   leaves the rule carrying the selection on its own. Its 2.15:1 against white
+   would fail as TEXT and is right for a hairline: it is a graphical marker
+   beside a 17.63:1 label, not the thing being read.
+
+   An active tab trades its BOTTOM border for a top and two sides. An inactive
+   one still declares `border-t`, in transparent — the border has to occupy its
+   1px whether or not it paints, or every label would jump upward the moment its
+   tab lost selection. */
 function tabClass(active: boolean) {
-  return `-mb-px flex items-center gap-2 border-b-2 px-0.5 pb-2.5 text-sm font-medium whitespace-nowrap transition ${
+  return `flex items-center gap-2 border-nav-accent px-4 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition ${
     active
-      ? 'border-brand text-brand'
-      : 'border-transparent text-muted hover:border-border-strong hover:text-ink'
+      ? 'rounded-t-control border-t border-r border-b-0 border-l text-ink'
+      : 'border-t border-t-transparent border-b text-muted hover:text-ink'
   }`
 }
 

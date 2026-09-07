@@ -321,7 +321,7 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`relative z-40 flex shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-150 ${
+      className={`relative z-40 flex shrink-0 flex-col border-r border-nav-border bg-nav-surface transition-[width] duration-150 ${
         collapsed ? 'w-16' : 'w-64'
       }`}
     >
@@ -333,13 +333,19 @@ export default function Sidebar({
              the COMPANY, hence the default "Software" subline; a till passes
              its module there instead. */
           <Link href="/dashboard" className="flex min-w-0 items-center">
-            <BrandLockup />
+            {/* The wordmark is `text-ink`, which is near-black in the light
+                theme — invisible on this dark rail. `[&_.wordmark-lockup]`
+                repaints just the word and leaves the mark and the brand-toned
+                rules alone, rather than forking the shared component: it is
+                also used by DeviceNotLicensed, on a normal themed page. */}
+            <BrandLockup className="[&_.wordmark-lockup]:!text-nav-ink" />
           </Link>
         )}
         <Button
           variant="bare"
           size="sm"
           iconOnly
+          className="!text-nav-muted hover:!bg-nav-surface-2 hover:!text-nav-ink"
           onClick={toggleCollapsed}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -369,7 +375,7 @@ export default function Sidebar({
           onClick={() => setSearchOpen(true)}
           title="Search everything (Ctrl+K)"
           aria-label="Search everything"
-          className={`flex h-control w-full items-center rounded-control border border-border-strong bg-surface text-sm text-faint transition hover:border-brand/50 ${
+          className={`flex h-control w-full items-center rounded-control border border-nav-border bg-nav-surface-2 text-sm text-nav-faint transition hover:border-brand/50 ${
             collapsed ? 'justify-center px-0' : 'gap-2 px-3'
           }`}
         >
@@ -379,7 +385,7 @@ export default function Sidebar({
               <span className="flex-1 truncate text-left">Search</span>
               {/* The shortcut, shown rather than hidden in a tooltip — it is the
                   fastest way in and nobody discovers it otherwise. */}
-              <kbd className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted">
+              <kbd className="shrink-0 rounded border border-nav-border px-1.5 py-0.5 text-[11px] text-nav-faint">
                 Ctrl K
               </kbd>
             </>
@@ -410,7 +416,14 @@ export default function Sidebar({
       {/* `overflow-y-auto` also clips horizontally, which would cut a flyout off
           at the rail's edge. The collapsed rail is 9 icon rows and never needs
           to scroll, so it drops the clipping and lets the panel escape. */}
-      <nav className={`flex-1 px-2 pb-2 ${collapsed ? 'overflow-visible' : 'overflow-y-auto'}`}>
+      {/* `space-y-1` between rows. They used to stack flush, which was fine
+          while a selected row was only tinted text — now that both the open
+          section and the current page carry a FILLED block, two touching fills
+          ran together into one shape and you could not see where the section
+          ended and the page inside it began. */}
+      <nav
+        className={`flex-1 space-y-1 px-2 pb-2 ${collapsed ? 'overflow-visible' : 'overflow-y-auto'}`}
+      >
         {/* The whole menu, always. It is no longer filtered by anything: search
             happens in the palette, so the menu's job is only to be the menu —
             which means it never rearranges itself under somebody mid-click. */}
@@ -475,8 +488,19 @@ function SectionRow({
     }
   }, [flyout])
 
-  const rowClass = `flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
-    active ? 'bg-brand/10 font-medium text-brand' : 'text-muted hover:bg-surface-2 hover:text-ink'
+  /* The section you are in is a SOLID block, not a tint.
+
+     A 10% wash of the brand reads as "slightly different grey" down a rail of
+     thirty rows — on the dark theme it was very nearly invisible. Filling the
+     row makes the answer to "where am I?" a single glance rather than a hunt.
+     `nav-active` rather than `brand` because white on the brand itself is
+     3.55:1, and this row carries its own label; the token is the same blue a
+     step darker, measured to carry white at AA. The amber rule pinned to the
+     left edge is the second half of that — see --color-nav-accent. */
+  const rowClass = `relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+    active
+      ? 'bg-nav-active font-medium text-nav-active-ink before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r before:bg-nav-accent before:content-[""]'
+      : 'text-nav-muted hover:bg-nav-surface-2 hover:text-nav-ink'
   }`
 
   // A section that is itself a destination — Dashboard, and every hub.
@@ -531,9 +555,14 @@ function SectionRow({
           /* ml-3, not ml-1: the row sits inside the nav's own px-2, so
              `left-full` stops short of the rail's edge and a smaller offset
              leaves the panel overlapping the icons it belongs to. */
-          className="absolute left-full top-0 z-50 ml-3 w-56 rounded-card border border-border bg-surface p-1.5 shadow-pop"
+          /* Drawn in the RAIL's colours, not the page's. It renders the same
+             ChildLink rows the expanded rail does, and those are now written
+             against the dark panel — on a `bg-surface` popover the pale
+             `text-nav-muted` labels were a light grey on white. It reads as
+             the rail leaning out, which is what it is. */
+          className="absolute left-full top-0 z-50 ml-3 w-56 space-y-0.5 rounded-card border border-nav-border bg-nav-surface p-1.5 shadow-pop"
         >
-          <p className="px-2 pb-1.5 pt-1 text-xs font-semibold text-ink">{section.label}</p>
+          <p className="px-2 pb-1.5 pt-1 text-xs font-semibold text-nav-ink">{section.label}</p>
           {hasChildren ? (
             section.items!.map((item) => (
               <ChildLink
@@ -544,7 +573,7 @@ function SectionRow({
               />
             ))
           ) : (
-            <p className="px-2 py-1.5 text-xs text-muted opacity-60">Not built yet</p>
+            <p className="px-2 py-1.5 text-xs text-nav-muted opacity-60">Not built yet</p>
           )}
         </div>
       )}
@@ -553,7 +582,12 @@ function SectionRow({
       {!collapsed && expanded && hasChildren && (
         // The rail echoes the screenshot and makes the nesting readable without
         // indenting the labels off the edge.
-        <div className="ml-5 border-l border-border pl-2">
+        //
+        // `mt-1` lifts the whole list off the section row above it, and
+        // `space-y-0.5` separates the children from each other — a smaller step
+        // than the gap between sections, so the group still reads as one block
+        // hanging off its parent rather than as eight loose rows.
+        <div className="mt-1 ml-5 space-y-0.5 border-l border-nav-border pl-2">
           {section.items!.map((item) => (
             <ChildLink key={item.href} item={item} isActive={isActive} />
           ))}
@@ -561,7 +595,7 @@ function SectionRow({
       )}
 
       {!collapsed && expanded && !hasChildren && (
-        <p className="ml-5 border-l border-border py-1.5 pl-5 text-xs text-muted opacity-60">
+        <p className="ml-5 border-l border-nav-border py-1.5 pl-5 text-xs text-nav-muted opacity-60">
           Not built yet
         </p>
       )}
@@ -592,7 +626,7 @@ function ChildLink({
       <span
         title="Not built yet"
         aria-disabled
-        className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-muted opacity-45"
+        className="flex cursor-not-allowed items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-nav-muted opacity-45"
       >
         <ItemIcon size={15} className="shrink-0" />
         <span className="truncate">{item.label}</span>
@@ -611,12 +645,27 @@ function ChildLink({
       {...(item.href === TILL_HREF ? tillLinkProps : {})}
       {...(opensInInvoicingWindow(item.href) ? invoicingLinkProps : {})}
       className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm transition ${
-        itemActive ? 'font-medium text-brand' : 'text-muted hover:bg-surface-2 hover:text-ink'
+        /* The whole row takes a fill, and the label goes white and bold.
+
+           Not the blue block the parent section wears: the section is the
+           branch you opened and the child is the page you are on, and two
+           identical highlights three rows apart read as two selections rather
+           than as one place. A quieter band says "within that, this one".
+
+           White rather than a brand tint, because every sibling is now white —
+           a coloured label would make the current row the FAINTEST on the rail,
+           which is the opposite of marking it. */
+        itemActive
+          ? 'bg-nav-child-active font-semibold text-nav-ink'
+          : 'text-nav-muted hover:bg-nav-surface-2 hover:text-nav-ink'
       }`}
     >
       <ItemIcon size={15} className="shrink-0" />
       <span className="truncate">{item.label}</span>
-      {itemActive && <span className="ml-auto size-1.5 rounded-full bg-brand" />}
+      {/* The amber pip, echoing the rule on the open section above it — the
+          rail's one non-blue mark, so "you are here" is the same colour at both
+          levels. `ml-auto` pins it to the trailing edge of the filled row. */}
+      {itemActive && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-nav-accent" />}
     </Link>
   )
 }

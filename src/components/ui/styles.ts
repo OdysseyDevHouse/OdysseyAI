@@ -322,8 +322,24 @@ export const TABLE_SCROLLER = 'overflow-auto'
  * This covers EVERY table in the app, including the two grids built by hand
  * outside DataTable: BulkPricingGrid and TableScroller use this same frame, so
  * a report and a price grid meet their card edge exactly as a list does.
+ *
+ * ── WHY IT CLIPS TO THE CARD'S RADIUS ─────────────────────────────────────
+ *
+ * `rounded-[inherit] overflow-hidden`, together. A Card is `rounded-card` and
+ * does NOT clip its children; the header row is opaque (`bg-surface-2`) with
+ * square corners, so where a table meets the card edge the grey painted OVER
+ * the curve and left a light notch in the corner.
+ *
+ * The clip goes on the child, never on the Card — a Card that clips would also
+ * cut off menus and tooltips that legitimately overhang it.
+ *
+ * `rounded-[inherit]` rather than a literal `rounded-card` because a table is
+ * only SOMETIMES the first thing in its card: put a toolbar above it and the
+ * top corners must stay square. Inheriting means the frame takes a radius only
+ * where it actually sits in a rounded corner, and 0 everywhere else — one
+ * class that is right in both places, with nothing for a caller to remember.
  */
-export const TABLE_FRAME = 'p-0'
+export const TABLE_FRAME = 'rounded-[inherit] overflow-hidden p-0'
 
 /**
  * The header row of a scrolling table. Sticks to the top of TABLE_SCROLLER so
@@ -370,8 +386,28 @@ export const TABLE_HEAD_STICKY_INSET = TABLE_HEAD_STICKY
 
    Wrapping a long VALUE is untouched: this is on the <th>, and `TABLE_TD`
    sets no such rule. */
+/* ── THE FILL AND THE RULE BOTH BELONG ON THE CELL ────────────────────────
+
+   `border-b border-border bg-surface-2` is repeated here even though
+   TABLE_HEAD_ROW sets `border-y` and TABLE_HEAD_STICKY sets `bg-surface-2` on
+   the row and the <thead> above it. Neither of those reaches the cell, and the
+   table is `border-collapse: collapse` (see TABLE), where a CELL's border wins
+   over the row's: the `th` resolved to `border-bottom: 0px` and the header ended
+   up with no bottom rule at all.
+
+   The symptom was a long list looking like a scrolled-away row was bleeding
+   through the sticky header. It was not — the header band is opaque. What was
+   missing was the divider under it, so the partially scrolled row directly
+   beneath sat flush against the headings with nothing separating the two, and
+   read as one torn row. Measured on /products: the header spans 218→260 and
+   the row under it runs 226→279.
+
+   The background is on the cell for the same reason: under collapsed borders a
+   fill painted on a `thead` or `tr` does not reliably cover a `td` scrolling
+   beneath a STICKY header. The thead fill is kept as well — it still covers
+   the gaps between cells that the collapsed border model leaves. */
 export const TABLE_TH =
-  'px-4 pt-3 pb-2.5 text-left align-top text-[13px] font-normal leading-tight whitespace-nowrap text-muted'
+  'border-b border-border bg-surface-2 px-4 pt-3 pb-2.5 text-left align-top text-[13px] font-normal leading-tight whitespace-nowrap text-muted'
 
 /**
  * A second line under a column heading, saying what the column MEANS.
@@ -628,8 +664,14 @@ export const CONTROL_QUIET_FOCUS = 'focus:shadow-none focus:border-brand/50'
  * a variants panel and a photographs gallery down one page; when only the form
  * carried the cap, the two panels below ran to the window edge and the right
  * edge of the page zig-zagged. Anything stacked as part of one record wears this.
+ *
+ * CENTRED, not left-aligned. The cap is about line length and has nothing to say
+ * about which side the leftover room goes; parked left, every screen wider than
+ * 1100px grew a dead margin down the right (228px at 1584px, measured) and the
+ * form read as pushed aside rather than laid out. Splitting the slack puts the
+ * column under the middle of the window, where the eye already is.
  */
-export const EDIT_COLUMN = 'w-full max-w-[1100px]'
+export const EDIT_COLUMN = 'mx-auto w-full max-w-[1100px]'
 
 /* ── The till's coloured edge ─────────────────────────────────────────────── */
 

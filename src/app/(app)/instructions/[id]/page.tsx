@@ -47,6 +47,8 @@ export default async function EditInstructionPage({
         title={group.name}
         subtitle={`${group.optionCount} option${group.optionCount === 1 ? '' : 's'} · used by ${group.productCount} product${group.productCount === 1 ? '' : 's'}`}
         backHref="/instructions"
+        /* Body is EDIT_COLUMN — see the prop's note. */
+        narrow
       />
 
       <PageBody>

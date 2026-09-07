@@ -24,6 +24,8 @@ export default async function NewInstructionPage() {
         title="New instruction"
         subtitle="A question the till asks when an item is sold"
         backHref="/instructions"
+        /* Body is EDIT_COLUMN — see the prop's note. */
+        narrow
       />
       <PageBody>
         <InstructionForm

@@ -34,8 +34,23 @@
   /* Each accent has three steps: base (fill), -ink (hover/active + text on a
      tint), -soft (the pale background used by badges and active pills). */
   --color-brand: #1890cd;
-  --color-brand-ink: #1b4fc0;
-  --color-brand-soft: #eaf1fe;
+  --color-brand-ink: #116894;
+  --color-brand-soft: #e8f4fa;
+
+  /* The SOLID fill behind a selected navigation row, and the ink on it.
+     Deliberately NOT --color-brand: white on the brand measures 3.55:1, which
+     fails AA for the row's own label, and a nav item is read on every screen.
+     A quarter-step darker carries white at 5.77:1 and still reads as the same
+     blue. See the note on the sidebar's active row in Sidebar.tsx. */
+  --color-nav-active: #126c9a;
+  --color-nav-active-ink: #ffffff;
+
+  /* The bar down the left edge of the section you are in. Amber rather than
+     more blue: its whole job is to be findable in one glance down a rail where
+     everything else is blue or grey, and a blue marker on a blue row is the
+     one thing that cannot do that. */
+  --color-nav-accent: #f59e0b;
+
   /* The rule a card wears down its left edge when its heading is brand-toned.
      Used by SectionTitle, CardHeader and SettingGroup — see the note further
      down for how it is drawn.
@@ -168,6 +183,55 @@
      below — "keep the two in sync" here means keeping them the SAME. */
   --color-on-image: #ffffff; /* words and icons over a picture */
   --color-image-scrim: #101317; /* the wash that makes them legible */
+
+  /* --- The navigation rail ------------------------------------------------ */
+  /* The sidebar is DARK IN BOTH THEMES, and these are the second group that
+     must not flip — same rule as the overlay colours above, for a different
+     reason.
+
+     It used to be `bg-surface`, so it was white beside a white page and the
+     rail's only edge was a 1px border. The nav is not content: it is the frame
+     the content sits in, and holding it dark separates "where I can go" from
+     "what I am looking at" without a rule having to do that work. That
+     separation is the point, so it cannot be allowed to disappear in one
+     theme — which is exactly what following `surface` did.
+
+     So these are NOT redefined in either dark block below. Keeping the two in
+     sync here means keeping them the SAME. Every colour the rail needs is
+     defined here rather than borrowed from a themed token, because a borrowed
+     one inverts underneath it: `text-muted` on this panel is a mid grey in the
+     light theme and legible, but the label colour has to be chosen against
+     THIS background, not against the page's. */
+  --color-nav-surface: #111a40; /* the rail itself */
+  --color-nav-surface-2: #242c4f; /* hover fill, the search box */
+  --color-nav-border: #323a5b; /* its right edge and inner rules */
+  --color-nav-ink: #ffffff; /* a label you are meant to read */
+  /* Every row reads white. It was a mid grey (#93a0b8), which is the usual way
+     to rank a menu — the page you are on loud, everything else quiet. Asked
+     for white outright, so the ranking now comes from the FILL and the amber
+     rule on the current row rather than from dimming the other thirty. That is
+     the stronger signal of the two anyway; the grey was doing very little that
+     the filled block was not already saying. */
+  --color-nav-muted: #ffffff; /* every row that is not the current one */
+  /* The search box's placeholder and its Ctrl-K hint. These are the one thing
+     on the rail that is NOT a destination — prompt text, not a label — so it
+     keeps the dimmer step the rows gave up. At white it read as another menu
+     entry, which is the one thing a placeholder must not do. */
+  --color-nav-faint: #93a0b8;
+  /* There is no separate colour for the current page's label: it is nav-ink
+     like the rest, set apart by weight and by the row's own fill. A blue one
+     was tried and removed — against white siblings it made the row you are on
+     the FAINTEST on the rail. */
+
+  /* The fill behind the selected CHILD row.
+     Distinct from --color-nav-active, which fills the open SECTION. The two
+     mark different things and must not look alike: the section is the branch
+     you have opened, the child is the page you are actually on. The section
+     gets the loud blue block; the child gets this quieter band, so the pair
+     reads as "inside Products → on Products" rather than as two equal
+     selections competing down the rail. */
+  --color-nav-child-active: #3c446c;
+
 
   /* --- Tile swatches ------------------------------------------------------ */
   /* The palette offered when a product has no photo and gets a coloured
@@ -433,9 +497,15 @@
     --color-muted: #98a2b3;
     --color-faint: #6b7686;
 
-    --color-brand: #6a9bff;
-    --color-brand-ink: #8fb4ff;
-    --color-brand-soft: #1c2942;
+    --color-brand: #46a6d7;
+    --color-brand-ink: #74bce1;
+    --color-brand-soft: #173243;
+
+    /* Kept in step with the [data-theme="dark"] block below — see the notes
+       there for why each of these is the value it is. */
+    --color-nav-active: #1c7cac;
+    --color-nav-active-ink: #ffffff;
+    --color-nav-accent: #fbbf24;
     /* No --color-brand-rule here on purpose: it is defined as var(--color-brand)
        and so has already followed the line above. */
 
@@ -528,9 +598,17 @@
   --color-muted: #98a2b3;
   --color-faint: #6b7686;
 
-  --color-brand: #6a9bff;
-  --color-brand-ink: #8fb4ff;
-  --color-brand-soft: #1c2942;
+  --color-brand: #46a6d7;
+  --color-brand-ink: #74bce1;
+  --color-brand-soft: #173243;
+
+  /* Lighter than the light theme's fill, not darker: this sits on the dark
+     sidebar (#171b21), where the job is to stand OUT of the panel rather than
+     off a white page. Measured: white on it is 4.64:1 (AA), and it is 3.73:1
+     against the sidebar itself, so the row reads as a filled block. */
+  --color-nav-active: #1c7cac;
+  --color-nav-active-ink: #ffffff;
+  --color-nav-accent: #fbbf24;
   /* No --color-brand-rule here either — see the block above. */
 
   --color-success: #4ade80;

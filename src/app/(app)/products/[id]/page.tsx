@@ -231,6 +231,10 @@ export default async function EditProductPage({
         title="Edit product"
         subtitle={product.description}
         backHref={backHref}
+        /* The form below is EDIT_COLUMN — capped and centred — so the header
+           takes the same column and the back arrow, the title and the buttons
+           share their edges with the card underneath. */
+        narrow
         action={
           <>
             {/* Capturing a batch of products lands here after every save —

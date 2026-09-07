@@ -44,6 +44,8 @@ export default async function NewProductPage() {
         title="New product"
         subtitle="Normal product"
         backHref="/products"
+        /* Body is EDIT_COLUMN — see the prop's note. */
+        narrow
         // The only Save on this screen — there is no Actions menu here, because
         // a product that does not exist yet cannot be archived or deleted.
         action={<SaveProductButton />}

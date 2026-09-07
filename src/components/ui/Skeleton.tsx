@@ -169,13 +169,25 @@ export function ToolbarSkeleton({
   )
 }
 
-/** A row of tab labels above a section's content. */
+/**
+ * A row of tab labels above a section's content.
+ *
+ * Mirrors Tabs' own geometry — the amber rule running in from the left edge,
+ * under each tab, and out to the right — so the bar does not jump when the real
+ * tabs land. What it deliberately does NOT draw is the box around the open tab:
+ * a skeleton does not yet know which tab that is, and guessing the first one
+ * would flash a wrong selection on every screen whose tab comes from the URL.
+ */
 export function TabsSkeleton({ tabs = 4 }: { tabs?: number }) {
   return (
-    <div aria-hidden className="flex items-center gap-1 border-b border-border">
+    <div aria-hidden className="flex items-stretch">
+      <div className="w-6 shrink-0 border-b border-nav-accent" />
       {Array.from({ length: tabs }, (_, i) => (
-        <Skeleton key={i} className="mb-2 h-6 w-24" />
+        <div key={i} className="border-t border-t-transparent border-b border-nav-accent px-4 pt-2 pb-2.5">
+          <Skeleton className="h-5 w-24" />
+        </div>
       ))}
+      <div className="flex-1 border-b border-nav-accent" />
     </div>
   )
 }

@@ -181,8 +181,11 @@ export default async function PortalStatementPage({
         {/* Filters one list into slices, so it is a tab bar rather than the
             record-section Tabs — and href-driven, because the filter lives in
             the URL and this page is server-rendered. */}
+        {/* No horizontal padding: the bar's rule is meant to reach the card's
+            edges, and a px-4 here would stop it 16px short on both sides. The
+            lead-in before the first tab is the bar's own, not a gutter. */}
         <LinkTabs
-          className="px-4 pt-1"
+          className="pt-1"
           aria-label="Which lines to show"
           value={showAll ? 'all' : 'open'}
           items={[

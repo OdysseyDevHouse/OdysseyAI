@@ -1935,7 +1935,7 @@ function TabsSection() {
     <Card>
       <CardHeader
         title="Tabs"
-        description="<Tabs /> — the underline tab bar from the Edit Product page; use it for every tabbed screen"
+        description="<Tabs /> — the tab bar from the Edit Product page: an amber rule that runs edge to edge and wraps whichever tab is open. Use it for every tabbed screen"
       />
       <CardBody>
         <Tabs
@@ -1954,6 +1954,21 @@ function TabsSection() {
           <code className="rounded bg-surface-2 px-1 font-mono text-xs">label</code> only for a
           text-only tab bar.
         </p>
+
+        <div className="mt-6">
+          <p className="mb-2 text-xs text-muted">Text-only, with counts</p>
+          <Tabs
+            aria-label="Document status"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { value: 'general', label: 'General', count: 12 },
+              { value: 'properties', label: 'Properties', count: 4 },
+              { value: 'suppliers', label: 'Suppliers' },
+              { value: 'reports', label: 'Reports', count: 118 },
+            ]}
+          />
+        </div>
       </CardBody>
     </Card>
   )
