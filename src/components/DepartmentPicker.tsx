@@ -76,7 +76,15 @@ export default function DepartmentPicker({
      locally is what makes a new department appear the moment it exists rather
      than a beat later. */
   const [added, setAdded] = useState<Department[]>([])
-  const all = useMemo(() => [...departments, ...added], [departments, added])
+  /* Once refresh() lands, the server is sending the same row this list is
+     still holding a stand-in for, so the stand-in has to drop out — otherwise
+     the department renders twice in its level, under one id, and React is
+     asked to key two options the same. The server row wins: it is the real
+     one, with the real counts. */
+  const all = useMemo(() => {
+    const fromServer = new Set(departments.map((d) => d.id))
+    return [...departments, ...added.filter((d) => !fromServer.has(d.id))]
+  }, [departments, added])
 
   const [editor, setEditor] = useState<DepartmentEditorTarget | null>(null)
   const [busy, setBusy] = useState(false)

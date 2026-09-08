@@ -65,8 +65,9 @@ export function SettingRow({
           drag handle in `icon` drew the grip on top of the tint. */}
       {leading && <span className="-mr-2 flex shrink-0 items-center">{leading}</span>}
 
+      {/* accent, not brand — the medallion carries the module. */}
       {icon && (
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent">
           {icon}
         </span>
       )}
@@ -116,7 +117,7 @@ export function SettingGroup({
     // Card with a brand heading. See the note in globals.css.
     <div
       className={`overflow-hidden rounded-card border border-border bg-surface shadow-card ${
-        brand ? 'border-l-2 border-l-brand-rule' : ''
+        brand ? 'border-l-2 border-l-accent-rule' : ''
       }`}
     >
       <div className="border-b border-border px-6 py-4">

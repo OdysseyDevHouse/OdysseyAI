@@ -2,6 +2,8 @@ import 'server-only'
 import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne, execute, transaction } from './db'
 import { hashPassword } from './password'
+import { portalConfig } from './control/portalApi'
+import * as portal from './control/usersPortal'
 
 /**
  * Back-office accounts in the control database.
@@ -19,19 +21,23 @@ import { hashPassword } from './password'
  * `created_by` and `updated_by` are deliberately left NULL: they carry foreign
  * keys to `users` — v2's own admin-staff table, a different thing from
  * cp2_users — and a store has no id in it to write.
+ *
+ * ── EVERY FUNCTION HERE ASKS THE PORTAL FIRST ───────────────────────────────
+ *
+ * A desktop build has no control-database socket to open — `pool()` refuses,
+ * loudly, so a missing route shows up in testing rather than as a silent
+ * degradation at a counter. This file had no route, so Users and permissions
+ * did not degrade on such a machine: it threw, and the screen died.
+ *
+ * So each function below asks control/usersPortal.ts first and keeps its query
+ * as the fallback for everything the portal cannot answer — a cloud install, a
+ * dev checkout, a machine with no key. Same shape as devices.ts and
+ * control/modules.ts, and for the same reason: the transport moved, the rules
+ * did not.
  */
 
 /** Back-office passwords are set by an administrator, so this is the floor. */
 export const MIN_CONTROL_PASSWORD = 10
-
-export type ControlAccount = {
-  id: number
-  email: string
-  fullName: string | null
-  status: 'active' | 'suspended'
-  mustChangePassword: boolean
-  lastLoginAt: string | null
-}
 
 export type SiteGrant = {
   siteId: number
@@ -42,7 +48,30 @@ export type SiteGrant = {
   granted: boolean
 }
 
-export async function findControlAccountByEmail(email: string): Promise<ControlAccount | null> {
+/**
+ * The control account id behind an email address, or null when there is none.
+ *
+ * ── WHY AN ID RATHER THAN THE ACCOUNT ───────────────────────────────────────
+ *
+ * This used to be findControlAccountByEmail and returned the whole row, of
+ * which its one caller used `id` and nothing else. The narrowing is what let it
+ * cross the portal: a site key belongs to a shop's machine, and a route that
+ * named the holder of any address on the platform would turn every shop into a
+ * directory of every other shop's staff. An id is meaningless without a
+ * granter-scoped provision call behind it.
+ *
+ * The question it answers is "does this address already have a login", asked so
+ * that saving GRANTS that account this store instead of creating a second one
+ * and colliding on the unique index. See saveUserAction.
+ */
+export async function controlAccountIdForEmail(email: string): Promise<number | null> {
+  /* `undefined` from the portal means it could not be asked — not "no such
+     account". Getting those two the wrong way round would create a duplicate
+     login for somebody who already has one, so only a real answer short-cuts
+     the query below. */
+  const viaPortal = await portal.controlAccountIdForEmail(email)
+  if (viaPortal !== undefined) return viaPortal
+
   const row = await queryOne<RowDataPacket & {
     id: number
     email: string
@@ -55,15 +84,7 @@ export async function findControlAccountByEmail(email: string): Promise<ControlA
        FROM cp2_users WHERE email = ? LIMIT 1`,
     [email.trim().toLowerCase()],
   )
-  if (!row) return null
-  return {
-    id: row.id,
-    email: row.email,
-    fullName: row.full_name,
-    status: row.status,
-    mustChangePassword: !!row.must_change_password,
-    lastLoginAt: row.last_login_at,
-  }
+  return row ? row.id : null
 }
 
 /**
@@ -78,6 +99,9 @@ export async function siteGrantsFor(
   granterUserId: number,
   targetControlUserId: number | null,
 ): Promise<SiteGrant[]> {
+  const viaPortal = await portal.siteGrantsFor(granterUserId, targetControlUserId)
+  if (viaPortal) return viaPortal
+
   const rows = await query<RowDataPacket & {
     site_id: number
     site_code: string
@@ -139,6 +163,9 @@ export async function accessForControlUsers(
   const out: Record<number, UserSiteAccess> = {}
   if (!granterUserId || !controlUserIds.length) return out
 
+  const viaPortal = await portal.accessForControlUsers(granterUserId, controlUserIds)
+  if (viaPortal) return viaPortal
+
   const rows = await query<RowDataPacket & {
     user_id: number
     site_id: number
@@ -176,6 +203,14 @@ export async function accessForControlUsers(
 export async function accountsWithAccessTo(
   siteId: number,
 ): Promise<{ id: number; email: string; fullName: string }[]> {
+  /* Answered for the SIGNING site, so the portal is only the right answer when
+     this machine's key is for the site being asked about. Anywhere else — a
+     cloud back office reconciling another store — the query below is. */
+  if (portalConfig()?.siteId === siteId) {
+    const viaPortal = await portal.accountsWithAccessTo()
+    if (viaPortal) return viaPortal
+  }
+
   const rows = await query<RowDataPacket & {
     id: number
     email: string
@@ -258,6 +293,20 @@ export async function provisionControlAccount(
   existingId: number | null,
   input: ProvisionInput,
 ): Promise<ProvisionResult> {
+  /* ── THE PORTAL DECIDES, OR NOBODY DOES ──────────────────────────────────
+   *
+   * Unlike the reads above, a refusal here does NOT fall through. This writes
+   * who may sign in, and re-running a save the portal rejected against the
+   * direct connection would let a bad key quietly revert the one screen that
+   * creates logins to the socket all of this exists to stop needing.
+   *
+   * usersPortal returns null only when it could not ask at all; a refusal
+   * arrives as an ordinary { ok: false } the screen already knows how to show.
+   * Validation still runs on the server either way — the portal's copy of it is
+   * the authority on that path, not this one. */
+  const viaPortal = await portal.provisionControlAccount(granterUserId, existingId, input)
+  if (viaPortal) return viaPortal
+
   const problem = validate(input, existingId === null)
   if (problem) return { ok: false, error: problem }
 
@@ -345,8 +394,17 @@ export async function provisionControlAccount(
   })
 }
 
-/** Revokes a person's access to one store, without touching their account. */
+/**
+ * Revokes a person's access to one store, without touching their account.
+ *
+ * The portal acts on the store that SIGNED the request and can act on no other,
+ * so it is only the right answer when this machine's key is for the store being
+ * revoked. Everywhere else — a cloud back office, a dev checkout — the
+ * statement below is.
+ */
 export async function revokeSiteAccess(controlUserId: number, siteId: number): Promise<void> {
+  if (portalConfig()?.siteId === siteId && (await portal.revokeSiteAccess(controlUserId))) return
+
   await execute(
     `UPDATE cp2_user_sites SET status = 'suspended' WHERE user_id = ? AND site_id = ?`,
     [controlUserId, siteId],

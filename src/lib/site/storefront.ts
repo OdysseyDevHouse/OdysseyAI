@@ -154,6 +154,16 @@ export type StorefrontDepartment = {
   imageId: number | null
   /** The department's colour, for that fallback tile. Null means the default. */
   color: string | null
+  /**
+   * The department this one sits under, where that parent is also published.
+   *
+   * Carried so the back office can offer these as a tree — the builder's
+   * product picker filters by department and would otherwise show a nested
+   * catalogue as one flat list. The shop's own department rail ignores it: a
+   * published child whose parent has nothing in it is a top-level thing to a
+   * shopper, and the picker treats a missing parent the same way.
+   */
+  parentId: number | null
 }
 
 // Re-exported so a caller rendering a front page has one import for everything
@@ -744,7 +754,7 @@ export async function publishedDepartments(
 ): Promise<StorefrontDepartment[]> {
   const rows = await siteQuery<Row>(
     context.catalogueSiteId,
-    `SELECT dep.id, dep.name, dep.online_image_id, dep.color, COUNT(*) AS product_count
+    `SELECT dep.id, dep.name, dep.parent_id, dep.online_image_id, dep.color, COUNT(*) AS product_count
        FROM products p
        JOIN product_prices pp
          ON pp.product_id = p.id
@@ -753,7 +763,7 @@ export async function publishedDepartments(
             ))
        JOIN departments dep ON dep.id = p.department_id
       WHERE ${SELLABLE} AND ${publishFilter(context.settings.publishMode)}
-      GROUP BY dep.id, dep.name, dep.online_image_id, dep.color
+      GROUP BY dep.id, dep.name, dep.parent_id, dep.online_image_id, dep.color
       ORDER BY dep.name`,
     [context.settings.priceStructureId],
   )
@@ -767,6 +777,7 @@ export async function publishedDepartments(
       productCount: Number(r.product_count),
       imageId: Number.isInteger(image) && image > 0 ? image : null,
       color: (r.color as string | null) ?? null,
+      parentId: r.parent_id === null ? null : Number(r.parent_id),
     }
   })
 }

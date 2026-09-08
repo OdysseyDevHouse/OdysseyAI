@@ -14,7 +14,8 @@ import {
   FilterChip,
   Icons,
   LinkSegmentedControl,
-  LinkSelect,
+  TreeSelect,
+  departmentTreeOptions,
   PageBody,
   PageHeader,
   Pagination,
@@ -139,19 +140,29 @@ export default async function OnlineProductsPage({
           {/* Options carry their own href, built on the server: a function
               prop cannot cross into a client component, and this keeps the URL
               helpers out of the browser bundle entirely. */}
-          <LinkSelect
+          {/* Browsed a level at a time, in the shop's own order — see the note on
+              the products list, which offers the same filter. */}
+          <TreeSelect
             aria-label="Filter by department"
+            backLabel="Back to departments"
             icon={<Icons.LayoutGrid size={16} />}
             value={department ?? ''}
-            className="w-64"
-            options={[
-              { value: '', label: 'All departments', href: filterHref({ department: null }) },
-              ...departments.map((d) => ({
-                value: String(d.id),
-                label: departmentPath(departments, d.id),
-                href: filterHref({ department: String(d.id) }),
+            className="w-52"
+            options={departmentTreeOptions(
+              departments.map((d) => ({
+                id: d.id,
+                parentId: d.parentId,
+                name: d.name,
+                color: d.color,
+                /* The SHOP's picture, not the till's: this screen is about what
+                   the online store shows. */
+                imageId: d.onlineImageId,
               })),
-            ]}
+              {
+                allHref: filterHref({ department: null }),
+                hrefFor: (id) => filterHref({ department: String(id) }),
+              },
+            )}
           />
 
           <LinkSegmentedControl

@@ -562,9 +562,41 @@ function markerSaysLocal() {
 
 function adoptMachineConfig() {
   const cfg = readConfig()
-  if (cfg.siteDbSealed && cfg.siteId) return true
-
   const machineConfig = require('./machineConfig')
+
+  if (cfg.siteDbSealed && cfg.siteId) {
+    /* ── ALREADY ADOPTED, BUT MAYBE NOT THE SIGNING KEY ────────────────────
+     *
+     * This used to return here, full stop, and that was right when the shared
+     * file held only database credentials: re-reading them on every start would
+     * be work with no possible outcome.
+     *
+     * Then the file gained apiKey/apiKeyId, and the early return quietly meant
+     * that every machine adopted BEFORE the portal issued keys could never
+     * acquire one — Setup could write it, and Back Office would never look
+     * again. There is no error in that path: portalConfig() simply keeps
+     * returning null, every portal read answers "ask the database yourself",
+     * and on a desktop build the fallback throws. Setup → Users, Billing and
+     * Tills all died that way, on machines whose key was sitting in
+     * ProgramData the whole time.
+     *
+     * So the database half still short-circuits and only the key is picked up,
+     * and only when there is one to pick up and none held. Nothing is ever
+     * overwritten or cleared from here: a key already sealed on this machine is
+     * the one it is signing with, and a shared file that has lost its key must
+     * not take the working one down with it.
+     */
+    if (!cfg.apiKeySealed) {
+      const shared = machineConfig.read()
+      if (shared && shared.apiKey) {
+        cfg.apiKeySealed = seal(String(shared.apiKey))
+        cfg.apiKeyId = shared.apiKeyId || null
+        writeConfig(cfg)
+      }
+    }
+    return true
+  }
+
   const shared = machineConfig.read()
   if (!shared) return false
 

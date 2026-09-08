@@ -171,6 +171,8 @@ export {
   ToolbarSearch,
   type SegmentedOption,
 } from './TableToolbar'
+export { TreeSelect, type TreeSelectOption } from './TreeSelect'
+export { departmentTreeOptions, type DepartmentTreeInput } from './departmentTree'
 export { ColumnPicker, type ColumnOption } from './ColumnPicker'
 export { Pagination } from './Pagination'
 export { FilterBar, FilterChip } from './FilterBar'

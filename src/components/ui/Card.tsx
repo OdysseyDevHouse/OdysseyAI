@@ -74,7 +74,7 @@ export function CardHeader({
       /* The marker the card's left border keys off — the rule itself is drawn
          by the card, because a border here could only be as tall as the
          header. See globals.css. */
-      data-brand-rule={brand ? '' : undefined}
+      data-accent-rule={brand ? '' : undefined}
       className={[
         /* Wraps rather than squeezing. The action is shrink-0 and the title
            min-w-0, so without a wrap a header carrying a real toolbar — the
@@ -109,8 +109,12 @@ export function CardHeader({
           description ? 'items-start' : 'items-center'
         }`}
       >
+        {/* `accent`, not `brand`: the medallion is the kit's one coloured mark
+            on a page, so it is what carries the module you are in — amber in
+            Back-office, emerald in Job cards. Outside the module shell the pair
+            still resolves to the brand. See components/ModuleAccent.tsx. */}
         {icon && (
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent">
             {icon}
           </span>
         )}

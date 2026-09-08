@@ -26,6 +26,19 @@
   --l-warning: #d97706;
   --l-radius: 10px;
 
+  /* The showcase panel's own colours. Deliberately NOT restated under
+     [data-theme='dark'] below: the panel is the brand half of the card and
+     stays navy in both themes, the same decision PosSignInArt makes for the
+     till's customer-facing pane. */
+  --l-panel: #16233f;
+  --l-panel-line: rgba(255, 255, 255, 0.09);
+  --l-panel-fill: rgba(255, 255, 255, 0.055);
+  --l-panel-dim: rgba(255, 255, 255, 0.62);
+  --l-panel-faint: rgba(255, 255, 255, 0.44);
+  --l-panel-code: rgba(96, 165, 250, 0.2);
+  --l-panel-code-ink: #9dc4ff;
+  --l-panel-pip: #f5a524;
+
   position: relative;
   overflow: hidden;
   min-height: 100vh;
@@ -35,13 +48,21 @@
   justify-content: center;
   gap: 22px;
   background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(37, 99, 235, 0.1), transparent 60%),
-    radial-gradient(900px 500px at 0% 110%, rgba(20, 184, 166, 0.08), transparent 55%),
+    radial-gradient(
+      1200px 600px at 80% -10%,
+      rgba(37, 99, 235, 0.1),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 500px at 0% 110%,
+      rgba(20, 184, 166, 0.08),
+      transparent 55%
+    ),
     linear-gradient(135deg, #f4f6fb 0%, #eef1f8 55%, #e8ecf6 100%);
   padding: 24px;
 }
 
-:global([data-theme='dark']) .wrapper {
+:global([data-theme="dark"]) .wrapper {
   --l-surface: #1a212b;
   --l-surface-2: #212a36;
   --l-text: #e7ecf3;
@@ -54,8 +75,16 @@
   --l-warning: #fbbf24;
 
   background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(37, 99, 235, 0.35), transparent 60%),
-    radial-gradient(900px 500px at 0% 110%, rgba(20, 184, 166, 0.22), transparent 55%),
+    radial-gradient(
+      1200px 600px at 80% -10%,
+      rgba(37, 99, 235, 0.35),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 500px at 0% 110%,
+      rgba(20, 184, 166, 0.22),
+      transparent 55%
+    ),
     linear-gradient(135deg, #0b1220 0%, #131c2e 55%, #1b2640 100%);
 }
 
@@ -63,7 +92,7 @@
    grid at the left — pure backdrop, behind the card (which owns its own
    stacking context via position/z-index below). */
 .wrapper::before {
-  content: '';
+  content: "";
   position: absolute;
   right: -22vw;
   bottom: -34vh;
@@ -96,19 +125,22 @@
 }
 
 .wrapper::after {
-  content: '';
+  content: "";
   position: absolute;
   left: 2vw;
   top: 46%;
   width: 190px;
   height: 150px;
-  background-image: radial-gradient(rgba(37, 99, 235, 0.16) 1.5px, transparent 1.6px);
+  background-image: radial-gradient(
+    rgba(37, 99, 235, 0.16) 1.5px,
+    transparent 1.6px
+  );
   background-size: 15px 15px;
   mask-image: linear-gradient(105deg, #000, transparent 78%);
   pointer-events: none;
 }
 
-:global([data-theme='dark']) .wrapper::before {
+:global([data-theme="dark"]) .wrapper::before {
   background:
     radial-gradient(
       closest-side,
@@ -133,8 +165,11 @@
     );
 }
 
-:global([data-theme='dark']) .wrapper::after {
-  background-image: radial-gradient(rgba(148, 190, 255, 0.16) 1.5px, transparent 1.6px);
+:global([data-theme="dark"]) .wrapper::after {
+  background-image: radial-gradient(
+    rgba(148, 190, 255, 0.16) 1.5px,
+    transparent 1.6px
+  );
 }
 
 /* Decoration is noise on a small screen — the card should own the viewport. */
@@ -145,34 +180,64 @@
   }
 }
 
+/* ============================================================================
+   The card — a showcase panel and the form, as one surface.
+
+   THREE grid children, in the order a PHONE reads them: the panel, the form,
+   then the footer. On a wide screen the panel and the footer are placed back
+   into the left column and the form spans both rows beside them, which is why
+   this is a grid rather than two flex halves — the footer has to sit under the
+   panel on a desktop and under the FORM on a phone, and one DOM order cannot
+   do that any other way.
+
+   The panel and the footer therefore paint the same flat --l-panel rather than
+   a gradient: they are two cells of one column, and a gradient scoped to each
+   would draw a visible seam across the middle of it.
+   ========================================================================= */
 .card {
   position: relative; /* above the wrapper's decorative arcs / dot grid */
   z-index: 1;
   width: 100%;
-  /* The card is wider than the content column it holds: the extra 60px is
-     absorbed by the side padding (36 → 66), so the form, logo and button keep
-     their 368px width and only the surface around them grows. */
-  max-width: 500px;
+  max-width: 1080px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   background: var(--l-surface);
   border: 1px solid var(--l-border);
   border-radius: 24px;
-  padding: 40px 66px 32px;
+  /* Clips the panel's navy to the radius, so the card keeps its corners
+     without every child having to round its own. */
+  overflow: hidden;
   box-shadow: 0 24px 70px rgba(16, 24, 40, 0.12);
   animation: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-:global([data-theme='dark']) .card {
+:global([data-theme="dark"]) .card {
   border-color: transparent;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
 }
 
-/* The wide side padding is breathing room on a desktop card; on a phone the
-   card is already viewport-width, so it would only squeeze the fields.
-   Declared after .card — same specificity, so source order decides. */
-@media (max-width: 640px) {
+/* 900px, not 640: the two halves need most of 500px each before the headline
+   starts breaking into four lines, so a tablet in portrait keeps the stack. */
+@media (min-width: 900px) {
   .card {
-    padding-left: 28px;
-    padding-right: 28px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-height: 660px;
+  }
+
+  .panel {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .panelFoot {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .formPane {
+    grid-column: 2;
+    grid-row: 1 / -1;
   }
 }
 
@@ -222,40 +287,257 @@
   }
 }
 
-/* Logo, greeting and subtitle stacked and centred at the top of the card. */
-.brand {
+/* ============================================================================
+   The showcase panel — what this account is a front door TO.
+
+   Somebody arriving here has bought a till and is being asked to sign in to a
+   "workspace", which is a word that means nothing until the modules are named.
+   So the panel names them. It is marketing on the one screen where marketing is
+   the honest answer to the question the screen itself provokes.
+   ========================================================================= */
+.panel {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  margin-bottom: 30px;
+  padding: 40px 40px 32px;
+  background: var(--l-panel);
+  color: #fff;
+  overflow: hidden;
 }
 
-.logo {
-  height: 62px;
-  width: auto;
-  max-width: 100%;
+/* Concentric arcs sweeping out of the top-right, echoing the wrapper's own
+   decoration behind the card. Faint enough that the headline never fights it. */
+.panel::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: -38%;
+  top: -30%;
+  width: 118%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      closest-side,
+      transparent 63%,
+      rgba(255, 255, 255, 0.055) 64%,
+      rgba(255, 255, 255, 0.055) 67%,
+      transparent 68%
+    ),
+    radial-gradient(
+      closest-side,
+      transparent 79%,
+      rgba(255, 255, 255, 0.045) 80%,
+      rgba(255, 255, 255, 0.045) 83%,
+      transparent 84%
+    );
+  pointer-events: none;
+}
+
+.panelBrand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* A permanent white disc, in both themes. The mark is drawn for white paper and
+   the panel behind it is navy whatever the operator's theme says — which is
+   also why this screen no longer needs the dark-mode plate the old full-lockup
+   logo wore. */
+.panelMark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  padding: 8px;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.panelMarkImg {
+  width: 100%;
+  height: auto;
   object-fit: contain;
 }
 
-/* The wordmark is dark navy — a light plate behind the logo in dark mode so it
-   stays readable. */
-:global([data-theme='dark']) .logo {
-  background: #fff;
-  border-radius: 10px;
-  padding: 8px 14px;
-  height: 78px; /* 62px logo + plate padding */
+.panelWordmark {
+  font-size: 19px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.17em;
+}
+
+/* The one line that says what the account IS, above the headline. The pip is
+   the only warm colour on the card and it is here on purpose: it is what pulls
+   the eye to the sentence the rest of the panel expands on. */
+.panelEyebrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 30px 0 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--l-panel-dim);
+}
+
+.panelEyebrow::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--l-panel-pip);
+}
+
+.panelHeadline {
+  margin: 14px 0 0;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.14;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+.panelBlurb {
+  margin: 16px 0 0;
+  max-width: 34ch;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--l-panel-dim);
+}
+
+/* ----------------------------------------------------------------------------
+   The module board.
+
+   TWO layouts from one list, and the breakpoint decides which. On a desktop it
+   is a two-column board sitting at the foot of the panel — `margin-top: auto`,
+   so it stays pinned there however far the headline wraps. On a phone it is a
+   single row scrolled sideways with a finger: seven tiles stacked would push
+   the sign-in form below the fold, which is the one thing the person actually
+   came here to do.
+
+   Sales leads on a row of its own — it is the till, the thing most accounts are
+   here for, and seven tiles in two columns leave an odd one somewhere
+   regardless. Better at the top, deliberately, than orphaned at the bottom.
+   ------------------------------------------------------------------------- */
+.moduleStrip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  /* Pinned to the foot of the panel, whatever the headline above it does. */
+  margin: 0;
+  margin-top: auto;
+  padding: 34px 0 0;
+  list-style: none;
+}
+
+.moduleTile {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--l-panel-line);
+  border-radius: 14px;
+  background: var(--l-panel-fill);
+}
+
+.moduleLead {
+  grid-column: 1 / -1;
+}
+
+.moduleCode {
+  flex: none;
+  min-width: 42px;
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: var(--l-panel-code);
+  color: var(--l-panel-code-ink);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-align: center;
+}
+
+.moduleText {
+  min-width: 0;
+}
+
+.moduleName {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.moduleNote {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--l-panel-faint);
+}
+
+/* The panel's foot. Its own grid cell rather than a child of the panel, so the
+   phone layout can drop it below the FORM — see the note on .card. */
+.panelFoot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 40px 26px;
+  background: var(--l-panel);
+  font-size: 12px;
+  color: var(--l-panel-faint);
+}
+
+.footRule {
+  flex: 1;
+  height: 1px;
+  background: var(--l-panel-line);
+}
+
+.footLink {
+  color: var(--l-panel-dim);
+  text-decoration: none;
+}
+
+.footLink:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
+/* ── The form half ───────────────────────────────────────────────────────── */
+.formPane {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 44px 54px 34px;
+  background: var(--l-surface);
+}
+
+/* Greeting and subtitle. Left-aligned, not centred as they were on the old
+   single-column card: they now head a column of left-aligned field labels, and
+   a centred pair above that reads as another screen's heading dropped in. */
+.brand {
+  margin-bottom: 26px;
 }
 
 .title {
-  margin: 22px 0 0;
-  font-size: 27px;
+  margin: 0;
+  font-size: 30px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--l-text);
 }
 
 .subtitle {
-  margin: 7px 0 0;
+  margin: 8px 0 0;
   font-size: 14px;
   color: var(--l-muted);
 }
@@ -437,10 +719,31 @@
 
 .secureNote::before,
 .secureNote::after {
-  content: '';
+  content: "";
   flex: 1;
   height: 1px;
   background: var(--l-border);
+}
+
+/* The last line on the card, and the answer to the question the panel opposite
+   provokes: "I can see six other modules — how do I get one?". Never a link to
+   a pricing page: on a multi-user account it is not this person's decision, and
+   on a single-user one they are already the administrator. */
+.adminNote {
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--l-muted);
+}
+
+.adminLink {
+  color: var(--l-brand);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.adminLink:hover {
+  text-decoration: underline;
 }
 
 .error {
@@ -466,6 +769,112 @@
   border-radius: var(--l-radius);
   font-size: 13px;
   margin-bottom: 16px;
+}
+
+/* ============================================================================
+   The phone.
+
+   The panel keeps its identity and headline and gives up its blurb; the board
+   becomes one row scrolled with a finger; the footer crosses over to the white
+   half of the card, under the form, where it is a quiet line rather than a dark
+   band below the fold.
+   ========================================================================= */
+@media (max-width: 899px) {
+  .panel {
+    /* No side padding of its own: the module row has to bleed to both edges of
+       the card, so the horizontal inset moves onto its children. */
+    padding: 28px 0 26px;
+  }
+
+  .panelTop {
+    padding: 0 24px;
+  }
+
+  .panelEyebrow {
+    margin-top: 20px;
+  }
+
+  .panelHeadline {
+    font-size: 25px;
+  }
+
+  /* A paragraph the thumb scrolls past on its way to the form. The board below
+     says the same thing in less room, so on a phone the board says it alone. */
+  .panelBlurb {
+    display: none;
+  }
+
+  /* ── The row that scrolls with a finger ─────────────────────────────────
+     No scrollbar: it is a strip of seven tiles on a touch screen, and a bar
+     under them is a control nobody drags on a phone taking a line of height
+     from the card. The last tile is cut off mid-width at the right edge on
+     purpose — that is what tells the thumb there is more to the right, doing
+     the job the missing scrollbar would have done. */
+  .moduleStrip {
+    display: flex;
+    gap: 10px;
+    margin: 22px 0 0;
+    padding: 2px 24px;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scroll-padding-left: 24px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .moduleStrip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .moduleTile {
+    flex: none;
+    scroll-snap-align: start;
+  }
+
+  /* One line per tile in the row — the strapline is the first thing to go when
+     a tile has to be narrow enough that two of them fit on a phone. */
+  .moduleNote {
+    display: none;
+  }
+
+  /* The pane still spans the card — it is the white half of it — but the
+     COLUMN inside stops at a form's width. Without this the fields ran the
+     full 860px of a tablet, which is a text box you lose the cursor in. */
+  .formPane {
+    align-items: center;
+    padding: 30px 24px 18px;
+  }
+
+  /* Not the store picker: a <dialog> is a child of this pane in the markup and
+     sizes itself in the top layer, where this cap would only shrink it. */
+  .formPane > *:not(dialog) {
+    width: 100%;
+    max-width: 420px;
+  }
+
+  /* Out of the navy and under the form. Same markup, restyled — see .card. */
+  .panelFoot {
+    justify-content: center;
+    padding: 0 24px 24px;
+    background: transparent;
+    color: var(--l-muted);
+  }
+
+  .footRule {
+    display: none;
+  }
+
+  .footLink,
+  .footLink:hover {
+    color: var(--l-brand);
+  }
+}
+
+@media (max-width: 640px) {
+  .panelHeadline {
+    font-size: 23px;
+  }
 }
 
 /* ============================================================================
@@ -502,7 +911,7 @@
   animation: rise 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-:global([data-theme='dark']) .picker {
+:global([data-theme="dark"]) .picker {
   --l-surface: #1a212b;
   --l-surface-2: #212a36;
   --l-text: #e7ecf3;

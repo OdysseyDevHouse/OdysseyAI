@@ -56,6 +56,8 @@ import {
   MiniStat,
   LinkSegmentedControl,
   LinkSelect,
+  TreeSelect,
+  departmentTreeOptions,
   ColumnPicker,
   Menu,
   MenuItem,
@@ -271,6 +273,7 @@ export default function StyleGuidePage() {
         <ChartSection />
         <LayoutSection />
         <WordmarkSection />
+        <ModuleAccentSection />
         <TokensSection />
       </PageBody>
     </>
@@ -1152,7 +1155,7 @@ function SectionTitleSection() {
           <div className="px-5 py-4 text-sm text-muted">
             &lt;SectionTitle icon action&gt; — the heading bar inside a card that holds one
             section of a long form. The icon sits in a pale brand-soft tile; the rule down the
-            card&apos;s left edge uses its own deeper brand-rule token, and is drawn by the card
+            card&apos;s left edge is the module&apos;s colour, and is drawn by the card
             rather than by this heading, so it runs the card&apos;s full height.
           </div>
         </Card>
@@ -2211,6 +2214,7 @@ function TableControlsSection() {
   const [view, setView] = useState('all')
   const [search, setSearch] = useState('')
   const [owingOnly, setOwingOnly] = useState(true)
+  const [treeDepartment, setTreeDepartment] = useState('')
 
   return (
     <Card>
@@ -2313,6 +2317,30 @@ function TableControlsSection() {
                 { value: '1', label: 'Groceries', href: '/setup/style-guide' },
                 { value: '2', label: 'Groceries › Dry goods', href: '/setup/style-guide' },
               ]}
+            />
+          </div>
+        </div>
+
+        <div>
+          <Spec
+            name="<TreeSelect />"
+            note="The department filter. A picker for choices that NEST — the row picks that branch and everything under it, the chevron opens the level below, and the panel heads with the way back. Options carry an href on a list screen and fall back to onChange in a dialog."
+          />
+          <div className="mt-2">
+            <TreeSelect
+              aria-label="Filter by department"
+              backLabel="Back to departments"
+              icon={<Icons.LayoutGrid size={16} />}
+              value={treeDepartment}
+              onChange={setTreeDepartment}
+              className="w-56"
+              options={departmentTreeOptions([
+                { id: 1, parentId: null, name: 'Beer', color: 'cat-beverages', imageId: null },
+                { id: 4, parentId: 1, name: 'Imported', color: 'cat-beverages', imageId: null },
+                { id: 5, parentId: 1, name: 'Local beer', color: 'cat-beverages', imageId: null },
+                { id: 2, parentId: null, name: 'Empties', color: 'cat-cleaning', imageId: null },
+                { id: 3, parentId: null, name: 'Spirits', color: 'cat-confectionery', imageId: null },
+              ])}
             />
           </div>
         </div>
@@ -2664,12 +2692,21 @@ async function demoProductSearch(
     total,
     lookups: request.withLookups
       ? {
+          /* A tree, not a flat list: the dialog's department filter browses one
+             level at a time, and a fixture with no nesting would demo the one
+             thing the control does not do. */
           departments: [
-            { id: 1, label: 'Bakery' },
-            { id: 2, label: 'Dairy' },
-            { id: 3, label: 'Hardware' },
+            { id: 1, parentId: null, name: 'Bakery', color: 'cat-bakery', imageId: null },
+            { id: 4, parentId: 1, name: 'Morning goods', color: 'cat-bakery', imageId: null },
+            { id: 2, parentId: null, name: 'Dairy', color: 'cat-dairy', imageId: null },
+            { id: 3, parentId: null, name: 'Hardware', color: null, imageId: null },
           ],
-          departmentPaths: { 1: 'Bakery', 2: 'Dairy', 3: 'Hardware' },
+          departmentPaths: {
+            1: 'Bakery',
+            2: 'Dairy',
+            3: 'Hardware',
+            4: 'Bakery › Morning goods',
+          },
           productTypes: [
             { id: 'normal', name: 'Normal product' },
             { id: 'service', name: 'Service' },
@@ -4749,6 +4786,57 @@ function WordmarkSection() {
             />
           </div>
         </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+/* Written out in full for the same reason TOKENS below is: Tailwind scans
+   source text, so a built-up `bg-module-${key}` would never be emitted. The
+   inline `style` is how a swatch shows a colour the page is not currently
+   wearing — this row IS the module rail's six, side by side, which is the one
+   thing the live chrome can never show you (it only ever draws the one you are
+   in). */
+const MODULE_TONES = [
+  { name: 'Sales', rail: 'bg-module-sales', ink: 'text-module-sales-ink', soft: 'bg-module-sales-soft' },
+  { name: 'Back office', rail: 'bg-module-back-office', ink: 'text-module-back-office-ink', soft: 'bg-module-back-office-soft' },
+  { name: 'Loyalty', rail: 'bg-module-loyalty', ink: 'text-module-loyalty-ink', soft: 'bg-module-loyalty-soft' },
+  { name: 'Online store', rail: 'bg-module-online-store', ink: 'text-module-online-store-ink', soft: 'bg-module-online-store-soft' },
+  { name: 'Job cards', rail: 'bg-module-job-cards', ink: 'text-module-job-cards-ink', soft: 'bg-module-job-cards-soft' },
+  { name: 'Ticketing', rail: 'bg-module-tickets', ink: 'text-module-tickets-ink', soft: 'bg-module-tickets-soft' },
+]
+
+function ModuleAccentSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Module colours"
+        description="Each module owns a colour. The rail wears the bright step; the page wears the -soft tint under the -ink glyph, which is what every icon medallion in the kit paints with. Screens ask for none of this: components/ModuleAccent.tsx sets --color-accent from the path, so bg-accent-soft / text-accent follow whichever module you are in — and fall back to the brand outside the module shell."
+      />
+      <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {MODULE_TONES.map((m) => (
+          <div key={m.name} className="flex items-center gap-3">
+            {/* The medallion, exactly as StatIcon draws it — the tint and the
+                glyph, at the size a dashboard figure uses. */}
+            <span
+              className={`flex size-9 shrink-0 items-center justify-center rounded-control ${m.soft} ${m.ink}`}
+            >
+              <Icons.Money size={17} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-medium text-ink">{m.name}</p>
+              <div className="mt-1 flex items-center gap-1.5">
+                {/* The rail step, which only ever shows on the near-black rail —
+                    drawn on a dark chip here so it is looked at where it lives. */}
+                <span className="flex items-center gap-1 rounded bg-nav-rail px-1.5 py-0.5">
+                  <span className={`size-2 rounded-full ${m.rail}`} />
+                  <span className="text-[10px] text-nav-faint">rail</span>
+                </span>
+                <span className="text-[10px] text-muted">soft + ink</span>
+              </div>
+            </div>
+          </div>
+        ))}
       </CardBody>
     </Card>
   )

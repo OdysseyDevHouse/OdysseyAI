@@ -1556,3 +1556,38 @@ export function findTrail(
   }
   return null
 }
+
+/**
+ * The row this page is on.
+ *
+ * Lives here rather than in the sidebar because two callers need the SAME
+ * answer: the menu, to light a row, and `moduleForPath`, to colour the page.
+ * Two copies of a three-rule matcher is two copies that eventually disagree
+ * about where /staff/pay-rules is, and the symptom would be a screen wearing
+ * one module's colour under another module's highlighted row.
+ *
+ * Three rules in order, and the order is what makes it right:
+ *
+ *  1. An EXACT match on a menu row wins. The online store's screens are rows in
+ *     their own panel now, so /online-store/orders must light "Orders" rather
+ *     than the hub it also sits under.
+ *  2. Failing that, the hub that owns the screen. /staff/pay-rules is a setup
+ *     screen that happens to live beneath /staff; a plain prefix scan would
+ *     light "Staff" while the breadcrumb above said "Setup › Pay rules" — the
+ *     menu and the trail disagreeing about where somebody is.
+ *  3. Failing that, the longest prefix — which is what a record page
+ *     (/products/1842) and every other child route resolves through.
+ */
+export function activeHrefFor(pathname: string, candidates: string[]): string | null {
+  if (candidates.includes(pathname)) return pathname
+
+  const owner = hubFor(pathname)
+  if (owner && candidates.includes(owner)) return owner
+
+  let best: string | null = null
+  for (const href of candidates) {
+    if (!pathname.startsWith(`${href}/`)) continue
+    if (!best || href.length > best.length) best = href
+  }
+  return best
+}

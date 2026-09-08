@@ -181,13 +181,13 @@ export function ToolbarSkeleton({
 export function TabsSkeleton({ tabs = 4 }: { tabs?: number }) {
   return (
     <div aria-hidden className="flex items-stretch">
-      <div className="w-6 shrink-0 border-b border-nav-accent" />
+      <div className="w-6 shrink-0 border-b-2 border-border" />
       {Array.from({ length: tabs }, (_, i) => (
-        <div key={i} className="border-t border-t-transparent border-b border-nav-accent px-4 pt-2 pb-2.5">
+        <div key={i} className="border-b-2 border-border px-4 pt-2 pb-2.5">
           <Skeleton className="h-5 w-24" />
         </div>
       ))}
-      <div className="flex-1 border-b border-nav-accent" />
+      <div className="flex-1 border-b-2 border-border" />
     </div>
   )
 }

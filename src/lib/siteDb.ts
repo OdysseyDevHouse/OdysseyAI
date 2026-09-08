@@ -106,19 +106,46 @@ const HOST_ALIASES: Record<string, string> = {
 }
 
 /**
+ * Is the alias table in play?
+ *
+ * ── OFF IN PRODUCTION, ON IN DEVELOPMENT ────────────────────────────────
+ *
+ * The alias only ever solved the developer's problem: `odpvdb101.odyssey.co.za`
+ * does not resolve off Odyssey's network, so a laptop needs the public address
+ * instead. A server INSIDE the network has the opposite problem — its firewall
+ * will not hairpin that public address, so the substitution turns a name that
+ * resolves perfectly well into a connection that hangs until ETIMEDOUT, and the
+ * store is simply down.
+ *
+ * The safe default therefore follows NODE_ENV rather than being unconditional:
+ * a production build uses cp2_site_databases.server_host exactly as stored, and
+ * only a dev build rewrites it. That way the environment where being wrong is
+ * cheap is the one carrying the guess.
+ *
+ * SITE_DB_HOST_ALIASES overrides the default in either direction — `off` on a
+ * dev machine that really is on the network, `on` for a production build being
+ * exercised from a laptop (`next start` locally), where the stored name is
+ * still unreachable.
+ */
+function aliasesEnabled(): boolean {
+  const flag = process.env.SITE_DB_HOST_ALIASES?.trim().toLowerCase()
+  if (flag === 'off' || flag === '0' || flag === 'false') return false
+  if (flag === 'on' || flag === '1' || flag === 'true') return true
+  return process.env.NODE_ENV !== 'production'
+}
+
+/**
  * Swaps an internal-only name for its reachable address.
  *
  * Applied to the override as well as to the stored value, so setting
  * SITE_DB_HOST_OVERRIDE to the name does not quietly reintroduce the failure
  * this exists to remove.
  *
- * Set SITE_DB_HOST_ALIASES=off where the alias is the wrong answer — a machine
- * INSIDE the network whose firewall will not hairpin its own public address.
  * Names not listed are returned untouched, so this can never redirect a host
  * nobody wrote down here.
  */
 function aliasHost(host: string): string {
-  if (process.env.SITE_DB_HOST_ALIASES?.trim().toLowerCase() === 'off') return host
+  if (!aliasesEnabled()) return host
   return HOST_ALIASES[host.trim().toLowerCase()] ?? host
 }
 
