@@ -327,6 +327,9 @@ export default function CustomerForm({
                   defaultValue={typed('name', customer?.name ?? '')}
                   required
                   maxLength={160}
+                  // Creating: the name is where typing starts. Editing focuses
+                  // nothing, so the cursor stays where the user put it.
+                  autoFocus={isNew}
                 />
               </Field>
             </div>

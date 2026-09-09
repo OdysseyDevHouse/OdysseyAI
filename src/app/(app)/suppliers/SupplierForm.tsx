@@ -112,7 +112,15 @@ export default function SupplierForm({
                 />
               </Field>
               <Field label="Name">
-                <Input name="name" defaultValue={supplier?.name ?? ''} required maxLength={160} />
+                <Input
+                  name="name"
+                  defaultValue={supplier?.name ?? ''}
+                  required
+                  maxLength={160}
+                  // Creating: the name is where typing starts. Editing focuses
+                  // nothing, so the cursor stays where the user put it.
+                  autoFocus={isNew}
+                />
               </Field>
             </div>
 
