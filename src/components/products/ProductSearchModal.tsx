@@ -92,6 +92,26 @@ export type ProductSearchPick = {
   priceIncl: number | null
   barcode: string | null
   stockOnHand: number
+  /**
+   * What KIND of product this is.
+   *
+   * Carried because a document line behaves differently for some of them: a
+   * serial line wants its numbers scanned and a batch line its lot, and
+   * purchasing decides that per line from this value. A caller with no use for
+   * it can ignore it.
+   */
+  productType: string
+  /** Where it is filed. Receiving stamps it onto the line it creates. */
+  departmentId: number | null
+  /**
+   * The buying cost excl. VAT — what a purchase line opens at, and `null` when
+   * this role may not read a cost at all.
+   *
+   * Null rather than zero for the hidden case, so a screen that cannot show
+   * costs does not quietly open every order line at free. See the action:
+   * the figure is stripped server-side, never rendered-and-hidden.
+   */
+  cost: number | null
 }
 
 export default function ProductSearchModal({
@@ -149,7 +169,9 @@ export default function ProductSearchModal({
    * captured — and rewriting it to remember a department would put a
    * half-finished document one Back button away from being lost. */
   const [term, setTerm] = useState('')
-  const [departmentId, setDepartmentId] = useState<number | null>(null)
+  /* SEVERAL departments, not one: "the beer and the wine" is a question people
+     ask of this dialog constantly, and it used to take two searches. */
+  const [departmentIds, setDepartmentIds] = useState<number[]>([])
   const [productType, setProductType] = useState<string | null>(null)
   const [conditions, setConditions] = useState<FilterCondition[]>([])
   const [sort, setSort] = useState<{ key: string; direction: 'asc' | 'desc' }>({
@@ -176,6 +198,12 @@ export default function ProductSearchModal({
 
   const encodedFilters = useMemo(() => encodeFilters(conditions), [conditions])
 
+  /* The department filter as a STRING, for the effects below to depend on. The
+     array itself is a new identity on every render, so depending on it would
+     re-run the search — and reset the page — on renders where the filter had
+     not moved at all. */
+  const departmentKey = departmentIds.join(',')
+
   /* ── Fetching ───────────────────────────────────────────────────────────
    *
    * Debounced, and guarded by a `live` flag rather than by cancelling: a short
@@ -197,7 +225,7 @@ export default function ProductSearchModal({
         try {
           const result = await search({
             search: term.trim() || undefined,
-            departmentId,
+            departmentIds,
             productType,
             filters: encodedFilters,
             sort: sort.key,
@@ -238,7 +266,7 @@ export default function ProductSearchModal({
   }, [
     open,
     term,
-    departmentId,
+    departmentKey,
     productType,
     encodedFilters,
     sort.key,
@@ -253,7 +281,7 @@ export default function ProductSearchModal({
      WHICH products match. */
   useEffect(() => {
     setPage(1)
-  }, [term, departmentId, productType, encodedFilters])
+  }, [term, departmentKey, productType, encodedFilters])
 
   /* A fresh dialog every time it opens.
    *
@@ -263,7 +291,7 @@ export default function ProductSearchModal({
   useEffect(() => {
     if (!open) return
     setTerm('')
-    setDepartmentId(null)
+    setDepartmentIds([])
     setProductType(null)
     setConditions([])
     setSort({ key: 'description', direction: 'asc' })
@@ -349,6 +377,9 @@ export default function ProductSearchModal({
       priceIncl: p.priceIncl,
       barcode: p.barcode,
       stockOnHand: p.stockOnHand,
+      productType: p.productType,
+      departmentId: p.departmentId,
+      cost: p.cost,
     }),
     [],
   )
@@ -616,8 +647,10 @@ export default function ProductSearchModal({
   /* The CHIP spells out the full path where the picker shows one level — a
      filter someone has already applied has to say "Drinks > Beer > Imported",
      since by then the menu that gave it that context is closed. */
-  const departmentLabel =
-    departmentId !== null ? (departmentPaths[departmentId] ?? null) : null
+  const departmentChips = departmentIds.map((id) => ({
+    id,
+    label: departmentPaths[id] ?? '',
+  }))
   const typeLabel =
     productType !== null
       ? (lookups?.productTypes.find((t) => t.id === productType)?.name ?? null)
@@ -638,7 +671,7 @@ export default function ProductSearchModal({
           </Button>
         ),
       }
-    : departmentId !== null || productType !== null || conditions.length > 0
+    : departmentIds.length > 0 || productType !== null || conditions.length > 0
       ? {
           icon: <Icons.Filter size={22} />,
           title: 'No products match this filter',
@@ -656,7 +689,7 @@ export default function ProductSearchModal({
         }
 
   function clearAllFilters() {
-    setDepartmentId(null)
+    setDepartmentIds([])
     setProductType(null)
     setConditions([])
   }
@@ -742,13 +775,18 @@ export default function ProductSearchModal({
           }
           filters={
             <FilterBar inToolbar onClearAll={clearAllFilters}>
-              {departmentLabel && (
+              {/* One chip per department, each clearing only itself — with
+                  four picked, one chip could name only one of them. */}
+              {departmentChips.map((chip) => (
                 <FilterChip
+                  key={chip.id}
                   label="Department"
-                  value={departmentLabel}
-                  onClear={() => setDepartmentId(null)}
+                  value={chip.label}
+                  onClear={() =>
+                    setDepartmentIds((current) => current.filter((id) => id !== chip.id))
+                  }
                 />
-              )}
+              ))}
               {typeLabel && (
                 <FilterChip label="Type" value={typeLabel} onClear={() => setProductType(null)} />
               )}
@@ -790,9 +828,10 @@ export default function ProductSearchModal({
 
           <Field label="Department" className="mb-0 w-52">
             <TreeSelect
-              value={departmentId === null ? '' : String(departmentId)}
+              values={departmentIds.map(String)}
               options={departmentOptions}
-              onChange={(value) => setDepartmentId(value ? Number(value) : null)}
+              onChangeMany={(next) => setDepartmentIds(next.map(Number))}
+              manyNoun="departments"
               icon={<Icons.LayoutGrid size={16} />}
               backLabel="Back to departments"
               aria-label="Filter products by department"

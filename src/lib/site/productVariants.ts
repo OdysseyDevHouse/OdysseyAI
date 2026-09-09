@@ -6,6 +6,7 @@ import {
   insertProductTx,
   resolveVat,
   validateProduct,
+  whyCodeTaken,
   type ProductInput,
 } from '@/lib/site/products'
 import { resolveMasterCode } from '@/lib/site/masterCodes'
@@ -662,12 +663,8 @@ export async function createVariantGrid(
     }
     seenCodes.add(code.toLowerCase())
 
-    const clash = await siteQueryOne<Row>(
-      siteId,
-      'SELECT id FROM products WHERE code = ? LIMIT 1',
-      [code],
-    )
-    if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
+    const codeTaken = await whyCodeTaken(siteId, code)
+    if (codeTaken) return { ok: false, error: codeTaken }
 
     /*
      * The child inherits exactly what INHERITED says it must and nothing else.

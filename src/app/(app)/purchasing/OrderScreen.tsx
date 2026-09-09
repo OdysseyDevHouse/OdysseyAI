@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Button,
@@ -13,13 +13,8 @@ import {
   Field,
   Icons,
   Input,
-  Modal,
   PageBody,
-  PickerResults,
   Select,
-  TreeSelect,
-  departmentTreeOptions,
-  type DepartmentTreeInput,
   Textarea,
   useToast,
   type ComboboxOption,
@@ -41,23 +36,28 @@ import PurchaseLineGrid, {
   type StockLocationOption,
 } from './PurchaseLineGrid'
 import { purchaseDocumentFigures } from './purchaseLine'
+import ProductSearchModal, {
+  type ProductSearchPick,
+} from '@/components/products/ProductSearchModal'
+import { searchProductsForPurchasePickerAction } from '@/components/products/productSearchActions'
 import {
   searchProductsForPurchaseAction,
-  browseProductsForPurchaseAction,
-  purchaseDepartmentsAction,
   agreedPricesAction,
   saveOrderAction,
+  saveOrderDraftAction,
   issueOrderAction,
 } from './actions'
 
 /**
- * How many products the browse dialog will show at once.
+ * How long a change sits still before it is saved.
  *
- * The same ceiling receiving uses, for the same reason: a buyer narrows by
- * department or types a few characters, and 500 rows is already more than
- * anyone scrolls. The dialog says when the list was cut short.
+ * Long enough that typing a cost is one save rather than one per keystroke,
+ * short enough that nobody gets up and walks away from unsaved work. The stock
+ * take's count sheet uses 700ms for the same job; the online-store builder
+ * 1200ms. This sits between them because a purchase line has more fields being
+ * tabbed through than a count sheet and fewer than a page layout.
  */
-const PICKER_LIMIT = 500
+const AUTOSAVE_MS = 800
 
 /**
  * Raising a purchase order.
@@ -168,21 +168,15 @@ export default function OrderScreen({
   const [searching, setSearching] = useState(false)
   const [pending, startTransition] = useTransition()
 
-  /* The browse dialog, the same one receiving uses. Distinct from the Combobox
-     above it, which answers keystrokes: this one answers "show me what is in
-     Groceries" with no term at all, which is how a buyer works down a
-     supplier's catalogue for things they cannot spell. */
+  /* The product search dialog — the shared one, the same grid recipes and
+     invoicing use. Distinct from the Combobox above it, which answers
+     keystrokes: this one answers "show me what is in Groceries, below minimum,
+     sorted by what I last paid" with no term at all, which is how a buyer works
+     down a supplier's catalogue. It holds its own search, filter, sort, paging
+     and column state, so this screen keeps none of it. */
   const [pickerOpen, setPickerOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [scanOpen, setScanOpen] = useState(false)
-  const [pickerTerm, setPickerTerm] = useState('')
-  const [pickerDept, setPickerDept] = useState<number | null>(null)
-  const [pickerResults, setPickerResults] = useState<TillProduct[]>([])
-  const [pickerBusy, setPickerBusy] = useState(false)
-  const [depts, setDepts] = useState<DepartmentTreeInput[]>([])
-  /* Grouped into rows once per fetch rather than on every keystroke in the
-     picker beside it — the tree is the same until the dialog is closed. */
-  const deptOptions = useMemo(() => departmentTreeOptions(depts), [depts])
 
   const columns = useColumnPrefs(
     'odyssey.purchasing.order.columns',
@@ -220,31 +214,6 @@ export default function OrderScreen({
     return () => clearTimeout(timer)
   }, [query])
 
-  // The department filter, fetched once the dialog is first opened rather than
-  // on page load: most orders are keyed from the search box and never open it.
-  useEffect(() => {
-    if (!pickerOpen || depts.length > 0) return
-    purchaseDepartmentsAction().then(setDepts).catch(() => setDepts([]))
-  }, [pickerOpen, depts.length])
-
-  // Results follow the term and the department. Debounced like the Combobox,
-  // and it runs with an EMPTY term too — that is the whole point of browsing.
-  useEffect(() => {
-    if (!pickerOpen) return
-    setPickerBusy(true)
-    const timer = setTimeout(() => {
-      browseProductsForPurchaseAction({
-        term: pickerTerm.trim() || undefined,
-        departmentId: pickerDept,
-        limit: PICKER_LIMIT,
-      })
-        .then(setPickerResults)
-        .catch(() => setPickerResults([]))
-        .finally(() => setPickerBusy(false))
-    }, 180)
-    return () => clearTimeout(timer)
-  }, [pickerOpen, pickerTerm, pickerDept])
-
   function patchLine(key: string, patch: Partial<GridLine>) {
     setLines((current) => current.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   }
@@ -276,11 +245,67 @@ export default function OrderScreen({
     })
   }
 
-  function addProduct(product: TillProduct) {
+  /**
+   * What `addProducts` needs to know about a thing being ordered.
+   *
+   * Its own shape because two different pickers feed it: the type-ahead
+   * Combobox, which returns a full TillProduct, and the search dialog, which
+   * returns a ProductSearchPick. Both are narrowed to this on the way in, so
+   * the line-building below is written once and neither picker's shape leaks
+   * into it.
+   */
+  type Addable = {
+    id: number
+    code: string
+    description: string
+    productType: string
+    /** Excl. VAT. Null when the role may not read costs — the line opens at 0. */
+    costExcl: number | null
+    stockOnHand: number
+    priceIncl: number | null
+  }
+
+  const fromTillProduct = (p: TillProduct): Addable => ({
+    id: p.id,
+    code: p.code,
+    description: p.description,
+    productType: p.productType,
+    costExcl: p.costExcl,
+    stockOnHand: p.stockOnHand,
+    priceIncl: p.priceIncl,
+  })
+
+  /* From the search dialog. `cost` is null when this role may not read one —
+     carried through as null rather than coerced here, so the line opens at zero
+     and the buyer types what they are paying, which is the honest state for
+     someone who is not allowed to be shown the old figure. */
+  const fromPick = (p: ProductSearchPick): Addable => ({
+    id: p.id,
+    code: p.code,
+    description: p.description,
+    productType: p.productType,
+    costExcl: p.cost,
+    stockOnHand: p.stockOnHand,
+    priceIncl: p.priceIncl,
+  })
+
+  /**
+   * Puts products on the order.
+   *
+   * Takes a LIST rather than one at a time because the search dialog can send
+   * several: ticking a dozen and adding them together is the gesture that
+   * replaced opening the picker a dozen times. One added product is a list of
+   * one, so there is a single path and the location-inheritance rule below
+   * cannot disagree between them.
+   */
+  function addProducts(products: Addable[]) {
+    if (products.length === 0) return
+    const stamp = Date.now()
+
     setLines((current) => [
       ...current,
-      {
-        key: `${product.id}-${Date.now()}`,
+      ...products.map((product, index) => ({
+        key: `${product.id}-${stamp}-${index}`,
         productId: product.id,
         productCode: product.code,
         supplierCode: '',
@@ -289,31 +314,42 @@ export default function OrderScreen({
         qtyOrdered: 1,
         qty: 1,
         qtyBonus: 0,
-        unitCostExcl: product.costExcl,
+        unitCostExcl: product.costExcl ?? 0,
         discountPct: 0,
         discountAmount: 0,
         vatRatePct: defaultVatRate,
         // Inherits whatever the previous line used, so ordering a whole pallet
         // for the warehouse is one choice rather than one per line. The same
-        // rule receiving follows.
+        // rule receiving follows. Read from the last line of the batch being
+        // added as well as the existing ones, so twelve products picked
+        // together all land in the same room rather than only the first.
         locationId: current[current.length - 1]?.locationId ?? mainLocationId,
-        currentAverage: product.costExcl,
-        lastCost: product.costExcl,
+        currentAverage: product.costExcl ?? 0,
+        lastCost: product.costExcl ?? 0,
         currentStock: product.stockOnHand,
-        sellIncl: product.priceIncl,
-      },
+        // A variant PARENT prices per child, so it has no price of its own —
+        // zero rather than null, which is what the grid's column expects and
+        // reads as "not priced here" beside a parent that cannot be sold.
+        sellIncl: product.priceIncl ?? 0,
+      })),
     ])
     setQuery('')
     setOptions([])
 
     // Their agreed price beats the product's last cost, if they have quoted
-    // one. Fetched after the line is on screen rather than before, so adding a
-    // product is never gated on a round trip.
+    // one. Fetched after the lines are on screen rather than before, so adding
+    // a product is never gated on a round trip.
     if (supplierId) {
-      applyAgreedPrices(Number(supplierId), [
-        { productId: product.id } as OrderScreenLine,
-      ])
+      applyAgreedPrices(
+        Number(supplierId),
+        products.map((p) => ({ productId: p.id }) as OrderScreenLine),
+      )
     }
+  }
+
+  /** One product, from the type-ahead beside the button. */
+  function addProduct(product: TillProduct) {
+    addProducts([fromTillProduct(product)])
   }
 
   /**
@@ -407,50 +443,150 @@ export default function OrderScreen({
 
   const ready = supplierId !== '' && lines.length > 0 && lines.every((l) => l.qty > 0)
 
-  /** Saves, and optionally issues in the same click. */
-  function save(thenIssue: boolean) {
+  /** Everything the order is, in the shape the two save actions want. */
+  function payload() {
+    return {
+      supplierId: Number(supplierId),
+      documentDate,
+      expectedDate: expectedDate || null,
+      supplierOrderNo: supplierOrderNo || null,
+      reference: reference || null,
+      notes: notes || null,
+      lines: lines.map((l) => ({
+        productId: l.productId,
+        productCode: l.productCode,
+        supplierCode: l.supplierCode || null,
+        description: l.description,
+        productType: l.productType,
+        departmentId: null,
+        locationId: l.locationId,
+        qtyOrdered: l.qty,
+        unitCostExcl: l.unitCostExcl,
+        discountPct: l.discountPct,
+        discountAmount: l.discountAmount,
+        vatRatePct: l.vatRatePct,
+        // Carried straight back (163). saveOrder rewrites its lines wholesale,
+        // so a line raised from a job part request loses its job the moment
+        // somebody edits the order unless this makes the round trip.
+        jobCardLineId: l.jobCardLineId ?? null,
+      })),
+    }
+  }
+
+  /* ── Autosave ────────────────────────────────────────────────────────────
+   *
+   * The order is written as it is worked on: choosing a supplier creates it,
+   * adding a product writes the line, editing a cost writes the change. A shut
+   * laptop or a dead battery costs nothing, and the buyer never has to think
+   * about a Save button at all.
+   *
+   * ── WHY IT DOES NOT NAVIGATE ─────────────────────────────────────────────
+   *
+   * The old explicit save pushed to /purchasing/<id> once the order existed.
+   * An autosave must not: the buyer is mid-keystroke, and a route change would
+   * remount the screen, drop focus and lose whatever is half-typed. So the new
+   * id is REMEMBERED instead — that is what `documentId` is for — and every
+   * later save updates the same order rather than leaving a trail of drafts.
+   * This is exactly how ReceiveScreen's draftId already behaves.
+   *
+   * ── WHY IT IS NOT IN startTransition ─────────────────────────────────────
+   *
+   * `pending` disables the Issue button. Firing an autosave through the same
+   * transition would grey the primary action out every time somebody typed a
+   * digit, which reads as the screen fighting them. The autosave carries its
+   * own quiet flag; only the explicit buttons drive `pending`.
+   */
+  const [documentId, setDocumentId] = useState<number | null>(existing?.id ?? null)
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  /* The last payload written, serialised. The comparison that decides whether
+     there is anything to save at all — without it, every re-render for any
+     reason would queue another identical write. */
+  const savedJson = useRef<string | null>(null)
+  /* The live id, for the effect below. State alone is not enough: two saves
+     queued before the first returns would both read `documentId` as null and
+     create two orders. The ref is written the moment an id comes back. */
+  const documentIdRef = useRef<number | null>(existing?.id ?? null)
+  /* Only the newest save may report its result, and only it may set the id —
+     an early slow save landing after a later fast one must not overwrite it. */
+  const saveSeq = useRef(0)
+
+  useEffect(() => {
+    // Nothing to save until it is known who the order is for: supplier_id is
+    // the one column the row cannot exist without. An order with a supplier
+    // and no lines IS saved, deliberately — that is the "selecting a supplier
+    // creates it" step, and it is what makes the id exist for the first line
+    // to be written against.
+    if (supplierId === '') return
+
+    const body = payload()
+    const json = JSON.stringify(body)
+    // Unchanged since the last write. Covers the re-render after a save lands.
+    if (json === savedJson.current) return
+
+    const timer = setTimeout(() => {
+      const seq = ++saveSeq.current
+      setSaveState('saving')
+      void (async () => {
+        try {
+          const result = await saveOrderDraftAction(documentIdRef.current, body)
+          if (seq !== saveSeq.current) return
+          if (!result.ok) {
+            setSaveState('error')
+            toast.error(result.error)
+            return
+          }
+          documentIdRef.current = result.id
+          setDocumentId(result.id)
+          savedJson.current = json
+          setSaveState('saved')
+        } catch {
+          if (seq !== saveSeq.current) return
+          // Deliberately quiet. A failed autosave is usually a dropped
+          // connection, and a toast on every retry while a laptop wakes up is
+          // noise. The indicator says "not saved", which is the honest state,
+          // and the explicit Issue button still reports properly.
+          setSaveState('error')
+        }
+      })()
+    }, AUTOSAVE_MS)
+
+    return () => clearTimeout(timer)
+    // Serialised state rather than the objects themselves: `lines` is a new
+    // array on every render, and depending on it would re-arm the timer
+    // forever without ever firing it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    supplierId,
+    documentDate,
+    expectedDate,
+    supplierOrderNo,
+    reference,
+    notes,
+    JSON.stringify(lines),
+  ])
+
+  /** Issues the order. Saves whatever is on screen first, then claims the number. */
+  function issue() {
     startTransition(async () => {
-      const result = await saveOrderAction(existing?.id ?? null, {
-        supplierId: Number(supplierId),
-        documentDate,
-        expectedDate: expectedDate || null,
-        supplierOrderNo: supplierOrderNo || null,
-        reference: reference || null,
-        notes: notes || null,
-        lines: lines.map((l) => ({
-          productId: l.productId,
-          productCode: l.productCode,
-          supplierCode: l.supplierCode || null,
-          description: l.description,
-          productType: l.productType,
-          departmentId: null,
-          locationId: l.locationId,
-          qtyOrdered: l.qty,
-          unitCostExcl: l.unitCostExcl,
-          discountPct: l.discountPct,
-          discountAmount: l.discountAmount,
-          vatRatePct: l.vatRatePct,
-          // Carried straight back (163). saveOrder rewrites its lines wholesale,
-          // so a line raised from a job part request loses its job the moment
-          // somebody edits the order unless this makes the round trip.
-          jobCardLineId: l.jobCardLineId ?? null,
-        })),
-      })
+      // Through the CHECKED action, not the draft one: this is the save that
+      // has to refuse an order with a blank quantity, because the next line
+      // sends it to a supplier.
+      const result = await saveOrderAction(documentIdRef.current, payload())
 
       if (!result.ok) {
         toast.error(result.error)
         return
       }
+      documentIdRef.current = result.id
+      setDocumentId(result.id)
+      // The autosave must not re-write what was just saved and navigated away
+      // from — and if the issue below fails, the draft on screen is current.
+      savedJson.current = JSON.stringify(payload())
 
-      if (!thenIssue) {
-        toast.success('Order saved as a draft.')
-        router.push(`/purchasing/${result.id}`)
-        return
-      }
-
-      // Issued in the same click, but as a SECOND call: issueOrder claims the
-      // number and moves the status, and it refuses anything that is not a
-      // clean draft. Folding it into the save would hide that refusal.
+      // Issued as a SECOND call: issueOrder claims the number and moves the
+      // status, and it refuses anything that is not a clean draft. Folding it
+      // into the save would hide that refusal.
       const issued = await issueOrderAction(result.id)
       if (!issued.ok) {
         toast.error(issued.error)
@@ -684,14 +820,24 @@ export default function OrderScreen({
             </Card>
           )}
 
-          <Button variant="primary" disabled={!ready || pending} onClick={() => save(true)}>
+          <Button variant="primary" disabled={!ready || pending} onClick={issue}>
             <Icons.Send size={16} />
-            {pending ? 'Saving…' : 'Issue to supplier'}
+            {pending ? 'Issuing…' : 'Issue to supplier'}
           </Button>
 
-          <Button variant="ghost" disabled={!ready || pending} onClick={() => save(false)}>
-            Save as draft
-          </Button>
+          {/* No "Save as draft" button any more: the order saves itself as it
+              is worked on, and a button that repeats what already happened
+              invites the belief that work is lost without it. What replaces it
+              is a statement of where the draft actually stands. */}
+          <p className="text-center text-xs text-muted" aria-live="polite">
+            {saveState === 'saving'
+              ? 'Saving…'
+              : saveState === 'error'
+                ? 'Not saved — check your connection.'
+                : documentId
+                  ? 'Saved as a draft automatically.'
+                  : 'Choose a supplier and this order saves itself.'}
+          </p>
 
           {lines.length === 0 && (
             <p className="text-center text-xs text-muted">Add what you want to order.</p>
@@ -708,106 +854,27 @@ export default function OrderScreen({
         </div>
       </div>
 
-      {/* Stays OPEN after each pick, so an order of fifteen lines is fifteen
-          clicks rather than fifteen round trips through a button. Each pick
-          shows a toast, which is the only feedback that the row landed on a
-          grid the dialog is covering. */}
-      <Modal
+      {/* The shared product search — the same grid the recipe and invoicing
+          screens use, not a lookup box of its own. What it adds over the old
+          picker is the whole catalogue's worth of narrowing: any column the
+          store has turned on, the advanced filter, sorting by what a thing
+          costs or when it last sold, and tick boxes for adding a dozen at once.
+
+          Recipe products are absent by construction — see
+          searchProductsForPurchasePickerAction. A made item cannot be
+          delivered, so it is not offered here at all. */}
+      <ProductSearchModal
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
         title="Add stock"
-        description="Browse by department, or search by code, barcode or description. Each one you pick goes straight onto the order."
-        /* Search box, department browse and an unbounded results list — the
-           picker is exactly as tall as the catalogue lets it be. */
-        bodyGrows
-        size="lg"
-        footer={
-          <Button variant="secondary" onClick={() => setPickerOpen(false)}>
-            Done
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <Field label="Search" className="min-w-64 flex-1">
-              <Input
-                autoFocus
-                value={pickerTerm}
-                placeholder="Code, barcode or description…"
-                aria-label="Search products to add to this order"
-                icon={<Icons.Search size={15} />}
-                onChange={(e) => setPickerTerm(e.target.value)}
-                onKeyDown={(e) => {
-                  // Enter takes the first match, so a search that has already
-                  // narrowed to one thing needs no reach for the mouse.
-                  if (e.key === 'Enter' && pickerResults[0]) {
-                    e.preventDefault()
-                    addProduct(pickerResults[0])
-                    toast.success(`${pickerResults[0].description} added.`)
-                  }
-                }}
-              />
-            </Field>
-
-            <Field label="Department" className="w-60">
-              {/* One level at a time, rather than the flat list of indented
-                  paths this used to be: a nested catalogue read as forty rows
-                  all opening with the same two words, in a control too narrow
-                  to show the part that differed. */}
-              <TreeSelect
-                value={pickerDept === null ? '' : String(pickerDept)}
-                options={deptOptions}
-                onChange={(value) => setPickerDept(value ? Number(value) : null)}
-                icon={<Icons.LayoutGrid size={16} />}
-                backLabel="Back to departments"
-                aria-label="Filter products by department"
-              />
-            </Field>
-          </div>
-
-          {/* A fixed height, so the dialog does not jump as results arrive and
-              a pick never lands on a row that moved under the cursor. */}
-          <div className="min-h-[18rem]">
-            {pickerBusy && pickerResults.length === 0 ? (
-              <p className="px-1 py-3 text-sm text-muted">Loading products…</p>
-            ) : pickerResults.length === 0 ? (
-              <p className="px-1 py-3 text-sm text-muted">
-                {pickerTerm.trim()
-                  ? `Nothing matches “${pickerTerm.trim()}”${pickerDept !== null ? ' in this department' : ''}.`
-                  : 'No products in this department.'}
-              </p>
-            ) : (
-              <PickerResults
-                results={pickerResults.map((p) => ({
-                  key: p.id,
-                  label: p.description,
-                  // On hand and the cost, because those are the two figures a
-                  // buyer checks before deciding to order more.
-                  meta: `${p.code} · ${formatQty(p.stockOnHand)} on hand`,
-                  trailing: formatMoney(p.costExcl),
-                }))}
-                onPick={(key) => {
-                  const product = pickerResults.find((p) => p.id === Number(key))
-                  if (!product) return
-                  addProduct(product)
-                  toast.success(`${product.description} added.`)
-                }}
-              />
-            )}
-          </div>
-
-          {/* Say so when the list is cut short. A picker that silently shows
-              the first 500 of 40,000 looks like a complete catalogue, and the
-              product someone cannot find is the one they conclude the shop
-              does not stock. */}
-          {pickerResults.length >= PICKER_LIMIT && (
-            <p className="px-1 text-xs text-muted">
-              Showing the first <span className="numeric">{PICKER_LIMIT}</span> products. Narrow by
-              department or search to see the rest.
-            </p>
-          )}
-        </div>
-      </Modal>
+        description="Search, filter and sort the catalogue. Click a name to add one, or tick several and add them together."
+        confirmLabel="Add"
+        search={searchProductsForPurchasePickerAction}
+        onPick={(p) => addProducts([fromPick(p)])}
+        /* Present, so the tick boxes appear: a delivery of thirty lines was
+           thirty separate trips through the old dialog. */
+        onPickMany={(picks) => addProducts(picks.map(fromPick))}
+      />
 
       <LineImportDialog
         open={importOpen}

@@ -86,6 +86,8 @@ export async function searchProductsAction(
 export async function browseProductsAction(options: {
   search?: string
   departmentId?: number | null
+  /** Several departments, each covering everything beneath it. */
+  departmentIds?: number[] | null
   limit?: number
 }): Promise<BrowseResult> {
   const ctx = await actorForModule('online_store', 'online.edit')
@@ -97,6 +99,7 @@ export async function browseProductsAction(options: {
   const products = await publishedProducts(context, {
     search: options.search ?? '',
     departmentId: options.departmentId ?? undefined,
+    departmentIds: options.departmentIds ?? undefined,
     limit: options.limit ?? 100,
   })
 

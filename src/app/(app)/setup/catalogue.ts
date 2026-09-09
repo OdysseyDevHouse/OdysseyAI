@@ -293,6 +293,20 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
          is not a settings row. It sits with what the shop holds, because the
          question it answers is a shop-floor one: what did the scale in the deli
          just print. */
+      /* The catalogue's own supporting list. It sits with what the shop HOLDS
+         rather than under Money & pricing, because a brand is a property of the
+         goods — the fact that you can scope a reprice by one is a use of it,
+         not what it is. Departments are not a tile here: they have their own
+         top-level screen, being a tree somebody maintains rather than a flat
+         list. */
+      {
+        href: '/setup/brands',
+        description: 'Who makes what you sell. Used to filter, commission, count and reprice by range.',
+        keywords: 'brand brands make manufacturer maker label range product brands catalogue',
+        icon: 'Tag',
+        tone: 'teal',
+        capability: 'setup.edit',
+      },
       {
         href: '/setup/scale-barcodes',
         description:

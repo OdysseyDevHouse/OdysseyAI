@@ -23,9 +23,11 @@ import {
   gpPercent,
   sellExclFromMarkup,
   sellExclFromGp,
+  repricedForCostChange,
   type CostBasis,
 } from '@/lib/pricing'
 import type { VatRate, PriceStructure } from '@/lib/site/lookups'
+import type { PriceCalcId } from '@/lib/productProperties'
 
 /**
  * Cost and selling prices for this store AND every store linked to it.
@@ -110,6 +112,7 @@ export default function PricingPanel({
   sharesCost,
   sharesSelling,
   derivedCost = null,
+  priceCalc = 'selling',
 }: {
   vatRates: VatRate[]
   structures: PriceStructure[]
@@ -135,6 +138,16 @@ export default function PricingPanel({
    * Null — the default — leaves cost editable as it always was.
    */
   derivedCost?: number | null
+  /**
+   * Which figure survives a cost change — products.price_calc (193).
+   *
+   *   'markup'  the markup is the product's identity, so a new cost pushes
+   *             the SELLING PRICE and each tier keeps the markup it is on.
+   *   'selling' the shelf price is the identity, so a new cost is absorbed by
+   *             the MARGIN and the price does not move. Markup and GP are
+   *             read-only then: they are consequences, not inputs.
+   */
+  priceCalc?: PriceCalcId
 }) {
   const purchaseRates = vatRates.filter((v) => v.vatType === 'purchase')
   const salesRates = vatRates.filter((v) => v.vatType === 'sales')
@@ -197,8 +210,69 @@ export default function PricingPanel({
   const setPrice = (structureId: number, incl: number) =>
     setPrices((p) => ({ ...p, [structureId]: incl }))
 
+  /*
+   * A COST EDIT, with the price calculation applied (193).
+   *
+   * On 'markup' every tier is repriced to hold the markup it is currently on,
+   * which is what "Markup Fixed" means: type a new cost and the shelf prices
+   * follow, each keeping its own percentage. On 'selling' the prices are left
+   * exactly where they are and the markup columns simply re-read lower — the
+   * margin absorbs it.
+   *
+   * Both prices are recomputed from the OLD cost still in state, so this must
+   * run before the cost is stored. Tiers are held independently: retail on 20%
+   * and wholesale on 8% must stay two different products, not collapse onto
+   * one price.
+   */
+  const applyCost = (next: number) => {
+    if (priceCalc === 'markup') {
+      const from = costExcl
+      setPrices((current) => {
+        const moved: Record<number, number> = { ...current }
+        for (const s of structures) {
+          const repriced = repricedForCostChange({
+            priceCalc: 'markup',
+            oldCostExcl: from,
+            newCostExcl: next,
+            currentSellIncl: current[s.id] ?? 0,
+            sellingVatPercent: sellingVat,
+          })
+          if (repriced !== null) moved[s.id] = repriced
+        }
+        return moved
+      })
+    }
+    setCostExcl(next)
+  }
+
+  /*
+   * The same rule for a LINKED store's cost (193).
+   *
+   * Each store keeps its own markup: the group may well sell the same product
+   * at different margins, so this holds the markup that store is on rather
+   * than the one this store is on. Only meaningful while prices are not
+   * shared — a shared price is written from the table above, and moving a
+   * follower's copy here would be overwritten on save anyway.
+   */
   const setLineCost = (siteId: number, value: number) =>
-    setLines((all) => all.map((l) => (l.siteId === siteId ? { ...l, lastCost: value } : l)))
+    setLines((all) =>
+      all.map((l) => {
+        if (l.siteId !== siteId) return l
+        if (priceCalc !== 'markup' || sharesSelling) return { ...l, lastCost: value }
+        const moved: Record<number, number> = { ...l.prices }
+        for (const st of structures) {
+          const repriced = repricedForCostChange({
+            priceCalc: 'markup',
+            oldCostExcl: l.lastCost,
+            newCostExcl: value,
+            currentSellIncl: l.prices[st.id] ?? 0,
+            sellingVatPercent: sellingVat,
+          })
+          if (repriced !== null) moved[st.id] = repriced
+        }
+        return { ...l, lastCost: value, prices: moved }
+      }),
+    )
 
   const setLinePrice = (siteId: number, structureId: number, incl: number) =>
     setLines((all) =>
@@ -290,7 +364,7 @@ export default function PricingPanel({
                           name="lastCost"
                           min="0"
                           value={costExcl}
-                          onChange={(e) => setCostExcl(Number(e.target.value) || 0)}
+                          onChange={(e) => applyCost(Number(e.target.value) || 0)}
                           className={CONTROL_W}
                         />
                       )}
@@ -324,7 +398,7 @@ export default function PricingPanel({
                           min="0"
                           value={costIncl}
                           onChange={(e) =>
-                            setCostExcl(removeVat(Number(e.target.value) || 0, purchaseVat))
+                            applyCost(removeVat(Number(e.target.value) || 0, purchaseVat))
                           }
                           className={CONTROL_W}
                         />
@@ -510,6 +584,7 @@ export default function PricingPanel({
             valueFor={(id) => prices[id] ?? 0}
             onChange={setPrice}
             fieldName={(id) => `price_${id}`}
+            marginLocked={priceCalc === 'selling'}
           />
 
           {/* One table PER STORE, and only when prices are not shared. Shared,
@@ -533,6 +608,7 @@ export default function PricingPanel({
               valueFor={(id) => (sharesSelling ? (prices[id] ?? 0) : (line.prices[id] ?? 0))}
               onChange={(id, incl) => setLinePrice(line.siteId, id, incl)}
               fieldName={(id) => `storePrice_${line.siteId}_${id}`}
+              marginLocked={priceCalc === 'selling'}
             />
           ))}
 
@@ -567,6 +643,7 @@ function SellingTable({
   onChange,
   fieldName,
   readOnly = false,
+  marginLocked = false,
 }: {
   heading: string
   headingNote?: string
@@ -577,6 +654,16 @@ function SellingTable({
   onChange: (structureId: number, incl: number) => void
   fieldName: (structureId: number) => string
   readOnly?: boolean
+  /**
+   * Markup and GP are OUTPUTS on this product — price calculation 'selling'.
+   *
+   * Typing in them used to move the selling price, which is precisely what a
+   * "Selling Price Fixed" product must never do: the shelf price is the figure
+   * the shop has decided on, and the margin is whatever the cost leaves. The
+   * boxes stay visible because the margin is the reason to look at this table
+   * at all; they simply stop pretending to be editable.
+   */
+  marginLocked?: boolean
 }) {
   return (
     /* The store name still labels each block — with several stores listed the
@@ -622,8 +709,8 @@ function SellingTable({
                       step="0.01"
                       value={markupPercent(basis, excl)}
                       precision={2}
-                      readOnly={readOnly}
-                      disabled={readOnly}
+                      readOnly={readOnly || marginLocked}
+                      disabled={readOnly || marginLocked}
                       onChange={(e) =>
                         onChange(
                           s.id,
@@ -640,8 +727,8 @@ function SellingTable({
                       max="99.99"
                       value={gpPercent(basis, excl)}
                       precision={2}
-                      readOnly={readOnly}
-                      disabled={readOnly}
+                      readOnly={readOnly || marginLocked}
+                      disabled={readOnly || marginLocked}
                       onChange={(e) => {
                         // A GP of 100% or more has no finite price; ignore it
                         // rather than writing Infinity into the field.

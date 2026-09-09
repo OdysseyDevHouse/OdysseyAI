@@ -39,10 +39,10 @@ async function state(siteId: number): Promise<PurchasingSettingsResult> {
   return {
     ok: true,
     settings: {
-      // Anything other than the two known values reads as 'average', which is
-      // both the default and the safer of the two: it is what every site that
-      // has never touched this setting is already on.
-      costBasis: costBasis === 'last' ? 'last' : 'average',
+      // Anything other than the two known values reads as 'last' — the default
+      // a site is created with, so the screen shows what the rest of the app is
+      // actually costing from rather than a second opinion.
+      costBasis: costBasis === 'average' ? 'average' : 'last',
       invoiceTolerance,
       costWarnPct,
       approvalThreshold,
@@ -82,9 +82,36 @@ export async function savePurchasingSettingsAction(input: {
     ['purchase_approval_threshold', input.approvalThreshold],
   ] as const
 
+  const basisBefore = await getSetting(ctx.siteId, 'cost_basis').catch(() => null)
+
   for (const [key, value] of writes) {
     const result = await setSetting(ctx.siteId, key, value)
     if (!result.ok) return result
+  }
+
+  /*
+   * ── CHANGING THE BASIS RESTATES EVERY COMPOSED COST ──────────────────────
+   *
+   * A recipe's stored cost is a cache of compositionCost(), which sums its
+   * ingredients out of the column cost_basis names. Flipping the basis
+   * re-points that read at the OTHER column, so every recipe and every pack is
+   * now caching a figure derived from a column nothing reads any more — and no
+   * individual product changed, so the ordinary cascade never fires.
+   *
+   * Measured on a fixture across a basis flip: the till charged 600 while the
+   * catalogue and every report still stored 200. That is the same
+   * stored-vs-live divergence the cascade exists to prevent, arriving through
+   * the one door it did not watch.
+   *
+   * Only when the basis actually MOVED. Saving this screen to change the
+   * invoice tolerance must not walk the whole catalogue.
+   *
+   * Never fails the save: the settings are written and correct either way, and
+   * a recipe that cannot be resolved keeps the stored figure it had.
+   */
+  if (basisBefore !== null && basisBefore !== input.costBasis) {
+    const { recostAllComposed } = await import('@/lib/site/productComposition')
+    await recostAllComposed(ctx.siteId).catch(() => 0)
   }
 
   revalidatePath('/settings')

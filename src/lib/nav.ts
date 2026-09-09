@@ -832,6 +832,7 @@ export const SUBPAGE_LABELS = {
   '/setup/linked-stores': 'Linked stores',
   '/setup/locations': 'Stock locations',
   '/setup/reasons': 'Reasons',
+  '/setup/brands': 'Brands',
   /* '/setup/stock-takes' was here. It moved to /settings → "Stock takes". */
   /* '/setup/stock-tracking' was here. It moved to /settings → "Stock tracking". */
   '/setup/pricing': 'Price types & VAT',
@@ -1137,6 +1138,11 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
   '/setup/reasons':
     'write off shrinkage damage breakage wastage adjustment void cancel refund return credit note faulty codes exception',
   '/setup/pricing': 'tax rates price structures markup reprice vat',
+  /* "Make" and "manufacturer" are here because they are the importer's own
+     aliases for the Brand column — somebody whose spreadsheet says Manufacturer
+     searches for that word. */
+  '/setup/brands':
+    'brand brands make manufacturer maker label range product brands catalogue',
   '/setup/customer-groups':
     'customer groups categories wholesale retail staff trade terms price structure defaults segment',
   '/setup/tender-types': 'cash card eft payment methods vouchers',

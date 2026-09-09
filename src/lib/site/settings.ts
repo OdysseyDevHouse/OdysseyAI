@@ -28,7 +28,10 @@ import { isMenuArea } from '../menuAreas'
 
 /** Every setting the app reads, with its default. One list, so nothing is invented at a call site. */
 export const SETTING_DEFAULTS = {
-  cost_basis: 'average',
+  // Last cost, matching the seed in sql/site/001_products.sql. Change both or
+  // a site whose settings row is missing prices off a different basis than the
+  // one it was created with.
+  cost_basis: 'last',
   /**
    * What this country calls its sales tax: VAT, HST, GST, Tax.
    *

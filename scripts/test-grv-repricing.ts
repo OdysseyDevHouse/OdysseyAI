@@ -27,7 +27,9 @@ import { getPurchaseDocument } from '../src/lib/site/purchaseDocuments'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { reconcileStock } from '../src/lib/site/stockMovements'
 import { reconcileSupplierBalances } from '../src/lib/site/supplierLedger'
-import { toNum } from '../src/lib/decimals'
+import { toNum, round } from '../src/lib/decimals'
+import { markupPercent, removeVat } from '../src/lib/pricing'
+import { getCostBasis } from '../src/lib/site/lookups'
 
 const SITE = 1
 const actor = { userId: 1, userName: 'Reprice Test' }
@@ -97,6 +99,32 @@ async function main() {
       "SELECT rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1",
     ))
   const rate = toNum(vat?.rate, 15)
+
+  /*
+   * The SELLING side, for the markup-fixed cases below.
+   *
+   * A markup is measured on the exclusive price, so a product needs a real
+   * selling rate on it or the panel's arithmetic and this test's arithmetic
+   * are reading two different numbers.
+   */
+  const sellingVatRow = await siteQueryOne<any>(
+    SITE,
+    "SELECT id, rate FROM vat_rates WHERE vat_type='sales' AND is_default=1 LIMIT 1",
+  )
+  const sellingVatId = sellingVatRow ? Number(sellingVatRow.id) : null
+  const sellingRate = toNum(sellingVatRow?.rate, 0)
+
+  /*
+   * Which cost column the reprice measured against — the site's own basis.
+   * Asserting against the other one would fail on a correctly repriced
+   * product for no reason but this test's choice of column.
+   */
+  const basis = await getCostBasis(SITE)
+  const basisColumn = basis === 'last' ? 'last_cost' : 'average_cost'
+
+  /** The markup a product is actually on, given a cost and an incl. price. */
+  const markupOf = (costExcl: number, sellIncl: number) =>
+    markupPercent(costExcl, removeVat(sellIncl, sellingRate))
 
   const sup = await createSupplier(SITE, actor, {
     code: `RPR${stamp}`,
@@ -313,9 +341,181 @@ async function main() {
     )
   }
 
+  /*
+   * ── MARKUP FIXED: the price follows the cost ───────────────────────────
+   *
+   * products.price_calc is what a shop sets when a product is defined by its
+   * MARGIN rather than its shelf price: "this sells at 20%". A delivery that
+   * moves the cost and leaves the price alone quietly breaks that promise, and
+   * nothing on the screen says so — the markup column simply reads lower, and
+   * the shop finds out at month end.
+   *
+   * The setting was stored and editable for a long time without a single line
+   * of pricing code reading it, so this is the case that was silently wrong on
+   * every GRV.
+   */
+  console.log('\n── Markup fixed: an untouched line RE-PRICES itself ──')
+
+  /** A product whose markup is the fixed figure, at a known starting margin. */
+  const mkFixed = async (code: string, startingPrice: number, startCost: number) => {
+    const id = (
+      await siteExecute(
+        SITE,
+        `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos, price_calc, selling_vat_rate_id)
+         VALUES (?,?,'normal',?,?,?,1,'markup',?)`,
+        [code, `Markup fixed ${code}`, 0, startCost, startCost, sellingVatId],
+      )
+    ).insertId
+    await siteExecute(
+      SITE,
+      'INSERT INTO product_prices (product_id, price_structure_id, selling_price_incl) VALUES (?,?,?)',
+      [id, structureId, startingPrice.toFixed(4)],
+    )
+    return id
+  }
+
+  /* A real starting margin, not a clean zero: cost 100, 120 excl, i.e. 20%. */
+  const startIncl = round(120 * (1 + sellingRate / 100), 4)
+  const p7 = await mkFixed(`R7${stamp}`, startIncl, 100)
+  ok('starts on a 20% markup', markupOf(100, await priceOf(p7, structureId)) === 20,
+    String(markupOf(100, await priceOf(p7, structureId))))
+
+  const fixedRun = await receiveGoods(SITE, actor, {
+    supplierId: sup.id,
+    lines: [
+      {
+        productId: p7,
+        description: 'Markup fixed item',
+        qtyReceived: 10,
+        // The supplier put it up. Nothing is on hand (seeding stock without a
+        // movement is drift, and reconcileStock is right to say so), so the
+        // average lands squarely on what just arrived: 100 -> 140 on either
+        // basis.
+        unitCostExcl: 140,
+        vatRatePct: rate,
+        // The buyer typed NOTHING. This is exactly the line that used to drift.
+        sellingPriceIncl: null,
+      },
+    ],
+  })
+  ok('the receipt posts', fixedRun.ok, fixedRun.ok ? '' : fixedRun.error)
+  if (!fixedRun.ok) process.exit(1)
+
+  const newCost = toNum((await costOf(p7))[basisColumn])
+  const newPrice = await priceOf(p7, structureId)
+  ok(
+    '*** the shelf price MOVED, with nobody typing one ***',
+    newPrice !== startIncl,
+    `${startIncl} -> ${newPrice}`,
+  )
+  ok(
+    '*** and the product is STILL on its 20% markup ***',
+    Math.abs(markupOf(newCost, newPrice) - 20) < 0.01,
+    `${markupOf(newCost, newPrice)}% on a cost of ${newCost}`,
+  )
+
+  const fixedHist = await historyFor(p7)
+  ok('  the move is on the record as a GRV', fixedHist?.source === 'grv', String(fixedHist?.source))
+  ok(
+    '  naming the receipt that caused it',
+    Number(fixedHist?.source_doc_id) === fixedRun.documentId,
+  )
+
+  console.log('\n── A typed price still beats the calculation ──')
+
+  /* The buyer is the one holding the supplier's invoice. If they state a shelf
+     price, that is a decision — the markup rule fills SILENCE, it does not
+     overrule a person. */
+  const p8 = await mkFixed(`R8${stamp}`, startIncl, 100)
+  const overridden = await receiveGoods(SITE, actor, {
+    supplierId: sup.id,
+    lines: [
+      {
+        productId: p8,
+        description: 'Markup fixed but priced by hand',
+        qtyReceived: 10,
+        unitCostExcl: 140,
+        vatRatePct: rate,
+        sellingPriceIncl: 175,
+      },
+    ],
+  })
+  ok('the receipt posts', overridden.ok)
+  ok(
+    '*** the buyer\u2019s own price won, not the computed one ***',
+    (await priceOf(p8, structureId)) === 175,
+    String(await priceOf(p8, structureId)),
+  )
+
+  console.log('\n── Selling price fixed is the other half ──')
+
+  /* The same delivery against a 'selling' product must leave the shelf exactly
+     where it is and let the MARGIN absorb the cost — which is what every
+     product in this file did before, and must keep doing. */
+  const p9 = await mkFixed(`R9${stamp}`, startIncl, 100)
+  await siteExecute(SITE, "UPDATE products SET price_calc='selling' WHERE id=?", [p9])
+  const heldRun = await receiveGoods(SITE, actor, {
+    supplierId: sup.id,
+    lines: [
+      {
+        productId: p9,
+        description: 'Selling price fixed item',
+        qtyReceived: 10,
+        unitCostExcl: 140,
+        vatRatePct: rate,
+        sellingPriceIncl: null,
+      },
+    ],
+  })
+  ok('the receipt posts', heldRun.ok)
+  ok(
+    '*** the shelf price did NOT move ***',
+    (await priceOf(p9, structureId)) === startIncl,
+    String(await priceOf(p9, structureId)),
+  )
+  ok('  and no history row was invented', (await historyFor(p9)) === null)
+  ok(
+    '  the MARKUP absorbed the cost instead',
+    markupOf(toNum((await costOf(p9))[basisColumn]), startIncl) < 20,
+    String(markupOf(toNum((await costOf(p9))[basisColumn]), startIncl)),
+  )
+
+  console.log('\n── A markup-fixed product with no price stays unpriced ──')
+
+  /* No product_prices row means no markup to hold. Inventing one would put a
+     price on the shelf that nobody ever set. */
+  const p10 = (
+    await siteExecute(
+      SITE,
+      `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos, price_calc)
+       VALUES (?,?,'normal',0,0,0,1,'markup')`,
+      [`RA${stamp}`, 'Markup fixed, never priced'],
+    )
+  ).insertId
+  const unpriced = await receiveGoods(SITE, actor, {
+    supplierId: sup.id,
+    lines: [
+      {
+        productId: p10,
+        description: 'Never priced',
+        qtyReceived: 4,
+        unitCostExcl: 90,
+        vatRatePct: rate,
+        sellingPriceIncl: null,
+      },
+    ],
+  })
+  ok('the receipt posts', unpriced.ok)
+  ok(
+    '*** no price was invented for it ***',
+    (await priceOf(p10, structureId)) === 0,
+    String(await priceOf(p10, structureId)),
+  )
+  ok('  and the cost still moved', toNum((await costOf(p10)).last_cost) === 90)
+
   console.log('\n── Invariants ──')
 
-  const ids = [p1, p2, p3, p4, p5, p6]
+  const ids = [p1, p2, p3, p4, p5, p6, p7, p8, p9, p10]
   const drift = (await reconcileStock(SITE)).filter((d) => ids.includes(d.productId))
   ok(
     '*** zero stock drift across every product this run touched ***',

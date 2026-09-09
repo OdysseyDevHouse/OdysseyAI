@@ -232,7 +232,7 @@ function optionGroups(canDelete: boolean): BulkOptionGroup<BulkKind>[] {
   const lifecycle: BulkOptionGroup<BulkKind> = {
     title: 'Lifecycle',
     options: [
-      { key: 'archive', label: 'Archive or restore', icon: <Icons.Archive size={15} /> },
+      { key: 'archive', label: 'Archive or unarchive', icon: <Icons.Archive size={15} /> },
       ...(canDelete
         ? [
             {
@@ -672,7 +672,7 @@ function BulkForms({
 
     case 'archive':
       return shell(
-        'Archive or restore',
+        'Archive or unarchive',
         <Field
           label="Archive state"
           hint="Archived products keep every document and movement — they come off the till only."
@@ -682,7 +682,7 @@ function BulkForms({
             onChange={(e) => setArchived(e.target.value === 'archive')}
           >
             <option value="archive">Archive</option>
-            <option value="restore">Restore</option>
+            <option value="restore">Unarchive</option>
           </Select>
         </Field>,
         () => ({ kind: 'archive', archived }),

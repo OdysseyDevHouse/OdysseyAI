@@ -177,9 +177,17 @@ export default function TradeEntryPane({
               min={0}
               /* The product's own places once one is found. `step="any"` was
                  inert anyway — NumberInput renders type="text", so min/step have
-                 never constrained anything here; the rounding below is what
-                 actually holds. */
+                 never constrained anything here. */
               step="any"
+              /*
+               * What actually holds the rule: a keystroke past the product's
+               * places is REFUSED, so the box never shows a figure the counter
+               * hand did not type. Before the lookup there is no product to
+               * have a rule, so it is left undefined and anything may be typed
+               * — the blur and commit rounding below settle whatever was
+               * entered once the product IS known.
+               */
+              precision={found ? qtyDecimalsOf(found) : undefined}
               onChange={(e) => setQty(Number(String(e.target.value).replace(',', '.')) || 0)}
               /*
                * Rounded when the box is LEFT, not per keystroke.

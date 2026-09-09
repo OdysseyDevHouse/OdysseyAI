@@ -7,18 +7,23 @@ import {
   Combobox,
   EmptyState,
   NumberInput,
+  QtyCalculator,
   Switch,
   TABLE,
   TABLE_HEAD_ROW,
   TABLE_NUMERIC,
   TABLE_TD,
   TABLE_TH,
+  useToast,
   type ComboboxOption,
 } from '@/components/ui'
-import { Trash } from '@/components/ui/icons'
+import { Calculator, Search, Trash } from '@/components/ui/icons'
+import ProductSearchModal, {
+  type ProductSearchPick,
+} from '@/components/products/ProductSearchModal'
 import type { RecipeLine } from '@/lib/site/productComposition'
 import type { ProductPick } from '@/lib/site/products'
-import { searchProductsAction } from '@/app/(app)/products/pickerActions'
+import { productPicksByIdAction, searchProductsAction } from '@/app/(app)/products/pickerActions'
 
 /**
  * What a recipe product is made of.
@@ -64,6 +69,7 @@ const money = (n: number) =>
 export default function RecipePanel({
   lines,
   productId,
+  madeName,
   isNew,
   isManufactured = false,
   lockManufactured = false,
@@ -73,6 +79,14 @@ export default function RecipePanel({
   lines: RecipeLine[]
   /** Excluded from the picker so a recipe cannot list itself. */
   productId: number | null
+  /**
+   * What is being made — the product's own description.
+   *
+   * Only used to word the weight-factor dialog ("When selling a Burger…").
+   * Live from the form's description box rather than the saved row, so a new
+   * product being named right now reads correctly.
+   */
+  madeName?: string
   isNew: boolean
   /** Built ahead of time and stocked, rather than exploded at the till. */
   isManufactured?: boolean
@@ -93,11 +107,19 @@ export default function RecipePanel({
    */
   onCostChange?: (costExcl: number) => void
 }) {
+  const toast = useToast()
   const [made, setMade] = useState(isManufactured)
   const [rows, setRows] = useState<Row[]>(() => lines.map(toRow))
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ProductPick[]>([])
   const [searching, startSearch] = useTransition()
+
+  /** The big search grid — the same dialog invoicing and the POS open. */
+  const [browsing, setBrowsing] = useState(false)
+  const [adding, startAdding] = useTransition()
+
+  /** Which row's quantity the calculator is working out, by key. */
+  const [calcFor, setCalcFor] = useState<string | null>(null)
 
   function search(next: string) {
     setQuery(next)
@@ -106,29 +128,70 @@ export default function RecipePanel({
     })
   }
 
-  function add(pick: ProductPick) {
-    setRows((prev) =>
+  /** One pick as a row. `costExcl` is the site's basis, NOT average — see below. */
+  const toNewRow = (pick: ProductPick): Row => ({
+    key: `new-${pick.id}`,
+    componentId: pick.id,
+    code: pick.code,
+    description: pick.description,
+    qty: 1,
+    wastagePct: 0,
+    /*
+     * The cost this site PRICES from, resolved server-side.
+     *
+     * This used to read `pick.averageCost` while the saved line was read back
+     * through listRecipe() at the site's cost basis — so on a `last`-basis site
+     * a newly added ingredient showed its average cost, and became a different
+     * figure the moment the screen was refreshed. Same field, two authorities.
+     */
+    unitCostExcl: pick.costExcl,
+    stockOnHand: pick.stockOnHand,
+  })
+
+  function addMany(picks: ProductPick[]) {
+    setRows((prev) => {
       // Silently ignoring a duplicate would look like the click missed. The row
       // is already there, so scrolling to it is the honest response — but the
       // list is short, so simply refusing to double it is enough.
-      prev.some((r) => r.componentId === pick.id)
-        ? prev
-        : [
-            ...prev,
-            {
-              key: `new-${pick.id}`,
-              componentId: pick.id,
-              code: pick.code,
-              description: pick.description,
-              qty: 1,
-              wastagePct: 0,
-              unitCostExcl: pick.averageCost,
-              stockOnHand: pick.stockOnHand,
-            },
-          ],
-    )
+      const have = new Set(prev.map((r) => r.componentId))
+      const fresh = picks.filter((p) => !have.has(p.id)).map(toNewRow)
+      return fresh.length === 0 ? prev : [...prev, ...fresh]
+    })
+  }
+
+  function add(pick: ProductPick) {
+    addMany([pick])
     setQuery('')
     setResults([])
+  }
+
+  /**
+   * Picks from the big search dialog, costed before they become rows.
+   *
+   * That dialog's rows are shaped for a grid and carry no cost — cost is
+   * capability-gated there, so a role without `products.cost` sees null in the
+   * column. A recipe still has to be costed for such a user, so the ids go back
+   * to the server and come home as whole picks at the site's basis.
+   */
+  function addFromSearch(picks: ProductSearchPick[]) {
+    const ids = picks.map((p) => p.id)
+    if (ids.length === 0) return
+    startAdding(async () => {
+      try {
+        const full = await productPicksByIdAction(ids, productId ?? undefined)
+        addMany(full)
+        // A pick that came back with nothing behind it is worth saying out
+        // loud: silently adding four of five ticked rows reads as a bug.
+        if (full.length < ids.length) {
+          const missing = ids.length - full.length
+          toast.info(
+            `${missing} of ${ids.length} could not be added — a variant parent, or this product itself.`,
+          )
+        }
+      } catch {
+        toast.error('Could not add those products. Try again.')
+      }
+    })
   }
 
   const update = (key: string, patch: Partial<Row>) =>
@@ -162,6 +225,10 @@ export default function RecipePanel({
     if (per <= 0) return least
     return Math.min(least, r.stockOnHand / per)
   }, Infinity)
+
+  /* Resolved from `rows`, not held as its own copy: deleting the row the
+     calculator is open on closes it rather than leaving it editing a ghost. */
+  const calcRow = rows.find((r) => r.key === calcFor) ?? null
 
   const options: ComboboxOption<ProductPick>[] = results.map((p) => ({
     value: String(p.id),
@@ -210,17 +277,44 @@ export default function RecipePanel({
         </p>
       )}
 
-      <div className="max-w-md">
-        <Combobox
-          options={options}
-          query={query}
-          onQueryChange={search}
-          onSelect={(option) => option.data && add(option.data)}
-          loading={searching}
-          placeholder="Search a product to add as an ingredient…"
-          emptyText="No products match"
-        />
+      {/* Two ways in, for two different questions. The type-ahead is for
+          someone who knows what they want and can name it; the dialog is the
+          full catalogue with columns, filters and tick boxes, for someone
+          browsing — and it is the only one that can add several at once. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1 sm:max-w-md">
+          <Combobox
+            options={options}
+            query={query}
+            onQueryChange={search}
+            onSelect={(option) => option.data && add(option.data)}
+            loading={searching}
+            placeholder="Search a product to add as an ingredient…"
+            emptyText="No products match"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => setBrowsing(true)}
+          disabled={adding}
+        >
+          <Search size={15} />
+          {adding ? 'Adding…' : 'Search products'}
+        </Button>
       </div>
+
+      <ProductSearchModal
+        open={browsing}
+        onClose={() => setBrowsing(false)}
+        title="Add ingredients"
+        description="Search, filter and sort the catalogue. Click a name to add one, or tick several and add them together."
+        confirmLabel="Add"
+        onPick={(p) => addFromSearch([p])}
+        /* Present, so the tick boxes appear: adding a dozen ingredients one
+           dialog-open at a time is the thing this button exists to end. */
+        onPickMany={addFromSearch}
+      />
 
       {rows.length === 0 ? (
         <EmptyState
@@ -262,12 +356,27 @@ export default function RecipePanel({
                         <input type="hidden" name="recipeWastage" value={row.wastagePct} />
                       </td>
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
-                        <NumberInput
-                          aria-label={`Quantity of ${row.description}`}
-                          value={row.qty}
-                          onChange={(e) => update(row.key, { qty: Number(e.target.value) })}
-                          className="w-24"
-                        />
+                        {/* justify-end so the pair stays on the column's right
+                            rail with the other numbers, rather than the input
+                            drifting left to make room for the button. */}
+                        <div className="flex items-center justify-end gap-1">
+                          <NumberInput
+                            aria-label={`Quantity of ${row.description}`}
+                            value={row.qty}
+                            onChange={(e) => update(row.key, { qty: Number(e.target.value) })}
+                            className="w-24"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            iconOnly
+                            aria-label={`Work out the quantity of ${row.description}`}
+                            onClick={() => setCalcFor(row.key)}
+                          >
+                            <Calculator size={15} />
+                          </Button>
+                        </div>
                       </td>
                       <td className={`${TABLE_TD} ${TABLE_NUMERIC}`}>
                         <NumberInput
@@ -306,6 +415,27 @@ export default function RecipePanel({
               </tbody>
             </table>
           </div>
+
+          {/*
+            ONE calculator for the whole table, outside it, keyed by row.
+
+            Not one per row: a <dialog>'s children stay mounted when it is
+            closed, so twenty of these would leave twenty sets of key handlers
+            listening on a page with one visible pad. Mounting only while a row
+            is chosen also means the dialog's `initial` is read fresh on open.
+          */}
+          {calcRow && (
+            <QtyCalculator
+              open
+              onClose={() => setCalcFor(null)}
+              initial={calcRow.qty}
+              label={calcRow.description}
+              /* Falls back rather than reading "undefined" into the sentence —
+                 a product being created may not be named yet. */
+              madeName={madeName?.trim() || 'this product'}
+              onApply={(value) => update(calcRow.key, { qty: value })}
+            />
+          )}
 
           <div className="flex flex-wrap items-center gap-6 border-t border-border pt-4">
             <div>

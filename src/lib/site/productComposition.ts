@@ -64,8 +64,9 @@ const MAX_DEPTH = 5
  */
 async function costColumn(siteId: number): Promise<'last_cost' | 'average_cost'> {
   const { getSetting } = await import('./settings')
-  const basis = await getSetting(siteId, 'cost_basis').catch(() => 'average')
-  return basis === 'last' ? 'last_cost' : 'average_cost'
+  // Falls back to the created-with default, not to average — see getCostBasis.
+  const basis = await getSetting(siteId, 'cost_basis').catch(() => 'last')
+  return basis === 'average' ? 'average_cost' : 'last_cost'
 }
 
 export type RecipeLine = {
@@ -689,13 +690,23 @@ export async function usedInRecipes(
  * A cost that could not be recomputed leaves the stored figure alone and the
  * caller still succeeds. Refusing to receive stock because an unrelated recipe
  * upstairs is missing an ingredient would make a broken setup impossible to
- * edit your way out of — and the goods are on the shelf either way. Returns
- * how many were rewritten so a caller can say so.
+ * edit your way out of — and the goods are on the shelf either way.
+ *
+ * ── WHY IT RETURNS THE IDS AND NOT JUST A COUNT ──────────────────────────
+ *
+ * The products it rewrote are exactly the ones whose PAGE is now stale, and
+ * this walk is the only thing that knows which they are. Repricing mince moves
+ * every burger built on it, through nesting no caller can name in advance — so
+ * a caller told only "7 were rewritten" could expire the ingredient it saved
+ * and nothing else, leaving every recipe screen serving the old cost out of the
+ * router cache until something unrelated evicted it. That was the bug: the
+ * database was right and the screen was not. Handing back the ids lets the save
+ * path expire precisely those pages. `.length` is still the count.
  */
 export async function cascadeCompositionCosts(
   siteId: number,
   changedId: number,
-): Promise<number> {
+): Promise<number[]> {
   /*
    * Deeper than resolveComponents' MAX_DEPTH, and deliberately.
    *
@@ -708,7 +719,7 @@ export async function cascadeCompositionCosts(
 
   let frontier = [changedId]
   const seen = new Set<number>([changedId])
-  let written = 0
+  const written: number[] = []
 
   for (let depth = 0; depth < MAX && frontier.length; depth++) {
     const placeholders = frontier.map(() => '?').join(',')
@@ -758,7 +769,7 @@ export async function cascadeCompositionCosts(
         'UPDATE products SET last_cost = ?, average_cost = ? WHERE id = ?',
         [cost.toFixed(4), cost.toFixed(4), id],
       )
-      written++
+      written.push(id)
     }
 
     // The ones just rewritten are the next frontier: a burger whose cost moved
@@ -768,5 +779,70 @@ export async function cascadeCompositionCosts(
     frontier = next
   }
 
+  return written
+}
+
+/**
+ * Recosts every composed product on the site, from the bottom of each chain up.
+ *
+ * ── WHY THE WHOLE CATALOGUE, AND NOT ONE CHANGED PRODUCT ─────────────────
+ *
+ * cascadeCompositionCosts() answers "this ingredient moved, what is built on
+ * it". This answers the other question: nothing moved, but the RULE for
+ * reading a cost did — the site switched cost_basis between last and average.
+ *
+ * That flips which column every read resolves to, including the one
+ * compositionCost() sums. So a recipe whose stored cost was derived under the
+ * old basis is now wrong by however much the two columns differ, and no single
+ * product changed to trigger the ordinary cascade. Measured on a fixture: the
+ * till charged 600 while the catalogue and every report stored 200.
+ *
+ * ── WHY IT SEEDS FROM THE LEAVES ─────────────────────────────────────────
+ *
+ * Composed products are recosted bottom-up, because a platter's cost is a sum
+ * of burgers whose own cost must be right first. Rather than sort the graph
+ * here, it hands each PLAIN ingredient to the existing walk, which already
+ * climbs breadth-first through both link tables and already refuses to write a
+ * cost it could not resolve. One implementation of the arithmetic, not two.
+ *
+ * Never fails its caller, exactly like the walk it delegates to: a setting
+ * that saved must not be reported as failed because one recipe upstairs is
+ * missing an ingredient. Returns how many stored costs it rewrote.
+ */
+export async function recostAllComposed(siteId: number): Promise<number> {
+  /*
+   * The leaves: products that something is built OUT of, but which are not
+   * themselves composed. Starting anywhere else would recost a parent before
+   * its children and then have to do it again.
+   *
+   * A chain made only of composed products has no leaf here and is reached
+   * anyway — every such chain still bottoms out in a real purchased product,
+   * because that is what `refer` and `recipe` are defined against.
+   */
+  const leaves = await siteQuery<Row>(
+    siteId,
+    `SELECT DISTINCT c.id
+       FROM (
+         SELECT component_id AS id FROM product_recipes
+         UNION
+         SELECT target_id AS id FROM product_refers
+       ) AS used
+       JOIN products c ON c.id = used.id
+      WHERE c.product_type NOT IN ('recipe', 'refer')`,
+  ).catch(() => [] as Row[])
+
+  const seen = new Set<number>()
+  let written = 0
+  for (const leaf of leaves) {
+    const ids = await cascadeCompositionCosts(siteId, Number(leaf.id)).catch(() => [])
+    // Two leaves in the same burger both reach it; it is recosted twice and
+    // written once, which is right — the second pass reads the first's result.
+    for (const id of ids) {
+      if (!seen.has(id)) {
+        seen.add(id)
+        written++
+      }
+    }
+  }
   return written
 }

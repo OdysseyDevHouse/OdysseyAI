@@ -5,6 +5,7 @@ import { toNum } from '../decimals'
 import { effectiveCost, type CostBasis } from '../pricing'
 import { writePriceRows } from './reprice'
 import { getCostBasis } from './lookups'
+import { toPriceCalc, type PriceCalcId } from '../productProperties'
 import { logActivityTx } from './activityLog'
 
 /**
@@ -40,6 +41,8 @@ export type BulkPricingRow = {
   purchaseVatRateId: number | null
   sellingVatRateId: number | null
   departmentName: string | null
+  /** Which figure survives a cost change, so a cost edit can hold the markup. */
+  priceCalc: PriceCalcId
 }
 
 export type BulkPricingOptions = {
@@ -126,7 +129,7 @@ export async function listProductsForPricing(
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT p.id, p.code, p.description, p.last_cost, p.average_cost,
-            p.purchase_vat_rate_id, p.selling_vat_rate_id,
+            p.purchase_vat_rate_id, p.selling_vat_rate_id, p.price_calc,
             d.name AS department_name,
             COALESCE(v.rate, 0)  AS selling_vat,
             COALESCE(pv.rate, 0) AS purchase_vat,
@@ -159,6 +162,7 @@ export async function listProductsForPricing(
         r.purchase_vat_rate_id === null ? null : Number(r.purchase_vat_rate_id),
       sellingVatRateId: r.selling_vat_rate_id === null ? null : Number(r.selling_vat_rate_id),
       departmentName: r.department_name === null ? null : String(r.department_name),
+      priceCalc: toPriceCalc(r.price_calc),
     }
   })
 

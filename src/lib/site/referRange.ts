@@ -6,6 +6,7 @@ import {
   insertProductTx,
   resolveVat,
   validateProduct,
+  whyCodeTaken,
   type ProductInput,
 } from './products'
 import { resolveMasterCode } from './masterCodes'
@@ -602,10 +603,8 @@ export async function addReferRung(
   const code = await resolveMasterCode(siteId, 'product', input.code)
   if (!code) return { ok: false, error: 'A product code is needed.' }
 
-  const clash = await siteQueryOne<Row>(siteId, 'SELECT id FROM products WHERE code = ? LIMIT 1', [
-    code,
-  ])
-  if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
+  const taken = await whyCodeTaken(siteId, code)
+  if (taken) return { ok: false, error: taken }
 
   const barcode = input.barcode?.trim() || ''
   if (barcode) {
@@ -688,7 +687,7 @@ export async function addReferRung(
  */
 async function recostFromBase(siteId: number, baseId: number): Promise<void> {
   const { cascadeCompositionCosts } = await import('./productComposition')
-  await cascadeCompositionCosts(siteId, baseId).catch(() => 0)
+  await cascadeCompositionCosts(siteId, baseId).catch(() => [])
 }
 
 /**
@@ -863,12 +862,8 @@ export async function createReferRange(
     }
     seenCodes.add(code)
 
-    const clash = await siteQueryOne<Row>(
-      siteId,
-      'SELECT id FROM products WHERE code = ? LIMIT 1',
-      [code],
-    )
-    if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
+    const taken = await whyCodeTaken(siteId, code)
+    if (taken) return { ok: false, error: taken }
 
     /*
      * The base rung is an ordinary stocked product; everything above it is a
@@ -1058,7 +1053,7 @@ export async function createReferRange(
 export async function cascadeReferCosts(
   siteId: number,
   baseId: number,
-): Promise<number> {
+): Promise<number[]> {
   const { cascadeCompositionCosts } = await import('./productComposition')
   return cascadeCompositionCosts(siteId, baseId)
 }

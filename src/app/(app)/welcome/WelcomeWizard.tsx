@@ -128,7 +128,7 @@ export default function WelcomeWizard({
   const [currencyCode, setCurrencyCode] = useState(settings.currency_code ?? 'ZAR')
   const [currencySymbol, setCurrencySymbol] = useState(settings.currency_symbol ?? 'R')
   const [taxLabel, setTaxLabel] = useState(settings.tax_label ?? 'VAT')
-  const [costBasis, setCostBasis] = useState(settings.cost_basis ?? 'average')
+  const [costBasis, setCostBasis] = useState(settings.cost_basis ?? 'last')
   const [qtyDecimals, setQtyDecimals] = useState(settings.qty_decimals ?? '2')
   const [costDecimals, setCostDecimals] = useState(settings.cost_decimals ?? '2')
   const [rates, setRates] = useState<TaxRow[]>(vatRates)

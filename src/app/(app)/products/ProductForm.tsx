@@ -1,9 +1,10 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useRef, useState } from 'react'
 import { Save } from '@/components/ui/icons'
 import RichText from '@/components/RichText'
 import DepartmentPicker from '@/components/DepartmentPicker'
+import BrandPicker from '@/components/BrandPicker'
 import PricingPanel, { type StoreLine } from '@/components/PricingPanel'
 import LocationStockPanel, { type LocationStockRow } from '@/components/LocationStockPanel'
 import LinkedStoresPanel from '@/components/LinkedStoresPanel'
@@ -13,6 +14,7 @@ import TillTilePanel from './TillTilePanel'
 import ExtraBarcodesModal from './ExtraBarcodesModal'
 import GenerateBarcodeModal from './GenerateBarcodeModal'
 import PropertiesPanel from '@/components/PropertiesPanel'
+import type { PriceCalcId } from '@/lib/productProperties'
 import InstructionsPanel from '@/components/InstructionsPanel'
 import RecipePanel from '@/components/RecipePanel'
 import ReferPanel from '@/components/ReferPanel'
@@ -41,7 +43,6 @@ import {
   MenuItem,
   SectionTitle,
   SectionBody,
-  Select,
   Tabs,
   TILE_SWATCHES,
 } from '@/components/ui'
@@ -62,7 +63,7 @@ import {
 } from '@/components/ui/icons'
 import { DEFAULT_PRODUCT_TYPE, type ProductTypeId } from '@/lib/productTypes'
 import { DEFAULT_PRODUCT_TAB, type ProductTab } from '@/lib/productTabs'
-import { saveProductAction, type ProductFormState } from './actions'
+import { saveProductAction, checkProductCodeAction, type ProductFormState } from './actions'
 import type { Product } from '@/lib/site/products'
 import type { Brand, VatRate, PriceStructure } from '@/lib/site/lookups'
 import type { Department } from '@/lib/site/departments'
@@ -267,6 +268,45 @@ export default function ProductForm({
      before anyone opens it, which is what makes hiding them behind a menu
      safe. Kept in sync by the dialog rather than re-read: each add/remove is
      already its own round trip.  */
+  /*
+   * The duplicate-code refusal, asked as the user leaves the code box.
+   *
+   * The save checks this too and always will — two people can take the same
+   * code in the seconds between. This is only about WHERE the sentence lands:
+   * under the field that caused it, while the code is still what the user is
+   * thinking about, instead of at the top of a re-rendered form several fields
+   * later.
+   */
+  const [codeTaken, setCodeTaken] = useState<string | null>(null)
+  /* Every check gets a number, and only the newest one is allowed to write.
+     Blur, re-focus, blur again fires two requests, and the network may return
+     them in either order — without this, a stale "free" answer can clear the
+     warning the current code earned. */
+  const codeCheckSeq = useRef(0)
+
+  async function checkCode(typed: string) {
+    const seq = ++codeCheckSeq.current
+    const code = typed.trim()
+
+    /* Blank is not a clash — on a new product it is how the user asks for the
+       next number (see the note on the field). Nothing to say yet. */
+    if (!code || code === product?.code) {
+      setCodeTaken(null)
+      return
+    }
+
+    try {
+      const res = await checkProductCodeAction(code, product?.id)
+      if (seq !== codeCheckSeq.current) return
+      setCodeTaken(res.ok ? null : res.error)
+    } catch {
+      /* Offline, or the action failed. Say NOTHING rather than guessing: the
+         save still refuses a duplicate, and a warning we cannot stand behind
+         is worse than waiting for the one we can. */
+      if (seq === codeCheckSeq.current) setCodeTaken(null)
+    }
+  }
+
   const [barcode, setBarcode] = useState(product?.barcode ?? '')
   const [aliases, setAliases] = useState<ProductBarcode[]>(extraBarcodes)
   const [aliasesOpen, setAliasesOpen] = useState(false)
@@ -280,6 +320,11 @@ export default function ProductForm({
   // card owns the controls. One source of truth, read by both.
   const [sharesCost, setSharesCost] = useState(defaultSharesCost)
   const [sharesSelling, setSharesSelling] = useState(defaultSharesSelling)
+
+  // Which figure survives a cost change, for the same reason as the two above:
+  // the setting lives on the Properties tab but is FELT on the Pricing tab,
+  // where it decides whether typing a cost moves the selling price.
+  const [priceCalc, setPriceCalc] = useState<PriceCalcId>(product?.priceCalc ?? 'selling')
 
   // Open to start with: the fold exists to put a section you are done with out
   // of the way, not to hide stock levels until somebody thinks to look.
@@ -365,19 +410,12 @@ export default function ProductForm({
   const initial = (description.trim()[0] ?? '?').toUpperCase()
 
   /* Defined once and placed by the department picker, which is the only thing
-     that knows how many levels are on screen — see its `trailing` prop. No
-     max-w here: it is a grid cell now, and the column sets the width. */
+     that knows how many levels are on screen — see its `trailing` prop.
+     BrandPicker rather than a bare Select: it carries the same "<Create new>"
+     option the department levels have, so a missing brand does not mean
+     abandoning a half-filled form. */
   const brandField = (
-    <Field label="Brand">
-      <Select name="brandId" defaultValue={product?.brandId ?? ''}>
-        <option value="">&lt;None&gt;</option>
-        {brands.map((b) => (
-          <option key={b.id} value={b.id}>
-            {b.name}
-          </option>
-        ))}
-      </Select>
-    </Field>
+    <BrandPicker name="brandId" brands={brands} defaultValue={product?.brandId ?? null} />
   )
 
   // EDIT_COLUMN, not a literal: this wrapper is what gives the whole screen its
@@ -578,6 +616,9 @@ export default function ProductForm({
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
                   label={isNew && suggestedCode ? 'Product code' : 'Product code *'}
+                  /* The clash wins the line: a code that cannot be saved is
+                     more urgent than the hint explaining where it came from. */
+                  error={codeTaken ?? undefined}
                   hint={
                     !isNew
                       ? 'Fixed after creation — stock movements refer to it'
@@ -593,6 +634,17 @@ export default function ProductForm({
                     defaultValue={product?.code ?? suggestedCode ?? ''}
                     required={!(isNew && suggestedCode)}
                     maxLength={48}
+                    /* On blur, not on every keystroke: a code is typed left to
+                       right, so mid-word prefixes are not yet a claim about
+                       anything, and warning about them would flicker a refusal
+                       under a field the user has not finished. */
+                    onBlur={(e) => void checkCode(e.target.value)}
+                    /* Typing again retracts the refusal — it was about the old
+                       code, and leaving it up marks a code nobody has judged
+                       yet. The next blur re-asks. */
+                    onChange={() => {
+                      if (codeTaken) setCodeTaken(null)
+                    }}
                     // Editable on create, fixed afterwards: the code is how stock
                     // movements and orders refer to this product.
                     //
@@ -795,6 +847,10 @@ export default function ProductForm({
             /* A recipe's cost is the sum of its ingredients, not a typed
                figure — see the note on recipeCost above. */
             derivedCost={derivedCost}
+            /* Properties tab setting, felt here: on 'markup' a cost edit moves
+               the selling prices; on 'selling' the price holds and the margin
+               gives. */
+            priceCalc={priceCalc}
           />
 
           {/* ── Inventory ────────────────────────────────────────────────────
@@ -864,6 +920,7 @@ export default function ProductForm({
         <fieldset disabled={!ownership.canEdit} className="contents">
         <div className={tab === 'properties' ? 'flex flex-col gap-4' : 'hidden'}>
           <PropertiesPanel
+            onPriceCalcChange={setPriceCalc}
             value={{
               // A new product starts visible in the POS and otherwise plain,
               // matching the column defaults in migration 006.
@@ -876,7 +933,7 @@ export default function ProductForm({
               nonGpProduct: product?.nonGpProduct ?? false,
               maxDiscountPct: product?.maxDiscountPct ?? 0,
               variableType: product?.variableType ?? 'none',
-              priceCalc: product?.priceCalc ?? 'selling',
+              priceCalc,
 
               packWeight: product?.packWeight ?? 0,
               weightDescription: product?.weightDescription ?? 'Kg',
@@ -948,6 +1005,9 @@ export default function ProductForm({
               <RecipePanel
                 lines={recipeLines}
                 productId={product?.id ?? null}
+                /* Live from the description box above, so the weight-factor
+                   dialog names the product even while it is being typed. */
+                madeName={description}
                 isNew={isNew}
                 isManufactured={product?.isManufactured ?? false}
                 /* Locked once there is history: flipping it would change what

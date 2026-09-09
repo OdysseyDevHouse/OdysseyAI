@@ -29,7 +29,7 @@ import {
   TABLE_ROW,
   TABLE_NUMERIC,
 } from '@/components/ui'
-import { formatMoney, formatQty, round } from '@/lib/decimals'
+import { formatMoney, formatQty, round, roundQty, qtyDecimalsOf } from '@/lib/decimals'
 import { lineTotals, documentTotals } from '@/lib/documentMath'
 import { createCreditNoteAction } from '../../actions'
 
@@ -58,6 +58,12 @@ type CreditLine = {
   unitPriceIncl: number
   vatRatePct: number
   unitCostExcl: number
+  /**
+   * The product's own quantity rule. Read through `qtyDecimalsOf`, never
+   * directly — the number is meaningless while `allowFractions` is off.
+   */
+  allowFractions: boolean
+  qtyDecimals: number
 }
 
 export default function CreditNoteForm({
@@ -107,7 +113,11 @@ export default function CreditNoteForm({
   function setLineQty(line: CreditLine, value: number) {
     // Clamped here as well as on the server: the server is the authority, this
     // is so the figure on screen is always one that can actually be posted.
-    const clamped = Math.max(0, Math.min(round(value, 3), line.creditable))
+    //
+    // Rounded to the PRODUCT's places, not a hardcoded three. At three, a
+    // whole-unit product accepted 1.5 and `checkQuantities` then refused the
+    // save — the screen was offering a quantity the server would never take.
+    const clamped = Math.max(0, Math.min(roundQty(value, line), line.creditable))
     setQty((current) => ({ ...current, [line.id]: clamped }))
   }
 
@@ -204,7 +214,11 @@ export default function CreditNoteForm({
                         <div className="flex items-center gap-1.5">
                           <NumberInput
                             value={q}
-                            precision={3}
+                            /* The product's own places, not a hardcoded three:
+                               a whole-unit product must not accept 1.5 here
+                               only for the server to refuse the credit. */
+                            precision={qtyDecimalsOf(line)}
+                            aria-label={`Credit quantity for ${line.description}`}
                             onChange={(e) => setLineQty(line, Number(e.target.value) || 0)}
                             className="text-right"
                           />

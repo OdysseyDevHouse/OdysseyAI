@@ -13,6 +13,8 @@ import {
 } from './productComposition'
 import { mainLocationIdTx } from './stockLocations'
 import { writePriceRows, type PriceRow } from './reprice'
+import { repricedForCostChange } from '../pricing'
+import { getCostBasis } from './lookups'
 import { receiveSerialsTx, removeReceivedSerialsTx } from './serials'
 import { getSetting } from './settings'
 import { guardPosting } from './periodLocks'
@@ -785,6 +787,15 @@ export async function receiveGoods(
     }
   }
 
+  /*
+   * Which cost column this site prices from (193).
+   *
+   * Read OUTSIDE the transaction because it is a settings lookup that takes no
+   * part in the receipt: it decides how a markup-fixed product is repriced
+   * below, and a site with no setting at all prices off last cost.
+   */
+  const costBasis = await getCostBasis(siteId)
+
   try {
     const posted = await siteTransaction(siteId, async (tx) => {
       // 092 adds the document discount columns. A site it has not reached must
@@ -946,6 +957,46 @@ export async function receiveGoods(
       )
       const defaultPriceStructureId =
         ((structureRows as RowDataPacket[])[0]?.id as number | undefined) ?? null
+
+      /*
+       * The products on this receipt whose MARKUP is the fixed figure (price
+       * calculation 193), with everything needed to hold it.
+       *
+       * Read in one statement before the line loop rather than per line: a
+       * 200-line delivery would otherwise be 200 more round-trips inside a
+       * transaction that already holds row locks, and the figures cannot
+       * change under us — this is the same transaction that is about to write
+       * them.
+       *
+       * A product_prices row is required, not defaulted: a product with no
+       * price on the default structure has no markup to hold, and inventing
+       * one would put a price on the shelf that nobody ever set. The join
+       * therefore drops those lines, and they simply keep no price.
+       */
+      const markupFixed = new Map<
+        number,
+        { lastCost: number; sellIncl: number; sellingVatPct: number }
+      >()
+      const productIds = [...new Set(input.lines.map((l) => l.productId).filter(Boolean))]
+      if (defaultPriceStructureId !== null && productIds.length > 0) {
+        const [heldRows] = await tx.query(
+          `SELECT p.id, p.last_cost, pp.selling_price_incl, COALESCE(v.rate, 0) AS selling_vat
+             FROM products p
+             JOIN product_prices pp
+               ON pp.product_id = p.id AND pp.price_structure_id = ?
+             LEFT JOIN vat_rates v ON v.id = p.selling_vat_rate_id
+            WHERE p.price_calc = 'markup'
+              AND p.id IN (${productIds.map(() => '?').join(',')})`,
+          [defaultPriceStructureId, ...productIds] as never,
+        )
+        for (const r of heldRows as RowDataPacket[]) {
+          markupFixed.set(r.id as number, {
+            lastCost: toNum(r.last_cost),
+            sellIncl: toNum(r.selling_price_incl),
+            sellingVatPct: toNum(r.selling_vat),
+          })
+        }
+      }
 
       for (const [index, line] of input.lines.entries()) {
         const c = computed[index]
@@ -1169,6 +1220,46 @@ export async function receiveGoods(
             priceStructureId: defaultPriceStructureId,
             priceIncl: round(line.sellingPriceIncl, 4),
           })
+        } else if (defaultPriceStructureId !== null) {
+          /*
+           * MARKUP FIXED: the cost just moved, so the shelf price must follow.
+           *
+           * This is products.price_calc doing its job at the moment it matters
+           * most. A shop that prices a product at 20% means it on a delivery
+           * too — leaving the price alone here is what quietly turns a 20%
+           * line into a 9% one the first time a supplier puts a price up, and
+           * nobody sees it until the month-end margin report.
+           *
+           * Only on the ELSE of the rule above, deliberately: a buyer who
+           * typed a price on the receiving grid has stated what the shelf
+           * should be, and that beats a computed one. This fills the silence
+           * for untouched lines, which is exactly where the drift lived.
+           *
+           * A price_calc of 'selling' is absent from the map and keeps its
+           * price — the margin absorbs the cost change instead, which is the
+           * other half of the setting.
+           */
+          const held = markupFixed.get(line.productId)
+          if (held) {
+            const next = repricedForCostChange({
+              priceCalc: 'markup',
+              // Measured against the cost this SITE prices from, not whichever
+              // column is handy: a site on the average basis reads its margins
+              // off average_cost, so holding a markup against last_cost would
+              // hold a markup none of its screens ever showed.
+              oldCostExcl: costBasis === 'last' ? held.lastCost : existingCost,
+              newCostExcl: costBasis === 'last' ? c.landedUnitCost : newAverage,
+              currentSellIncl: held.sellIncl,
+              sellingVatPercent: held.sellingVatPct,
+            })
+            if (next !== null) {
+              priceRows.push({
+                productId: line.productId,
+                priceStructureId: defaultPriceStructureId,
+                priceIncl: next,
+              })
+            }
+          }
         }
 
         // Keep the supplier's own code and cost for this product, so the next
@@ -1274,7 +1365,7 @@ export async function receiveGoods(
      */
     const { cascadeReferCosts } = await import('./referRange')
     for (const productId of posted.costMoved) {
-      await cascadeReferCosts(siteId, productId).catch(() => 0)
+      await cascadeReferCosts(siteId, productId).catch(() => [])
     }
 
     // The supplier ledger, after the receipt is safely committed — the same

@@ -546,6 +546,11 @@ export async function browseForTill(
      */
     term?: string
     departmentId?: number | null
+    /**
+     * Several departments, each covering everything beneath it. Unioned with
+     * `departmentId` above, which stays for the callers that pass one.
+     */
+    departmentIds?: number[] | null
     priceStructureId?: number | null
     limit?: number
     /** The room this till sells from. Null counts the main location, as before. */
@@ -574,10 +579,17 @@ export async function browseForTill(
      MariaDB 12.3 supports these, and the alternative — fetching every department
      and walking the tree in JS — is a second round trip plus a second definition of
      what "beneath" means. */
-  const scope = options.departmentId
+  /* SEVERAL roots, so a picker can ask for the beer and the wine at once. The
+     seed is a UNION ALL of one SELECT per department rather than an IN list,
+     because the recursive term walks down from every seed row alike — the
+     shape of the descent does not change, only how many places it starts. */
+  const roots = [...new Set([...(options.departmentIds ?? []), options.departmentId].filter(
+    (id): id is number => typeof id === 'number' && Number.isFinite(id) && id > 0,
+  ))]
+  const scope = roots.length
     ? `AND p.department_id IN (
          WITH RECURSIVE tree (id) AS (
-           SELECT ? UNION ALL
+           ${roots.map(() => 'SELECT ?').join(' UNION ALL ')} UNION ALL
            SELECT d.id FROM departments d JOIN tree t ON d.parent_id = t.id
          )
          SELECT id FROM tree
@@ -586,7 +598,7 @@ export async function browseForTill(
 
   // The four leading parameters, in selectProduct's own order — see its docblock.
   const params: unknown[] = PARAMS(options.locationId ?? null, options.priceStructureId ?? null)
-  if (options.departmentId) params.push(options.departmentId)
+  params.push(...roots)
 
   /* Same matching rule as searchForTill: barcode exact, code and description
      fuzzy. Under two characters is treated as no term at all rather than as a

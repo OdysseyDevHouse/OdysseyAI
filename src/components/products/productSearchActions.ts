@@ -6,7 +6,7 @@ import { listProducts, type ProductSort } from '@/lib/site/products'
 import { compileListFilters, filterableFields } from '@/lib/site/listFilterSql'
 import { decodeFilters } from '@/lib/listFilters'
 import { getCostBasis } from '@/lib/site/lookups'
-import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
+import { listDepartments, departmentPath, departmentFilterIds } from '@/lib/site/departments'
 import { listColumnsFor } from '@/lib/site/listColumns'
 import { PRODUCT_TYPES, type ProductTypeId } from '@/lib/productTypes'
 import {
@@ -42,7 +42,13 @@ import {
 
 export type ProductSearchRequest = {
   search?: string
+  /**
+   * One department, kept for the callers that still pass one. `departmentIds`
+   * below supersedes it; both are honoured, and the two are unioned.
+   */
   departmentId?: number | null
+  /** Several departments, each covering everything beneath it. */
+  departmentIds?: number[] | null
   productType?: string | null
   includeArchived?: boolean
   /** The advanced filter, encoded exactly as the list screens encode it. */
@@ -53,6 +59,24 @@ export type ProductSearchRequest = {
   pageSize?: number
   /** First call only: fetch the department tree, filter fields and columns. */
   withLookups?: boolean
+}
+
+/**
+ * Kinds of product a particular picker must never offer.
+ *
+ * Set by the CALLER's own action, never by the browser — see
+ * `searchProductsForPurchasePickerAction`, which hides recipes because a made
+ * item cannot be bought. It is deliberately not part of ProductSearchRequest:
+ * a dialog asking a server which products to hide from it is a request the
+ * server should decide, and putting it on the wire would let anyone reopen the
+ * question by editing the call.
+ *
+ * It removes the type from the FILTER DROPDOWN as well as from the rows. A
+ * picker that still offers "Recipe" and then shows an empty grid reads as a
+ * broken screen, not a deliberate omission.
+ */
+export type ProductSearchExclusions = {
+  productTypes?: readonly ProductTypeId[]
 }
 
 export type ProductSearchLookups = {
@@ -118,7 +142,49 @@ export async function searchProductsForPickerAction(
   /* The same capability the catalogue screen needs. A dialog is not a lower
      bar than a page — it reads the same rows out of the same table, and the
      caller passing different props cannot change that. */
-  const { siteId, capabilities } = await actorForOrThrow('products.view')
+  return runProductSearch(request, await actorForOrThrow('products.view'), null)
+}
+
+/**
+ * The same grid, for a purchase order or a goods receipt.
+ *
+ * Two things make it a different action rather than a prop on the one above.
+ *
+ * ── IT IS A DIFFERENT BOUNDARY ───────────────────────────────────────────
+ *
+ * Guarded by `purchasing.view`, exactly as the picker it replaces was: a buyer
+ * who may not price the catalogue can still order from it, and asking them for
+ * `products.view` would lock the receiving screen against the people who work
+ * it. Same reasoning as browseProductsForPurchaseAction.
+ *
+ * ── RECIPES CANNOT BE BOUGHT ─────────────────────────────────────────────
+ *
+ * A recipe product is MADE, not delivered. Its own stock on hand is always
+ * zero — selling one consumes its components, and it has no cost of its own to
+ * receive against (see productComposition.ts). Putting one on a GRV would
+ * credit the supplier for something that never arrived and move stock that
+ * cannot move; putting one on an order would ask them to deliver a thing the
+ * shop assembles itself.
+ *
+ * So it is hidden here rather than merely warned about at post time. The
+ * exclusion is applied on the server for the reason every filter in this file
+ * is: the dialog is a public endpoint, and a hidden option in a dropdown is a
+ * suggestion.
+ */
+export async function searchProductsForPurchasePickerAction(
+  request: ProductSearchRequest,
+): Promise<ProductSearchResponse> {
+  return runProductSearch(request, await actorForOrThrow('purchasing.view'), {
+    productTypes: ['recipe'],
+  })
+}
+
+async function runProductSearch(
+  request: ProductSearchRequest,
+  actor: Awaited<ReturnType<typeof actorForOrThrow>>,
+  exclude: ProductSearchExclusions | null,
+): Promise<ProductSearchResponse> {
+  const { siteId, capabilities } = actor
   const showCost = can(capabilities, 'products.cost')
   const allow = (c: Capability) => can(capabilities, c)
 
@@ -130,18 +196,24 @@ export async function searchProductsForPickerAction(
   /* Filtering by a department includes everything beneath it, exactly as the
      list screen does — picking "Fresh Produce" should not hide what is filed
      under its sub-levels. */
-  const departmentId = Number(request.departmentId)
-  const departmentIds =
-    Number.isFinite(departmentId) && departmentId > 0
-      ? [...descendantIds(departments, departmentId)]
-      : undefined
+  const picked = [...(request.departmentIds ?? []), request.departmentId].filter(
+    (id): id is number => Number.isFinite(id) && Number(id) > 0,
+  )
+  const departmentIds = departmentFilterIds(departments, picked) ?? undefined
 
   /* Both narrowed against the known ids rather than trusted. These reach an
      ORDER BY and a WHERE, and an action is a public endpoint however private
      the dialog that calls it looks. */
-  const productType = TYPE_IDS.has(request.productType ?? '')
+  const excludedTypes = exclude?.productTypes ?? []
+  /* An excluded type asked for by name is dropped, not honoured. Otherwise
+     selecting "Recipe" in a dropdown that no longer offers it — an old tab, a
+     hand-made request — would narrow the list to exactly the rows this picker
+     exists to hide. */
+  const requestedType = TYPE_IDS.has(request.productType ?? '')
     ? (request.productType as ProductTypeId)
     : undefined
+  const productType =
+    requestedType && excludedTypes.includes(requestedType) ? undefined : requestedType
   const sort: ProductSort = SORT_IDS.has(request.sort ?? '')
     ? (request.sort as ProductSort)
     : 'description'
@@ -161,13 +233,28 @@ export async function searchProductsForPickerAction(
     'p',
   )
 
+  /* The exclusion, as a WHERE rather than by inverting `productTypes`.
+   *
+   * listProducts' own type filter is an inclusive list, so expressing "not a
+   * recipe" through it would mean naming the other nine types — a list that
+   * silently stops excluding the moment a tenth is added to productTypes.ts.
+   *
+   * Placed BEFORE the compiled filter's fragments, because `extraParams` is
+   * positional: these placeholders must line up with these values, and
+   * appending them after a filter that carries its own would shift both. */
+  const excludeWhere = excludedTypes.length
+    ? [
+        `COALESCE(p.product_type, 'normal') NOT IN (${excludedTypes.map(() => '?').join(',')})`,
+      ]
+    : []
+
   const { items, total } = await listProducts(siteId, {
     search: request.search,
     includeArchived: request.includeArchived === true,
     departmentIds,
     productTypes: productType ? [productType] : undefined,
-    extraWhere: compiled.where,
-    extraParams: compiled.params,
+    extraWhere: [...excludeWhere, ...compiled.where],
+    extraParams: [...excludedTypes, ...compiled.params],
     sort,
     direction,
     limit: pageSize,
@@ -250,7 +337,13 @@ export async function searchProductsForPickerAction(
         imageId: d.posImageId,
       })),
       departmentPaths,
-      productTypes: PRODUCT_TYPES.map((t) => ({ id: t.id, name: t.name })),
+      /* Minus whatever this picker hides. The rows are already filtered above;
+         leaving the option in the dropdown would offer a filter that can only
+         ever return nothing, which reads as a bug rather than as a rule. */
+      productTypes: PRODUCT_TYPES.filter((t) => !excludedTypes.includes(t.id)).map((t) => ({
+        id: t.id,
+        name: t.name,
+      })),
       filterFields: fields.map((f) => ({
         key: f.key,
         label: f.label,

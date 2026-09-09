@@ -35,7 +35,7 @@
  * rows this file made. An unanchored 'RB%' would take a real product the first
  * time somebody coded one that way.
  */
-import { createProduct, setDerivedCost } from '../src/lib/site/products'
+import { createProduct, setDerivedCost, isCodeTakenError } from '../src/lib/site/products'
 import { saveRecipe, compositionCost } from '../src/lib/site/productComposition'
 import { siteQuery, siteQueryOne, siteExecute } from '../src/lib/siteDb'
 
@@ -582,7 +582,7 @@ async function main() {
     })
 
     if (result.ok) madeIngredients++
-    else if (result.error.includes('already in use')) keptIngredients++
+    else if (isCodeTakenError(result.error)) keptIngredients++
     else failures.push(`${item.code}: ${result.error}`)
   }
 
@@ -630,7 +630,7 @@ async function main() {
     if (result.ok) {
       parentId = result.id
       madeBurgers++
-    } else if (result.error.includes('already in use')) {
+    } else if (isCodeTakenError(result.error)) {
       const existing = await siteQueryOne<{ id: number }>(
         SITE,
         'SELECT id FROM products WHERE code = ? LIMIT 1',

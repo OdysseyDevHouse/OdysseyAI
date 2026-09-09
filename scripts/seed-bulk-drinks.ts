@@ -48,7 +48,7 @@
  * rows this file made. An unanchored 'BULK%' would take a real product the
  * first time someone coded one that way. Same reasoning as seed-menu.ts.
  */
-import { createProduct } from '../src/lib/site/products'
+import { createProduct, isCodeTakenError } from '../src/lib/site/products'
 import { saveRefer } from '../src/lib/site/productComposition'
 import { siteQuery, siteQueryOne, siteExecute } from '../src/lib/siteDb'
 
@@ -242,7 +242,7 @@ async function main() {
 
     if (result.ok) {
       created++
-    } else if (result.error.includes('already in use')) {
+    } else if (isCodeTakenError(result.error)) {
       skipped++
     } else {
       failures.push(`${item.code}: ${result.error}`)

@@ -21,6 +21,28 @@ export async function searchProductsAction(
   return searchProductsForPicker(siteId, { search, exclude, limit: 20 })
 }
 
+/**
+ * The same picks, fetched by id.
+ *
+ * For the big search dialog: its rows are shaped for a grid and carry no cost
+ * (cost is capability-gated there), but a recipe line must be costed whoever
+ * added it. The panel sends back what was ticked and gets whole picks.
+ *
+ * `exclude` is honoured so a recipe still cannot list itself, even if the
+ * dialog offered the row — the save path refuses it too.
+ */
+export async function productPicksByIdAction(
+  ids: number[],
+  exclude?: number,
+): Promise<ProductPick[]> {
+  const ctx = await actorForOrThrow('products.view')
+  const { siteId } = ctx
+  // Guard the input rather than trusting the client's array: this is a live
+  // endpoint, and a junk id here would otherwise reach the query as NaN.
+  const clean = [...new Set(ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))]
+  return searchProductsForPicker(siteId, { ids: clean, exclude })
+}
+
 export type SupplierPick = { id: number; code: string; name: string; canOrder: boolean }
 
 export async function searchSuppliersAction(search: string): Promise<SupplierPick[]> {

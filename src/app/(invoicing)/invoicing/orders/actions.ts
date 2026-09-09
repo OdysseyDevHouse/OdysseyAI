@@ -6,11 +6,13 @@ import {
   setOrderDetails,
   deliverOrder,
   cancelOrder,
+  getOrder,
   releaseStaleReservations,
   type DeliveryLineInput,
   type OrderDetailsInput,
 } from '@/lib/site/salesOrders'
 import { createBlankDocument } from '@/lib/site/salesDocuments'
+import { checkQuantities } from '@/lib/site/quantityGuard'
 
 /**
  * Order actions.
@@ -75,6 +77,34 @@ export async function deliverAction(
   const ctx = await actorFor('sales.edit')
   if ('ok' in ctx) return ctx
   const { siteId, actor } = ctx
+
+  /*
+   * The same quantity rule every other save path enforces.
+   *
+   * A part-delivery is a typed quantity like any other, and this was the one
+   * route that reached a posting without asking. The DeliverPanel blocks the
+   * decimals in the browser, but a rule that lives only in a control is a
+   * suggestion — this is a plain server action and the client composes the
+   * payload. Same reasoning as the header comment on quantityGuard.ts.
+   *
+   * A delivery line names an ORDER LINE, not a product, so the product has to
+   * be resolved through the order before the rule can be asked about it. An
+   * unmatched lineId is passed through with no productId rather than refused
+   * here: `deliverOrder` is the authority on which lines belong to this order
+   * and gives the better message for one that does not.
+   */
+  const order = await getOrder(siteId, documentId)
+  if (order) {
+    const byLine = new Map(order.lines.map((l) => [l.id, l]))
+    const badQty = await checkQuantities(
+      siteId,
+      lines.map((l) => {
+        const line = byLine.get(l.lineId)
+        return { productId: line?.productId ?? null, description: line?.description, qty: l.qty }
+      }),
+    )
+    if (badQty) return { ok: false, error: badQty }
+  }
 
   const result = await deliverOrder(siteId, actor, documentId, lines)
   if (!result.ok) return result

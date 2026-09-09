@@ -32,7 +32,7 @@
  * real product the first time someone coded one that way. Same reasoning as
  * PRODUCT_PATTERN in test-product-setup.ts.
  */
-import { createProduct } from '../src/lib/site/products'
+import { createProduct, isCodeTakenError } from '../src/lib/site/products'
 import { siteQuery, siteQueryOne, siteExecute } from '../src/lib/siteDb'
 
 const SITE = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 1)
@@ -250,7 +250,7 @@ async function main() {
 
     if (result.ok) {
       created++
-    } else if (result.error.includes('already in use')) {
+    } else if (isCodeTakenError(result.error)) {
       skipped++
     } else {
       failures.push(`${item.code}: ${result.error}`)

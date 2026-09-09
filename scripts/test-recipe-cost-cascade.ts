@@ -27,9 +27,10 @@ import {
   saveRefer,
   compositionCost,
   cascadeCompositionCosts,
+  recostAllComposed,
 } from '../src/lib/site/productComposition'
 import { siteQuery, siteQueryOne, siteExecute } from '../src/lib/siteDb'
-import { setSetting } from '../src/lib/site/settings'
+import { setSetting, SETTING_DEFAULTS } from '../src/lib/site/settings'
 
 const SITE = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 53)
 
@@ -175,7 +176,27 @@ async function main() {
       `got ${(await storedCost(wrap)).toFixed(2)}`)
     check('salad recosted to 150.00', Math.abs((await storedCost(salad)) - 150) < 0.005,
       `got ${(await storedCost(salad)).toFixed(2)}`)
-    check('every dependant was counted', written >= 5, `wrote ${written}`)
+    check('every dependant was counted', written.length >= 5, `wrote ${written.length}`)
+
+    /*
+     * The IDS, not just how many — because the save path revalidates exactly
+     * this list, and a page left off it serves the old cost out of the router
+     * cache no matter how right the database is. That was the reported bug:
+     * reprice an ingredient, open the recipe, still see the old figure.
+     *
+     * Asserted as a superset rather than an exact match: what matters is that
+     * nothing stale is MISSED. Naming an extra id only costs a re-render.
+     */
+    for (const [name, id] of [
+      ['burger', burger],
+      ['wrap', wrap],
+      ['salad', salad],
+      ['platter', platter],
+      ['6-pack', sixPack],
+    ] as const) {
+      check(`${name} is named as needing its page refreshed`, written.includes(id))
+    }
+    check('the ingredient itself is not in the list', !written.includes(tomato))
 
     /* ── The nesting the old refer-only walk could not do ─────────────── */
     console.log('\n3. It climbs THROUGH a made item, and across link kinds')
@@ -218,7 +239,7 @@ async function main() {
 
     const lonely = await make('TCC-041', 'Cascade Lonely', { cost: 12 })
     const none = await cascadeCompositionCosts(SITE, lonely)
-    check('a product nothing is built from writes nothing', none === 0, `wrote ${none}`)
+    check('a product nothing is built from writes nothing', none.length === 0, `wrote ${none.length}`)
 
     // A cycle must terminate rather than hang the caller. saveRecipe refuses a
     // direct self-reference, so this is built through two products.
@@ -276,18 +297,49 @@ async function main() {
       Math.abs((await storedCost(basisRecipe)) - 99) < 0.005,
       `got ${(await storedCost(basisRecipe)).toFixed(2)}`)
 
+    /* ── Changing the basis restates every composed cost ──────────────── */
+    //
+    // Section 7 proves a cost is READ at the right column. This is the other
+    // half: when the basis itself moves, every stored cost was derived from
+    // the column nobody reads any more, and no single product changed to fire
+    // the ordinary cascade.
+    //
+    // Left unfixed this diverged silently and in the direction that overstates
+    // margin — measured at the till charging 600 while the catalogue and every
+    // report stored 200.
+    console.log('\n8. Changing the cost basis recosts what is already stored')
+
+    for (const basis of ['average', 'last'] as const) {
+      await setSetting(SITE, 'cost_basis', basis)
+
+      // Deliberately stale: what a flip leaves behind before anything recosts.
+      await setDerivedCost(SITE, basisRecipe, 1)
+
+      const written = await recostAllComposed(SITE)
+      const live = await compositionCost(SITE, basisRecipe, 'recipe')
+      const stored = await storedCost(basisRecipe)
+
+      check(
+        `on '${basis}', the stored cost is restated to what the till charges`,
+        live !== null && Math.abs(stored - live) < 0.005,
+        `stored ${stored.toFixed(2)} vs till ${live?.toFixed(2)}`,
+      )
+      check(`on '${basis}', the recost reports what it rewrote`, written > 0, `wrote ${written}`)
+    }
+
     console.log(`\n${passed} passed, ${failed} failed`)
   } finally {
     /*
      * Back to the DEFAULT, not to whatever was read at the start.
      *
      * Restoring "the original" faithfully re-writes a previous crashed run's
-     * pollution. SETTING_DEFAULTS says 'average', and that is the value a site
-     * that has never been touched reports.
+     * pollution. Read the value off SETTING_DEFAULTS rather than repeating it
+     * here, so changing the default cannot leave this suite quietly restoring
+     * the old one.
      */
-    await setSetting(SITE, 'cost_basis', 'average').catch(() => {})
+    await setSetting(SITE, 'cost_basis', SETTING_DEFAULTS.cost_basis).catch(() => {})
     await cleanup()
-    console.log('fixtures removed, cost_basis restored to average.')
+    console.log(`fixtures removed, cost_basis restored to ${SETTING_DEFAULTS.cost_basis}.`)
   }
 
   process.exit(failed ? 1 : 0)

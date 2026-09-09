@@ -72,9 +72,27 @@ const SELECT_DEPARTMENT = `
     FROM departments d
 `
 
+/**
+ * Every department, hidden ones included.
+ *
+ * `is_active` is POS VISIBILITY, not existence — it decides whether the till
+ * draws a tile for the department, and nothing else. So this returns the lot
+ * by default and the two till readers (`(pos)/pos/page.tsx` and
+ * `api/pos/catalog`) filter on `isActive` themselves, which is where the rule
+ * belongs and where it can be seen.
+ *
+ * It used to be the other way round: the default hid inactive rows, so
+ * switching a department off the till also took it out of every back-office
+ * picker — the product form could no longer file anything under it, and a
+ * shop turning off "Cigarettes" for the counter lost the ability to receive,
+ * price or report on it. One switch quietly meant two things.
+ *
+ * `includeInactive` is kept, and kept defaulting to true, so the several
+ * callers that pass it explicitly still read the way they always did.
+ */
 export async function listDepartments(
   siteId: number,
-  includeInactive = false,
+  includeInactive = true,
 ): Promise<Department[]> {
   const rows = await siteQuery<Row>(
     siteId,
@@ -500,4 +518,44 @@ export async function deleteDepartment(siteId: number, id: number): Promise<Dele
 
   await siteExecute(siteId, 'DELETE FROM departments WHERE id = ?', [id])
   return { ok: true }
+}
+
+/**
+ * The department ids in a `?department=` parameter, which now carries SEVERAL.
+ *
+ * Comma-separated, because a repeated key (`?department=3&department=8`) does
+ * not survive the `Record<string, string>` shape every one of these list pages
+ * types its searchParams as — the second value silently wins, and the filter
+ * would appear to drop everything but the last department ticked.
+ *
+ * Tolerant on the way in: a single bare id is still valid, which is what every
+ * link printed, bookmarked or e-mailed before this existed carries.
+ */
+export function parseDepartmentParam(value: string | undefined): number[] {
+  if (!value) return []
+  const out: number[] = []
+  for (const part of value.split(',')) {
+    const id = Number(part.trim())
+    /* Deduped: `descendantIds` below unions anyway, but the ids are also what
+       the chips and the picker's ticks read, and a doubled entry there would
+       draw the same department twice. */
+    if (Number.isFinite(id) && id > 0 && !out.includes(id)) out.push(id)
+  }
+  return out
+}
+
+/**
+ * Every id the filter covers — each picked department AND everything beneath
+ * it, unioned.
+ *
+ * Picking a parent means the whole branch, so the ticked ids alone are never
+ * what the query wants. Returns null for "nothing picked", which is the shape
+ * `listProducts` and friends read as "do not filter at all" — an empty array
+ * there would mean "in none of these departments" and match nothing.
+ */
+export function departmentFilterIds(all: Department[], picked: number[]): number[] | null {
+  if (picked.length === 0) return null
+  const out = new Set<number>()
+  for (const id of picked) for (const descendant of descendantIds(all, id)) out.add(descendant)
+  return [...out]
 }

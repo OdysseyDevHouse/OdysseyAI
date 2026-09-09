@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 import { Button } from './Button'
 import { Modal } from './Modal'
 import { Checkbox, Input, Select } from './Field'
-import { Combobox } from './Combobox'
-import { Filter, Close } from './icons'
+import { SearchSelect } from './SearchSelect'
+import { Filter, Close, Plus } from './icons'
 import { Badge } from './Badge'
 import type { FilterOp } from '@/lib/reportBuilder/spec'
 import {
@@ -162,8 +162,8 @@ export function AdvancedFilter({
            It starts with ONE row and grows a row at a time, so the body must
            be its content's height — the default body is a plain block child of
            a flex column, which STRETCHES, and drew a one-row dialog full
-           height with a scrollbar down the side. And the field picker is a
-           Combobox that opens inside the body, so any clipping there cuts its
+           height with a scrollbar down the side. And the field picker opens
+           its panel inside the body, so any clipping there cuts the
            list off at the body's edge — which is what put the scrollbar back
            even once the height was right. `bodyOverflows` sizes to content and
            clips nothing. Safe here because the conditions are capped at a
@@ -311,17 +311,20 @@ export function AdvancedFilter({
 
           <div className="flex items-center gap-3">
             {draft.length < max ? (
-              /* A SEARCH box, not a dropdown of thirty-five fields.
-                 Two reasons, and the second is what forced it: at this length
-                 a menu is something you hunt through, while a filter is always
-                 begun by knowing the word — "till", "type", "cost". And a
-                 dropdown opens INSIDE this dialog's scrolling body, so a long
-                 one is clipped at the body's edge no matter what height it is
-                 given. Combobox already caps its list to the room actually
-                 left below it, which is the same fix the product picker needed
-                 in a modal. */
+              /* A DROPDOWN that searches, not a bare search box.
+                 Both halves are load-bearing. A plain text box gave no sign a
+                 list existed at all — it read as a filter over rows that were
+                 not there yet, when what someone opening this dialog first
+                 wants is "what can I filter on?". But thirty-five fields is
+                 more than a menu should ask anyone to hunt through, and a
+                 filter is usually begun already knowing the word — "till",
+                 "type", "cost". So the closed control announces the list, and
+                 the search sits inside the panel it opens.
+                 SearchSelect caps its rows to the room actually left below it,
+                 which is what a picker opening INSIDE this dialog's body needs
+                 — the same fix the product picker needed in a modal. */
               <div className="w-72">
-                <Combobox
+                <SearchSelect
                   options={pickerOptions}
                   query={fieldQuery}
                   onQueryChange={setFieldQuery}
@@ -329,8 +332,15 @@ export function AdvancedFilter({
                     add(String(option.value))
                     setFieldQuery('')
                   }}
+                  /* No `value`: picking here ADDS a row rather than settling
+                     the control on a choice, so the trigger keeps reading as
+                     the invitation it is instead of naming the last field
+                     added — which is already on screen, in its own row. */
                   clearOnSelect
-                  placeholder="Add a condition — search fields…"
+                  icon={<Plus size={15} />}
+                  placeholder="Add a condition…"
+                  searchPlaceholder="Search fields…"
+                  ariaLabel="Add a filter condition"
                   emptyText="No field matches"
                 />
               </div>

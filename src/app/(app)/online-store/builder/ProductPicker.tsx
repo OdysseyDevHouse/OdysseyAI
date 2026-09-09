@@ -251,7 +251,11 @@ function AddProductsDialog({
   room: number
   onAdd: (products: StorefrontProduct[]) => void
 }) {
-  const [departmentId, setDepartmentId] = useState<number | null>(null)
+  /* SEVERAL departments: a shop page is often "the beer and the wine". */
+  const [departmentIds, setDepartmentIds] = useState<number[]>([])
+  /* A stable key for the effect below — the array is a new identity each
+     render, so depending on it would re-query on renders that changed nothing. */
+  const departmentKey = departmentIds.join(',')
 
   /* The picture is the SHOP's, and the count is what is actually published in
      that department — the two things this dialog is choosing between. */
@@ -291,7 +295,7 @@ function AddProductsDialog({
       () => {
         browseProductsAction({
           search: term.trim(),
-          departmentId,
+          departmentIds,
           limit: PAGE_SIZE,
         }).then((result) => {
           if (!live) return
@@ -308,7 +312,7 @@ function AddProductsDialog({
       live = false
       clearTimeout(timer)
     }
-  }, [open, term, departmentId])
+  }, [open, term, departmentKey])
 
   /** What the list can offer: this page, minus what the row already holds. */
   const offered = useMemo(
@@ -391,9 +395,10 @@ function AddProductsDialog({
           <div className="min-w-48">
             <Field label="Department">
               <TreeSelect
-                value={departmentId === null ? '' : String(departmentId)}
+                values={departmentIds.map(String)}
                 options={departmentOptions}
-                onChange={(value) => setDepartmentId(value ? Number(value) : null)}
+                onChangeMany={(next) => setDepartmentIds(next.map(Number))}
+                manyNoun="departments"
                 icon={<Icons.LayoutGrid size={16} />}
                 backLabel="Back to departments"
                 aria-label="Filter products by department"

@@ -163,5 +163,9 @@ INSERT INTO price_structures (position, name, is_default) VALUES
   (1, 'Retail', 1);
 
 -- Which cost figure drives margin and valuation. 'average' or 'last'.
+-- A new site starts on last cost; the owner can switch to average in
+-- Settings › Purchasing. Keep this in step with SETTING_DEFAULTS.cost_basis
+-- in src/lib/site/settings.ts — this row seeds a NEW site, that constant
+-- answers every site whose row is missing or unreadable.
 INSERT INTO settings (setting_key, setting_value) VALUES
-  ('cost_basis', 'average');
+  ('cost_basis', 'last');

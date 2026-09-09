@@ -30,6 +30,7 @@ import {
   markupPercent,
   sellExclFromGp,
   sellExclFromMarkup,
+  repricedForCostChange,
   type CostBasis,
 } from '@/lib/pricing'
 import type { EndingDirection } from '@/lib/repricing'
@@ -427,6 +428,38 @@ export default function BulkPricingGrid({
 
       if (same) delete current[field]
       else current[field] = next
+
+      /*
+       * MARKUP FIXED: a cost edit drags the price with it (193).
+       *
+       * products.price_calc says which figure survives a cost change, and on
+       * 'markup' it is the margin: the product stays on the percentage it is
+       * on and the shelf price moves. Staged as a normal pending priceIncl
+       * edit rather than written directly, so it shows in the row, counts in
+       * the footer, and saves through the same path a typed price does.
+       *
+       * The markup is read from the price and cost the row STARTED with, not
+       * from any pending edit: the two figures on screen are what the margin
+       * was, and re-deriving from a half-applied edit would compound.
+       */
+      if (
+        field === 'lastCost' &&
+        row.priceCalc === 'markup' &&
+        typeof next === 'number' &&
+        row.sellingIncl !== null
+      ) {
+        const repriced = repricedForCostChange({
+          priceCalc: 'markup',
+          oldCostExcl: row.costExcl,
+          newCostExcl: next,
+          currentSellIncl: row.sellingIncl,
+          sellingVatPercent: row.sellingVatPercent,
+        })
+        if (repriced !== null) {
+          if (Math.abs(repriced - row.sellingIncl) < 0.00005) delete current.priceIncl
+          else current.priceIncl = repriced
+        }
+      }
 
       const copy = { ...prev }
       if (Object.keys(current).length === 0) delete copy[row.id]
@@ -907,7 +940,10 @@ function PriceRow({
               key={cellKey('markup')}
               precision={2}
               value={priced ? markupPercent(costExcl, excl) : ''}
-              disabled={busy || costExcl <= 0}
+              /* Read-only on a 'Selling Price Fixed' product: there the shelf
+                 price is the decision and the margin is its consequence, so a
+                 markup box that moved the price would invert the setting. */
+              disabled={busy || costExcl <= 0 || row.priceCalc === 'selling'}
               onFocus={() => focusCell('markup')}
               onBlur={() => setEditingField(null)}
               onChange={(e) => {
@@ -928,7 +964,7 @@ function PriceRow({
               precision={2}
               max="99.99"
               value={priced ? gpPercent(costExcl, excl) : ''}
-              disabled={busy || costExcl <= 0}
+              disabled={busy || costExcl <= 0 || row.priceCalc === 'selling'}
               onFocus={() => focusCell('gp')}
               onBlur={() => setEditingField(null)}
               onChange={(e) => {

@@ -6,7 +6,12 @@ import {
   listProductVisibility,
 } from '@/lib/site/onlineStore'
 import { soldOutToday } from '@/lib/site/branchTrading'
-import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
+import {
+  listDepartments,
+  departmentPath,
+  parseDepartmentParam,
+  departmentFilterIds,
+} from '@/lib/site/departments'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   ButtonLink,
@@ -56,11 +61,10 @@ export default async function OnlineProductsPage({
 
   // Filtering by a department includes everything beneath it, so picking
   // "Fresh Produce" does not hide what is filed under its sub-levels.
-  const departmentId = Number(department)
-  const filterIds =
-    Number.isFinite(departmentId) && departmentId > 0
-      ? [...descendantIds(departments, departmentId)]
-      : undefined
+  // SEVERAL may be picked — a comma-separated list, tolerant of the single
+  // bare id older links carry.
+  const departmentIds = parseDepartmentParam(department)
+  const filterIds = departmentFilterIds(departments, departmentIds) ?? undefined
 
   const only = show === 'shown' ? 'shown' : show === 'hidden' ? 'hidden' : undefined
   const page = pageFrom(params.page)
@@ -82,12 +86,21 @@ export default async function OnlineProductsPage({
   // rather than a flag somebody has to remember to unset.
   const soldOut = await soldOutToday(siteId)
 
-  const filterLabel = filterIds ? departmentPath(departments, departmentId) : null
-
   const href = hrefBuilder('/online-store/products', params)
   // Any filter change returns to page 1 — page 7 of the old result set is
   // rarely a page of the new one.
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
+
+  /* One chip per picked department, each clearing only itself: a single chip
+     over four picks could name only one of them, and its X would throw away
+     three choices someone made deliberately. */
+  const departmentChips = departmentIds.map((id) => ({
+    id,
+    label: departmentPath(departments, id),
+    clearHref: filterHref({
+      department: departmentIds.filter((other) => other !== id).join(',') || null,
+    }),
+  }))
 
   const empty = q
     ? {
@@ -99,7 +112,7 @@ export default async function OnlineProductsPage({
           </ButtonLink>
         ),
       }
-    : filterLabel || only
+    : departmentIds.length > 0 || only
       ? {
           title: 'No products match this filter',
           hint: 'Nothing on file fits the current slice.',
@@ -146,7 +159,10 @@ export default async function OnlineProductsPage({
             aria-label="Filter by department"
             backLabel="Back to departments"
             icon={<Icons.LayoutGrid size={16} />}
-            value={department ?? ''}
+            values={departmentIds.map(String)}
+            /* Data, not a callback — this page is a Server Component. */
+            urlFilter={{ href: filterHref({}), param: 'department', reset: ['page'] }}
+            manyNoun="departments"
             className="w-52"
             options={departmentTreeOptions(
               departments.map((d) => ({
@@ -158,10 +174,8 @@ export default async function OnlineProductsPage({
                    the online store shows. */
                 imageId: d.onlineImageId,
               })),
-              {
-                allHref: filterHref({ department: null }),
-                hrefFor: (id) => filterHref({ department: String(id) }),
-              },
+              /* No per-row hrefs: in a multi-select the destination depends on
+                 what is already ticked, so the picker builds it on close. */
             )}
           />
 
@@ -190,13 +204,14 @@ export default async function OnlineProductsPage({
             ]}
           />
 
-          {filterLabel && (
+          {departmentChips.map((chip) => (
             <FilterChip
+              key={chip.id}
               label="Department"
-              value={filterLabel}
-              clearHref={filterHref({ department: null })}
+              value={chip.label}
+              clearHref={chip.clearHref}
             />
-          )}
+          ))}
         </TableToolbar>
 
         {/* The mode this screen serves. Ticking products does nothing under

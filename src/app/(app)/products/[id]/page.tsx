@@ -51,6 +51,10 @@ export default async function EditProductPage({
     error?: string
     /** The code a rename moved AWAY from, so the banner can name both ends. */
     renamed?: string
+    /** 'archived' | 'unarchived' — which way the Actions menu just moved it. */
+    filed?: string
+    /** Why a delete became an archive. Written by deleteProductAction. */
+    reason?: string
     /** A rename that this store applied but a sibling store could not follow. */
     warn?: string
     /** The tab the last save was working in, so it reopens there. */
@@ -58,7 +62,7 @@ export default async function EditProductPage({
   }>
 }) {
   const { id } = await params
-  const { saved, from, error, renamed, warn, tab } = await searchParams
+  const { saved, from, error, renamed, warn, tab, filed, reason } = await searchParams
 
   /* Where leaving this product goes. The list that sent us here when it had
      filters worth keeping, else the plain catalogue.
@@ -278,6 +282,22 @@ export default async function EditProductPage({
 
       <PageBody>
         {saved === '1' && <TransientCallout tone="success" title="Product saved." />}
+        {/* Archiving leaves the screen looking exactly as it did, so say which
+            way it went. `reason` is the delete path's "it had history, so it
+            was archived instead" — shown here because that sentence was being
+            written into the URL and never read, which meant a delete quietly
+            did something other than what was asked. */}
+        {filed === 'archived' && (
+          <TransientCallout tone="success" title="Product archived.">
+            {reason ??
+              'It is out of the catalogue and off the till, and still on every document that used it.'}
+          </TransientCallout>
+        )}
+        {filed === 'unarchived' && (
+          <TransientCallout tone="success" title="Product unarchived.">
+            It is back in the catalogue and available on the till again.
+          </TransientCallout>
+        )}
         {renamed && (
           <TransientCallout tone="success" title="Stock code renamed.">
             <span className="numeric font-medium">{renamed}</span> is now{' '}

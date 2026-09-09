@@ -105,6 +105,7 @@ export {
   type CategorySwatch,
 } from './tiles'
 export { ColourPickerModal } from './ColourPickerModal'
+export { QtyCalculator } from './QtyCalculator'
 export { SwatchPicker } from './SwatchPicker'
 export {
   GeneratedPictureGallery,
@@ -229,6 +230,10 @@ export { ExpandingCard } from './ExpandingCard'
 export { Accordion } from './Accordion'
 export { RowDisclosure } from './RowDisclosure'
 export { Combobox, type ComboboxOption } from './Combobox'
+/* Combobox's sibling: reads as a dropdown when closed, searches inside the
+   panel it opens. For choosing FROM a known set, where a bare search box gives
+   no sign a list exists at all. */
+export { SearchSelect, type SearchSelectOption } from './SearchSelect'
 export { DateRangeField, type DateRange } from './DateRangeField'
 export { useChartColors, ChartTooltip, ChartGlow, type ChartColors } from './charts'
 export { Sparkline } from './Sparkline'

@@ -108,6 +108,13 @@ export default async function CreditNotePage({ params }: { params: Promise<{ id:
             unitPriceIncl: l.unitPriceIncl,
             vatRatePct: l.vatRatePct,
             unitCostExcl: l.unitCostExcl,
+            /* The product's own quantity rule, joined fresh by getDocument
+               rather than snapshotted onto the line. The credit box used to
+               hardcode three decimals for everything, so a whole-unit product
+               accepted 1.5 here and `checkQuantities` refused the save — the
+               screen offered a quantity the server would never take. */
+            allowFractions: l.allowFractions,
+            qtyDecimals: l.qtyDecimals,
           }))}
           tenders={tenders.filter((t) => t.allowsRefund).map((t) => ({ id: t.id, name: t.name }))}
           lockWarning={lockCheck.locked ? lockCheck.message : null}

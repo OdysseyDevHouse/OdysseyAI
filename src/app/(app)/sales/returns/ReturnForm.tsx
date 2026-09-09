@@ -28,7 +28,7 @@ import {
   TABLE_NUMERIC,
   type ComboboxOption,
 } from '@/components/ui'
-import { formatMoney, round } from '@/lib/decimals'
+import { formatMoney, round, roundQty, qtyDecimalsOf } from '@/lib/decimals'
 import { lineTotals, documentTotals } from '@/lib/documentMath'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { TenderType } from '@/lib/site/tenderTypes'
@@ -58,6 +58,12 @@ type ReturnLine = {
   unitPriceIncl: number
   vatRatePct: number
   unitCostExcl: number
+  /**
+   * The product's own quantity rule. Read through `qtyDecimalsOf`, never
+   * directly — the number is meaningless while `allowFractions` is off.
+   */
+  allowFractions: boolean
+  qtyDecimals: number
 }
 
 export default function ReturnForm({
@@ -121,6 +127,11 @@ export default function ReturnForm({
         unitPriceIncl: product.priceIncl,
         vatRatePct: product.vatRatePct,
         unitCostExcl: product.costExcl,
+        // Carried from the product so the quantity box below can hold it to
+        // its own rule. Without these the box took any number of decimals and
+        // `checkQuantities` refused the return at save.
+        allowFractions: product.allowFractions,
+        qtyDecimals: product.qtyDecimals,
       },
     ])
     setQuery('')
@@ -220,11 +231,16 @@ export default function ReturnForm({
                             value={line.qty}
                             min={0}
                             step={1}
+                            /* The product's own places. A keystroke past them
+                               is refused, so the box cannot offer a quantity
+                               `checkQuantities` will reject at save. */
+                            precision={qtyDecimalsOf(line)}
+                            aria-label={`Return quantity for ${line.description}`}
                             onChange={(e) =>
                               setLines((current) =>
                                 current.map((l) =>
                                   l.key === line.key
-                                    ? { ...l, qty: Math.max(0, round(Number(e.target.value) || 0, 3)) }
+                                    ? { ...l, qty: Math.max(0, roundQty(Number(e.target.value) || 0, l)) }
                                     : l,
                                 ),
                               )

@@ -11,7 +11,12 @@ import { getGroup } from '@/lib/site/productVariants'
 import { getCostBasis, listBrands, listVatRates } from '@/lib/site/lookups'
 import { listGroups } from '@/lib/site/instructions'
 import { listLocations } from '@/lib/site/stockLocations'
-import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
+import {
+  listDepartments,
+  departmentPath,
+  parseDepartmentParam,
+  departmentFilterIds,
+} from '@/lib/site/departments'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom, withParams } from '@/lib/searchParams'
 import { listColumnsFor } from '@/lib/site/listColumns'
 import { PRODUCT_COLUMN_IDS, PRODUCT_DEFAULT_COLUMNS } from './columns'
@@ -139,6 +144,21 @@ export default async function ProductsPage({
     'p',
   )
 
+  /* An advanced condition ON the archived field OWNS the archived question.
+   *
+   * listProducts adds `p.is_archived = 0` unless told otherwise, which is the
+   * right default for a catalogue. But the toolbar's archived control is gone
+   * and the Filter button now offers Archived as a yes/no field — so without
+   * this, "Archived is Yes" compiled to `is_archived = 0 AND is_archived = 1`
+   * and returned nothing, every time. A user who archives a product and then
+   * filters for it is told it does not exist.
+   *
+   * Asking whether the field is USED, rather than what it was set to: "is No"
+   * is already the default, and "is not Yes" or an `in` of both values are the
+   * same request. In every case the compiled condition states the rule, so the
+   * default clause only has to get out of its way. */
+  const filtersOnArchived = conditions.some((c) => c.field === 'isArchived')
+
   /* Which variant group is open, if any. A group id that is not a parent falls
      back to the whole catalogue rather than showing an empty list — the URL is
      typeable, and a product can stop being a parent while a tab sits open. */
@@ -161,11 +181,10 @@ export default async function ProductsPage({
 
   // Filtering by a department includes everything beneath it — picking
   // "Fresh Produce" should not hide the products filed under its sub-levels.
-  const departmentId = Number(department)
-  const filterIds =
-    Number.isFinite(departmentId) && departmentId > 0
-      ? [...descendantIds(departments, departmentId)]
-      : undefined
+  // SEVERAL may be picked, so this is a comma-separated list; one bare id is
+  // still valid, which is what every link printed before this carries.
+  const departmentIds = parseDepartmentParam(department)
+  const filterIds = departmentFilterIds(departments, departmentIds) ?? undefined
 
   /* Both narrowed against the known ids rather than trusted: these reach an
      ORDER BY and a WHERE, and the URL is typeable. An unrecognised value falls
@@ -180,7 +199,7 @@ export default async function ProductsPage({
   const page = pageFrom(params.page)
   const { items, total } = await listProducts(siteId, {
     search: q,
-    includeArchived: archived === '1',
+    includeArchived: archived === '1' || filtersOnArchived,
     belowMinimum: low === '1',
     departmentIds: filterIds,
     productTypes: productType ? [productType] : undefined,
@@ -240,8 +259,6 @@ export default async function ProductsPage({
   const listUrl = `/products${withParams(params, {})}`
   const editSuffix = listUrl === '/products' ? '' : `?from=${encodeURIComponent(listUrl)}`
 
-  const filterLabel = filterIds ? departmentPath(departments, departmentId) : null
-
   // A plain id -> path map rather than the department tree plus the function
   // that walks it: ProductsTable is a client component, and departments.ts is
   // server-only.
@@ -257,6 +274,17 @@ export default async function ProductsPage({
      rarely a page of the new one, and landing on an empty list reads as "no
      matches" when there are plenty. */
   const filterHref = (changes: Record<string, string | null>) => href({ ...changes, page: null })
+
+  /* One chip per picked department, each clearing only itself: with four
+     ticked, a single chip could name only one of them, and a single X would
+     throw away three choices someone made deliberately. */
+  const departmentChips = departmentIds.map((id) => ({
+    id,
+    label: departmentPath(departments, id),
+    clearHref: filterHref({
+      department: departmentIds.filter((other) => other !== id).join(',') || null,
+    }),
+  }))
 
   /* Clears every chip at once.
    *
@@ -301,10 +329,10 @@ export default async function ProductsPage({
       color: d.color,
       imageId: d.posImageId,
     })),
-    {
-      allHref: filterHref({ department: null }),
-      hrefFor: (id) => filterHref({ department: String(id) }),
-    },
+    /* No per-row hrefs, unlike the single-pick pickers: the destination of a
+       row depends on what is ALREADY ticked, so it cannot be baked into the
+       option. The picker calls `hrefForValues` once, with the finished set,
+       when it closes. */
   )
 
   /* What the bulk-options forms need to offer a choice. Plain values only:
@@ -405,7 +433,7 @@ export default async function ProductsPage({
           </ButtonLink>
         ),
       }
-    : slice !== 'all' || filterLabel || typeLabel || conditions.length
+    : slice !== 'all' || departmentIds.length || typeLabel || conditions.length
       ? {
           title: 'No products match this filter',
           /* Name the conditions rather than saying "the current slice". An
@@ -514,13 +542,14 @@ export default async function ProductsPage({
              positions they hold on every other list. */
           filters={
             <FilterBar inToolbar clearHref={clearFiltersHref}>
-              {filterLabel && (
+              {departmentChips.map((chip) => (
                 <FilterChip
+                  key={chip.id}
                   label="Department"
-                  value={filterLabel}
-                  clearHref={filterHref({ department: null })}
+                  value={chip.label}
+                  clearHref={chip.clearHref}
                 />
-              )}
+              ))}
 
               {/* The toolbar no longer offers a type picker — the advanced
                   filter asks the same question and asks it better, with "is
@@ -587,7 +616,12 @@ export default async function ProductsPage({
             aria-label="Filter by department"
             backLabel="Back to departments"
             icon={<Icons.LayoutGrid size={16} />}
-            value={filterIds ? String(departmentId) : ''}
+            values={departmentIds.map(String)}
+            /* Data, not a callback: this page is a Server Component. The
+               picker rewrites `?department=` on this list's own address, so
+               the search and the advanced conditions survive a re-tick. */
+            urlFilter={{ href: listUrl, param: 'department', reset: ['page'] }}
+            manyNoun="departments"
             options={departmentOptions}
             className="w-48"
           />

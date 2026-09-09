@@ -4,7 +4,14 @@ import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb
 import { round, toNum, toQtyDecimals } from '../decimals'
 import { supplierQuery } from './customerDb'
 import { sanitiseHtml } from '../html'
-import { costLine, priceLine, type CostBasis, type CostLine, type PriceLine } from '../pricing'
+import {
+  costLine,
+  effectiveCost,
+  priceLine,
+  type CostBasis,
+  type CostLine,
+  type PriceLine,
+} from '../pricing'
 import { toProductType, type ProductTypeId } from '../productTypes'
 import {
   toVariableType,
@@ -639,7 +646,7 @@ export async function getProduct(siteId: number, id: number): Promise<Product | 
   return mapProduct(row, basis, priceMap.get(id) ?? [])
 }
 
-/** The few columns a picker needs, without the price and cost-basis joins. */
+/** The few columns a picker needs, without the price joins. */
 export type ProductPick = {
   id: number
   code: string
@@ -647,6 +654,17 @@ export type ProductPick = {
   productType: ProductTypeId
   stockOnHand: number
   averageCost: number
+  lastCost: number
+  /**
+   * The cost this site actually prices from — average or last, per cost_basis.
+   *
+   * Carried because a picker's caller must not re-derive it. RecipePanel used
+   * to take `averageCost` for a line's unit cost, while the SAVED line was read
+   * back through listRecipe() at the site's basis — so on a `last` site a newly
+   * added ingredient showed one figure and became a different one on refresh.
+   * A single field neither side can read differently is the fix.
+   */
+  costExcl: number
   /**
    * The default-structure selling price, VAT inclusive.
    *
@@ -687,10 +705,28 @@ export type ProductPick = {
  */
 export async function searchProductsForPicker(
   siteId: number,
-  opts: { search?: string; exclude?: number; limit?: number } = {},
+  opts: { search?: string; exclude?: number; limit?: number; ids?: number[] } = {},
 ): Promise<ProductPick[]> {
   const where: string[] = ['p.is_archived = 0', 'p.has_variants = 0']
   const params: unknown[] = []
+
+  /*
+   * `ids` turns this into a by-id lookup, sharing one definition of what a
+   * pick IS with the type-ahead above it.
+   *
+   * The big search dialog returns rows shaped for a grid and deliberately
+   * carries no cost — cost is capability-gated there, so a role without
+   * products.cost sees null. A recipe still has to be COSTED for such a user,
+   * so the panel sends the chosen ids back here and gets the same ProductPick
+   * the type-ahead would have produced.
+   */
+  if (opts.ids) {
+    // An empty list must match nothing, not everything — an unguarded IN ()
+    // is a syntax error and a `1=1` fallback would return the catalogue.
+    if (opts.ids.length === 0) return []
+    where.push(`p.id IN (${opts.ids.map(() => '?').join(',')})`)
+    params.push(...opts.ids)
+  }
 
   if (opts.search?.trim()) {
     const term = `%${opts.search.trim()}%`
@@ -702,11 +738,21 @@ export async function searchProductsForPicker(
     params.push(opts.exclude)
   }
 
-  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 50)
+  /* A by-id lookup is already bounded by the ids asked for, and capping it at
+     the type-ahead's 50 would silently drop ingredients from a big multi-select
+     — the rows would simply not arrive, and the lines would cost nothing. */
+  const limit = opts.ids
+    ? Math.max(opts.ids.length, 1)
+    : Math.min(Math.max(opts.limit ?? 20, 1), 50)
+
+  /* One settings read, not a join — cheap enough to run on a keystroke, and the
+     alternative is every caller re-deriving the basis for itself. */
+  const basis = await getCostBasis(siteId)
+
   const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
     siteId,
     `SELECT p.id, p.code, p.description, p.product_type, p.stock_on_hand,
-            p.average_cost, p.department_id, p.pack_size,
+            p.average_cost, p.last_cost, p.department_id, p.pack_size,
             -- The DEFAULT structure's price. A picker shows one number, so it
             -- shows the shelf price rather than making the caller choose.
             (SELECT pp.selling_price_incl FROM product_prices pp
@@ -720,17 +766,25 @@ export async function searchProductsForPicker(
     params,
   )
 
-  return rows.map((r) => ({
-    id: Number(r.id),
-    code: String(r.code),
-    description: String(r.description),
-    productType: toProductType(r.product_type),
-    stockOnHand: toNum(r.stock_on_hand),
-    averageCost: toNum(r.average_cost),
-    sellingIncl: toNum(r.selling_incl),
-    departmentId: r.department_id === null ? null : Number(r.department_id),
-    packSize: toNum(r.pack_size),
-  }))
+  return rows.map((r) => {
+    const averageCost = toNum(r.average_cost)
+    const lastCost = toNum(r.last_cost)
+    return {
+      id: Number(r.id),
+      code: String(r.code),
+      description: String(r.description),
+      productType: toProductType(r.product_type),
+      stockOnHand: toNum(r.stock_on_hand),
+      averageCost,
+      lastCost,
+      // The same helper listRecipe's column choice resolves to, so a picked
+      // line and a saved line cannot report different costs.
+      costExcl: effectiveCost(averageCost, lastCost, basis),
+      sellingIncl: toNum(r.selling_incl),
+      departmentId: r.department_id === null ? null : Number(r.department_id),
+      packSize: toNum(r.pack_size),
+    }
+  })
 }
 
 export async function findByBarcode(siteId: number, barcode: string): Promise<Product | null> {
@@ -953,6 +1007,86 @@ async function writePrices(
   })
 }
 
+/**
+ * The product already holding `code`, or null when the code is free.
+ *
+ * ONE definition for every path that refuses a duplicate — create, edit, quick
+ * edit, rename, variants and refer ranges all call this rather than writing
+ * their own SELECT, so the refusal reads the same wherever it comes from.
+ *
+ * It returns the row rather than a boolean because "already in use" on its own
+ * sends the user hunting: which product holds the code is the whole answer, and
+ * an archived holder is the case they cannot find in the list at all — hence
+ * the flag, which codeTakenMessage() turns into words.
+ */
+export async function productHoldingCode(
+  siteId: number,
+  code: string,
+  /** The product being saved, so an edit does not clash with itself. */
+  exceptId?: number,
+): Promise<{ id: number; code: string; description: string; archived: boolean } | null> {
+  const trimmed = code.trim()
+  if (!trimmed) return null
+
+  const row = await siteQueryOne<
+    RowDataPacket & { id: number; code: string; description: string; is_archived: number }
+  >(
+    siteId,
+    `SELECT id, code, description, is_archived FROM products
+      WHERE code = ?${exceptId ? ' AND id <> ?' : ''} LIMIT 1`,
+    exceptId ? [trimmed, exceptId] : [trimmed],
+  )
+  if (!row) return null
+
+  return {
+    id: Number(row.id),
+    code: String(row.code),
+    description: String(row.description ?? ''),
+    archived: Number(row.is_archived ?? 0) === 1,
+  }
+}
+
+/**
+ * The words for a taken code, split out so the browser can build the same
+ * sentence on blur that the save would have produced.
+ */
+export function codeTakenMessage(holder: {
+  code: string
+  description: string
+  archived: boolean
+}): string {
+  const name = holder.description.trim()
+  const who = name ? `"${name}"` : 'another product'
+  /* An archived holder is named as archived: it is not in the product list, so
+     a user told only that the code is taken would look for it and find nothing. */
+  return holder.archived
+    ? `Product code "${holder.code}" is already assigned to ${who}, which is archived.`
+    : `Product code "${holder.code}" is already assigned to ${who}.`
+}
+
+/**
+ * Was this refusal a duplicate code, rather than any other reason?
+ *
+ * For the seed scripts, which re-run against a site that may already hold what
+ * they are inserting and must count that as "already there" rather than as a
+ * failure. They used to match the sentence itself, which quietly turned every
+ * existing product into a hard failure the moment the wording improved — so the
+ * question gets an answer that is allowed to outlive the words.
+ */
+export function isCodeTakenError(error: string): boolean {
+  return /already (assigned to|in use)/i.test(error)
+}
+
+/** The refusal for a taken product code, or null when the code is free. */
+export async function whyCodeTaken(
+  siteId: number,
+  code: string,
+  exceptId?: number,
+): Promise<string | null> {
+  const holder = await productHoldingCode(siteId, code, exceptId)
+  return holder ? codeTakenMessage(holder) : null
+}
+
 export async function createProduct(
   siteId: number,
   input: ProductInput,
@@ -965,12 +1099,8 @@ export async function createProduct(
   const invalid = validateProduct({ ...input, code })
   if (invalid) return { ok: false, error: invalid }
 
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
-    siteId,
-    'SELECT id FROM products WHERE code = ? LIMIT 1',
-    [code],
-  )
-  if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
+  const taken = await whyCodeTaken(siteId, code)
+  if (taken) return { ok: false, error: taken }
 
   const vat = await resolveVat(siteId, input)
 
@@ -1109,12 +1239,8 @@ export async function updateProduct(
   if (invalid) return { ok: false, error: invalid }
 
   const code = input.code.trim()
-  const clash = await siteQueryOne<RowDataPacket & { id: number }>(
-    siteId,
-    'SELECT id FROM products WHERE code = ? AND id <> ? LIMIT 1',
-    [code, id],
-  )
-  if (clash) return { ok: false, error: `Product code "${code}" is already in use.` }
+  const taken = await whyCodeTaken(siteId, code, id)
+  if (taken) return { ok: false, error: taken }
 
   /*
    * "Made in batches" cannot be changed once the product has history.
@@ -2139,12 +2265,8 @@ export async function quickUpdateProduct(
   if (!existing) return { ok: false, error: 'That product no longer exists.' }
 
   if (patch.code !== undefined) {
-    const clash = await siteQueryOne<RowDataPacket & { id: number }>(
-      siteId,
-      'SELECT id FROM products WHERE code = ? AND id <> ? LIMIT 1',
-      [patch.code.trim(), id],
-    )
-    if (clash) return { ok: false, error: `Product code "${patch.code.trim()}" is already in use.` }
+    const taken = await whyCodeTaken(siteId, patch.code, id)
+    if (taken) return { ok: false, error: taken }
   }
 
   /* A variant PARENT holds no stock and is never bought or sold — its price and
@@ -2280,12 +2402,24 @@ export async function renameProductCode(
       return { ok: false as const, error: 'That is already this product’s code.' }
     }
 
+    /* The clash check stays on THIS connection rather than calling
+       whyCodeTaken(): a helper on a pooled connection of its own would not see
+       the FOR UPDATE above, so the lock that makes this rename safe would do
+       nothing. Only the wording is shared. */
     const [clash] = await tx.query<RowDataPacket[]>(
-      'SELECT id FROM products WHERE code = ? AND id <> ? LIMIT 1',
+      'SELECT id, code, description, is_archived FROM products WHERE code = ? AND id <> ? LIMIT 1',
       [code, id],
     )
     if (clash.length > 0) {
-      return { ok: false as const, error: `Product code "${code}" is already in use.` }
+      const holder = clash[0]
+      return {
+        ok: false as const,
+        error: codeTakenMessage({
+          code: String(holder.code),
+          description: String(holder.description ?? ''),
+          archived: Number(holder.is_archived ?? 0) === 1,
+        }),
+      }
     }
 
     await tx.execute('UPDATE products SET code = ?, last_edit_date = NOW() WHERE id = ?', [

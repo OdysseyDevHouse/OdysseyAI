@@ -52,6 +52,35 @@ export async function saveOrderAction(
   return { ok: true, id: result.id, message: 'Order saved.' }
 }
 
+/**
+ * Saves an order that is still being written.
+ *
+ * The autosave behind the order screen: choosing a supplier writes the order,
+ * adding a product writes the line, editing a cost writes the change. It is a
+ * separate action from saveOrderAction rather than a flag on it because the two
+ * differ in what they will ACCEPT — this one takes work in progress, blank
+ * quantities and all — and a single action with a "do not check it" parameter
+ * is one mistaken argument away from letting an unchecked order through the
+ * path that is supposed to check it.
+ *
+ * It cannot issue, and it claims no document number. Everything that commits
+ * the business to the spend still goes through issueOrderAction, which
+ * re-checks the order in full.
+ */
+export async function saveOrderDraftAction(
+  documentId: number | null,
+  input: OrderInput,
+): Promise<PurchaseResult> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+  const result = await saveOrder(siteId, actor, input, documentId ?? undefined, { draft: true })
+  if (!result.ok) return { ok: false, error: result.error }
+
+  revalidatePath('/purchasing')
+  return { ok: true, id: result.id, message: 'Saved.' }
+}
+
 export async function issueOrderAction(id: number): Promise<PurchaseResult> {
   const ctx = await actorFor('purchasing.edit')
   if ('ok' in ctx) return ctx
@@ -279,6 +308,8 @@ export async function searchProductsForPurchaseAction(term: string) {
 export async function browseProductsForPurchaseAction(options: {
   term?: string
   departmentId?: number | null
+  /** Several departments, each covering everything beneath it. */
+  departmentIds?: number[] | null
   limit?: number
 }) {
   const ctx = await actorForOrThrow('purchasing.view')

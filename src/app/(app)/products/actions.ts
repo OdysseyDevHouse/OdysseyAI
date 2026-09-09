@@ -37,6 +37,7 @@ import {
   propertyColumnMap,
   bulkUpdateProducts,
   quickUpdateProduct,
+  whyCodeTaken,
   type ProductInput,
   type ProductQuickEdit,
   type ProductBulkChange,
@@ -480,7 +481,7 @@ export async function saveProductAction(
    * above it costs one cheap query and writes nothing.
    */
   const { cascadeReferCosts } = await import('@/lib/site/referRange')
-  await cascadeReferCosts(siteId, result.id).catch(() => 0)
+  const recosted = await cascadeReferCosts(siteId, result.id).catch(() => [])
 
   // This store's own database is now saved. Everything below concerns the OTHER
   // linked stores, and must never turn a successful save into a failed one — a
@@ -553,6 +554,23 @@ export async function saveProductAction(
 
   revalidatePath('/products')
 
+  /*
+   * ── THE PAGES THIS SAVE MADE STALE ───────────────────────────────────────
+   *
+   * The list is not the only thing that moved. Repricing an ingredient recosts
+   * every recipe built on it, and each of those has its own page holding the
+   * OLD figure in the router cache — so the classic report was: change mince
+   * from 118 to 180, open the burger, and the recipe line still says 118. The
+   * database was right the whole time; the screen was serving a cached render.
+   *
+   * `recosted` is the cascade's own list of what it rewrote, which is the only
+   * honest answer to "what is stale now" — the set depends on nesting no code
+   * here could name in advance. The product itself is expired too: its cost,
+   * and the margin every price row shows against it, both just changed.
+   */
+  revalidatePath(`/products/${result.id}`)
+  for (const id of recosted) revalidatePath(`/products/${id}`)
+
   /* Saving keeps you ON the product — it is not necessarily the end of the
      edit, and bouncing to the list after every field change would make a
      two-part correction into two round trips.
@@ -586,7 +604,12 @@ export async function archiveProductAction(form: FormData): Promise<void> {
   revalidatePath('/products')
   // Same as the save path: keep the list that sent us here. See above.
   const back = safeReturnTo(form.get('returnTo'))
-  redirect(`/products/${id}${back ? `?from=${encodeURIComponent(back)}` : ''}`)
+  /* Which way it went, so the screen can say so. Without this the redirect
+     lands on a page that looks identical to the one just left — the only
+     evidence anything happened is the menu now reading the other word, which
+     is not something you notice unless you go looking for it. */
+  const from = back ? `&from=${encodeURIComponent(back)}` : ''
+  redirect(`/products/${id}?filed=${archived ? 'archived' : 'unarchived'}${from}`)
 }
 
 export async function deleteProductAction(form: FormData): Promise<void> {
@@ -615,7 +638,7 @@ export async function deleteProductAction(form: FormData): Promise<void> {
   // A product with sales history is archived rather than deleted. Say so:
   // silently doing something other than what was asked is worse than refusing.
   if (result.archived) {
-    redirect(`/products/${id}?archived=1&reason=${encodeURIComponent(result.reason)}${from}`)
+    redirect(`/products/${id}?filed=archived&reason=${encodeURIComponent(result.reason)}${from}`)
   }
 
   redirect(back ? `${back}${back.includes('?') ? '&' : '?'}deleted=1` : '/products?deleted=1')
@@ -848,7 +871,13 @@ export async function quickEditProductAction(
    */
   if (patch.lastCost !== undefined) {
     const { cascadeCompositionCosts } = await import('@/lib/site/productComposition')
-    await cascadeCompositionCosts(siteId, id).catch(() => 0)
+    const recosted = await cascadeCompositionCosts(siteId, id).catch(() => [])
+
+    /* And the pages those rewrites made stale — see the same block in
+       saveProductAction. This panel is the quickest way to reprice an
+       ingredient, so it is the path most likely to be followed by opening the
+       recipe that was just recosted. */
+    for (const other of recosted) revalidatePath(`/products/${other}`)
   }
 
   /*
@@ -904,6 +933,10 @@ export async function quickEditProductAction(
   }
 
   revalidatePath('/products')
+  /* The product's own page as well: the panel writes the same cost and price
+     columns that page renders, and it is reached from the list the user is
+     still standing on. */
+  revalidatePath(`/products/${id}`)
   return { ok: true }
 }
 
@@ -963,4 +996,32 @@ export async function renameProductCodeAction(form: FormData): Promise<void> {
       : ''
 
   redirect(`/products/${id}?renamed=${encodeURIComponent(result.from)}${note}${from}`)
+}
+
+/**
+ * Is this product code free? Asked as the user leaves the code field.
+ *
+ * The save already refuses a duplicate, but only after the whole form has been
+ * posted and re-rendered — by which time the code is several fields behind the
+ * cursor. Answering on blur puts the refusal next to the box that caused it,
+ * while the user is still thinking about the code.
+ *
+ * It ADDS to the save-time check rather than replacing it: two people can type
+ * the same code between this call and the save, and this runs in a browser that
+ * may be offline. The action is the boundary; this is the courtesy.
+ *
+ * Read-only, so it takes `products.view` — the product list already shows every
+ * code and description, so naming the holder tells the caller nothing the same
+ * user could not read off the screen behind them.
+ */
+export async function checkProductCodeAction(
+  code: string,
+  /** The product being edited, so its own code does not read as a clash. */
+  exceptId?: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('products.view')
+  if ('ok' in ctx) return { ok: true } // Not our place to refuse; the save will.
+
+  const taken = await whyCodeTaken(ctx.siteId, code, exceptId)
+  return taken ? { ok: false, error: taken } : { ok: true }
 }

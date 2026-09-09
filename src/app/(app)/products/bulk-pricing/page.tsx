@@ -5,7 +5,12 @@ import { listPriceStructures, listVatRates } from '@/lib/site/lookups'
 import { listSuppliers } from '@/lib/site/suppliers'
 import { getSetting } from '@/lib/site/settings'
 import { toEndingDirection } from '@/lib/repricing'
-import { listDepartments, departmentPath, descendantIds } from '@/lib/site/departments'
+import {
+  listDepartments,
+  departmentPath,
+  parseDepartmentParam,
+  departmentFilterIds,
+} from '@/lib/site/departments'
 import { hrefBuilder, offsetFor, pageCountFor, pageFrom } from '@/lib/searchParams'
 import {
   PageHeader,
@@ -104,11 +109,10 @@ export default async function BulkPricingPage({
     structures.find((s) => s.isDefault) ??
     structures[0]
 
-  const departmentId = Number(department)
-  const filterIds =
-    Number.isFinite(departmentId) && departmentId > 0
-      ? [...descendantIds(departments, departmentId)]
-      : undefined
+  /* Several may be picked — a comma-separated list, tolerant of the single
+     bare id older links carry. Each one covers everything beneath it. */
+  const departmentIds = parseDepartmentParam(department)
+  const filterIds = departmentFilterIds(departments, departmentIds) ?? undefined
 
   const supplierId = Number(params.supplier)
   const supplierFilter =
@@ -156,10 +160,8 @@ export default async function BulkPricingPage({
       color: d.color,
       imageId: d.posImageId,
     })),
-    {
-      allHref: filterHref({ department: null }),
-      hrefFor: (id) => filterHref({ department: String(id) }),
-    },
+    /* No per-row hrefs: in a multi-select the destination depends on what is
+       already ticked, so the picker builds it from urlFilter when it closes. */
   )
 
   const supplierOptions = [
@@ -212,7 +214,10 @@ export default async function BulkPricingPage({
               aria-label="Department"
               backLabel="Back to departments"
               options={departmentOptions}
-              value={filterIds ? String(departmentId) : ''}
+              values={departmentIds.map(String)}
+              /* Data, not a callback — this page is a Server Component. */
+              urlFilter={{ href: filterHref({}), param: 'department', reset: ['page'] }}
+              manyNoun="departments"
               icon={<Icons.LayoutGrid size={16} />}
               className="w-48"
             />

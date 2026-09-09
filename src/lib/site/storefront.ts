@@ -482,6 +482,13 @@ const SORT_SQL: Record<CatalogueSort, string> = {
 
 export type CatalogueOptions = {
   departmentId?: number
+  /**
+   * Several departments, each covering everything beneath it — the page
+   * builder's picker, which can ask for two branches at once. Unioned with
+   * `departmentId` above, which the storefront's own browsing still uses:
+   * a shopper is always looking at exactly one department.
+   */
+  departmentIds?: number[]
   search?: string
   limit?: number
   offset?: number
@@ -540,18 +547,26 @@ function catalogueFilter(
     where.push(`p.id IN (${picked.join(',')})`)
   }
 
-  if (options.departmentId) {
-    // Includes the chosen department's descendants, so browsing a parent shows
-    // what browsing its children would.
+  const departmentRoots = [
+    ...new Set(
+      [...(options.departmentIds ?? []), options.departmentId].filter(
+        (id): id is number => typeof id === 'number' && Number.isFinite(id) && id > 0,
+      ),
+    ),
+  ]
+  if (departmentRoots.length > 0) {
+    // Includes each chosen department's descendants, so browsing a parent shows
+    // what browsing its children would. Several seeds where the storefront
+    // itself passes one — the recursive term descends from every seed alike.
     where.push(`p.department_id IN (
       WITH RECURSIVE branch AS (
-        SELECT id FROM departments WHERE id = ?
+        SELECT id FROM departments WHERE id IN (${departmentRoots.map(() => '?').join(',')})
         UNION ALL
         SELECT d.id FROM departments d JOIN branch b ON d.parent_id = b.id
       )
       SELECT id FROM branch
     )`)
-    params.push(options.departmentId)
+    params.push(...departmentRoots)
   }
 
   if (options.search?.trim()) {

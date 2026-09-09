@@ -120,7 +120,10 @@ export async function setDepartmentActiveAction(
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidateDepartments()
-  return { ok: true, message: isActive ? 'Department activated.' : 'Department deactivated.' }
+  return {
+    ok: true,
+    message: isActive ? 'Now on the till.' : 'Taken off the till. It is still available everywhere in the back office.',
+  }
 }
 
 export async function reorderDepartmentsAction(orderedIds: number[]): Promise<InlineResult> {

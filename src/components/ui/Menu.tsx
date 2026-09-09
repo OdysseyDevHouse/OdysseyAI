@@ -1,6 +1,13 @@
 'use client'
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { ChevronDown } from './icons'
 import { buttonClass, type ButtonSize, type ButtonVariant } from './styles'
 
@@ -162,8 +169,39 @@ export function MenuItem({
     )
   }
 
+  /*
+   * A submit entry has to fire its form ITSELF, before the panel closes.
+   *
+   * The panel closes on any click inside it (see Menu), and that close is
+   * React state — so the <form> wrapping this item unmounts in the same click,
+   * BEFORE React dispatches the submit it was going to handle. With a server
+   * action that means nothing happens at all: no request, no redirect, no
+   * error. Archiving a product from this menu did exactly nothing for that
+   * reason. Sign out survived only because its form is a native method="post",
+   * which the browser submits synchronously and the unmount cannot overtake.
+   *
+   * Submitting in a capture-phase handler runs before the panel's own click
+   * handler, so the request is already in flight by the time the form goes.
+   */
+  const submitBeforeClose =
+    type === 'submit'
+      ? (event: ReactMouseEvent<HTMLButtonElement>) => {
+          const form = event.currentTarget.form
+          if (!form) return
+          event.preventDefault()
+          form.requestSubmit(event.currentTarget)
+        }
+      : undefined
+
   return (
-    <button type={type} role="menuitem" disabled={disabled} onClick={onClick} className={skin}>
+    <button
+      type={type}
+      role="menuitem"
+      disabled={disabled}
+      onClickCapture={submitBeforeClose}
+      onClick={onClick}
+      className={skin}
+    >
       {children}
     </button>
   )

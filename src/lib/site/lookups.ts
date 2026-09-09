@@ -129,11 +129,16 @@ export async function listSalesReps(siteId: number): Promise<SalesRep[]> {
 
 // ── Settings ────────────────────────────────────────────────────────────
 
-/** Which cost figure this site prices from. Defaults to average. */
+/**
+ * Which cost figure this site prices from. Defaults to last cost, matching
+ * SETTING_DEFAULTS.cost_basis and the seed in sql/site/001_products.sql — a
+ * missing row must read as the value a new site is created with, or the same
+ * site prices differently depending on which reader answered.
+ */
 export async function getCostBasis(siteId: number): Promise<CostBasis> {
   const row = await siteQueryOne<RowDataPacket & { setting_value: string | null }>(
     siteId,
     "SELECT setting_value FROM settings WHERE setting_key = 'cost_basis' LIMIT 1",
   )
-  return row?.setting_value === 'last' ? 'last' : 'average'
+  return row?.setting_value === 'average' ? 'average' : 'last'
 }

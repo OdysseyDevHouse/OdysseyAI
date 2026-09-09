@@ -492,15 +492,45 @@ export function validateOrder(input: OrderInput): string | null {
  *
  * Lines are rewritten wholesale rather than diffed — the same reasoning as a
  * sales draft: nothing has been received, so there is no state to preserve.
+ *
+ * ── `draft`: SAVING WORK THAT IS NOT FINISHED YET ────────────────────────
+ *
+ * The order screen saves as the buyer works — choosing a supplier writes the
+ * order, adding a product writes the line, editing a cost writes the change —
+ * so that a closed tab or a flat battery costs nothing. Every one of those
+ * saves lands mid-keystroke by definition: an order with no lines on it yet, a
+ * quantity box someone has just emptied in order to retype it.
+ *
+ * `validateOrder` refuses all of that, and rightly — it is the gate in front of
+ * ISSUING, where the order becomes something a supplier can hold us to. So an
+ * autosave passes `draft` and skips it, exactly as saveDraftReceipt() does on
+ * the receiving side and for the same reason: a draft is by definition
+ * incomplete, and refusing to remember it defeats the point of saving it.
+ *
+ * Nothing is weakened by this. A draft order moves no stock, no cost and no
+ * ledger, and holds no document number. issueOrder() re-checks the lot — it
+ * refuses an order with no lines of its own accord — so an incomplete draft can
+ * be remembered but never sent.
  */
 export async function saveOrder(
   siteId: number,
   actor: Actor,
   input: OrderInput,
   documentId?: number,
+  options?: {
+    /** Skip line validation: this is an autosave of work still in progress. */
+    draft?: boolean
+  },
 ): Promise<SaveResult> {
-  const invalid = validateOrder(input)
-  if (invalid) return { ok: false, error: invalid }
+  /* A supplier is required either way. It is not a matter of completeness —
+     the row cannot exist without one, and Number('') would reach the database
+     as NaN. Everything BELOW this line is what a draft is allowed to omit. */
+  if (!input.supplierId) return { ok: false, error: 'Choose who to order from.' }
+
+  if (!options?.draft) {
+    const invalid = validateOrder(input)
+    if (invalid) return { ok: false, error: invalid }
+  }
 
   // The supplier file may be the group's; the order is always this shop's.
   const supplier = await supplierQueryOne<Row>(
@@ -522,7 +552,18 @@ export async function saveOrder(
   }
 
   const computed = input.lines.map((line) => {
-    const gross = round(line.qtyOrdered * line.unitCostExcl, 2)
+    /* Coerced to a number the arithmetic below can survive.
+     *
+     * A validated save cannot get here with a blank quantity — validateOrder
+     * has already refused it. A DRAFT can, and does routinely: the buyer
+     * cleared the box to retype it and the autosave fired in the gap. Without
+     * this, NaN would run through round() into toFixed() and write the literal
+     * string "NaN" into a DECIMAL column, which MariaDB stores as 0 while
+     * warning — a silently wrong figure on a saved order. Zero is the honest
+     * reading of an empty box, and issueOrder() still refuses to send it. */
+    const qty = Number.isFinite(line.qtyOrdered) ? line.qtyOrdered : 0
+    const cost = Number.isFinite(line.unitCostExcl) ? line.unitCostExcl : 0
+    const gross = round(qty * cost, 2)
     // The absolute amount wins over the percentage, and is capped at the line
     // — the same rule lineTotals() applies on the sales side. Capping matters
     // here rather than only in the UI: this function is the boundary, and a
@@ -532,8 +573,12 @@ export async function saveOrder(
         ? round(Math.min(line.discountAmount ?? 0, gross), 2)
         : round(gross * ((line.discountPct ?? 0) / 100), 2)
     const excl = round(gross - discount, 2)
-    const vat = round(excl * (line.vatRatePct / 100), 2)
-    return { excl, vat, incl: round(excl + vat, 2), discount }
+    const vatRate = Number.isFinite(line.vatRatePct) ? line.vatRatePct : 0
+    const vat = round(excl * (vatRate / 100), 2)
+    /* qty, cost and vatRate travel WITH the figures they produced, so the
+       INSERT writes the numbers that were actually totalled rather than
+       re-reading the raw input and disagreeing with its own line total. */
+    return { excl, vat, incl: round(excl + vat, 2), discount, qty, cost, vatRate }
   })
 
   const subtotalExcl = computed.reduce((sum, c) => round(sum + c.excl, 2), 0)
@@ -625,14 +670,29 @@ export async function saveOrder(
           locationId,
           line.productCode ?? null,
           line.supplierCode ?? null,
-          line.description.trim().slice(0, 190),
+          // `?? ''` for the draft case only: validateOrder has already refused a
+          // blank description on the path that matters, but a half-typed line
+          // being autosaved may not have one yet and must not throw here.
+          (line.description ?? '').trim().slice(0, 190),
           line.productType ?? 'normal',
           line.departmentId ?? null,
-          round(line.qtyOrdered, 3).toFixed(3),
-          round(line.unitCostExcl, 4).toFixed(4),
-          (line.discountPct ?? 0).toFixed(3),
-          ...(hasDiscountAmount ? [round(line.discountAmount ?? 0, 4).toFixed(4)] : []),
-          line.vatRatePct.toFixed(3),
+          round(c.qty, 3).toFixed(3),
+          round(c.cost, 4).toFixed(4),
+          (Number.isFinite(line.discountPct) ? (line.discountPct as number) : 0).toFixed(3),
+          /* The AMOUNT as it was typed, not the computed `c.discount`. The two
+             differ on a percentage-only line, where c.discount holds the
+             derived figure — writing that here would turn a 10% line into a
+             fixed-amount one on reload, because the amount wins over the
+             percentage when both are set. */
+          ...(hasDiscountAmount
+            ? [
+                round(
+                  Number.isFinite(line.discountAmount) ? (line.discountAmount as number) : 0,
+                  4,
+                ).toFixed(4),
+              ]
+            : []),
+          c.vatRate.toFixed(3),
           c.excl.toFixed(4),
           c.vat.toFixed(4),
           c.incl.toFixed(4),

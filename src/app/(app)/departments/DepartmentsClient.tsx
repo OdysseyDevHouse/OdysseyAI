@@ -322,7 +322,10 @@ export function DepartmentsClient({
                       the column IS the control, so centring lands on it. The
                       name column has no cap and takes the remaining room. */}
                   <th className={`${TABLE_TH} w-px whitespace-nowrap text-right`}>Products</th>
-                  <th className={`${TABLE_TH} w-px whitespace-nowrap text-center`}>Visible</th>
+                  {/* Named for the surface it governs. "Visible" alone read as
+                      visible ANYWHERE, which is what the switch was mistaken
+                      for — it only ever decides the till's department rail. */}
+                  <th className={`${TABLE_TH} w-px whitespace-nowrap text-center`}>On till</th>
                   <th className={`${TABLE_TH} w-px whitespace-nowrap text-center`}>Colour</th>
                   <th className={`${TABLE_TH} w-px text-right`}>
                     {busy ? 'Saving…' : 'Actions'}
@@ -603,8 +606,9 @@ function DepartmentRow({
           {hasChildren && <Badge>{d.childCount}</Badge>}
 
           {/* Hidden is the exception, so it is said in words on the row itself
-              — the switch three columns right is the control, not the label. */}
-          {!d.isActive && <Badge tone="warning">Hidden</Badge>}
+              — the switch three columns right is the control, not the label.
+              It names the POS, because that is all it hides it from. */}
+          {!d.isActive && <Badge tone="warning">Hidden in POS</Badge>}
         </span>
       </td>
 
@@ -627,10 +631,10 @@ function DepartmentRow({
             <Switch
               checked={d.isActive}
               onChange={onToggleActive}
-              ariaLabel={`${d.name} is ${d.isActive ? 'visible' : 'hidden'}`}
+              ariaLabel={`${d.name} is ${d.isActive ? 'on' : 'not on'} the till`}
             />
           ) : (
-            <span className="text-faint">{d.isActive ? '—' : 'Hidden'}</span>
+            <span className="text-faint">{d.isActive ? '—' : 'Hidden in POS'}</span>
           )}
         </div>
       </td>

@@ -278,6 +278,31 @@ function selectOnFocus(event: React.FocusEvent<HTMLInputElement>) {
 }
 
 /**
+ * Would this text carry more decimals than the field allows?
+ *
+ * Only ever answers about the DECIMALS. Everything else a half-typed number
+ * legitimately looks like has to pass through untouched, or the field becomes
+ * impossible to type in rather than merely limited:
+ *
+ *   ""      nothing yet          "-"     a minus, before any digit
+ *   "1."    the point just typed  ".5"   leading point, no zero
+ *
+ * A trailing point is allowed even at precision 0. Refusing it would be right
+ * in principle and awful in practice — the operator would press "." on a
+ * whole-unit product, see nothing happen, and press it again. It resolves
+ * itself: any DIGIT after that point is refused by this same function, and
+ * blur formats the stray point away.
+ *
+ * Non-numeric text is not this function's business either; it says no-opinion
+ * and lets the caller's own parsing reject it.
+ */
+function tooManyDecimals(text: string, precision: number): boolean {
+  const point = text.indexOf('.')
+  if (point === -1) return false
+  return text.length - point - 1 > precision
+}
+
+/**
  * Numbers — quantities, counts, percentages.
  *
  * Like CurrencyInput this is a text input rather than type="number", for the
@@ -288,6 +313,24 @@ function selectOnFocus(event: React.FocusEvent<HTMLInputElement>) {
  *
  * `precision` fixes the decimals shown when blurred. Leave it undefined for
  * whole quantities, which should not gain trailing zeroes.
+ *
+ * ── PRECISION IS ALSO A LIMIT ON WHAT MAY BE TYPED ───────────────────────
+ *
+ * A keystroke that would take the number past `precision` decimals is REFUSED
+ * — the caret does not move and nothing is echoed to the caller.
+ *
+ * Rounding on blur is not enough on its own, and the difference is not
+ * cosmetic. A product allowing 3 decimals, typed as 3.4556, blurred to 3.456:
+ * the operator typed a 5 and the box shows a 6. It is arithmetically correct
+ * and it reads as the till changing the number — and on a screen where the
+ * quantity is what gets charged for, a figure nobody typed is worse than a
+ * keystroke that never landed. Refusing at the key press means what is on
+ * screen is always what was typed.
+ *
+ * Blur-time rounding STAYS, for the inputs a person did not type: a scale
+ * weighing 1.2345kg of a two-decimal product has not made a mistake to be
+ * corrected (see roundQty), and a caller writing a computed value in is not
+ * typing either.
  */
 export function NumberInput({
   className = '',
@@ -327,6 +370,26 @@ export function NumberInput({
   const controlled = useRef(value !== undefined).current
 
   /*
+   * A `value` the FIELD did not type wins over the editing buffer.
+   *
+   * The buffer exists so formatting cannot fight the caret mid-keystroke, and
+   * it is cleared on blur. But a value can also change from OUTSIDE while the
+   * field still has focus — a calculator dialog writing its result back, a
+   * sibling cell recomputing this one — and the buffer was masking it: the box
+   * went on showing the old number while everything derived from it moved.
+   * Measured on the recipe panel's quantity cell, not theorised.
+   *
+   * Comparing against the value we last echoed to a caller is what separates
+   * the two cases. Typing sets `echoed` in onChange, so the buffer survives its
+   * own keystrokes; anything else leaves them unequal and the buffer stands
+   * down.
+   */
+  const echoed = useRef<string | null>(null)
+  // Read-only during render — the ref is only written in the event handlers
+  // below, so a double render under StrictMode cannot change what this decides.
+  const external = editing !== null && echoed.current !== format(value)
+
+  /*
    * The editing buffer feeds the CONTROLLED path only.
    *
    * An uncontrolled input already holds what is typed — that is what
@@ -334,7 +397,7 @@ export function NumberInput({
    * fight the DOM for the caret. It is still tracked: onChange callers get
    * their value either way, and onBlur clears it in both modes.
    */
-  const shown = controlled ? (editing ?? format(value)) : undefined
+  const shown = controlled ? (external ? format(value) : (editing ?? format(value))) : undefined
 
   return (
     <Input
@@ -366,13 +429,49 @@ export function NumberInput({
       defaultValue={controlled ? undefined : format(defaultValue)}
       onFocus={(e) => {
         setEditing(e.target.value)
+        // What is on screen right now IS this field's own value, so an external
+        // write is anything that differs from it later.
+        echoed.current = e.target.value
         selectOnFocus(e)
         onFocus?.(e)
       }}
       onChange={(e) => {
         // Accept a typed comma, hand callers a plain "1.5".
         const next = e.target.value.replace(',', '.')
+
+        /*
+         * Too many decimals: refuse the keystroke outright.
+         *
+         * Put back what the field held and restore the caret, because simply
+         * returning leaves the DOM node showing the rejected character — this
+         * is an uncontrolled input as far as React is concerned while it has
+         * focus, so the node keeps whatever was typed into it unless it is
+         * written back by hand.
+         *
+         * The caret is set to where it was BEFORE the key: refusing a
+         * character typed in the middle of a number must not throw the cursor
+         * to the end, or correcting "1.2345" to "12.345" becomes impossible.
+         *
+         * `precision === 0` participates: a whole-unit product refuses the
+         * decimal point itself, which is the same rule with nothing after it.
+         */
+        if (precision !== undefined && tooManyDecimals(next, precision)) {
+          /* What the box held before this key. `editing` is set on focus and
+             on every accepted keystroke, so it is the truth here; the other
+             two are only reached if a caller drives this field without ever
+             focusing it. */
+          const kept = editing ?? (controlled ? format(value) : '')
+          const caret = (e.target.selectionStart ?? kept.length) - 1
+          e.target.value = kept
+          const at = Math.max(0, Math.min(caret, kept.length))
+          e.target.setSelectionRange(at, at)
+          return
+        }
+
         setEditing(next)
+        // Remember what the caller is about to be told, so the value coming
+        // back is recognised as this field's own rather than someone else's.
+        echoed.current = format(next)
         if (onChange) {
           e.target.value = next
           onChange(e)
@@ -380,6 +479,7 @@ export function NumberInput({
       }}
       onBlur={(e) => {
         setEditing(null)
+        echoed.current = null
         onBlur?.(e)
       }}
       className={`numeric text-right ${className}`}

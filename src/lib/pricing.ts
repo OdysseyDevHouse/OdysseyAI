@@ -113,3 +113,51 @@ export function costLine(
     basis,
   }
 }
+
+/**
+ * What a COST change does to a selling price.
+ *
+ * This is the rule behind products.price_calc, and it is asked wherever a cost
+ * moves — the product form, the bulk pricing grid, and a GRV. The two settings
+ * are each other's mirror, and between them they decide which of the three
+ * figures (cost, markup, price) is the one allowed to give:
+ *
+ *   'markup'  — the markup is the product's identity. A 20% product stays a
+ *               20% product, so a new cost pushes the SELLING PRICE.
+ *   'selling' — the shelf price is the product's identity. R100 stays R100, so
+ *               a new cost is absorbed by the MARGIN and the price holds.
+ *
+ * Returns the new INCLUSIVE selling price, or null when the price must not
+ * move — which is both the 'selling' case and every case with nothing to
+ * compute from. Null means "leave the stored price alone", never "price zero".
+ *
+ * The markup held is the one this tier is currently on, recomputed per tier
+ * rather than taken from a single figure: a product with retail and wholesale
+ * tiers is on two different markups, and holding one of them would flatten the
+ * other onto it.
+ */
+export function repricedForCostChange({
+  priceCalc,
+  oldCostExcl,
+  newCostExcl,
+  currentSellIncl,
+  sellingVatPercent,
+}: {
+  priceCalc: 'selling' | 'markup'
+  oldCostExcl: number
+  newCostExcl: number
+  currentSellIncl: number
+  sellingVatPercent: number
+}): number | null {
+  if (priceCalc !== 'markup') return null
+
+  // Nothing to hold: a markup can only be read off a cost that existed. A
+  // product costed for the first time keeps its price and simply reports
+  // whatever margin that turns out to be — inventing one from a zero cost
+  // would price every such line at cost.
+  if (!(oldCostExcl > 0) || !(newCostExcl > 0)) return null
+  if (!(currentSellIncl > 0)) return null
+
+  const markup = markupPercent(oldCostExcl, removeVat(currentSellIncl, sellingVatPercent))
+  return addVat(sellExclFromMarkup(newCostExcl, markup), sellingVatPercent)
+}

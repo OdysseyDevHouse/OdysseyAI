@@ -74,6 +74,7 @@ import {
   PageBody,
   PageHeader,
   Pagination,
+  QtyCalculator,
   Radio,
   SegmentedControl,
   ReasonPicker,
@@ -82,6 +83,7 @@ import {
   SectionBody,
   SelectableCard,
   Select,
+  SearchSelect,
   RowTile,
   PickerResults,
   SettingGroup,
@@ -250,6 +252,7 @@ export default function StyleGuidePage() {
         <SignaturePadSection />
         <LaneWeekSection />
         <ComboboxSection />
+        <SearchSelectSection />
         <FilterBarSection />
         <StatusChipSection />
         <AdvancedFilterSection />
@@ -411,6 +414,8 @@ function FormSection() {
   const [price, setPrice] = useState(0)
   const [tileWidth, setTileWidth] = useState(200)
   const [deviceCount, setDeviceCount] = useState(2)
+  const [calcOpen, setCalcOpen] = useState(false)
+  const [calcQty, setCalcQty] = useState(0.3)
 
   return (
     <Card>
@@ -427,6 +432,16 @@ function FormSection() {
         </Field>
         <Field label="Number input">
           <NumberInput placeholder="0" />
+        </Field>
+        <Field
+          label="Number input — 3 decimals"
+          hint="precision also LIMITS typing: a fourth decimal is refused, not rounded"
+        >
+          {/* The quantity boxes on the selling screens pass the product's own
+              qtyDecimalsOf() here. Try typing 1.12345 — it stops at 1.123,
+              rather than accepting the lot and rounding it to 1.123 on blur,
+              which showed the operator a digit they never typed. */}
+          <NumberInput placeholder="0.000" precision={3} aria-label="Three decimals" />
         </Field>
         <Field label="Currency input" hint="Always 2 decimals, full stop — never the browser locale">
           <CurrencyInput value={price} onChange={(e) => setPrice(Number(e.target.value) || 0)} />
@@ -558,6 +573,43 @@ function FormSection() {
           <Field label="Disabled">
             <Stepper value={3} onChange={() => {}} min={1} max={9} label="Disabled" disabled />
           </Field>
+        </div>
+      </Row>
+
+      <Row>
+        <Spec
+          name="<QtyCalculator />"
+          note="The recipe weight factor, in three questions: what a pack arrives in (10 Kg), how much one made item uses (200 g), and the fraction of a pack that works out to (0.02) — which is what a recipe line actually stores. The using unit follows the buying one: Kg offers grams, Litre offers ml."
+        />
+        <div className="flex flex-wrap items-center gap-4">
+          <Field label="Quantity">
+            <div className="flex items-center gap-1">
+              <NumberInput
+                value={calcQty}
+                onChange={(e) => setCalcQty(Number(e.target.value))}
+                className="w-24"
+                aria-label="Quantity"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Work out the quantity"
+                onClick={() => setCalcOpen(true)}
+              >
+                <Icons.Calculator size={15} />
+              </Button>
+            </div>
+          </Field>
+          <QtyCalculator
+            open={calcOpen}
+            onClose={() => setCalcOpen(false)}
+            initial={calcQty}
+            label="Beef Patties (4)"
+            madeName="Burger"
+            onApply={setCalcQty}
+          />
         </div>
       </Row>
 
@@ -2215,6 +2267,7 @@ function TableControlsSection() {
   const [search, setSearch] = useState('')
   const [owingOnly, setOwingOnly] = useState(true)
   const [treeDepartment, setTreeDepartment] = useState('')
+  const [treeDepartments, setTreeDepartments] = useState<string[]>([])
 
   return (
     <Card>
@@ -2333,6 +2386,31 @@ function TableControlsSection() {
               icon={<Icons.LayoutGrid size={16} />}
               value={treeDepartment}
               onChange={setTreeDepartment}
+              className="w-56"
+              options={departmentTreeOptions([
+                { id: 1, parentId: null, name: 'Beer', color: 'cat-beverages', imageId: null },
+                { id: 4, parentId: 1, name: 'Imported', color: 'cat-beverages', imageId: null },
+                { id: 5, parentId: 1, name: 'Local beer', color: 'cat-beverages', imageId: null },
+                { id: 2, parentId: null, name: 'Empties', color: 'cat-cleaning', imageId: null },
+                { id: 3, parentId: null, name: 'Spirits', color: 'cat-confectionery', imageId: null },
+              ])}
+            />
+          </div>
+        </div>
+
+        <div>
+          <Spec
+            name="<TreeSelect values />"
+            note="The same picker, MULTI-select. Every row grows a checkbox, so a list can show two or four departments at once. Hovering a parent opens its children beside it — no click needed. Ticking a parent means the whole branch, so its children draw ticked and locked; a parent with only some of its branch ticked wears the indeterminate dash. Pass onChangeMany for a dialog, or urlFilter (data, not a callback) for a list whose filter lives in the URL."
+          />
+          <div className="mt-2">
+            <TreeSelect
+              aria-label="Filter by departments"
+              backLabel="Back to departments"
+              icon={<Icons.LayoutGrid size={16} />}
+              values={treeDepartments}
+              onChangeMany={setTreeDepartments}
+              manyNoun="departments"
               className="w-56"
               options={departmentTreeOptions([
                 { id: 1, parentId: null, name: 'Beer', color: 'cat-beverages', imageId: null },
@@ -3391,6 +3469,72 @@ function ComboboxSection() {
           />
         </div>
         <p className="text-xs text-muted">{picked ? `Picked: ${picked}` : 'Nothing picked yet'}</p>
+      </Row>
+    </Card>
+  )
+}
+
+/**
+ * Combobox's sibling, and the difference is the whole point of it existing.
+ *
+ * Combobox above is a search box: right where typing IS the job — a scan at
+ * the till, a product file too long to be a list at all. This one is a
+ * dropdown that happens to search, for choosing from a set someone has to see
+ * before they can choose from it. A bare text box there reads as a filter over
+ * rows that are not on screen yet, and nothing about it says a list exists.
+ */
+function SearchSelectSection() {
+  const [picked, setPicked] = useState<string | null>(null)
+
+  const options = [
+    { value: 'invoicing', label: 'Invoicing', hint: 'Back office' },
+    { value: 'loyalty', label: 'Loyalty', hint: 'Back office' },
+    { value: 'android-pos', label: 'Android POS', hint: 'Counter' },
+    { value: 'retail-pos', label: 'Retail POS', hint: 'Counter' },
+    { value: 'hospitality', label: 'Hospitality', hint: 'Counter' },
+    { value: 'stock', label: 'Stock', hint: 'Back office' },
+    { value: 'manufacturing', label: 'Manufacturing', hint: 'Back office' },
+  ]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Search select"
+        description="<SearchSelect /> — reads as a dropdown closed, searches inside the panel it opens. For choosing from a known set of more rows than a <Select> should carry. Arrow keys wrap, Enter takes the highlighted row, and the list caps itself to the room left below, so it survives a modal body."
+      />
+      <Row>
+        <Spec name="<SearchSelect>" note="Picking one of a known set" />
+        <div className="w-80">
+          <SearchSelect
+            options={options}
+            value={picked ?? undefined}
+            onSelect={(option) => setPicked(option.value)}
+            placeholder="Select a module…"
+            searchPlaceholder="Type to filter modules…"
+            ariaLabel="Module"
+          />
+        </div>
+        <p className="text-xs text-muted">
+          {picked ? `Picked: ${picked}` : 'Nothing picked yet'}
+        </p>
+      </Row>
+      <Row>
+        <Spec name="clearOnSelect" note="Picking ADDS rather than settles" />
+        <div className="w-80">
+          <SearchSelect
+            options={options}
+            onSelect={() => {}}
+            clearOnSelect
+            icon={<Icons.Plus size={15} />}
+            placeholder="Add a condition…"
+            searchPlaceholder="Search fields…"
+            ariaLabel="Add a condition"
+          />
+        </div>
+        <p className="text-xs text-muted">
+          No <code>value</code>: the trigger stays an invitation instead of naming the last pick.
+          This is the advanced filter&rsquo;s field picker.
+        </p>
       </Row>
     </Card>
   )

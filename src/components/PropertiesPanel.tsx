@@ -15,6 +15,7 @@ import {
   PRICE_CALCS,
   VARIABLE_TYPES,
   WEIGHT_DESCRIPTIONS,
+  toPriceCalc,
   type PriceCalcId,
   type VariableTypeId,
 } from '@/lib/productProperties'
@@ -73,10 +74,20 @@ function SettingSwitch({
   )
 }
 
-export default function PropertiesPanel({ value }: { value: ProductProperties }) {
+export default function PropertiesPanel({
+  value,
+  onPriceCalcChange,
+}: {
+  value: ProductProperties
+  /* The pricing tab reprices live off this one setting; the rest of the
+     properties are read only when the form is submitted. */
+  onPriceCalcChange?: (next: PriceCalcId) => void
+}) {
   const [props, setProps] = useState<ProductProperties>(value)
-  const set = <K extends keyof ProductProperties>(key: K, next: ProductProperties[K]) =>
+  const set = <K extends keyof ProductProperties>(key: K, next: ProductProperties[K]) => {
     setProps((prev) => ({ ...prev, [key]: next }))
+    if (key === 'priceCalc') onPriceCalcChange?.(next as PriceCalcId)
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -234,7 +245,17 @@ export default function PropertiesPanel({ value }: { value: ProductProperties })
           description="When the cost price changes, choose whether the selling price or the markup stays fixed."
           htmlFor="priceCalc"
         >
-          <Select id="priceCalc" name="priceCalc" defaultValue={props.priceCalc} className="w-52">
+          {/* Controlled, and reported upward: the PRICING tab has to know
+              which figure is fixed, because that is where the setting is
+              actually felt. An uncontrolled select would leave the two tabs
+              disagreeing until the page was saved and reloaded. */}
+          <Select
+            id="priceCalc"
+            name="priceCalc"
+            value={props.priceCalc}
+            onChange={(e) => set('priceCalc', toPriceCalc(e.target.value))}
+            className="w-52"
+          >
             {PRICE_CALCS.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}

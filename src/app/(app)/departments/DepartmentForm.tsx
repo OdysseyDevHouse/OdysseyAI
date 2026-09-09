@@ -176,13 +176,15 @@ export default function DepartmentForm({
         </Field>
 
         {/* The save action reads the old checkbox contract: 'on' means active,
-            anything else means inactive — so the switch submits exactly that. */}
+            anything else means inactive — so the switch submits exactly that.
+            The column is still `is_active`; what it MEANS is till visibility,
+            which is what the label now says. */}
         <input type="hidden" name="isActive" value={active ? 'on' : ''} />
         <Switch
           checked={active}
           onChange={setActive}
-          label="Active"
-          hint="Switch off to hide it from pickers without touching its products."
+          label="Visible in point of sale"
+          hint="Switch off to take it off the till's department rail. The back office still offers it everywhere, and its products keep selling by scan or search."
         />
       </FieldGroup>
 

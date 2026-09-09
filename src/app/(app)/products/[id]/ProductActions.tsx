@@ -62,7 +62,7 @@ export default function ProductActions({
           {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
           <MenuItem type="submit">
             {isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-            {isArchived ? 'Restore' : 'Archive'}
+            {isArchived ? 'Unarchive' : 'Archive'}
           </MenuItem>
         </form>
         {canRenameCode && (
