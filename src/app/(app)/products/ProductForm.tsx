@@ -567,6 +567,11 @@ export default function ProductForm({
                   onChange={(e) => setDescription(e.target.value)}
                   required
                   maxLength={190}
+                  /* Creating: the description is where typing starts, and this
+                     is the default tab, so the field is on screen to take the
+                     focus. Editing focuses nothing — the cursor would jump away
+                     from whatever the user opened the record to change. */
+                  autoFocus={isNew}
                 />
               </Field>
 
