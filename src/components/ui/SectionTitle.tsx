@@ -14,7 +14,7 @@ import { ChevronDown } from './icons'
  * Distinct from <CardHeader>, which carries a description and an action and is
  * used for cards that are a screen in their own right.
  *
- * The heading marks its card with a brand-rule line down the card's left edge,
+ * The heading marks its card with a line in the module's colour down its left edge,
  * so a long stack of sections reads as a set of distinct blocks. That is the
  * default across the app; tone="default" drops the rule for the rare card that
  * should not draw the eye.
@@ -56,7 +56,8 @@ export function SectionTitle({
     // and the tinted icon tile carries the colour.
     <h2 className="flex min-w-0 items-center gap-2.5 text-sm font-semibold text-ink">
       {icon && (
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-control border border-brand/25 bg-brand-soft text-brand">
+        // accent, not brand — the medallion carries the module. See ModuleAccent.
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-control border border-accent/25 bg-accent-soft text-accent">
           {icon}
         </span>
       )}
@@ -69,7 +70,7 @@ export function SectionTitle({
       /* The card draws the rule down its own left edge and keys off this
          marker — a border here could only be as tall as the heading. See
          globals.css. */
-      data-brand-rule={brand ? '' : undefined}
+      data-accent-rule={brand ? '' : undefined}
       className="flex items-center justify-between gap-3 border-b border-border px-5 py-3"
     >
       {foldable ? (

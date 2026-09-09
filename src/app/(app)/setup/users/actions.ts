@@ -23,7 +23,7 @@ import {
 import {
   provisionControlAccount,
   revokeSiteAccess,
-  findControlAccountByEmail,
+  controlAccountIdForEmail,
 } from '@/lib/controlUsers'
 
 /**
@@ -101,20 +101,20 @@ export async function saveUserAction(
     let linked = existing?.controlUserId ?? null
     let claimedByEmail = false
     if (linked === null && email) {
-      const account = await findControlAccountByEmail(email)
-      if (account) {
+      const accountId = await controlAccountIdForEmail(email)
+      if (accountId !== null) {
         /* The address belongs to an account that exists upstream. It may
            already be held by somebody on this store under a DIFFERENT email —
            the local row is the authority on who is who here — and linking
            would then break `uq_user_control` the same way as above. */
-        const held = await getUserByControlId(site.id, account.id)
+        const held = await getUserByControlId(site.id, accountId)
         if (held && held.id !== userId) {
           return {
             ok: false,
             error: `That back office account is already used by ${held.name} on this store.`,
           }
         }
-        linked = account.id
+        linked = accountId
         claimedByEmail = true
       }
     }

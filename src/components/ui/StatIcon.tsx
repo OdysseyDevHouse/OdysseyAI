@@ -17,7 +17,11 @@ import type { ReactNode } from 'react'
 export type StatIconTone = 'default' | 'positive' | 'success' | 'warning' | 'danger'
 
 const TONE: Record<StatIconTone, string> = {
-  default: 'bg-brand-soft text-brand',
+  /* The module's colour, not the brand's — a figure on a Back-office dashboard
+     wears amber and the same tile inside Job cards wears emerald. The tinted
+     tones below deliberately do NOT follow: takings are green because they are
+     MONEY, and a meaning that changes with the module is not a meaning. */
+  default: 'bg-accent-soft text-accent',
   positive: 'bg-success-soft text-success-ink',
   success: 'bg-success-soft text-success-ink',
   warning: 'bg-warning-soft text-warning-ink',

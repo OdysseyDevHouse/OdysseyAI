@@ -12,9 +12,9 @@ export type TabItem<T extends string> = {
 }
 
 /**
- * Tabs — the tab bar (as on Edit Product), an amber rule that wraps whichever
- * tab is open. Use it for every tabbed screen so the active-tab treatment stays
- * identical.
+ * Tabs — the tab bar (as on Edit Product): a quiet baseline the whole width of
+ * it, and the open tab underlined in the module's colour. Use it for every
+ * tabbed screen so the active-tab treatment stays identical.
  *
  * Tabs switch between *sections of one record*. To filter one list into slices,
  * use SegmentedControl instead.
@@ -111,46 +111,52 @@ function TabBar({
       aria-label={ariaLabel}
       className={`flex items-stretch overflow-x-auto overflow-y-hidden ${className}`}
     >
-      {/* The rule runs in from the left edge of whatever the bar sits in… */}
-      <div className="w-6 shrink-0 border-b-2 border-nav-accent" aria-hidden />
+      {/* The baseline runs in from the left edge of whatever the bar sits in… */}
+      <div className="w-6 shrink-0 border-b-2 border-border" aria-hidden />
       {children}
       {/* …and out to the right edge. flex-1 so it takes all the slack, which is
-          what makes the rule reach the edge at any number of tabs. */}
-      <div className="flex-1 border-b-2 border-nav-accent" aria-hidden />
+          what makes the line reach the edge at any number of tabs. */}
+      <div className="flex-1 border-b-2 border-border" aria-hidden />
     </div>
   )
 }
 
-/* ── THE RULE WRAPS THE OPEN TAB ─────────────────────────────────────────
-   One amber rule runs the full width of whatever the bar sits in and routes
-   AROUND the open tab: in from the left edge, up its left side, over its top,
-   down its right side, and out to the right edge. The open tab is the gap in
-   the line. Every other tab has the rule pass UNDER it and nothing over, so the
-   only thing drawn above the bar's baseline is the box around where you are.
+/* ── THE OPEN TAB IS UNDERLINED ──────────────────────────────────────────
+   A 2px baseline runs the full width of whatever the bar sits in, in the
+   neutral border colour, and the segment under the open tab is the module's.
+   So the line is continuous and only its COLOUR moves as you change tabs.
 
-   This replaced a short amber underline stamped beneath the open tab. Both
-   answer "you are here" in the same amber the sidebar marks the open section
-   with, so the colour means one thing in both places; the box just says it
-   with a shape instead of a mark, and reads at a glance on a bar of six tabs
-   where a 60px underline did not.
+   Every cell carries `border-b-2`, the two fillers included — that is what
+   keeps the baseline at one thickness and on one pixel row. Give the open tab a
+   thicker border than its neighbours and it hangs a pixel below them, and the
+   line you were trying to draw develops a step in it.
 
-   The label is `ink` rather than `brand`: on a bar of grey labels the SELECTED
-   one should be the most readable thing there, and the brand blue was actually
-   a step down from black (3.55:1 against white, versus 17.63). A coloured label
-   also reads as a link — the one thing a tab you are already on is not. That
-   leaves the rule carrying the selection on its own. Its 2.15:1 against white
-   would fail as TEXT and is right for a hairline: it is a graphical marker
-   beside a 17.63:1 label, not the thing being read.
+   This replaced a rule that ROUTED AROUND the open tab — in from the left, up
+   its side, over the top, down the far side and out — which drew the selection
+   as a box. The box read well and read as a lot: on a screen that now carries
+   the module's colour on the card edge, the medallions and the sidebar, one
+   more outlined shape was the loudest thing on it. An underline says the same
+   thing in one stroke.
 
-   An active tab trades its BOTTOM border for a top and two sides. An inactive
-   one still declares `border-t-2`, in transparent — the border has to occupy
-   its 2px whether or not it paints, or every label would jump upward the moment
-   its tab lost selection. */
+   THE OPEN TAB'S LABEL AND GLYPH take the colour too, which is a reversal
+   worth recording. They were `ink` — near-black — on the argument that the
+   selected label should be the most readable thing on the bar, and that a
+   coloured label reads as a link. That held while the colour was the brand
+   blue, which IS the colour of every link in the app. It holds less well now
+   the colour is the module's: amber words in Back-office are not a link
+   anywhere, and the label is the thing the eye lands on, so it is the thing
+   that should say which module you are in.
+
+   `accent-text`, not `accent-rule`. The underline is a graphical marker and
+   sits at 2.15:1 — right for a line, and a label at that contrast would be
+   unreadable. The text step is the same hue taken to 4.5:1 against both the
+   canvas and a card. Two steps of one colour, each at the weight its job
+   needs; see MODULE COLOURS in globals.css. */
 function tabClass(active: boolean) {
-  return `flex items-center gap-2 border-nav-accent px-4 pt-2 pb-2.5 text-sm font-medium whitespace-nowrap transition ${
+  return `flex items-center gap-2 border-b-2 px-4 pt-2 pb-2.5 text-sm whitespace-nowrap transition ${
     active
-      ? 'rounded-t-control border-t-2 border-r-2 border-b-0 border-l-2 text-ink'
-      : 'border-t-2 border-t-transparent border-b-2 text-muted hover:text-ink'
+      ? 'border-accent-rule font-semibold text-accent-text'
+      : 'border-border font-medium text-muted hover:text-ink'
   }`
 }
 

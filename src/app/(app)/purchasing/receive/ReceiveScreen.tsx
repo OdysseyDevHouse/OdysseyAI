@@ -21,6 +21,9 @@ import {
   PageHeader,
   PickerResults,
   Select,
+  TreeSelect,
+  departmentTreeOptions,
+  type DepartmentTreeInput,
   TableToolbar,
   useToast,
   type ComboboxOption,
@@ -203,7 +206,10 @@ export default function ReceiveScreen({
   const [pickerDept, setPickerDept] = useState<number | null>(null)
   const [pickerResults, setPickerResults] = useState<TillProduct[]>([])
   const [pickerBusy, setPickerBusy] = useState(false)
-  const [depts, setDepts] = useState<{ id: number; name: string; depth: number }[]>([])
+  const [depts, setDepts] = useState<DepartmentTreeInput[]>([])
+  /* Grouped into rows once per fetch rather than on every keystroke in the
+     picker beside it — the tree is the same until the dialog is closed. */
+  const deptOptions = useMemo(() => departmentTreeOptions(depts), [depts])
 
   const columns = useColumnPrefs(
     'odyssey.purchasing.receive.columns',
@@ -1121,21 +1127,18 @@ export default function ReceiveScreen({
             </Field>
 
             <Field label="Department" className="w-60">
-              <Select
-                value={pickerDept ?? ''}
+              {/* One level at a time, rather than the flat list of indented
+                  paths this used to be: a nested catalogue read as forty rows
+                  all opening with the same two words, in a control too narrow
+                  to show the part that differed. */}
+              <TreeSelect
+                value={pickerDept === null ? '' : String(pickerDept)}
+                options={deptOptions}
+                onChange={(value) => setPickerDept(value ? Number(value) : null)}
+                icon={<Icons.LayoutGrid size={16} />}
+                backLabel="Back to departments"
                 aria-label="Filter products by department"
-                onChange={(e) => setPickerDept(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">All departments</option>
-                {depts.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {/* Non-breaking spaces: a plain one is collapsed inside an
-                        <option>, so a nested list would render flat. */}
-                    {'  '.repeat(d.depth)}
-                    {d.name}
-                  </option>
-                ))}
-              </Select>
+              />
             </Field>
           </div>
 

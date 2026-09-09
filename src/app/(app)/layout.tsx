@@ -4,6 +4,7 @@ import { listSitesForUser, isSiteDataUnavailable } from '@/lib/sites'
 import { opensHere } from '@/lib/siteOpensHere'
 import { unreadCount } from '@/lib/site/notifications'
 import Sidebar from '@/components/Sidebar'
+import ModuleAccent from '@/components/ModuleAccent'
 import TopBar from '@/components/TopBar'
 import { MobileTopBar } from '@/components/MobileTopBar'
 import { PhoneNav } from '@/components/PhoneNav'
@@ -247,7 +248,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <main className="relative min-h-0 flex-1 overflow-y-auto bg-canvas">
           <ToastProvider>
             <PrecisionProvider qty={precision.qty} cost={precision.cost}>
-              {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+              {/* The module's colour, for the page rather than the rail — see
+                  ModuleAccent. Inside the providers because it wraps only what
+                  is DRAWN; outside the licence gate so the gate's own screen
+                  wears it too. It renders no box. */}
+              <ModuleAccent>
+                {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+              </ModuleAccent>
             </PrecisionProvider>
           </ToastProvider>
         </main>
@@ -337,7 +344,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               one claiming to be a browser could otherwise skip it.
             */}
             <PrecisionProvider qty={precision.qty} cost={precision.cost}>
-              {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+              {/* The module's colour, for the page rather than the rail — see
+                  ModuleAccent. Inside the providers because it wraps only what
+                  is DRAWN; outside the licence gate so the gate's own screen
+                  wears it too. It renders no box. */}
+              <ModuleAccent>
+                {isDesktop ? <DesktopLicenceGate>{children}</DesktopLicenceGate> : children}
+              </ModuleAccent>
             </PrecisionProvider>
           </ToastProvider>
         </main>

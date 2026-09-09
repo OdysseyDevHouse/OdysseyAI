@@ -31,7 +31,8 @@ import { formatQty } from '@/lib/decimals'
 import { listVatRates, defaultVat } from '@/lib/site/lookups'
 import { availableSerials } from '@/lib/site/serials'
 import { searchForTill, browseForTill } from '@/lib/site/tillSearch'
-import { listDepartments, flattenTree } from '@/lib/site/departments'
+import { listDepartments } from '@/lib/site/departments'
+import type { DepartmentTreeInput } from '@/components/ui'
 import { pricesFor } from '@/lib/site/supplierPrices'
 import { listSuppliers } from '@/lib/site/suppliers'
 
@@ -286,16 +287,20 @@ export async function browseProductsForPurchaseAction(options: {
 }
 
 /** The department list for that picker's filter, flattened for a <select>. */
-export async function purchaseDepartmentsAction(): Promise<
-  { id: number; name: string; depth: number }[]
-> {
+export async function purchaseDepartmentsAction(): Promise<DepartmentTreeInput[]> {
   const ctx = await actorForOrThrow('purchasing.view')
   const { siteId } = ctx
   const all = await listDepartments(siteId)
-  return flattenTree(all).map(({ department, depth }) => ({
-    id: department.id,
-    name: department.name,
-    depth,
+  /* The tree itself, not a flattened list with a depth on each row: the picker
+     browses one level at a time and does its own grouping by parent. Order is
+     preserved on the way through, so the levels read the way the shop arranged
+     them. */
+  return all.map((d) => ({
+    id: d.id,
+    parentId: d.parentId,
+    name: d.name,
+    color: d.color,
+    imageId: d.posImageId,
   }))
 }
 

@@ -1343,51 +1343,199 @@ export type DeleteProductResult =
   | { ok: false; error: string }
 
 /**
+ * Everything that pins a product in place, with the words to say so.
+ *
+ * ── WHY THIS IS A LIST AND NOT TWO HARD-CODED COUNTS ──────────────────────
+ *
+ * This used to check `sales_document_lines` and `stock_movements` only, which
+ * were the two RESTRICT keys on products when it was written. Many migrations
+ * later there are a dozen, and a product that had been counted on a stock take
+ * took the DELETE straight into `fk_takeline_product` — the products screen
+ * replaced by "This screen didn't load" over a raw constraint message, which is
+ * the worst possible way to be told a product cannot be removed. So the rule is
+ * stated once, here, and grows by adding a row rather than by someone
+ * remembering to.
+ *
+ * Every entry is a RESTRICT reference in sql/site. The keys that CASCADE
+ * (prices, barcodes, images, quick keys, specials) clean themselves up and do
+ * not belong here; the ones that SET NULL (purchase lines, commission rules)
+ * are meant to survive the product going away.
+ *
+ * The phrases are read after "It has ...", so each is a noun phrase carrying
+ * its own plural. Recipes and refers say who is pointing rather than what
+ * happened, because those are live setup rather than history and whoever hit
+ * delete needs to know which one to go and edit.
+ */
+const PRODUCT_HOLDS: readonly {
+  table: string
+  column: string
+  one: string
+  many: string
+}[] = [
+  { table: 'sales_document_lines', column: 'product_id', one: 'sale line', many: 'sale lines' },
+  {
+    table: 'stock_movements',
+    column: 'product_id',
+    one: 'stock movement',
+    many: 'stock movements',
+  },
+  {
+    table: 'stock_take_lines',
+    column: 'product_id',
+    one: 'stock take line',
+    many: 'stock take lines',
+  },
+  {
+    table: 'stock_transfer_lines',
+    column: 'product_id',
+    one: 'stock transfer line',
+    many: 'stock transfer lines',
+  },
+  {
+    table: 'stock_adjustment_lines',
+    column: 'product_id',
+    one: 'stock adjustment line',
+    many: 'stock adjustment lines',
+  },
+  {
+    table: 'manufacturing_orders',
+    column: 'product_id',
+    one: 'manufacturing order',
+    many: 'manufacturing orders',
+  },
+  {
+    table: 'manufacturing_order_lines',
+    column: 'product_id',
+    one: 'manufacturing order line',
+    many: 'manufacturing order lines',
+  },
+  { table: 'job_card_lines', column: 'product_id', one: 'job card line', many: 'job card lines' },
+  {
+    table: 'job_headline_parts',
+    column: 'product_id',
+    one: 'job template part',
+    many: 'job template parts',
+  },
+  {
+    table: 'product_recipes',
+    column: 'component_id',
+    one: 'recipe that uses it',
+    many: 'recipes that use it',
+  },
+  {
+    table: 'product_refers',
+    column: 'target_id',
+    one: 'refer rule pointing at it',
+    many: 'refer rules pointing at it',
+  },
+  { table: 'products', column: 'parent_id', one: 'variant', many: 'variants' },
+]
+
+/**
+ * Which of those tables this site actually has.
+ *
+ * Schema drifts between sites — a shop with no job cards module has no
+ * `job_card_lines` — and a COUNT against a table that is not there throws
+ * ER_NO_SUCH_TABLE, turning a delete that should have succeeded into the same
+ * error screen this whole rule exists to prevent. Asked once, so the counts
+ * stay a single round trip.
+ */
+async function tablesPresent(siteId: number, tables: readonly string[]): Promise<Set<string>> {
+  const rows = await siteQuery<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT TABLE_NAME FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (${tables.map(() => '?').join(',')})`,
+    [...tables],
+  )
+  // Read positionally and folded: the column comes back as TABLE_NAME or
+  // table_name depending on the server, and only one column was asked for.
+  return new Set(rows.map((r) => String(Object.values(r)[0] ?? '').toLowerCase()))
+}
+
+/** "3 sale lines, 1 stock take line and 2 variants". */
+function joinPhrases(parts: string[]): string {
+  if (parts.length <= 2) return parts.join(' and ')
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+/** What still refers to this product, spelled out. Empty means nothing does. */
+async function whatHoldsProduct(siteId: number, id: number): Promise<string[]> {
+  const present = await tablesPresent(
+    siteId,
+    PRODUCT_HOLDS.map((h) => h.table),
+  )
+  const holds = PRODUCT_HOLDS.filter((h) => present.has(h.table.toLowerCase()))
+  if (holds.length === 0) return []
+
+  /* Aliased c0, c1, c2 rather than by table name. The names are not the point —
+     the ORDER is, since the phrases are read back off `holds` — and an alias
+     taken from a table name is one MariaDB reserved word away from a syntax
+     error that breaks delete for every product. Not hypothetical: this query
+     used to alias a count `lines`, which is reserved, and did exactly that.
+     Table and column names are interpolated from the constant above, never
+     from anything a user typed. */
+  const row = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT ${holds
+      .map((h, i) => `(SELECT COUNT(*) FROM \`${h.table}\` WHERE \`${h.column}\` = ?) AS c${i}`)
+      .join(', ')}`,
+    holds.map(() => id),
+  )
+
+  const parts: string[] = []
+  holds.forEach((hold, i) => {
+    const n = Number(row?.[`c${i}`] ?? 0)
+    if (n > 0) parts.push(`${n} ${n === 1 ? hold.one : hold.many}`)
+  })
+  return parts
+}
+
+/**
  * Deletes a product — or archives it, once anything references it.
  *
  * This function used to just DELETE, with a comment saying it should refuse
  * once sales history existed. That history now exists, so it does.
  *
- * A sold product cannot be deleted: `sales_document_lines.product_id` is ON
- * DELETE SET NULL and `stock_movements.product_id` is RESTRICT, so deleting one
- * would either strip the link off historical invoices or fail on a constraint
- * nobody can read. Archiving keeps every document and every movement intact and
- * takes the product off the till, which is what "delete" actually means to
- * whoever clicked it.
+ * A product that has been sold, counted, moved, built or fitted cannot be
+ * deleted: those keys are RESTRICT, so the delete fails on a constraint nobody
+ * can read. Archiving keeps every document intact and takes the product off the
+ * till, which is what "delete" actually means to whoever clicked it.
+ * PRODUCT_HOLDS above is the full list, and the reason names what was found.
  *
  * Returns which of the two happened, so the screen can say so rather than
  * silently doing something other than what was asked.
  */
 export async function deleteProduct(siteId: number, id: number): Promise<DeleteProductResult> {
-  // NOT aliased `lines`: LINES is a reserved word in MariaDB (LOAD DATA ...
-  // LINES TERMINATED BY), so an unquoted alias is a syntax error and delete
-  // fails on every product.
-  const counts = await siteQueryOne<RowDataPacket & { sale_lines: number; movements: number }>(
-    siteId,
-    `SELECT (SELECT COUNT(*) FROM sales_document_lines WHERE product_id = ?) AS sale_lines,
-            (SELECT COUNT(*) FROM stock_movements      WHERE product_id = ?) AS movements`,
-    [id, id],
-  )
+  const held = await whatHoldsProduct(siteId, id)
 
-  const lines = Number(counts?.sale_lines ?? 0)
-  const movements = Number(counts?.movements ?? 0)
-
-  if (lines > 0 || movements > 0) {
+  if (held.length > 0) {
     await siteExecute(siteId, 'UPDATE products SET is_archived = 1 WHERE id = ?', [id])
-
-    const parts: string[] = []
-    if (lines > 0) parts.push(`${lines} sale line${lines === 1 ? '' : 's'}`)
-    if (movements > 0) parts.push(`${movements} stock movement${movements === 1 ? '' : 's'}`)
-
     return {
       ok: true,
       archived: true,
-      reason: `It has ${parts.join(' and ')}, so it was archived instead of deleted — that history has to stay readable.`,
+      reason: `It has ${joinPhrases(held)}, so it was archived instead of deleted — those records have to stay readable.`,
     }
   }
 
-  // Never sold, never moved: safe to remove outright. product_prices cascades.
-  await siteExecute(siteId, 'DELETE FROM products WHERE id = ?', [id])
+  // Nothing refers to it: safe to remove outright. product_prices cascades.
+  try {
+    await siteExecute(siteId, 'DELETE FROM products WHERE id = ?', [id])
+  } catch (err) {
+    /* A RESTRICT key the list above does not know about — one added by a later
+       migration, or one this site has and the list has not caught up with. The
+       rule is unchanged, so apply it: archive, and say so in words a shopkeeper
+       can act on. Anything else is a real failure and must surface. Without
+       this, the next migration to add a key silently re-arms the crash the list
+       above was written to stop. */
+    if ((err as { code?: string }).code !== 'ER_ROW_IS_REFERENCED_2') throw err
+    await siteExecute(siteId, 'UPDATE products SET is_archived = 1 WHERE id = ?', [id])
+    return {
+      ok: true,
+      archived: true,
+      reason: 'Something in the system still refers to it, so it was archived instead of deleted.',
+    }
+  }
+
   return { ok: true, archived: false }
 }
 
@@ -1892,17 +2040,28 @@ async function bulkDeleteProducts(
   let deleted = 0
 
   for (const row of rows) {
-    const result = await deleteProduct(siteId, Number(row.id))
-    if (result.ok && result.archived) {
-      skipped.push({
-        id: Number(row.id),
-        code: row.code,
-        name: row.description,
-        reason: 'Has history — archived instead of deleted.',
-      })
-    } else {
-      deleted++
+    const note = (reason: string) =>
+      skipped.push({ id: Number(row.id), code: row.code, name: row.description, reason })
+
+    /* One product's failure must not lose the report for the other forty-nine.
+       deleteProduct handles the constraint case itself, so anything reaching
+       here is unexpected — a lost connection, a deadlock — and the honest
+       answer is to say which product it was and carry on down the list. */
+    let result: DeleteProductResult
+    try {
+      result = await deleteProduct(siteId, Number(row.id))
+    } catch (err) {
+      note(err instanceof Error ? err.message : 'Could not be deleted.')
+      continue
     }
+
+    /* Three outcomes, three branches. This used to be `ok && archived` against
+       an else, which counted a REFUSED delete as a successful one — a run that
+       deleted nothing could report "12 deleted" with an empty skipped list, so
+       the one screen that could have explained the failure instead denied it. */
+    if (!result.ok) note(result.error)
+    else if (result.archived) note('Still referenced — archived instead of deleted.')
+    else deleted++
   }
 
   return { updated: deleted, skipped }

@@ -56,8 +56,21 @@ export type ProductSearchRequest = {
 }
 
 export type ProductSearchLookups = {
-  /** Every department by full path, sorted by it, so children sit under parents. */
-  departments: { id: number; label: string }[]
+  /**
+   * The department tree, as `departmentTreeOptions` wants it — the dialog's
+   * filter browses a level at a time rather than reading forty full paths.
+   *
+   * Sent as the tree rather than as ready-made TreeSelect options because the
+   * options carry a tone and a picture URL, which is presentation this action
+   * has no business deciding.
+   */
+  departments: {
+    id: number
+    parentId: number | null
+    name: string
+    color: string | null
+    imageId: number | null
+  }[]
   /** id -> full path, for the Department column. */
   departmentPaths: Record<number, string>
   productTypes: { id: string; name: string }[]
@@ -229,9 +242,13 @@ export async function searchProductsForPickerAction(
     rows,
     total,
     lookups: {
-      departments: departments
-        .map((d) => ({ id: d.id, label: departmentPaths[d.id] }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
+      departments: departments.map((d) => ({
+        id: d.id,
+        parentId: d.parentId,
+        name: d.name,
+        color: d.color,
+        imageId: d.posImageId,
+      })),
       departmentPaths,
       productTypes: PRODUCT_TYPES.map((t) => ({ id: t.id, name: t.name })),
       filterFields: fields.map((f) => ({

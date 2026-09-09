@@ -1,7 +1,17 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Checkbox, Field, Icons, Input, Modal, Select, TextLink } from '@/components/ui'
+import {
+  Button,
+  Checkbox,
+  Field,
+  Icons,
+  Input,
+  Modal,
+  TextLink,
+  TreeSelect,
+  departmentTreeOptions,
+} from '@/components/ui'
 import { MAX_SECTION_ITEMS } from '@/lib/storefrontModel'
 import type { StorefrontDepartment, StorefrontProduct } from '@/lib/site/storefront'
 import { browseProductsAction, searchProductsAction } from './actions'
@@ -242,6 +252,23 @@ function AddProductsDialog({
   onAdd: (products: StorefrontProduct[]) => void
 }) {
   const [departmentId, setDepartmentId] = useState<number | null>(null)
+
+  /* The picture is the SHOP's, and the count is what is actually published in
+     that department — the two things this dialog is choosing between. */
+  const departmentOptions = useMemo(
+    () =>
+      departmentTreeOptions(
+        departments.map((d) => ({
+          id: d.id,
+          parentId: d.parentId,
+          name: d.name,
+          color: d.color,
+          imageId: d.imageId,
+          count: d.productCount,
+        })),
+      ),
+    [departments],
+  )
   const [term, setTerm] = useState('')
   const [rows, setRows] = useState<StorefrontProduct[]>([])
   const [loading, setLoading] = useState(true)
@@ -363,17 +390,14 @@ function AddProductsDialog({
           </div>
           <div className="min-w-48">
             <Field label="Department">
-              <Select
-                value={departmentId ?? ''}
-                onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">All departments</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} ({d.productCount})
-                  </option>
-                ))}
-              </Select>
+              <TreeSelect
+                value={departmentId === null ? '' : String(departmentId)}
+                options={departmentOptions}
+                onChange={(value) => setDepartmentId(value ? Number(value) : null)}
+                icon={<Icons.LayoutGrid size={16} />}
+                backLabel="Back to departments"
+                aria-label="Filter products by department"
+              />
             </Field>
           </div>
           <Button

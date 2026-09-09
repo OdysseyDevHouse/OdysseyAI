@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import type { ModuleKey } from './control/moduleCatalogue'
 import type { MenuArea } from './menuAreas'
-import { NAV, type NavSection } from './nav'
+import { NAV, activeHrefFor, type NavSection } from './nav'
 
 /**
  * The products the menu is split into — one chip on the rail each.
@@ -99,6 +99,32 @@ export type NavModule = {
   sub: string
   icon: LucideIcon
   /**
+   * The colour this module wears, in the three places a colour is needed.
+   *
+   * References to tokens, never colours — all eighteen live together in
+   * globals.css under MODULE COLOURS, so the palette is picked in one place
+   * looking at all of it rather than a hex at a time down this list.
+   *
+   * `rail` is the mark on the chrome: the chip's fill, the rule down the open
+   * section, the pip on the current page. The other three are what the module
+   * makes of the PAGE — every icon medallion in the kit is `soft` behind `ink`,
+   * every LINE (a tab bar's underline, a card's left edge) is `rule`, and any
+   * LABEL the colour has to carry — a selected tab — is `text`.
+   *
+   * Three of them rather than one because a page is white and the rail is
+   * near-black, so one value cannot be legible on both — and because a line and
+   * a glyph do not want the same weight even on the same surface: `rule` is the
+   * light step that matches the marks on the rail, `ink` is dark enough to read
+   * inside a medallion, and `text` is the only one of the three that clears AA
+   * as words. See MODULE COLOURS in globals.css.
+   *
+   * Why not one colour for all six, as it was: the rail's amber said "you are
+   * here" and nothing else, which is the one thing the rest of the chip —
+   * filled, captioned, ruled — was already saying. Six colours say WHERE, and
+   * that is an answer the eye can have before it reads anything.
+   */
+  accent: { rail: string; ink: string; soft: string; rule: string; text: string }
+  /**
    * The `NAV` sections this module owns, by label.
    *
    * Omitted means "everything no other module claimed" — which is what
@@ -137,6 +163,13 @@ export const NAV_MODULES: readonly NavModule[] = [
     label: 'Sales',
     sub: 'Sales',
     icon: LineChart,
+    accent: {
+      rail: 'var(--color-module-sales)',
+      ink: 'var(--color-module-sales-ink)',
+      soft: 'var(--color-module-sales-soft)',
+      rule: 'var(--color-module-sales-rule)',
+      text: 'var(--color-module-sales-text)',
+    },
     sections: ['Sales'],
   },
   {
@@ -145,6 +178,13 @@ export const NAV_MODULES: readonly NavModule[] = [
     label: 'Back-office',
     sub: 'Back-office',
     icon: LayoutDashboard,
+    accent: {
+      rail: 'var(--color-module-back-office)',
+      ink: 'var(--color-module-back-office-ink)',
+      soft: 'var(--color-module-back-office-soft)',
+      rule: 'var(--color-module-back-office-rule)',
+      text: 'var(--color-module-back-office-text)',
+    },
     /* No `sections`: it is the remainder, deliberately. See the field's note.
        That is also what puts Setup last in its panel — it is the last of the
        sections no other module claimed, in NAV's own order. */
@@ -155,6 +195,13 @@ export const NAV_MODULES: readonly NavModule[] = [
     label: 'Loyalty',
     sub: 'Loyalty',
     icon: Gem,
+    accent: {
+      rail: 'var(--color-module-loyalty)',
+      ink: 'var(--color-module-loyalty-ink)',
+      soft: 'var(--color-module-loyalty-soft)',
+      rule: 'var(--color-module-loyalty-rule)',
+      text: 'var(--color-module-loyalty-text)',
+    },
     sections: ['Loyalty'],
     module: 'loyalty',
     menuArea: 'loyalty',
@@ -165,6 +212,13 @@ export const NAV_MODULES: readonly NavModule[] = [
     label: 'Online Store',
     sub: 'Online Store',
     icon: ShoppingBag,
+    accent: {
+      rail: 'var(--color-module-online-store)',
+      ink: 'var(--color-module-online-store-ink)',
+      soft: 'var(--color-module-online-store-soft)',
+      rule: 'var(--color-module-online-store-rule)',
+      text: 'var(--color-module-online-store-text)',
+    },
     sections: ['Online Store'],
     renameTo: 'Overview',
     /* One row. Everything this module holds is on the hub at /online-store
@@ -180,6 +234,13 @@ export const NAV_MODULES: readonly NavModule[] = [
     label: 'Job Cards',
     sub: 'Job Cards',
     icon: Wrench,
+    accent: {
+      rail: 'var(--color-module-job-cards)',
+      ink: 'var(--color-module-job-cards-ink)',
+      soft: 'var(--color-module-job-cards-soft)',
+      rule: 'var(--color-module-job-cards-rule)',
+      text: 'var(--color-module-job-cards-text)',
+    },
     sections: ['Job cards'],
     module: 'job_cards',
     menuArea: 'job_cards',
@@ -190,6 +251,13 @@ export const NAV_MODULES: readonly NavModule[] = [
     label: 'Tickets',
     sub: 'Tickets',
     icon: Ticket,
+    accent: {
+      rail: 'var(--color-module-tickets)',
+      ink: 'var(--color-module-tickets-ink)',
+      soft: 'var(--color-module-tickets-soft)',
+      rule: 'var(--color-module-tickets-rule)',
+      text: 'var(--color-module-tickets-text)',
+    },
     sections: ['Tickets'],
     /* No `module`. Every shop is entitled to the ticket desk — but a shop that
        has switched Job Cards off has said it does not take work in and track it,
@@ -224,4 +292,46 @@ export function moduleForSection(label: string): NavModuleKey {
  */
 export function unclaimedSections(): string[] {
   return NAV.filter((s: NavSection) => !OWNER_BY_SECTION.has(s.label)).map((s) => s.label)
+}
+
+/**
+ * Which module a PATH belongs to.
+ *
+ * The sidebar has always derived its own answer this way and still does — but
+ * over the rail it has built for this user, because a chip they may not open
+ * must not light up. This one runs over the whole of `NAV` instead, and that
+ * difference is deliberate: it answers for the colour the PAGE wears, and the
+ * page in front of somebody belongs to the module it belongs to whatever their
+ * permissions say. The two agree on every path a given user can actually reach.
+ *
+ * Longest match wins, via the same `activeHrefFor` the sidebar highlights with —
+ * shared rather than copied, so a record page (/products/1842) and a setup
+ * screen under another hub (/staff/pay-rules) cannot resolve one way for the
+ * menu and another for the colour.
+ *
+ * Anything unmatched — /settings, /upgrade, a 404 — is Back-office, which is
+ * where the menu puts everything unclaimed too.
+ */
+export function moduleForPath(pathname: string): NavModuleKey {
+  let best: { href: string; key: NavModuleKey } | null = null
+
+  for (const section of NAV) {
+    const hrefs = [
+      ...(section.href ? [section.href] : []),
+      ...(section.items ?? []).map((i) => i.href),
+    ]
+    const href = activeHrefFor(pathname, hrefs)
+    if (!href) continue
+    if (!best || href.length > best.href.length) {
+      best = { href, key: moduleForSection(section.label) }
+    }
+  }
+
+  return best?.key ?? DEFAULT_MODULE
+}
+
+/** The module's palette, by key — with Back-office as the fallback. */
+export function accentForModule(key: NavModuleKey): NavModule['accent'] {
+  const found = NAV_MODULES.find((m) => m.key === key)
+  return (found ?? NAV_MODULES.find((m) => m.key === DEFAULT_MODULE)!).accent
 }

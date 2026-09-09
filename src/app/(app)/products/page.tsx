@@ -30,6 +30,8 @@ import {
   Pagination,
   TableToolbar,
   LinkSelect,
+  TreeSelect,
+  departmentTreeOptions,
   Icons,
 } from '@/components/ui'
 
@@ -283,20 +285,27 @@ export default async function ProductsPage({
       .map((p) => [p.id, filterHref({ group: String(p.id), q: null })]),
   )
 
-  /* The picker lists every department by full path, sorted by that path so a
-     sub-department sits under its parent rather than wherever sort_order left
-     it. Picking one filters to it AND everything beneath it, which is why the
-     child entries are still worth listing separately. */
-  const departmentOptions = [
-    { value: '', label: 'All departments', href: filterHref({ department: null }) },
-    ...departments
-      .map((d) => ({
-        value: String(d.id),
-        label: departmentPaths[d.id],
-        href: filterHref({ department: String(d.id) }),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label)),
-  ]
+  /* The picker browses the tree one level at a time rather than listing forty
+     full paths, so what a shopkeeper reads is their three or four top-level
+     departments. Rows keep the order the shop arranged them in — the same order
+     the till draws — because a menu re-sorted alphabetically is a different
+     shape from the one they know.
+
+     Picking any level filters to it AND everything beneath it, which is why the
+     children are still worth reaching: `descendantIds` above does the widening. */
+  const departmentOptions = departmentTreeOptions(
+    departments.map((d) => ({
+      id: d.id,
+      parentId: d.parentId,
+      name: d.name,
+      color: d.color,
+      imageId: d.posImageId,
+    })),
+    {
+      allHref: filterHref({ department: null }),
+      hrefFor: (id) => filterHref({ department: String(id) }),
+    },
+  )
 
   /* What the bulk-options forms need to offer a choice. Plain values only:
      these cross into a client component, so ids and labels rather than the
@@ -569,18 +578,18 @@ export default async function ProductsPage({
           {/* Options carry their own href, built here on the server: a function
               prop cannot cross into a client component, and this keeps the URL
               helpers out of the browser bundle. */}
-          {/* A FIXED width, narrower than the longest option it can hold. A
-              department path can be "Food > Bakery > Morning goods", and a
-              picker sized to fit that is a control whose width is decided by
-              the deepest branch in the tree — different in every shop, and
-              wider than the pickers beside it here. The chosen value truncates
-              instead; the open menu is what shows a long path in full. */}
-          <LinkSelect
+          {/* A FIXED width, narrower than the longest name it can hold. Sized to
+              its content, the control's width would be decided by the longest
+              department in the shop — different in every one, and wider than the
+              pickers beside it here. The chosen name truncates instead, with the
+              full path on the trigger's tooltip. */}
+          <TreeSelect
             aria-label="Filter by department"
+            backLabel="Back to departments"
             icon={<Icons.LayoutGrid size={16} />}
             value={filterIds ? String(departmentId) : ''}
             options={departmentOptions}
-            className="w-44"
+            className="w-48"
           />
 
           {/* Sort sits with the filters rather than in the actions slot: it is

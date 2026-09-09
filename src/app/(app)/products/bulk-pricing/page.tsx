@@ -17,6 +17,8 @@ import {
   Pagination,
   TableToolbar,
   LinkSelect,
+  TreeSelect,
+  departmentTreeOptions,
   EmptyState,
   Icons,
 } from '@/components/ui'
@@ -144,16 +146,21 @@ export default async function BulkPricingPage({
     href: filterHref({ structure: String(s.id) }),
   }))
 
-  const departmentOptions = [
-    { value: '', label: 'All departments', href: filterHref({ department: null }) },
-    ...departments
-      .map((d) => ({
-        value: String(d.id),
-        label: departmentPaths[d.id],
-        href: filterHref({ department: String(d.id) }),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label)),
-  ]
+  /* Browsed a level at a time, in the shop's own order — see the note on the
+     products list, which offers the same filter. */
+  const departmentOptions = departmentTreeOptions(
+    departments.map((d) => ({
+      id: d.id,
+      parentId: d.parentId,
+      name: d.name,
+      color: d.color,
+      imageId: d.posImageId,
+    })),
+    {
+      allHref: filterHref({ department: null }),
+      hrefFor: (id) => filterHref({ department: String(id) }),
+    },
+  )
 
   const supplierOptions = [
     { value: '', label: 'All suppliers', href: filterHref({ supplier: null }) },
@@ -201,11 +208,13 @@ export default async function BulkPricingPage({
               icon={<Icons.Tag size={16} />}
             />
 
-            <LinkSelect
+            <TreeSelect
               aria-label="Department"
+              backLabel="Back to departments"
               options={departmentOptions}
               value={filterIds ? String(departmentId) : ''}
               icon={<Icons.LayoutGrid size={16} />}
+              className="w-48"
             />
 
             {suppliers.items.length > 0 && (

@@ -1,11 +1,11 @@
-'use client'
+"use client";
 
-import { useActionState, useState } from 'react'
-import { useFormStatus } from 'react-dom'
-import { ArrowRight, Eye, EyeOff, Lock, Mail } from '@/components/ui/icons'
-import styles from '../login.module.css'
-import { loginAction, totpAction, type LoginState } from './actions'
-import StorePickerDialog from './StorePickerDialog'
+import { useActionState, useState } from "react";
+import { useFormStatus } from "react-dom";
+import { ArrowRight, Eye, EyeOff, Lock, Mail } from "@/components/ui/icons";
+import styles from "../login.module.css";
+import { loginAction, totpAction, type LoginState } from "./actions";
+import StorePickerDialog from "./StorePickerDialog";
 
 /**
  * The sign-in form.
@@ -17,25 +17,33 @@ import StorePickerDialog from './StorePickerDialog'
  */
 
 function SubmitButton() {
-  const { pending } = useFormStatus()
+  const { pending } = useFormStatus();
   return (
     <button className={styles.button} type="submit" disabled={pending}>
-      {pending ? 'Signing in…' : 'Sign in'}
+      {pending ? "Signing in…" : "Sign in"}
       {!pending && (
-        <ArrowRight className={styles.buttonIcon} size={19} strokeWidth={2} aria-hidden="true" />
+        <ArrowRight
+          className={styles.buttonIcon}
+          size={19}
+          strokeWidth={2}
+          aria-hidden="true"
+        />
       )}
     </button>
-  )
+  );
 }
 
 export default function LoginForm({ next }: { next: string }) {
-  const [state, formAction] = useActionState<LoginState, FormData>(loginAction, { error: null })
-  const [showPassword, setShowPassword] = useState(false)
+  const [state, formAction] = useActionState<LoginState, FormData>(
+    loginAction,
+    { error: null },
+  );
+  const [showPassword, setShowPassword] = useState(false);
 
   // The password proved out; the account wants its six digits. A separate
   // form, same card — the code failing keeps the person HERE, because the
   // password step is already behind them.
-  if (state.totp) return <TotpStep next={next} initialError={state.error} />
+  if (state.totp) return <TotpStep next={next} initialError={state.error} />;
 
   return (
     <>
@@ -53,7 +61,7 @@ export default function LoginForm({ next }: { next: string }) {
               name="email"
               type="email"
               autoComplete="username"
-              placeholder="you@company.com"
+              placeholder="you@company.co.za"
               required
               autoFocus
             />
@@ -71,7 +79,7 @@ export default function LoginForm({ next }: { next: string }) {
             <input
               className={`${styles.input} ${styles.inputWithIcon} ${styles.inputPeekable}`}
               name="password"
-              type={showPassword ? 'text' : 'password'}
+              type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               placeholder="••••••••"
               required
@@ -80,9 +88,9 @@ export default function LoginForm({ next }: { next: string }) {
               type="button"
               className={styles.peek}
               onClick={() => setShowPassword((v) => !v)}
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-label={showPassword ? "Hide password" : "Show password"}
               aria-pressed={showPassword}
-              title={showPassword ? 'Hide password' : 'Show password'}
+              title={showPassword ? "Hide password" : "Show password"}
             >
               {showPassword ? (
                 <EyeOff size={18} strokeWidth={1.8} />
@@ -112,14 +120,20 @@ export default function LoginForm({ next }: { next: string }) {
           account turns out to open more than one store. */}
       <StorePickerDialog choices={state.choices ?? []} next={next} />
     </>
-  )
+  );
 }
 
-function TotpStep({ next, initialError }: { next: string; initialError: string | null }) {
+function TotpStep({
+  next,
+  initialError,
+}: {
+  next: string;
+  initialError: string | null;
+}) {
   const [state, formAction] = useActionState<LoginState, FormData>(totpAction, {
     error: initialError,
     totp: true,
-  })
+  });
 
   return (
     <form action={formAction}>
@@ -160,5 +174,5 @@ function TotpStep({ next, initialError }: { next: string; initialError: string |
         </a>
       </div>
     </form>
-  )
+  );
 }

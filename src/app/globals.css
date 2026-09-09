@@ -51,19 +51,195 @@
      one thing that cannot do that. */
   --color-nav-accent: #f59e0b;
 
-  /* The rule a card wears down its left edge when its heading is brand-toned.
-     Used by SectionTitle, CardHeader and SettingGroup — see the note further
-     down for how it is drawn.
+  /* The colour of "you are here" INSIDE one module — the chip's fill on the
+     rail, the rule down its open section, and the pip on the page you are on.
+     A variable rather than a value: the sidebar rewrites it per module from the
+     six below, so all three marks change colour together and no component ever
+     learns which module it is drawing. Left alone it is the amber above, which
+     is what every module wore before the six existed. */
+  --color-module-accent: var(--color-nav-accent);
 
-     The brand blue itself, written as a reference rather than as a copy of the
-     hex. Two reasons. It cannot drift: change --color-brand and the rule
-     follows on the same paint, in both themes, which is the whole point of the
-     rule being "the same blue" as everything else. And it keeps its own name,
-     so a future decision to make the rule paler or louder than the brand is
-     one edit here rather than a hunt through three components.
+  /* THE SAME IDEA, CARRIED ONTO THE PAGE.
+     `module-accent` above is the rail's mark; these two are what a module makes
+     of the SCREEN — the tinted medallion behind an icon, and the glyph on it.
+     Every icon chip in the kit paints with this pair instead of with `brand`,
+     so the dashboard's figures, a card's heading icon and a settings row all
+     turn amber inside Back-office and emerald inside Job cards, on one paint.
 
-     It needs no dark override for the same reason — brand already has one. */
-  --color-brand-rule: var(--color-brand);
+     They default to the brand, which is what the whole app wore before modules
+     had colours — so anything outside the module shell (the till, sign-in, the
+     style guide) is untouched, and a screen that never gets the override looks
+     exactly as it does today rather than looking broken. */
+  --color-accent: var(--color-brand);
+  --color-accent-soft: var(--color-brand-soft);
+
+/* ============================================================================
+   MODULE COLOURS — one per chip on the sidebar's rail.
+
+   A module is a place, and this is how each one says which. They are read
+   through --color-module-accent (see the note beside it): a chip sets that
+   variable to its own colour and the panel sets it to the open module's, so the
+   chip, the rule down its open section and the pip on the current page all land
+   on the same colour without a single component naming a module.
+
+   SIX HUES AT ONE INTENSITY, and the intensity is the amber's. They started
+   pale — a wash of each colour — and a wash is what the rail cannot use: the
+   chip's caption is 10px, the section's rule is 3px and the page's pip is 6px,
+   so a colour has to carry at those sizes or the mark is a smudge. These are
+   the SAME six hues, taken as deep as the amber back-office already wears, and
+   each is measured against the rail at better than 6:1.
+
+   No dark override, and they are the only colours here without one. The rail is
+   near-black in both themes — see --color-nav-rail — so unlike every other
+   token in this file these are never read on a light surface and have nothing
+   to invert for.
+
+   Back-office keeps the rail's amber, written as a reference rather than as a
+   copy of the hex so the two cannot drift — and so it still follows the dark
+   theme's lighter amber, as it did when it was the only mark on the rail.
+
+   The amber is back-office's alone. Loyalty was orange and had to give it up:
+   gold and orange are neighbours on the wheel, and two chips a click apart in
+   near enough the same colour is worse than no colour at all — it says the two
+   are RELATED, which is the one thing the rail must not say about two products.
+
+   Which left one seat and two holes to put it in, yellow-green or magenta, the
+   only arcs the other five leave open. Measured in Oklab against every colour
+   already here, yellow-green only clears the set's own tightest pair (sky
+   against violet) by going dark and olive, and "olive" is a word away from
+   "gold" anyway. The pink clears it at 0.160 while sitting at the AMBER's exact
+   lightness and chroma — the same colour, a different hue — so the six read as
+   one family rather than as five and a straggler. That is why loyalty is pink.
+
+   In @theme with every other token, so the Style Guide can draw all six side by
+   side — bg-module-sales, text-module-tickets-ink. The app itself never names a
+   module in a class: it goes through the one indirection above.
+   ========================================================================= */
+  --color-module-sales: #38bdf8; /* sky */
+  --color-module-back-office: var(--color-nav-accent); /* amber — the rail's own */
+  --color-module-loyalty: #ffa6fc; /* orchid — the amber's L and C, a different hue */
+  --color-module-online-store: #fb7185; /* rose */
+  --color-module-job-cards: #34d399; /* emerald */
+  --color-module-tickets: #a78bfa; /* violet */
+
+/* ============================================================================
+   THE SAME SIX, REDRAWN FOR A PAGE.
+
+   The six above are tuned for the rail, which is near-black — so on a white
+   card they are invisible. A module's colour on a PAGE needs the two steps
+   `brand` has always had: `-soft`, the pale tint a medallion is filled with,
+   and `-ink`, the glyph drawn on it.
+
+   NOT PICKED BY EYE, and not picked off the brand either. Each glyph is THE
+   MODULE'S OWN RAIL COLOUR — same hue, same chroma — taken down in lightness
+   only as far as the surface underneath it demands, and no further. So the
+   amber on a dashboard medallion is the amber on the chip, as close to it as a
+   white card allows.
+
+   That anchor was the fix for a real complaint: built instead from the BRAND's
+   ramp, every glyph inherited the lightness of a dark blue, and back-office's
+   amber came out a full step duller than the chip beside it. Blue's darkness is
+   not amber's darkness. A colour's ramp has to start from itself.
+
+   IN DARK MODE THERE IS NO STEP AT ALL. The rail colour clears its tint at 5:1
+   and better on a dark card, so the glyph IS the rail colour, unchanged — the
+   chip and the page are the identical value.
+
+   In LIGHT mode they cannot be, and this is worth knowing before it looks like
+   a bug: a colour bright enough to carry on a near-black rail is invisible on
+   white — the rail's amber measures 2.1:1 there, against the 3:1 an icon needs.
+   So the light theme keeps the darkest thing that is still recognisably the
+   same colour: the same hue and chroma, dropped to the lightness that clears
+   3:1 on both the tint and the card. Every one of the six lands at 3.0–3.1,
+   which is what stops one module reading heavier than another.
+
+   Dark overrides sit just BELOW this block rather than in the two far down the
+   file, next to the values they override — Tailwind only honours @theme at the
+   top level, so a dark value has to be written on :root anyway. Twenty-four
+   numbers split across three places is how a table drifts; the .logo-plate
+   rules already take the same liberty.
+   ========================================================================= */
+  --color-module-sales-ink: #0896cb;
+  --color-module-sales-soft: #e7f4fc;
+  --color-module-back-office-ink: #c27c02;
+  --color-module-back-office-soft: #faf0e5;
+  --color-module-loyalty-ink: #c16cbf;
+  --color-module-loyalty-soft: #f9eef8;
+  --color-module-online-store-ink: #e45c72;
+  --color-module-online-store-soft: #feedee;
+  --color-module-job-cards-ink: #079f70;
+  --color-module-job-cards-soft: #e8f6ee;
+  --color-module-tickets-ink: #9578e5;
+  --color-module-tickets-soft: #f2f0fd;
+
+  /* THE LINE STEP. Same hue and chroma as the rail colour, normalised so all
+     six read at ONE weight on a white page — 2.15:1, which is what the rail's
+     amber (#f59e0b) already measures and what these lines were signed off at.
+     Left as the raw rail colours they would not: loyalty's orchid comes to
+     1.73:1 and would draw a card's edge in something you have to look for,
+     while ticketing's violet at 2.72 would draw it heavier than its neighbours.
+     Sales and back-office are already at the mark, so they are written as
+     references and follow their rail colour wherever it goes. */
+  --color-module-sales-rule: var(--color-module-sales);
+  --color-module-back-office-rule: var(--color-module-back-office);
+  --color-module-loyalty-rule: #ea92e7;
+  --color-module-online-store-rule: #ff919d;
+  --color-module-job-cards-rule: #21c990;
+  --color-module-tickets-rule: #b8a4ff;
+
+  /* THE TEXT STEP — a label you READ, which the two above are not.
+     `-rule` draws lines and `-ink` sits inside a medallion; both are graphical,
+     both are allowed to be light, and both fail AA as text (2.15:1 and 3.4:1).
+     A selected tab's label is read, so it needs 4.5:1 and gets its own step:
+     same hue, same chroma, dark enough to carry on the canvas AND on a card.
+     Measured against both — the tab bar sits on canvas, a tab inside a dialog
+     sits on surface, and the label must not depend on which. */
+  --color-module-sales-text: #057aa6;
+  --color-module-back-office-text: #9f6400;
+  --color-module-loyalty-text: #a552a3;
+  --color-module-online-store-text: #c6415a;
+  --color-module-job-cards-text: #01815a;
+  --color-module-tickets-text: #7c5fc9;
+
+  /* ── DO NOT DERIVE A TOKEN FROM --color-accent HERE ─────────────────────
+     There was a `--color-accent-rule: var(--color-accent)` on this line, for the
+     rule a card wears down its left edge. It could not work, and the way it
+     failed is worth writing down because it looks like it should.
+
+     A custom property is substituted where it is DECLARED, not where it is
+     read. Declared here, on :root, it resolved once against the :root value of
+     --color-accent — the brand blue — and what inherited down the page was that
+     computed blue. ModuleAccent overriding --color-accent on a wrapper deeper in
+     the tree changed nothing: the derived token had already been resolved above
+     it. The symptom was a screen whose medallions went amber while every rule on
+     it stayed blue.
+
+     So anything that wants the module's colour reads var(--color-accent) — or
+     the utilities over it, text-accent / bg-accent-soft — AT THE ELEMENT.
+
+     `--color-accent-rule` below is NOT a counter-example. It is a third
+     variable that ModuleAccent SETS, alongside the two above, from a token of
+     its own; it is never computed from --color-accent. Deriving is what fails,
+     not having three. */
+
+  /* THE LINES, which want a different step from the glyphs.
+     A rule is a graphical marker and a glyph is something you read, so they do
+     not want the same weight: `--color-accent` is dark enough to read inside a
+     medallion (3.4:1 on white), and a card's whole left edge drawn that dark
+     reads as a border somebody added rather than as the module's colour. This
+     is the lighter step the rail's own marks use — the bar beside the open
+     section and the pip on the current page — so a line on the page and a line
+     in the menu are the same line.
+
+     Defaults to the brand, like the two above, so nothing outside a module
+     shell moved. Safe as a reference because --color-brand is only ever
+     declared on :root; it is never overridden deeper down the tree. */
+  --color-accent-rule: var(--color-brand);
+
+  /* The readable one — a selected tab's label and its glyph. Defaults to
+     `brand-ink` rather than `brand` for exactly the reason the module step
+     exists: it is the brand's own AA-on-white step. */
+  --color-accent-text: var(--color-brand-ink);
 
   /* --- Loading ----------------------------------------------------------- */
   /* The loaders — Orbit, Sweep, LoadingBar, LoadingDots, LoadingVeil — are
@@ -71,7 +247,7 @@
      every spinner in the app with it on the same paint.
 
      Written as references rather than as copies of the hexes, for the same
-     reason --color-brand-rule is: a spinner that stayed the OLD blue after a
+     reason the card rule is read at the element: a spinner that stayed the OLD blue after a
      rebrand is the most visible kind of drift, because it is the one thing on
      screen that MOVES. It also means they need no dark override — every
      variable underneath them already has one.
@@ -477,6 +653,66 @@
   --spacing-touch-lg: 4.5rem; /* 72px — Pay / Confirm */
 }
 
+/* The dark halves. Two blocks saying the same thing, for the same reason every
+   other dark override in this file is written twice — see the note above the
+   main dark section. Keep them in step.
+
+   The glyphs are written as REFERENCES to the rail six rather than as copies of
+   them, because on a dark card that is exactly what they are — see the note
+   above. Re-tune a module's rail colour and its dark-mode icons follow on the
+   same paint; only the light-theme step, which has to be computed against
+   white, is a hex of its own. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --color-module-sales-ink: var(--color-module-sales);
+    --color-module-sales-soft: #103344;
+    --color-module-back-office-ink: var(--color-module-back-office);
+    --color-module-back-office-soft: #3b2d0e;
+    --color-module-loyalty-ink: var(--color-module-loyalty);
+    --color-module-loyalty-soft: #3c253c;
+    --color-module-online-store-ink: var(--color-module-online-store);
+    --color-module-online-store-soft: #442427;
+    --color-module-job-cards-ink: var(--color-module-job-cards);
+    --color-module-job-cards-soft: #133728;
+    --color-module-tickets-ink: var(--color-module-tickets);
+    --color-module-tickets-soft: #302a46;
+    --color-module-loyalty-rule: var(--color-module-loyalty);
+    --color-module-online-store-rule: var(--color-module-online-store);
+    --color-module-job-cards-rule: var(--color-module-job-cards);
+    --color-module-tickets-rule: var(--color-module-tickets);
+    --color-module-sales-text: var(--color-module-sales);
+    --color-module-back-office-text: var(--color-module-back-office);
+    --color-module-loyalty-text: var(--color-module-loyalty);
+    --color-module-online-store-text: var(--color-module-online-store);
+    --color-module-job-cards-text: var(--color-module-job-cards);
+    --color-module-tickets-text: var(--color-module-tickets);
+  }
+}
+:root[data-theme='dark'] {
+  --color-module-sales-ink: var(--color-module-sales);
+  --color-module-sales-soft: #103344;
+  --color-module-back-office-ink: var(--color-module-back-office);
+  --color-module-back-office-soft: #3b2d0e;
+  --color-module-loyalty-ink: var(--color-module-loyalty);
+  --color-module-loyalty-soft: #3c253c;
+  --color-module-online-store-ink: var(--color-module-online-store);
+  --color-module-online-store-soft: #442427;
+  --color-module-job-cards-ink: var(--color-module-job-cards);
+  --color-module-job-cards-soft: #133728;
+  --color-module-tickets-ink: var(--color-module-tickets);
+  --color-module-tickets-soft: #302a46;
+  --color-module-loyalty-rule: var(--color-module-loyalty);
+  --color-module-online-store-rule: var(--color-module-online-store);
+  --color-module-job-cards-rule: var(--color-module-job-cards);
+  --color-module-tickets-rule: var(--color-module-tickets);
+  --color-module-sales-text: var(--color-module-sales);
+  --color-module-back-office-text: var(--color-module-back-office);
+  --color-module-loyalty-text: var(--color-module-loyalty);
+  --color-module-online-store-text: var(--color-module-online-store);
+  --color-module-job-cards-text: var(--color-module-job-cards);
+  --color-module-tickets-text: var(--color-module-tickets);
+}
+
 /* ============================================================================
    Dark mode.
 
@@ -540,8 +776,6 @@
     --color-nav-active: #1c7cac;
     --color-nav-active-ink: #ffffff;
     --color-nav-accent: #fbbf24;
-    /* No --color-brand-rule here on purpose: it is defined as var(--color-brand)
-       and so has already followed the line above. */
 
     --color-success: #4ade80;
     --color-success-ink: #86efac;
@@ -649,7 +883,6 @@
   --color-nav-active: #1c7cac;
   --color-nav-active-ink: #ffffff;
   --color-nav-accent: #fbbf24;
-  /* No --color-brand-rule here either — see the block above. */
 
   --color-success: #4ade80;
   --color-success-ink: #86efac;
@@ -828,9 +1061,10 @@ body {
    The wordmark in logo-full.png is dark navy on transparency, so on a dark
    canvas it is very nearly invisible — and the screens that show it full-size
    are the two front doors: the back-office login and the till's PIN gate. The
-   login solves this in its own CSS module (see `.logo` in login.module.css,
-   which is a deliberate pixel-port and stays as it is); this is the same fix
-   for every screen built on the design tokens.
+   login solves this in its own CSS module by standing its mark on a permanent
+   white disc against a navy panel (see `.panelMark` in login.module.css, which
+   is a deliberate pixel-port and stays as it is); this is the same fix for
+   every screen built on the design tokens.
 
    NOT a `dark:` Tailwind variant: this app has no such variant registered — it
    themes by swapping custom properties under [data-theme], so a `dark:` class
@@ -951,9 +1185,11 @@ input[type='range'] {
    card; the marker attributes are set by CardHeader and SectionTitle, and
    SettingGroup — which IS its own card — draws the same border itself.
    ========================================================================= */
-[data-card]:has(> [data-brand-rule]) {
+[data-card]:has(> [data-accent-rule]) {
   border-left-width: 2px;
-  border-left-color: var(--color-brand-rule);
+  /* The LINE step, not the glyph one — see --color-accent-rule. Set directly
+     by ModuleAccent, so unlike a derived token it does reach this far. */
+  border-left-color: var(--color-accent-rule);
 }
 
 /* ============================================================================

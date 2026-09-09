@@ -1250,13 +1250,13 @@ export default function InvoiceEditor({
               Aligned at the top, every glyph and every label sits on one line
               and the hint hangs below where it belongs.
 
-              data-brand-rule marks the card's left edge the way CardHeader
+              data-accent-rule marks the card's left edge the way CardHeader
               does — see globals.css. This strip IS the card's header, it just
               has no heading text, so it was the one card on the screen without
               the rule down its edge while Products, Comment and Summary all
               had one. The attribute is what the CSS looks for, not the
               component, so saying it directly is the whole fix. */}
-          <div data-brand-rule className="flex flex-wrap items-start gap-y-4 px-5 py-4">
+          <div data-accent-rule className="flex flex-wrap items-start gap-y-4 px-5 py-4">
             <CustomerBar
               customerId={customerId}
               customerName={customerName}

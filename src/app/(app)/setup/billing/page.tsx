@@ -1,5 +1,4 @@
-import { requireCapability, requireSite, requireSession } from '@/lib/auth'
-import { listSitesForUser } from '@/lib/sites'
+import { requireCapability, requireSite, openableSites } from '@/lib/auth'
 import {
   accountForSite,
   currentPrices,
@@ -49,7 +48,6 @@ export default async function BillingPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   await requireCapability('setup.edit')
   const site = await requireSite()
-  const session = await requireSession()
 
   /* ── WHERE THE BILLING FACTS COME FROM ────────────────────────────────────
      One signed HTTPS call on a shop's machine, the control database directly
@@ -86,7 +84,11 @@ export default async function BillingPage() {
       : account
         ? sitesForAccount(account.id)
         : Promise.resolve([]),
-    listSitesForUser(session.userId),
+    /* Not listSitesForUser(session.userId): on a local install that id belongs
+       to the shop's own users table, and the control query it would run cannot
+       even be attempted on a desktop build — it threw, and took this page down
+       with it. See openableSites. */
+    openableSites(),
   ])
   const permittedIds = new Set(permitted.map((s) => s.id))
 

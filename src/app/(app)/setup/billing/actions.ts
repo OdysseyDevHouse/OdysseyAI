@@ -2,8 +2,9 @@
 
 import { revalidatePath } from 'next/cache'
 import * as billingWritePortal from '@/lib/control/billingWritePortal'
-import { actorFor, requireSession, type Denied } from '@/lib/auth'
-import { listSitesForUser } from '@/lib/sites'
+import * as billingPortal from '@/lib/control/billingPortal'
+import { portalConfig } from '@/lib/control/portalApi'
+import { actorFor, requireSession, openableSites, type Denied } from '@/lib/auth'
 import {
   accountForSite,
   addModule,
@@ -15,11 +16,51 @@ import {
   DEVICE_MODULE_KEY,
   MODULE_KEYS,
   type ModuleKey,
+  type BillingAccount,
 } from '@/lib/control/modules'
 import { safeBillingDay } from '@/lib/billing/period'
 import { syncSubscriptionAmount } from './subscribeActions'
 
 export type BillingChange = { siteId: number; moduleKey: string; want: boolean }
+
+/**
+ * The account this store is on, and which of its stores this person may touch.
+ *
+ * ── WHY BOTH ACTIONS BELOW GO THROUGH ONE FUNCTION ──────────────────────────
+ *
+ * It is the whole permission boundary of this file: the set is re-derived from
+ * the account and from the stores this user may open, never taken from the
+ * payload. Written twice it would one day be tightened once.
+ *
+ * ── AND WHY IT ASKS THE PORTAL FIRST ────────────────────────────────────────
+ *
+ * The same split the billing PAGE makes. On a desktop install accountForSite()
+ * and sitesForAccount() cannot open a control-database socket at all — pool()
+ * refuses and throws — so a guard built only on them did not merely fail
+ * closed, it took the action down before it could refuse anything. The portal
+ * answers for the SIGNING site, so it is only asked when this machine's key is
+ * for the store doing the asking.
+ */
+async function billingScope(
+  callerSiteId: number,
+): Promise<{ account: BillingAccount; editable: Set<number> } | Denied> {
+  const viaPortal = portalConfig()?.siteId === callerSiteId ? await billingPortal.summary() : null
+
+  const account = viaPortal ? viaPortal.account : await accountForSite(callerSiteId)
+  if (!account) return { ok: false, error: 'This store is not attached to a billing account yet.' }
+
+  // The two sets that decide what may be touched: on the bill, AND openable.
+  const [onAccount, permitted] = await Promise.all([
+    viaPortal ? Promise.resolve(viaPortal.sites) : sitesForAccount(account.id),
+    openableSites(),
+  ])
+  const permittedIds = new Set(permitted.map((s) => s.id))
+
+  return {
+    account,
+    editable: new Set(onAccount.map((s) => s.siteId).filter((id) => permittedIds.has(id))),
+  }
+}
 
 /**
  * Apply a set of module changes.
@@ -42,20 +83,9 @@ export async function applyModuleChangesAction(
   if ('ok' in ctx) return ctx
 
   const session = await requireSession()
-  const account = await accountForSite(ctx.siteId)
-  if (!account) {
-    return { ok: false, error: 'This store is not attached to a billing account yet.' }
-  }
-
-  // The two sets that decide what may be touched: on the bill, AND openable.
-  const [onAccount, permitted] = await Promise.all([
-    sitesForAccount(account.id),
-    listSitesForUser(session.userId),
-  ])
-  const permittedIds = new Set(permitted.map((s) => s.id))
-  const editable = new Set(
-    onAccount.map((s) => s.siteId).filter((id) => permittedIds.has(id)),
-  )
+  const scope = await billingScope(ctx.siteId)
+  if ('ok' in scope) return scope
+  const { account, editable } = scope
 
   const actor = { name: ctx.actor.userName, email: session.email }
   const billingDay = safeBillingDay(account.billingDay)
@@ -219,18 +249,10 @@ export async function confirmPaymentAction(
  * forgotten in the other.
  */
 async function editableSite(callerSiteId: number, target: number): Promise<Denied | null> {
-  const session = await requireSession()
-  const account = await accountForSite(callerSiteId)
-  if (!account) return { ok: false, error: 'This store is not attached to a billing account yet.' }
+  const scope = await billingScope(callerSiteId)
+  if ('ok' in scope) return scope
 
-  const [onAccount, permitted] = await Promise.all([
-    sitesForAccount(account.id),
-    listSitesForUser(session.userId),
-  ])
-  const permittedIds = new Set(permitted.map((s) => s.id))
-  const editable = new Set(onAccount.map((s) => s.siteId).filter((id) => permittedIds.has(id)))
-
-  return editable.has(target)
+  return scope.editable.has(target)
     ? null
     : { ok: false, error: 'That store is not on this billing account.' }
 }

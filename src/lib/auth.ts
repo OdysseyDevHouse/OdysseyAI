@@ -1225,5 +1225,36 @@ export async function actorForCapability(capability: Capability): Promise<{
   }
 }
 
+/**
+ * Every store the person at this screen may open.
+ *
+ * ── WHY THIS IS NOT JUST listSitesForUser ───────────────────────────────────
+ *
+ * On a local install `session.userId` is a row in the SHOP'S OWN users table,
+ * not a control account — see SessionPayload.scope and the same reasoning in
+ * requireSite(). Handing it to listSitesForUser compares it against
+ * cp2_user_sites.user_id, two unrelated id spaces that are both small integers,
+ * so it matches nothing.
+ *
+ * That is the mild failure. The severe one is that on a DESKTOP build the query
+ * cannot run at all: pool() refuses to open a control-database socket and
+ * throws, which takes the whole page down rather than returning an empty list.
+ * Setup → Plan & billing died exactly this way.
+ *
+ * The site is already resolved, and resolved more strictly than that query
+ * could be — the machine was provisioned for it, and opensHere() refuses every
+ * other kind at the picker, at selectSiteAction and in the (app) layout. So on
+ * a site-scoped session the open store IS the list, which is the same answer
+ * the store switcher in the (app) layout reaches by the same reasoning.
+ *
+ * Callers that need a further filter — the switcher drops stores this door
+ * cannot open — apply it on top; this answers only "whose stores are these".
+ */
+export async function openableSites(): Promise<Site[]> {
+  const session = await requireSession()
+  if (session.scope === 'site') return [await requireSite()]
+  return listSitesForUser(session.userId)
+}
+
 export { getSession }
 export type { SessionPayload }

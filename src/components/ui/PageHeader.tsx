@@ -77,7 +77,8 @@ export function PageHeader({
           {icon && !backHref && (
             <span
               aria-hidden
-              className="flex size-9 shrink-0 items-center justify-center rounded-card bg-brand-soft text-brand"
+              /* accent, not brand — the medallion carries the module. */
+              className="flex size-9 shrink-0 items-center justify-center rounded-card bg-accent-soft text-accent"
             >
               {icon}
             </span>

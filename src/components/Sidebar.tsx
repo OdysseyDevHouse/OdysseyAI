@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Search,
   ChevronDown,
@@ -16,7 +16,7 @@ import GlobalSearch from '@/components/GlobalSearch'
 import SettingAnchor from '@/components/SettingAnchor'
 import {
   GETTING_STARTED_HREF,
-  hubFor,
+  activeHrefFor,
   navFor,
   type NavItem,
   type NavSection,
@@ -34,6 +34,23 @@ import {
   opensTill,
   opensInInvoicingWindow,
 } from '@/lib/openTill'
+
+/**
+ * The one place a module's colour is handed to the CSS.
+ *
+ * Everything in the chrome that marks "you are here" — the chip's fill, the
+ * rule down the open section, the pip on the current page, the module's name on
+ * the lockup — paints with `--color-module-accent`, and none of them knows which
+ * module it is drawing. This sets that variable on a subtree, so the whole of it
+ * changes colour together: on a chip, to the chip's own module, so its hover
+ * flyout matches the chip you are hovering; on the panel, to the OPEN one.
+ *
+ * The cast is React's: custom properties are valid CSS and are not in
+ * `CSSProperties`.
+ */
+function accentVars(def: NavModule): CSSProperties {
+  return { '--color-module-accent': def.accent.rail } as CSSProperties
+}
 
 const STORAGE_KEY = 'odyssey.sidebar'
 
@@ -201,35 +218,6 @@ function buildRail(
   }
 
   return rail
-}
-
-/**
- * The row this page is on.
- *
- * Three rules in order, and the order is what makes it right:
- *
- *  1. An EXACT match on a menu row wins. The online store's screens are rows in
- *     their own panel now, so /online-store/orders must light "Orders" rather
- *     than the hub it also sits under.
- *  2. Failing that, the hub that owns the screen. /staff/pay-rules is a setup
- *     screen that happens to live beneath /staff; a plain prefix scan would
- *     light "Staff" while the breadcrumb above said "Setup › Pay rules" — the
- *     menu and the trail disagreeing about where somebody is.
- *  3. Failing that, the longest prefix — which is what a record page
- *     (/products/1842) and every other child route resolves through.
- */
-function activeHrefFor(pathname: string, candidates: string[]): string | null {
-  if (candidates.includes(pathname)) return pathname
-
-  const owner = hubFor(pathname)
-  if (owner && candidates.includes(owner)) return owner
-
-  let best: string | null = null
-  for (const href of candidates) {
-    if (!pathname.startsWith(`${href}/`)) continue
-    if (!best || href.length > best.length) best = href
-  }
-  return best
 }
 
 /**
@@ -662,7 +650,12 @@ export default function Sidebar({
         everything the hidden rows reached.
       */}
       {!collapsed && current && (
-        <aside className="flex w-60 shrink-0 flex-col border-r border-nav-border bg-nav-surface">
+        <aside
+          className="flex w-60 shrink-0 flex-col border-r border-nav-border bg-nav-surface"
+          /* The panel belongs to the chip beside it, so it is painted in that
+             module's colour — see accentVars. */
+          style={accentVars(current.def)}
+        >
           <div className="shrink-0 px-4 pb-4 pt-4">
             {/* Centred, and the mark is not here — see the rail's head above.
                 Set a step larger than it was: with the globe gone the name has
@@ -674,13 +667,14 @@ export default function Sidebar({
                 invisible on this dark panel. The subline is `text-brand`, which
                 is right where it names the COMPANY — here it names the module,
                 the one thing in the header that changes as you move down the
-                rail, so it takes the rail's amber. Both hooks are the
+                rail, so it takes that module's own colour — the same one the
+                chip beside it is wearing. Both hooks are the
                 component's own; DeviceNotLicensed renders it on a themed page. */}
             <BrandLockup
               sub={current.def.sub}
               size="lg"
               mark={false}
-              className="justify-center [&_.wordmark-lockup]:!text-nav-ink [&_.wordmark-subline]:!text-nav-accent"
+              className="justify-center [&_.wordmark-lockup]:!text-nav-ink [&_.wordmark-subline]:!text-module-accent"
             />
           </div>
 
@@ -799,12 +793,15 @@ function ModuleChip({
      — three pixels of air on each side is what turns it back into one. */
   const chipClass = `relative flex size-[53px] flex-col items-center justify-center gap-1 rounded-xl transition ${
           active
-            ? /* The amber the rail already uses for "you are here" — the rule on
-                 the open section and the pip on the current page are the same
-                 colour, so the mark means one thing at all three levels. Not the
-                 blue block a section wears: that says which SCREEN, and two loud
-                 blues 200px apart read as two selections. */
-              'bg-nav-accent/15 text-nav-accent before:absolute before:-left-1 before:top-1/2 before:h-8 before:w-[3px] before:-translate-y-1/2 before:rounded-r before:bg-nav-accent before:content-[""]'
+            ? /* THE MODULE'S OWN COLOUR, not one mark shared by all six — see
+                 `accent` in navModules.ts, and MODULE COLOURS in globals.css.
+                 The rule on the open section and the pip on the current page
+                 take the same variable, so the mark still means one thing at all
+                 three levels; what changed is that it now also says WHICH place
+                 you are in, which the eye can have before it reads the caption.
+                 Still not the blue block a section wears: that says which
+                 SCREEN, and two loud fills 200px apart read as two selections. */
+              'bg-module-accent/15 text-module-accent before:absolute before:-left-1 before:top-1/2 before:h-8 before:w-[3px] before:-translate-y-1/2 before:rounded-r before:bg-module-accent before:content-[""]'
       : locked
         ? 'text-nav-faint opacity-50 hover:opacity-80'
         : 'text-nav-faint hover:bg-nav-surface-2 hover:text-nav-ink'
@@ -842,7 +839,10 @@ function ModuleChip({
   )
 
   return (
-    <div className="group relative">
+    /* Its OWN module's colour, not the open one's: the collapsed rail's flyout
+       is drawn inside here, and a hovered module's menu marking the current page
+       in some other module's colour would be a lie about where you are. */
+    <div className="group relative" style={accentVars(def)}>
       {href ? (
         <Link
           href={href}
@@ -994,11 +994,12 @@ function SectionRow({
      row makes the answer to "where am I?" a single glance rather than a hunt.
      `nav-active` rather than `brand` because white on the brand itself is
      3.55:1, and this row carries its own label; the token is the same blue a
-     step darker, measured to carry white at AA. The amber rule pinned to the
-     left edge is the second half of that — see --color-nav-accent. */
+     step darker, measured to carry white at AA. The rule pinned to the left
+     edge is the second half of that, in the module's own colour — see
+     --color-module-accent. */
   const rowClass = `relative flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
     active
-      ? 'bg-nav-active font-medium text-nav-active-ink before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r before:bg-nav-accent before:content-[""]'
+      ? 'bg-nav-active font-medium text-nav-active-ink before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r before:bg-module-accent before:content-[""]'
       : 'text-nav-muted hover:bg-nav-surface-2 hover:text-nav-ink'
   }`
 
@@ -1229,10 +1230,11 @@ function ChildLink({
       {opensInOwnWindow(item.href) && !itemActive && (
         <ExternalLink size={12} className="ml-auto shrink-0 opacity-60" />
       )}
-      {/* The amber pip, echoing the rule on the open section above it — the
-          rail's one non-blue mark, so "you are here" is the same colour at both
-          levels. `ml-auto` pins it to the trailing edge of the filled row. */}
-      {itemActive && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-nav-accent" />}
+      {/* The pip, echoing the rule on the open section above it and the chip
+          out on the rail — the module's colour, so "you are here" is the same
+          one answer at all three levels. `ml-auto` pins it to the trailing edge
+          of the filled row. */}
+      {itemActive && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-module-accent" />}
     </Link>
   )
 }

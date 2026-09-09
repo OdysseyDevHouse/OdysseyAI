@@ -20,6 +20,8 @@ import {
   RowGlyph,
   Select,
   TableToolbar,
+  TreeSelect,
+  departmentTreeOptions,
   summariseCondition,
   useToast,
   type Column,
@@ -604,10 +606,18 @@ export default function ProductSearchModal({
      is the authority on their shape and it is unchanged on the way through. */
   const filterFields = (lookups?.filterFields ?? []) as unknown as FilterField[]
 
+  /* Rebuilt only when the lookups land, not on every keystroke: this list is
+     the whole department tree, and the picker below re-groups it by parent. */
+  const departmentOptions = useMemo(
+    () => departmentTreeOptions(lookups?.departments ?? []),
+    [lookups],
+  )
+
+  /* The CHIP spells out the full path where the picker shows one level — a
+     filter someone has already applied has to say "Drinks > Beer > Imported",
+     since by then the menu that gave it that context is closed. */
   const departmentLabel =
-    departmentId !== null
-      ? (lookups?.departments.find((d) => d.id === departmentId)?.label ?? null)
-      : null
+    departmentId !== null ? (departmentPaths[departmentId] ?? null) : null
   const typeLabel =
     productType !== null
       ? (lookups?.productTypes.find((t) => t.id === productType)?.name ?? null)
@@ -779,18 +789,14 @@ export default function ProductSearchModal({
           </div>
 
           <Field label="Department" className="mb-0 w-52">
-            <Select
-              value={departmentId ?? ''}
+            <TreeSelect
+              value={departmentId === null ? '' : String(departmentId)}
+              options={departmentOptions}
+              onChange={(value) => setDepartmentId(value ? Number(value) : null)}
+              icon={<Icons.LayoutGrid size={16} />}
+              backLabel="Back to departments"
               aria-label="Filter products by department"
-              onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : null)}
-            >
-              <option value="">All departments</option>
-              {(lookups?.departments ?? []).map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.label}
-                </option>
-              ))}
-            </Select>
+            />
           </Field>
 
           <Field label="Type" className="mb-0 w-44">
