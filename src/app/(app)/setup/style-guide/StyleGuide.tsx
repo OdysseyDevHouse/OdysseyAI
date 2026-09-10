@@ -2319,6 +2319,25 @@ function TableControlsSection() {
               ]}
             />
           </div>
+          <div className="mt-4">
+            <Spec
+              name='size="touch-sm"'
+              note="The same full-width bar at `h-touch-sm` (37px), and on white rather than a grey band — for a bar that heads a screen instead of being operated at a till. The phone dashboard's period picker wears it."
+            />
+          </div>
+          <div className="mt-2 max-w-md">
+            <SegmentedControl
+              size="touch-sm"
+              aria-label="Sales period"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'all', label: 'Today' },
+                { value: 'orders', label: 'Week' },
+                { value: 'grvs', label: 'Month' },
+              ]}
+            />
+          </div>
         </div>
 
         <div>
@@ -4868,6 +4887,54 @@ function LayoutSection() {
               A form, a variants panel and a photographs gallery are separate siblings on the
               product screen. Each wears this, so the right edge runs straight instead of stepping
               in and out down the page.
+            </p>
+          </div>
+        </Row>
+
+        <Row>
+          <Spec name="PageHeader" note="Always pinned to the top of the pane" />
+          <div className="min-w-0 flex-1">
+            {/* The header of THIS page is a live PageHeader — scroll and watch
+                it stay. Nothing to demo in a card that the page is not already
+                demonstrating. */}
+            <p className="text-xs text-muted">
+              Every page header is sticky, on every screen — it carries the page’s actions, and on
+              anything longer than a window those are the controls you reach for after scrolling
+              to the bottom. Not a prop: a header that scrolled away on some screens and not
+              others is the inconsistency this replaced.
+            </p>
+          </div>
+        </Row>
+
+        <Row>
+          <Spec name="HeaderActions" note="Puts a form's Save in the top bar" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-muted">
+              Every record editor keeps its Save in the page header. Where the button is a bare
+              <code className="mx-1 rounded bg-surface-2 px-1 py-0.5 font-mono">
+                {'<button form="…">'}
+              </code>
+              the server page can render it into <code>action</code>. Where it says “Saving…”,
+              “Create customer” or “Save anyway”, that state lives in the client form — so the
+              button stays in the form and <code>&lt;HeaderActions&gt;</code> portals it up. One
+              per screen; on a tabbed screen, only the active tab’s.
+            </p>
+          </div>
+        </Row>
+
+        <Row>
+          <Spec name="PageHeader meta" note="A code after the subtitle" />
+          <div className="min-w-0 flex-1">
+            <PageHeader
+              title="Edit product"
+              subtitle="Ham and Cheese Toastie"
+              meta="PRD00024"
+              action={<Button variant="primary">Save product</Button>}
+            />
+            <p className="mt-2 text-xs text-muted">
+              The subtitle truncates, because a description can run to a paragraph. A code
+              appended to that string is the first thing cut off, and it is the half somebody
+              opened the screen holding — so it gets its own slot outside the clip.
             </p>
           </div>
         </Row>

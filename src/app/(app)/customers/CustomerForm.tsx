@@ -16,6 +16,7 @@ import {
   Select,
   Checkbox,
   Textarea,
+  HeaderActions,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -250,11 +251,15 @@ export default function CustomerForm({
 
   return (
     <>
-      {/* Gutters come from the page's <PageBody>, not from here. */}
-      <div className="flex items-center justify-end gap-2">
+      {/* Up in the page header, beside the record's other actions, rather than
+          on a row of its own above the form — see <HeaderActions>. Rendered
+          from in here because the label depends on state only this component
+          has: whether the record is new, and whether a duplicate warning is
+          standing. `rowActions` goes with it, so the group stays together. */}
+      <HeaderActions>
         {rowActions}
         <SubmitButton isNew={isNew} confirming={Boolean(state.duplicateWarning)} />
-      </div>
+      </HeaderActions>
 
       {/*
         Keyed on whether a warning stands, so the whole form REMOUNTS when one

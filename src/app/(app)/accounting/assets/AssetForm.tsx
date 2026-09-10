@@ -15,6 +15,7 @@ import {
   Textarea,
   Icons,
   useToast,
+  HeaderActions,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -317,22 +318,23 @@ export function AssetForm({
             <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>
         </CardBody>
+        {/* The note stays with the form it explains; the buttons go up to the
+            page header — see <HeaderActions>. Cancel travels with Save because
+            these two screens have no back arrow, so it is the way out. */}
         <CardFooter>
-          <div className="flex w-full items-center justify-between">
-            <span className="text-sm text-muted">
-              {refusal ?? 'Adding an asset posts no journal — the expense that bought it already did.'}
-            </span>
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => router.back()}>
-                Cancel
-              </Button>
-              <Button disabled={pending || refusal !== null} onClick={save}>
-                <Icons.Check size={15} />
-                {isEdit ? 'Save changes' : 'Add to the register'}
-              </Button>
-            </div>
-          </div>
+          <span className="text-sm text-muted">
+            {refusal ?? 'Adding an asset posts no journal — the expense that bought it already did.'}
+          </span>
         </CardFooter>
+        <HeaderActions>
+          <Button variant="secondary" onClick={() => router.back()}>
+            Cancel
+          </Button>
+          <Button disabled={pending || refusal !== null} onClick={save}>
+            <Icons.Check size={15} />
+            {isEdit ? 'Save changes' : 'Add to the register'}
+          </Button>
+        </HeaderActions>
       </Card>
     </>
   )

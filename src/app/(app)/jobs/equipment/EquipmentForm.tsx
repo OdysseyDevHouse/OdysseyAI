@@ -15,6 +15,7 @@ import {
   TextLink,
   Textarea,
   useToast,
+  HeaderActions,
 } from '@/components/ui'
 import type { CustomerAsset, DuplicateWarning } from '@/lib/site/jobAssets'
 import { saveAssetAction, customerAddressesAction } from '../actions'
@@ -336,14 +337,16 @@ export default function EquipmentForm({
               <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
             </Field>
 
-            <div className="flex justify-end gap-2">
+            {/* Up in the page header — see <HeaderActions>. Cancel travels
+                with Save because this screen has no back arrow. */}
+            <HeaderActions>
               <Button variant="secondary" onClick={() => router.back()} disabled={pending}>
                 Cancel
               </Button>
               <Button variant="primary" onClick={save} disabled={pending || !description.trim()}>
                 {pending ? 'Saving…' : asset ? 'Save changes' : 'Add the equipment'}
               </Button>
-            </div>
+            </HeaderActions>
           </div>
         </CardBody>
       </Card>

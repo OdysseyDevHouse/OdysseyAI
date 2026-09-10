@@ -13,6 +13,7 @@ import {
   Select,
   SwatchPicker,
   Switch,
+  HeaderActions,
 } from '@/components/ui'
 import PicturePicker from '@/components/PicturePicker'
 import DepartmentTilePanel from '@/components/DepartmentTilePanel'
@@ -20,10 +21,15 @@ import { saveDepartmentAction, type DepartmentFormState } from './actions'
 import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { Department } from '@/lib/site/departments'
 
+const FORM_ID = 'department-form'
+
 function SubmitButton() {
   const { pending } = useFormStatus()
+  /* `form=` because this button paints in the page header, outside the <form>
+     element — see <HeaderActions>. It stays a React child of the form, which is
+     what keeps useFormStatus reporting on the right one. */
   return (
-    <Button type="submit" variant="primary" disabled={pending}>
+    <Button type="submit" form={FORM_ID} variant="primary" disabled={pending}>
       <Save size={15} />
       {pending ? 'Saving…' : 'Save department'}
     </Button>
@@ -69,7 +75,7 @@ export default function DepartmentForm({
   const [onlineImage, setOnlineImage] = useState(pictures.online)
 
   return (
-    <form action={formAction} className="flex flex-col gap-5 p-5">
+    <form id={FORM_ID} action={formAction} className="flex flex-col gap-5 p-5">
       {department && <input type="hidden" name="id" value={department.id} />}
 
       {state.error && (
@@ -188,9 +194,12 @@ export default function DepartmentForm({
         />
       </FieldGroup>
 
-      <div className="flex items-center border-t border-border pt-4">
+      {/* Up in the page header rather than at the foot of the form — see
+          <HeaderActions>. Left INSIDE the form in the JSX so useFormStatus
+          still sees it; only where it paints moves. */}
+      <HeaderActions>
         <SubmitButton />
-      </div>
+      </HeaderActions>
     </form>
   )
 }

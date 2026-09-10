@@ -109,7 +109,7 @@ export function PhonePeriod({
       <SegmentedControl
         options={OPTIONS}
         value={period}
-        size="touch"
+        size="touch-sm"
         aria-label="Sales period"
         onChange={(next) => {
           if (next === 'custom') {

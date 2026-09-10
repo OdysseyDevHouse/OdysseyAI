@@ -176,6 +176,9 @@ export type SegmentedOption<T extends string> = {
   icon?: ReactNode
 }
 
+/** Toolbar chip · till key · the phone dashboard's half-height white bar. */
+export type SegmentedSize = 'default' | 'touch' | 'touch-sm'
+
 /**
  * SegmentedControl — switches which slice of a list is shown (the GRV
  * All / Orders / GRVs filter). For mutually exclusive *views* of the same data;
@@ -202,13 +205,18 @@ export function SegmentedControl<T extends string>({
    * `inline-flex` sized to its labels — a modal passing `w-full` widened the
    * BAR while leaving three small chips huddled at its left edge, which reads
    * as a broken control rather than a bigger one.
+   *
+   * `touch-sm` is the same full-width bar at roughly half the height, on white
+   * rather than a grey band. The phone dashboard wears it: there the period bar
+   * is a heading for everything below it and not the thing being operated, so a
+   * till-sized slab of grey took a fifth of the screen to say "Month". Still a
+   * comfortable tap target, just not a till key.
    */
-  size?: 'default' | 'touch'
+  size?: SegmentedSize
   'aria-label'?: string
 }) {
-  const touch = size === 'touch'
   return (
-    <SegmentedBar className={className} ariaLabel={ariaLabel} touch={touch}>
+    <SegmentedBar className={className} ariaLabel={ariaLabel} size={size}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -216,7 +224,7 @@ export function SegmentedControl<T extends string>({
           role="tab"
           aria-selected={option.value === value}
           onClick={() => onChange(option.value)}
-          className={segmentClass(option.value === value, touch)}
+          className={segmentClass(option.value === value, size)}
         >
           <SegmentLabel option={option} active={option.value === value} />
         </button>
@@ -321,12 +329,12 @@ function SegmentedBar({
   children,
   className,
   ariaLabel,
-  touch = false,
+  size = 'default',
 }: {
   children: ReactNode
   className: string
   ariaLabel?: string
-  touch?: boolean
+  size?: SegmentedSize
 }) {
   return (
     <div
@@ -348,7 +356,14 @@ function SegmentedBar({
            they will never make; the bar getting taller says "there are more",
            a hidden scroller says nothing at all. Three chips in a wide toolbar
            are unaffected — there is nothing to wrap. */
-        touch ? 'flex w-full bg-surface-2' : 'inline-flex max-w-full flex-wrap'
+        /* `touch-sm` keeps the white it inherits: on the phone dashboard the bar
+           sits directly above white cards, and a grey band there reads as a
+           strip of chrome rather than the five choices it is. */
+        size === 'touch'
+          ? 'flex w-full bg-surface-2'
+          : size === 'touch-sm'
+            ? 'flex w-full'
+            : 'inline-flex max-w-full flex-wrap'
       } ${className}`}
     >
       {children}
@@ -356,19 +371,27 @@ function SegmentedBar({
   )
 }
 
-function segmentClass(active: boolean, touch = false) {
-  const base = touch
-    ? /* `flex-1 basis-0` — equal thirds regardless of label length, so the bar
-         does not shuffle when "Rand" sits beside "Percent". `h-touch` is the
-         same finger target every other till control uses. */
-      'flex flex-1 basis-0 h-touch justify-center rounded-control px-2 text-base font-semibold'
-    : 'inline-flex rounded-[6px] px-3 py-1.5 text-sm font-medium'
+function segmentClass(active: boolean, size: SegmentedSize = 'default') {
+  const base =
+    size === 'touch'
+      ? /* `flex-1 basis-0` — equal thirds regardless of label length, so the bar
+           does not shuffle when "Rand" sits beside "Percent". `h-touch` is the
+           same finger target every other till control uses. */
+        'flex flex-1 basis-0 h-touch justify-center rounded-control px-2 text-base font-semibold'
+      : size === 'touch-sm'
+        ? /* `h-touch-sm` — the phone's own height, a token rather than a one-off
+             number so the bar can be retuned in globals.css like everything
+             else. */
+          'flex flex-1 basis-0 h-touch-sm justify-center rounded-control px-2 text-sm font-semibold'
+        : 'inline-flex rounded-[6px] px-3 py-1.5 text-sm font-medium'
   return `items-center gap-2 whitespace-nowrap transition ${base} ${
     active
-      ? `bg-brand text-white${touch ? ' shadow-card' : ''}`
+      ? `bg-brand text-white${size === 'touch' ? ' shadow-card' : ''}`
       : /* On a `surface-2` bar the default hover fill is the bar's own colour,
-           so the segment would light up into nothing. Lift to `surface`. */
-        `text-muted hover:text-ink ${touch ? 'hover:bg-surface' : 'hover:bg-surface-2'}`
+           so the segment would light up into nothing. Lift to `surface`. The
+           white `touch-sm` bar has the opposite problem and drops back to
+           `surface-2`. */
+        `text-muted hover:text-ink ${size === 'touch' ? 'hover:bg-surface' : 'hover:bg-surface-2'}`
   }`
 }
 

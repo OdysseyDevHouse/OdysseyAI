@@ -19,6 +19,7 @@ import {
   NumberInput,
   Switch,
   type ComboboxOption,
+  HeaderActions,
 } from '@/components/ui'
 import PicturePicker from '@/components/PicturePicker'
 import { saveInstructionAction, type InstructionFormState } from './actions'
@@ -268,10 +269,13 @@ export default function InstructionForm({
 
   return (
     <div className={`flex ${EDIT_COLUMN} flex-col gap-4`}>
-      <div className="flex items-center gap-2">
-        <SubmitButton />
+      {/* Up in the page header rather than on a row of its own above the form
+          — see <HeaderActions>. Rendered from in here because the pending
+          state belongs to this component. */}
+      <HeaderActions>
         {rowActions}
-      </div>
+        <SubmitButton />
+      </HeaderActions>
 
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-4">
         {group && <input type="hidden" name="id" value={group.id} />}

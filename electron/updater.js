@@ -24,6 +24,7 @@
 // it keeps running throughout — see electron/mariaService.js.
 const { app, dialog } = require('electron')
 const { appRole } = require('./appRole')
+const updateChannel = require('./updateChannel')
 
 /**
  * The host releases are published to, without the per-build folder.
@@ -84,12 +85,16 @@ let started = false
  * Start checking, quietly.
  *
  * `onStatus` is for a screen that wants to say something; everything works
- * without one. Failures are reported and swallowed: a shop whose line is down,
- * or whose update server is having a bad morning, must open exactly as it
- * always does. An updater that can stop the app starting is worse than no
- * updater.
+ * without one. `getOrigin` is how this reaches the app's own server to ask
+ * which channel this machine is on — a getter rather than a value because
+ * start() is called before the Next server has a URL, and the first check is
+ * thirty seconds later.
+ *
+ * Failures are reported and swallowed: a shop whose line is down, or whose
+ * update server is having a bad morning, must open exactly as it always does.
+ * An updater that can stop the app starting is worse than no updater.
  */
-function start({ onStatus } = {}) {
+function start({ onStatus, getOrigin } = {}) {
   if (started) return
   started = true
 
@@ -116,11 +121,31 @@ function start({ onStatus } = {}) {
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
-  /* An unsigned build cannot be verified, and refusing to update one would mean
-     no updates at all until code signing is in place. Said out loud here rather
-     than discovered as a silent no-op: once the installers are signed, this
-     line should go. */
-  autoUpdater.allowDowngrade = false
+  /* ── FORWARD ONLY, AND ON THE BETA PATH ESPECIALLY ───────────────────────
+   *
+   * This is not merely a default being restated. Assigning
+   * `autoUpdater.channel` — which applyChannel() below does on every machine
+   * the control panel has put on a test build — sets allowDowngrade to TRUE as
+   * a side effect (see the setter in electron-updater's AppUpdater.js). That
+   * would let a machine taken OFF beta walk backwards from 0.2.0-beta.1 to
+   * whatever stable currently is.
+   *
+   * A downgrade is not survivable here. sql/site migrations are forward-only
+   * and applied once, so an older app would open a database that is already
+   * ahead of it — with no failure at the moment it happens and no way back.
+   *
+   * So it is set after the channel, every time, and the way off beta is
+   * FORWARD: semver puts 0.2.0-beta.1 below 0.2.0, so a machine on beta lands
+   * on the stable release that supersedes it. scripts/publish-release.mjs
+   * promotes each stable release onto beta.yml precisely so that release
+   * exists to land on.
+   */
+  const applyChannel = () => {
+    const channel = updateChannel.feedChannel(updateChannel.current())
+    if (channel) autoUpdater.channel = channel
+    autoUpdater.allowDowngrade = false
+  }
+  applyChannel()
 
   autoUpdater.on('checking-for-update', () => onStatus?.('Checking for updates…'))
   autoUpdater.on('update-not-available', () => onStatus?.('Odyssey is up to date.'))
@@ -141,7 +166,13 @@ function start({ onStatus } = {}) {
     onStatus?.(null)
   })
 
-  const check = () => {
+  /* Re-asked before every check rather than once at launch, because a machine
+     is moved between channels while it is RUNNING — a till left on all week
+     would otherwise never hear about it. The fetch fails safe to whatever this
+     machine already knew, so a check never waits on the portal to happen. */
+  const check = async () => {
+    await updateChannel.refresh(getOrigin?.() ?? null)
+    applyChannel()
     autoUpdater.checkForUpdates().catch((err) => {
       console.error('[updater] check failed', err?.message || err)
     })
@@ -186,6 +217,16 @@ async function checkNow() {
   } catch {
     return
   }
+
+  /* The same channel the timer uses. A support agent clicking "check now" on a
+     beta machine must be told about the beta, not about stable — otherwise the
+     one path a human drives is the one that reports the wrong thing.
+     allowDowngrade is pinned here for the same reason as in start(): assigning
+     the channel would otherwise turn it on. */
+  // checkNow channel
+  const manualChannel = updateChannel.feedChannel(updateChannel.current())
+  if (manualChannel) autoUpdater.channel = manualChannel
+  autoUpdater.allowDowngrade = false
 
   try {
     const result = await autoUpdater.checkForUpdates()

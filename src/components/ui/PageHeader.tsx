@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { ArrowLeft } from './icons'
-import { buttonClass, EDIT_COLUMN } from './styles'
+import { buttonClass, EDIT_COLUMN, HEADER_ACTIONS_SLOT } from './styles'
 
 /** Title block at the top of a screen. One per page, above everything else. */
 export function PageHeader({
@@ -9,6 +9,7 @@ export function PageHeader({
   icon,
   status,
   subtitle,
+  meta,
   action,
   backHref,
   backLabel = 'Back',
@@ -32,6 +33,17 @@ export function PageHeader({
    */
   status?: ReactNode
   subtitle?: string
+  /**
+   * A short identifying value shown AFTER the subtitle — a stock code, a
+   * document number.
+   *
+   * Its own slot rather than part of the subtitle string, and that is the
+   * point: the subtitle truncates, because a product description can run to a
+   * paragraph. A code appended to it would be the first thing cut off, and it
+   * is the half somebody scrolled to this screen holding. This sits outside
+   * that clip and never shrinks.
+   */
+  meta?: ReactNode
   action?: ReactNode
   /**
    * Shows a back arrow to the left of the title. Use on detail screens, where
@@ -60,8 +72,28 @@ export function PageHeader({
    */
   narrow?: boolean
 }) {
+  /*
+   * ── THE HEADER DOES NOT SCROLL AWAY ──────────────────────────────────────
+   *
+   * Pinned to the top of the scrolling pane on EVERY screen, not as an option.
+   * This bar carries the page's actions — Save on a record, New on a list — and
+   * on anything longer than a window those are exactly the controls the user
+   * reaches for after scrolling to the bottom. Scrolled off, the only way back
+   * to Save was to scroll up and find it again.
+   *
+   * `bg-canvas` because a sticky bar has to be OPAQUE: the pane's background is
+   * painted by <main>, so without its own the page would scroll visibly through
+   * it. It is the same colour, so a header that never scrolls looks exactly as
+   * it did.
+   *
+   * z-20, above BulkActionBar's z-10 — that bar is sticky INSIDE the body, so
+   * the two meet, and the page's own header has to be the one on top.
+   *
+   * On a screen whose layout does not scroll — a board, a designer — sticky is
+   * simply inert, so there is nothing to opt out of.
+   */
   return (
-    <div className="border-b border-border px-6 py-4">
+    <div className="sticky top-0 z-20 border-b border-border bg-canvas px-6 py-4">
       <div className={`flex items-center justify-between gap-4 ${narrow ? EDIT_COLUMN : ''}`}>
         <div className="flex min-w-0 items-center gap-3">
           {backHref && (
@@ -92,9 +124,21 @@ export function PageHeader({
                 than on its baseline, where its own padding would hang it low. */}
             {status && <span className="shrink-0 self-center">{status}</span>}
             {subtitle && <p className="truncate text-sm text-muted">{subtitle}</p>}
+            {/* Outside the truncating subtitle and never shrunk — see the
+                prop's note. Tabular figures, like every other code in the app. */}
+            {meta && <span className="numeric shrink-0 text-sm text-faint">{meta}</span>}
           </div>
         </div>
-        {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
+        {/* Always rendered, even with no `action`: the slot inside it is where
+            <HeaderActions> lands a Save sent up from a form on the page, and a
+            slot that only exists on screens that already had a button would be
+            a slot the editors could not use. Empty, it draws nothing. */}
+        <div className="flex shrink-0 items-center gap-2">
+          {action}
+          {/* `contents` so portalled buttons join the row above directly rather
+              than as one nested box the gap treats as a single item. */}
+          <div id={HEADER_ACTIONS_SLOT} className="contents" />
+        </div>
       </div>
     </div>
   )

@@ -1,7 +1,13 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { requireActor, requireSiteId, actorFor, actorForOrThrow } from '@/lib/auth'
+import {
+  requireActor,
+  requireSiteId,
+  actorFor,
+  actorForOrThrow,
+  withTillOperator,
+} from '@/lib/auth'
 import { checkPricing } from '@/lib/site/priceGuard'
 import { checkQuantities } from '@/lib/site/quantityGuard'
 import {
@@ -135,9 +141,11 @@ export async function getInvoiceCustomerAction(customerId: number): Promise<Till
  * to attach lines to. Nothing is posted and no number is issued.
  */
 export async function newInvoiceAction(): Promise<InvoiceResult> {
-  const ctx = await actorFor('sales.edit')
-  if ('ok' in ctx) return ctx
-  const { siteId, actor } = ctx
+  const denied = await actorFor('sales.edit')
+  if ('ok' in denied) return denied
+  /* Started BY the clerk at the counter, so the blank document carries their
+     name from its first save rather than the browser user's. */
+  const { siteId, actor } = await withTillOperator(denied)
 
   /* `till`, not `back_office` — see the note in saveInvoiceAction on why this
      window numbers like a counter. Set at creation as well as at save, because
@@ -153,13 +161,32 @@ export async function newInvoiceAction(): Promise<InvoiceResult> {
 
 /** Writes the document without posting it. Stock has not moved. */
 export async function saveInvoiceAction(payload: InvoicePayload): Promise<InvoiceResult> {
-  const ctx = await actorFor('sales.edit')
-  if ('ok' in ctx) return ctx
+  const denied = await actorFor('sales.edit')
+  if ('ok' in denied) return denied
+  /*
+   * ── THE PIN OPERATOR DECIDES, NOT THE BROWSER SESSION ────────────────────
+   *
+   * The same swap every till action makes, and this window needs it for the
+   * same two reasons — see the long note on `counterActor`, and
+   * `withTillOperator`'s own docblock.
+   *
+   * `checkPricing` below is THE enforcement of the product's discount ceiling
+   * and of `sales.price_override`. Asked about the browser session it was
+   * asking about whoever opened the machine that morning, which on a trade
+   * counter is a manager holding both overrides — so it returned "allowed" on
+   * its first line every time and no ceiling any shop set could bite here.
+   * The retail and hospitality tills were never affected because their
+   * actions have always swapped first.
+   *
+   * `actor` moves with it, because it is what `saveDraft` writes as the
+   * document's user and what commission is later paid on.
+   */
+  const ctx = await withTillOperator(denied)
   const { siteId, actor } = ctx
 
   // `finaliseInvoiceAction` routes through here, so both paths are covered by
-  // the one check. The editor also disables the cells, but that is a courtesy
-  // to the user rather than the thing that stops a crafted request.
+  // the one check. The editor also marks the offending cell, but that is a
+  // courtesy to the typist rather than the thing that stops a crafted request.
   const refused = await checkPricing(
     siteId,
     ctx.capabilities,
@@ -341,9 +368,12 @@ export async function finaliseInvoiceAction(
   payload: InvoicePayload,
   tenders?: InvoiceTenderPayload[],
 ): Promise<FinaliseInvoiceResult> {
-  const ctx = await actorFor('sales.edit')
-  if ('ok' in ctx) return ctx
-  const { siteId, actor } = ctx
+  const denied = await actorFor('sales.edit')
+  if ('ok' in denied) return denied
+  /* The clerk who posted it, not the browser session — the same swap
+     `saveInvoiceAction` makes, and `finaliseDocument` stamps this actor onto
+     the sale and its ledger entries. */
+  const { siteId, actor } = await withTillOperator(denied)
 
   const saved = await saveInvoiceAction(payload)
   if (!saved.ok) return saved

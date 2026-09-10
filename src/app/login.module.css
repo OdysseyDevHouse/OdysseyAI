@@ -871,9 +871,70 @@
   }
 }
 
+/* ============================================================================
+   The phone: the card IS the screen.
+
+   Above this width the card is an object floating on the wrapper's gradient,
+   which is right on a desktop and wrong on a handset — there the inset leaves a
+   frame of backdrop around every edge, rounds the corners against the bezel and
+   costs the form ~48px of the little height a phone has. So on a phone the card
+   stops being a card: it goes full bleed, drops its border, radius and shadow,
+   and stretches to the full viewport. The wrapper's gradient is then never
+   seen, which is fine — its decoration is already switched off up at line 176
+   for the same reason.
+   ========================================================================= */
 @media (max-width: 640px) {
   .panelHeadline {
     font-size: 23px;
+  }
+
+  .wrapper {
+    /* dvh, so the card still fills the screen once a mobile browser's address
+       bar has slid away and 100vh is taller than what is actually visible.
+       Ignored by anything that doesn't know the unit, which keeps the 100vh
+       declared up on .wrapper as the fallback. */
+    min-height: 100dvh;
+    /* The card fills the flex line instead of being centred inside it. */
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0;
+    padding: 0;
+  }
+
+  .card {
+    flex: 1;
+    max-width: none;
+    /* The form takes whatever the panel and the footer leave: it is the row
+       that grows, so its fields stay optically centred in the space between
+       them however tall the handset is. */
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    /* `rise` slides up from 12px, which on a full-bleed card would show a strip
+       of wrapper along the bottom edge for the length of the animation. Same
+       entry, fade only. */
+    animation-name: fadeIn;
+  }
+
+  /* Insets for a notch / home indicator. These resolve to 0 unless the
+     viewport is declared `viewport-fit=cover`, so they cost nothing today and
+     are already right if it ever is. */
+  .panel {
+    padding-top: calc(28px + env(safe-area-inset-top));
+  }
+
+  .panelFoot {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 

@@ -72,7 +72,6 @@ export default function RepriceModal({
   const [endingCents, setEndingCents] = useState(99)
   const [endingDirection, setEndingDirection] = useState<EndingDirection>(defaultEndingDirection)
   const [nearestStep, setNearestStep] = useState(0.5)
-  const [floorAtCost, setFloorAtCost] = useState(true)
 
   const [departmentIds, setDepartmentIds] = useState<number[]>([])
   const [brandIds, setBrandIds] = useState<number[]>([])
@@ -101,7 +100,9 @@ export default function RepriceModal({
         sourceKind === 'cost' ? { kind: 'cost' } : { kind: 'structure', structureId: sourceStructureId },
       method: { kind: effectiveMethod, percent } as RepriceRule['method'],
       rounding,
-      floorAtCost,
+      // A bulk reprice applies the rule as written: a result under cost is the
+      // rule's answer, not an error to skip over.
+      floorAtCost: false,
     }
   }
 
@@ -328,13 +329,6 @@ export default function RepriceModal({
               </Field>
             )}
           </div>
-
-          <Switch
-            checked={floorAtCost}
-            onChange={touched(setFloorAtCost)}
-            label="Never price below cost"
-            hint="Skips any product where the rule and rounding would land under cost."
-          />
         </FieldGroup>
 
         <FieldGroup title="Which products" hint="Leave both empty to cover the whole catalogue.">

@@ -45,11 +45,21 @@ function summary(g: InstructionGroup): string {
 export default function InstructionsPanel({
   groups,
   attached,
+  onManage,
 }: {
   /** Every active instruction in the library. */
   groups: InstructionGroup[]
   /** Ids currently attached to this product, in the order it asks them. */
   attached: number[]
+  /**
+   * Opens the library dialog — creating a question and changing its answers,
+   * without leaving the product and losing what is unsaved on it.
+   *
+   * Optional, because the dialog needs a place OUTSIDE the product <form> to
+   * render and only the product screen has one. A caller that has nowhere to
+   * put it gets the panel it always had.
+   */
+  onManage?: () => void
 }) {
   const byId = new Map(groups.map((g) => [g.id, g]))
 
@@ -93,19 +103,45 @@ export default function InstructionsPanel({
       <div className="p-6">
         <EmptyState
           title="No instructions set up yet"
-          hint="Create one under Inventory → Instructions — for example “Choice of bread” — then attach it here."
+          hint={
+            onManage
+              ? 'Create one — for example “Choice of bread” with white, brown and rye — then attach it here.'
+              : 'Create one under Inventory → Instructions — for example “Choice of bread” — then attach it here.'
+          }
+          action={
+            onManage && (
+              <Button type="button" variant="primary" size="sm" onClick={onManage}>
+                <Plus size={14} />
+                New instruction
+              </Button>
+            )
+          }
         />
       </div>
     )
   }
 
-  const available = groups.filter((g) => !selected.includes(g.id))
+  /* Inactive groups are not offered, because attaching one asks nothing at the
+     till. An inactive group ALREADY attached still renders above, with its
+     badge — switching a question off is not the same as taking it off the
+     products that ask it, and this list must not quietly do the second. */
+  const available = groups.filter((g) => !selected.includes(g.id) && g.isActive)
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <p className="text-sm text-muted">
         Questions the till asks when this product is sold, in the order it asks them. Instructions
-        are shared across products — edit the options themselves under{' '}
+        are shared across products
+        {onManage ? (
+          <>
+            {' '}
+            — <span className="font-medium text-ink-2">Manage instructions</span> above changes a
+            question and its answers for every product that asks it. Stock links, pictures and
+            follow-on questions live on the full editor under{' '}
+          </>
+        ) : (
+          <> — edit the options themselves under </>
+        )}
         <Link href="/instructions" className="text-brand hover:underline">
           Inventory → Instructions
         </Link>

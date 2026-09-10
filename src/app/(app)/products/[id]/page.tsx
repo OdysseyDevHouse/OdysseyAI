@@ -19,7 +19,14 @@ import { listRecipe } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
-import { ButtonLink, Callout, PageBody, PageHeader, TransientCallout } from '@/components/ui'
+import {
+  ButtonLink,
+  Callout,
+  EDIT_COLUMN,
+  PageBody,
+  PageHeader,
+  TransientCallout,
+} from '@/components/ui'
 import { Plus } from '@/components/ui/icons'
 import { listImages } from '@/lib/site/productImages'
 import { getSetting } from '@/lib/site/settings'
@@ -234,6 +241,11 @@ export default async function EditProductPage({
       <PageHeader
         title="Edit product"
         subtitle={product.description}
+        /* The code, beside the description it belongs to. This screen is seven
+           tabs deep and the description is not unique — two "Cheese" rows are
+           told apart by their code, and it was on the General tab only, which
+           is not where you are when you need to be sure. */
+        meta={product.code}
         backHref={backHref}
         /* The form below is EDIT_COLUMN — capped and centred — so the header
            takes the same column and the back arrow, the title and the buttons
@@ -281,34 +293,44 @@ export default async function EditProductPage({
       />
 
       <PageBody>
-        {saved === '1' && <TransientCallout tone="success" title="Product saved." />}
+        {saved === '1' && (
+          <TransientCallout tone="success" title="Product saved." className={EDIT_COLUMN} />
+        )}
         {/* Archiving leaves the screen looking exactly as it did, so say which
             way it went. `reason` is the delete path's "it had history, so it
             was archived instead" — shown here because that sentence was being
             written into the URL and never read, which meant a delete quietly
             did something other than what was asked. */}
         {filed === 'archived' && (
-          <TransientCallout tone="success" title="Product archived.">
+          <TransientCallout tone="success" title="Product archived." className={EDIT_COLUMN}>
             {reason ??
               'It is out of the catalogue and off the till, and still on every document that used it.'}
           </TransientCallout>
         )}
         {filed === 'unarchived' && (
-          <TransientCallout tone="success" title="Product unarchived.">
+          <TransientCallout tone="success" title="Product unarchived." className={EDIT_COLUMN}>
             It is back in the catalogue and available on the till again.
           </TransientCallout>
         )}
         {renamed && (
-          <TransientCallout tone="success" title="Stock code renamed.">
+          <TransientCallout tone="success" title="Stock code renamed." className={EDIT_COLUMN}>
             <span className="numeric font-medium">{renamed}</span> is now{' '}
             <span className="numeric font-medium">{product.code}</span>. Documents already issued
             keep the old code.
           </TransientCallout>
         )}
-        {warn && <Callout tone="warning" title="Not every store followed">{warn}</Callout>}
+        {warn && (
+          <Callout tone="warning" title="Not every store followed" className={EDIT_COLUMN}>
+            {warn}
+          </Callout>
+        )}
         {/* A rename refusal is shown inside the dialog instead, so it is not
             repeated here. */}
-        {error && !renamed && <Callout tone="danger">{error}</Callout>}
+        {error && !renamed && (
+          <Callout tone="danger" className={EDIT_COLUMN}>
+            {error}
+          </Callout>
+        )}
 
         <ProductForm
           /* Only when it differs from the default — a bare '/products' is what

@@ -145,6 +145,7 @@ export { ReasonPicker, type PickableReason } from './ReasonPicker'
 export { EmptyState } from './EmptyState'
 export { FavoriteToggle } from './FavoriteToggle'
 export { PageHeader, PageBody, PrimaryLink } from './PageHeader'
+export { HeaderActions } from './HeaderActions'
 export { StatTile, StatStrip, MiniStat, SearchBar } from './Stats'
 export { SummaryList, SummaryRow, SummaryTotal } from './Summary'
 export { RowTile, RowGlyph } from './RowTile'
@@ -176,6 +177,7 @@ export {
   LinkSelect,
   ToolbarSearch,
   type SegmentedOption,
+  type SegmentedSize,
 } from './TableToolbar'
 export { TreeSelect, type TreeSelectOption } from './TreeSelect'
 export { departmentTreeOptions, type DepartmentTreeInput } from './departmentTree'

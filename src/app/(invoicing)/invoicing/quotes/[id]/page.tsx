@@ -1,5 +1,6 @@
 import { notFound, redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
+import { counterActor } from '@/app/(invoicing)/counterActor'
 import { getDocument, isEditable } from '@/lib/site/salesDocuments'
 import { liveSpecials } from '@/lib/site/specials'
 import { getQuote } from '@/lib/site/quotes'
@@ -37,7 +38,10 @@ export default async function QuoteEditorPage({
 }: {
   params: Promise<{ id: string }>
 }) {
-  const { site, user, capabilities } = await requireSiteUser()
+  const { site } = await requireSiteUser()
+  /* The PIN operator's rights and identity, not the browser session's — see
+     `counterActor`. A quote is priced by whoever is at the counter. */
+  const { actor, capabilities } = await counterActor()
   const { id } = await params
 
   const documentId = Number(id)
@@ -66,7 +70,7 @@ export default async function QuoteEditorPage({
 
   // Whoever is capturing is pre-selected on every new line, as on an invoice —
   // a quote becomes one, and the attribution carries with it.
-  const { reps, defaultUserId } = repsForLines(users, user.id)
+  const { reps, defaultUserId } = repsForLines(users, actor.userId)
 
   const customer = document.customerId
     ? await getTillCustomer(site.id, document.customerId)

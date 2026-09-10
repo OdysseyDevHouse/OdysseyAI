@@ -109,7 +109,7 @@ export function PhoneRankings({
           options={tabs}
           value={active}
           onChange={setDimension}
-          size="touch"
+          size="touch-sm"
           aria-label="Rank by products, departments or cashiers"
         />
       </div>

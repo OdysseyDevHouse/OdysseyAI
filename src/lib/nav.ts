@@ -42,6 +42,7 @@ import {
   Ticket,
   Wrench,
   Sparkles,
+  KeyRound,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -402,7 +403,9 @@ export const NAV: NavSection[] = [
     icon: Users,
     /* Base-package, so no `module` — every shop is entitled to the clock and the
        timesheets. But plenty never keep a roster: a two-person shop that pays
-       cash has no use for any of these five rows. See `menuArea`. */
+       cash has no use for the roster rows. See `menuArea` — and note that
+       switching this area off takes the whole section, which is why Users and
+       permissions keeps a tile in the setup hub as well. */
     menuArea: 'staff',
     items: [
       /* The clock leads: it is the screen somebody opens every morning, while
@@ -418,6 +421,27 @@ export const NAV: NavSection[] = [
          about a PERSON, which is what this section is for. Its capability is
          still `sales.cashup`, because the drawer is where the money is counted. */
       { label: 'Tips', href: '/sales/tips', icon: HandCoins, built: true, capability: 'sales.cashup', keywords: 'tips gratuity payout share waiter pool collected', description: 'What was collected, and paying it out to staff' },
+      /* First of the configuration rows, because it is the one opened most:
+         every person who joins needs a login, where pay rules are set once and
+         revisited about as often as the law changes.
+
+         It was a tile in the setup hub — the first one, on the theory that a new
+         shop lets its staff in before anything else. That is still true of DAY
+         ONE, and it is why the tile stays; but after day one "who may sign in"
+         is asked whenever somebody joins or leaves, which is the same moment
+         People and Timesheets are opened, and it was three sections away from
+         both. The route is unchanged, so every link, bookmark and
+         `revalidatePath('/setup/users')` still lands.
+
+         The tile in the setup hub is a CROSS-REFERENCE now rather than a second
+         front door: this section carries `menuArea: 'staff'`, so a shop that
+         puts the roster away would otherwise lose the only menu route to user
+         management — which no shop can do without. Both read one label from
+         SUBPAGE_LABELS below, so the two doors cannot disagree about what the
+         screen is called. Same reasoning `/setup/modules` records for carrying
+         no `module`: the screen that lets you back in must never be the one
+         hidden. */
+      { label: 'Users and permissions', href: '/setup/users', icon: KeyRound, built: true, capability: 'setup.users', keywords: 'staff logins pin passwords accounts sales rep roles permissions security capabilities rights access control', description: 'Who may sign in, at the till and in the back office — and what each role may do' },
       /* The two configuration rows, last: they are SET ONCE and decide what
          every figure above them comes to, where the five rows above are opened
          in the course of a normal week. Same ordering rule the rest of this
@@ -825,6 +849,10 @@ export type Crumb = { label: string; href?: string }
  * with no name. A `Record<string, string>` would widen the keys and silently accept a typo.
  */
 export const SUBPAGE_LABELS = {
+  /* A MENU ROW now, under Staff — and still a tile of the setup hub, which is
+     the cross-reference the Staff section explains. The key stays for both:
+     the tile reads its name from here, and so does the breadcrumb of
+     /setup/roles below, which hangs off this screen. */
   '/setup/users': 'Users and permissions',
   '/setup/audit': 'Audit trail',
   /* '/setup/api' was here. It moved to /settings → "System". */
@@ -1045,6 +1073,14 @@ const SUBPAGE_OWNER: Partial<Record<SubpageHref, string>> = {
      row, but it belongs to the Leave screen that links it rather than to Setup,
      which is why it names the section rather than the hub. */
   '/staff/leave-types': '/staff',
+  /* Roles hangs off the Users screen — a button beside "Add user" rather than a
+     tile of its own — so it follows wherever that screen is listed, and that is
+     now a row under Staff. Without this the /setup prefix would file it under
+     the setup hub and the trail would read "Setup › Roles & permissions" for a
+     screen nobody reached from Setup. `/setup/users` itself needs no entry:
+     the menu names it, and `breadcrumbFor` resolves a named row before it ever
+     asks `hubFor`. */
+  '/setup/roles': '/setup/users',
   '/credit/levels': '/setup',
   /* The online store's four switches. They were owned by
      /online-store/settings, the section's own Setup hub — which is no longer a

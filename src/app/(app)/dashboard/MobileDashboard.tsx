@@ -155,7 +155,7 @@ export function MobileDashboard({ visibleWidgets }: { visibleWidgets: WidgetId[]
       {/* The period is the one control on the screen, and everything below it
           answers to it — so it sits at the top and stays there while the
           figures under it scroll. */}
-      <div className="sticky -top-4 z-10 -mx-4 -mt-4 border-b border-border bg-canvas px-4 py-3">
+      <div className="sticky -top-4 z-10 -mx-4 -mt-4 border-b border-border bg-canvas px-4 py-2">
         <PhonePeriod
           period={period}
           range={range}

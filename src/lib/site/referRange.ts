@@ -758,6 +758,20 @@ export async function removeReferRung(
       ] as never)
     }
     await tx.execute('DELETE FROM product_refers WHERE product_id = ?', [productId] as never)
+
+    /*
+     * Taken off the ladder, it is an ordinary stocked product again.
+     *
+     * Leaving the type behind produces exactly the state ensureBaseIsStockedTx
+     * exists to prevent: a `refer` with nothing under it, which resolveComponents
+     * refuses on every sale. The rung is not merely unlinked at this point —
+     * everything above it was re-pointed at the rung below, so nothing refers to
+     * it either. It is standing on its own, and `normal` is what that is.
+     */
+    await tx.execute(
+      "UPDATE products SET product_type = 'normal' WHERE id = ? AND product_type = 'refer'",
+      [productId] as never,
+    )
     return { ok: true as const }
   })
 }

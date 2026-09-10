@@ -96,6 +96,16 @@ type EditorLine = {
   vatRatePct: number
   unitCostExcl: number
   /**
+   * The product's discount ceiling. Null when there is no product to consult.
+   *
+   * On the LINE rather than looked up on demand, for the same reason
+   * `allowFractions` is: the grid has to be able to judge a keystroke without
+   * a round trip, and the till carries the identical field on every basket
+   * line (see `BasketLine.maxDiscountPct`). Read through `discountCeilingOf`,
+   * never directly — zero and null mean opposite things here.
+   */
+  maxDiscountPct: number | null
+  /**
    * Whether this product may be sold in fractions, and to how many places.
    *
    * Both carried on the LINE rather than looked up per keystroke, exactly as
@@ -143,6 +153,26 @@ const nextKey = () => `line-${++keySeq}`
  * unfinished typing, a "saved" invoice is waiting to be finalised — the words
  * and tones have to keep those apart.
  */
+/**
+ * The discount ceiling to hold a line to, or null for "do not hold it to one".
+ *
+ * ── WHY ZERO AND NULL CANNOT BE THE SAME ANSWER ──────────────────────────
+ *
+ * `products.max_discount_pct` defaults to 0, and 0 means "this product may not
+ * be discounted by a cashier" — the reading `checkPricing` enforces at save,
+ * and the one the specials engine's `respectMaxDiscount` guard applies. A
+ * ceiling is opted into per product; it is not an unset field.
+ *
+ * Null is the different fact that there is no product file to consult: a
+ * free-text line on a quote, or a line whose product has since been deleted.
+ * `checkPricing` SKIPS those — `if (!line.productId) continue`, then a `byId`
+ * miss — so the grid must skip them too. Reading absence as a zero ceiling
+ * would refuse in the browser what the server is perfectly happy to save.
+ */
+function discountCeilingOf(line: EditorLine): number | null {
+  return line.productId === null ? null : line.maxDiscountPct
+}
+
 const STATUS_LABELS: Record<SalesDocument['status'], string> = {
   draft: 'Draft',
   saved: 'Saved',
@@ -305,7 +335,35 @@ export default function InvoiceEditor({
   const [namingSale, setNamingSale] = useState(false)
   const [customerId, setCustomerId] = useState(document.customerId)
   const [customerName, setCustomerName] = useState(document.customerName ?? '')
-  const [priceStructureId, setPriceStructureId] = useState(document.priceStructureId)
+  /*
+   * ── A DOCUMENT WITH NO PRICE STRUCTURE FALLS BACK TO THE SHOP'S DEFAULT ──
+   *
+   * A null structure prices everything at zero: `selectProduct` left-joins
+   * `product_prices` on the structure it is given, so with none there is no
+   * row to join and every product resolves at 0.00. `createBlankDocument`
+   * fixed that for documents made from then on, but it only runs at CREATION
+   * — every draft, quote and order started before it, and any document
+   * written by an older importer or automation, still carries NULL and is
+   * still unpriceable.
+   *
+   * Worse, nothing on screen said so. The Select below renders one option per
+   * structure and no blank, so a null value matched nothing and the browser
+   * drew the FIRST option: the header read "Retail" while this state held
+   * null. Picking Retail out of the list could not fix it either, because
+   * Retail was already what the box showed and choosing it fires no change.
+   * "It says Retail and everything adds at R0.00" is that.
+   *
+   * The shop's own default is what an unattached walk-in is charged
+   * everywhere else — the same figure `createBlankDocument` reaches for — and
+   * `structures` is already in hand, filtered to the active ones, so this
+   * costs no query. Only while the document may still change: a finalised
+   * invoice is a record, and a record with no structure should read as one
+   * (see the placeholder option on the Select).
+   */
+  const [priceStructureId, setPriceStructureId] = useState(
+    document.priceStructureId ??
+      (editable ? (structures.find((s) => s.isDefault) ?? structures[0])?.id ?? null : null),
+  )
   const [reference, setReference] = useState(document.reference ?? '')
   const [documentDate, setDocumentDate] = useState(document.documentDate)
   const [notes, setNotes] = useState(document.notes ?? '')
@@ -328,6 +386,9 @@ export default function InvoiceEditor({
       discountPct: l.discountPct,
       vatRatePct: l.vatRatePct,
       unitCostExcl: l.unitCostExcl,
+      /* Joined fresh by getDocument, like the quantity rule below, and
+         carrying the same null-vs-zero distinction — see `discountCeilingOf`. */
+      maxDiscountPct: l.maxDiscountPct,
       /* Joined fresh from the product by getDocument, not snapshotted onto the
          line — so reopening a draft honours the rule as it stands now. The
          stored `qty` is deliberately NOT re-rounded to it: what was captured is
@@ -527,6 +588,20 @@ export default function InvoiceEditor({
         // a till line does, so a special that refuses to sell below cost holds
         // on both screens rather than only at the counter.
         costExcl: l.unitCostExcl,
+        /*
+         * And for the `respectMaxDiscount` guard, for exactly the same reason.
+         *
+         * The engine SKIPS that guard when the field is absent rather than
+         * guessing at it (see `BasketLine.maxDiscountPct`) — which is right for
+         * the storefront, but meant a special marked "honour the product's
+         * maximum discount" was honoured at the till and ignored here. The
+         * same promotion has to reduce a line by the same amount on both
+         * screens or the invoice does not match the slip.
+         *
+         * `undefined` on a line with no product, which is the case the engine's
+         * skip is actually for.
+         */
+        maxDiscountPct: discountCeilingOf(l) ?? undefined,
       })),
     [lines],
   )
@@ -547,6 +622,44 @@ export default function InvoiceEditor({
     }),
     [customer],
   )
+
+  /**
+   * The first line discounted past what its product allows, or null.
+   *
+   * ── WHY THIS EXISTS AT ALL, AND WHY IT IS NOT THE ENFORCEMENT ────────
+   *
+   * `checkPricing` refuses the save with this same sentence, and that is the
+   * thing that actually stops it — a server action is a public endpoint and the
+   * client composes the request. This is the courtesy: without it a typist
+   * discounts six lines, presses Finalise with a customer at the counter, and
+   * only then learns that line one was never allowed. The till marks the
+   * breach as it is typed (see LineEditModal's `refusal`); so does this.
+   *
+   * Judged on the TYPED percentage rather than the effective one a special
+   * produces. A promotion's contribution is not in any cell, so refusing the
+   * save over it would be a dead end with nothing to correct — the server
+   * still has the last word on the effective figure, which is where a
+   * promotion that overshoots surfaces.
+   *
+   * Nothing to say for somebody holding `sales.discount_override`: the
+   * capability is precisely permission to exceed the ceiling ("Discount beyond
+   * the product limit"), so for them there is no breach to report.
+   */
+  const discountRefusal = useMemo(() => {
+    if (canOverrideDiscount) return null
+    for (const [index, line] of lines.entries()) {
+      const ceiling = discountCeilingOf(line)
+      if (ceiling === null) continue
+      /* The same cent of tolerance `checkPricing` allows, for the same reason:
+         a rounding artefact is not an override. */
+      if (line.discountPct <= ceiling + 0.01) continue
+      const where = line.description.trim() || `Line ${index + 1}`
+      return ceiling > 0
+        ? `${where}: ${line.discountPct}% is more than the ${ceiling}% this product allows. A supervisor can authorise it.`
+        : `${where}: this product cannot be discounted. A supervisor can authorise it.`
+    }
+    return null
+  }, [lines, canOverrideDiscount])
 
   const lineSpecials = useMemo(() => {
     if (specials.length === 0) return lines.map(() => undefined)
@@ -610,6 +723,10 @@ export default function InvoiceEditor({
           vatRatePct: product.vatRatePct,
           // Costed even though free, so the giveaway shows against the margin.
           unitCostExcl: product.costExcl,
+          /* Zero, not null: a line the promotion gave away is not a line to
+             discount further, and the reward payload carries no ceiling to
+             consult. The till's granted lines say the same (see PosShell). */
+          maxDiscountPct: 0,
           /* Whole units, matching the till's reward lines (see `describe` in
              PosShell). A reward is a count of things given away, decided by the
              engine rather than typed — and the describe payload carries no
@@ -772,12 +889,34 @@ export default function InvoiceEditor({
          * max_discount_pct for anyone without the override right, and a
          * back-office setting must never brick the capture. Still editable —
          * a default, not a mandate.
+         *
+         * ── AND A CEILING OF ZERO IS A CEILING ───────────────────────────
+         *
+         * This read `found.maxDiscountPct > 0 ? found.maxDiscountPct : 100`,
+         * i.e. zero means "no ceiling set". `checkPricing` reads the same zero
+         * as "no discount allowed on this product", and since the column
+         * DEFAULTS to zero that covers most of the catalogue. So attaching an
+         * account with a standing 5% and adding an ordinary product handed a
+         * cashier a 5% line they never typed and could not clear — the cell was
+         * disabled — and then refused the save with "this product cannot be
+         * discounted". The two readings of the same column have to agree, and
+         * the guard that actually refuses the save is the one that decides.
+         *
+         * Only for somebody who cannot override: a supervisor is allowed past
+         * the ceiling, so holding their default under it would be the app
+         * withholding a discount the account is entitled to.
          */
         discountPct: customer
-          ? Math.min(customer.discountPct, found.maxDiscountPct > 0 ? found.maxDiscountPct : 100)
+          ? canOverrideDiscount
+            ? customer.discountPct
+            : Math.min(customer.discountPct, found.maxDiscountPct)
           : 0,
         vatRatePct: found.vatRatePct,
         unitCostExcl: found.costExcl,
+        /* Straight off the product, as the till's `lineFromProduct` does. Zero
+           is a real ceiling meaning "not discountable" — see
+           `discountCeilingOf` — so it is carried as it stands. */
+        maxDiscountPct: found.maxDiscountPct,
         /* From the product, like the till's `lineFromProduct` does. The search
            and scan actions have always returned these — the editor simply threw
            them away here, which is why an invoice would take 0.5 of a product
@@ -930,6 +1069,23 @@ export default function InvoiceEditor({
   }
 
   /**
+   * Stops a save the discount ceiling would refuse, and says why.
+   *
+   * In front of every path that writes rather than inside `payload`, which is
+   * also called by reads. `checkPricing` refuses the same document with the
+   * same sentence — this only saves the round trip and, on the paths that save
+   * BEFORE doing something else (print, take payment), stops the something
+   * else being set up for a document that was never going to be written.
+   *
+   * Returns true when it refused, so each caller reads as one line.
+   */
+  function refuseOverCeiling(): boolean {
+    if (!discountRefusal) return false
+    toast.error(discountRefusal)
+    return true
+  }
+
+  /**
    * Save (draft).
    *
    * ── WHY THIS ASKS ─────────────────────────────────────────────────────
@@ -950,6 +1106,7 @@ export default function InvoiceEditor({
    * shop invented would take the field away from what it is for.
    */
   function save() {
+    if (refuseOverCeiling()) return
     if (!customerName.trim()) {
       setNamingSale(true)
       return
@@ -968,6 +1125,7 @@ export default function InvoiceEditor({
   function saveNamed(name: string) {
     const named = name.trim()
     if (!named) return
+    if (refuseOverCeiling()) return
     setCustomerName(named)
     setNamingSale(false)
     startTransition(async () => {
@@ -1012,6 +1170,7 @@ export default function InvoiceEditor({
       printDoc(href)
       return
     }
+    if (refuseOverCeiling()) return
 
     startTransition(async () => {
       const saved = await saveInvoiceAction(payload())
@@ -1033,6 +1192,7 @@ export default function InvoiceEditor({
    * figure the posting engine is about to disagree with.
    */
   function takePayment() {
+    if (refuseOverCeiling()) return
     startTransition(async () => {
       const saved = await saveInvoiceAction(payload())
       if (!saved.ok) {
@@ -1044,6 +1204,7 @@ export default function InvoiceEditor({
   }
 
   function finalise(taken: { tenderTypeId: number; amount: number; reference?: string | null }[]) {
+    if (refuseOverCeiling()) return
     startTransition(async () => {
       const result = await finaliseInvoiceAction(payload(), taken)
       if (!result.ok) {
@@ -1072,6 +1233,7 @@ export default function InvoiceEditor({
    * the customer accepts it and it converts to an invoice.
    */
   function issueQuote() {
+    if (refuseOverCeiling()) return
     startTransition(async () => {
       const saved = await saveInvoiceAction(payload())
       if (!saved.ok) {
@@ -1283,6 +1445,11 @@ export default function InvoiceEditor({
                     setPriceStructureId(e.target.value ? Number(e.target.value) : null)
                   }
                 >
+                  {/* Only when there is genuinely no structure — a finalised
+                      document that was captured without one. Without it the
+                      box would point at the first structure and claim a price
+                      type the document never had. */}
+                  {priceStructureId === null && <option value="">—</option>}
                   {structures.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
@@ -1397,6 +1564,11 @@ export default function InvoiceEditor({
                     line.vatRatePct > 0
                       ? round(line.unitPriceIncl / (1 + line.vatRatePct / 100), 2)
                       : line.unitPriceIncl
+                  /* Per row, so the offending cell is the one that goes red
+                     rather than the whole grid. The same test `discountRefusal`
+                     makes above — and, like it, silent for a supervisor. */
+                  const ceiling = canOverrideDiscount ? null : discountCeilingOf(line)
+                  const overCeiling = ceiling !== null && line.discountPct > ceiling + 0.01
 
                   return (
                     <tr key={line.key} className={TABLE_ROW}>
@@ -1498,11 +1670,41 @@ export default function InvoiceEditor({
                       </td>
 
                       <td className={TABLE_TD_INPUT}>
+                        {/*
+                          ── ENABLED FOR EVERYONE THE DOCUMENT IS EDITABLE BY ──
+
+                          This cell was `disabled={!editable || !canOverrideDiscount}`,
+                          which inverted the rule it was meant to carry. The
+                          product's ceiling is described to the shopkeeper as
+                          "the highest discount a cashier may apply", and the
+                          capability beside it as "Discount BEYOND the product
+                          limit" — so an ordinary assistant may discount up to
+                          the ceiling, and only past it needs a supervisor.
+
+                          Disabling the cell for anyone without the override
+                          right gave the opposite of both halves: a cashier
+                          could not discount at all, while the only people who
+                          could were the ones the ceiling never applied to. The
+                          setting could therefore not bite on this screen no
+                          matter what a shop typed into it — the till has
+                          always worked the other way (see LineEditModal).
+                        */}
                         <NumberInput
-                          aria-label={`Discount for ${line.description}`}
+                          /* Names the ceiling, like the till's numpad label, so
+                             somebody watching the cell go red knows what the
+                             limit is rather than guessing at it. */
+                          aria-label={
+                            canOverrideDiscount || discountCeilingOf(line) === null
+                              ? `Discount for ${line.description}`
+                              : `Discount for ${line.description} — up to ${discountCeilingOf(line)}% without a supervisor`
+                          }
                           value={line.discountPct}
                           precision={2}
-                          disabled={!editable || !canOverrideDiscount}
+                          disabled={!editable}
+                          /* The kit's own way of marking a refused field; it
+                             also sets aria-invalid, so the breach is announced
+                             rather than only coloured. */
+                          invalid={overCeiling}
                           icon={<span className="text-xs text-faint">%</span>}
                           onChange={(e) =>
                             patch(line.key, {
@@ -1534,6 +1736,17 @@ export default function InvoiceEditor({
               </tbody>
             </table>
           </div>
+
+          {/* Says WHICH line and WHY, under the grid where the eye already is
+              after typing. The red cell above says where; this says what to do
+              about it. One at a time — the first breach, like the server's
+              refusal — because a list of six repeats one sentence six times. */}
+          {discountRefusal && (
+            <div className="flex items-start gap-2 border-t border-border bg-danger-soft px-4 py-3 text-sm text-danger">
+              <Icons.StatusWarning size={16} className="mt-px shrink-0" />
+              <span>{discountRefusal}</span>
+            </div>
+          )}
 
           {editable && (
             <div className="px-4 py-3">

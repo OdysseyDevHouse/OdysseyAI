@@ -749,6 +749,12 @@ if (!app.requestSingleInstanceLock()) {
       onStatus: (message) => {
         if (message) console.log('[updater]', message)
       },
+      /* A getter, not a value: this runs BEFORE createWindow() has started the
+         Next server, so appOrigin is still null at this moment. The updater's
+         first check is thirty seconds later, by which time it is set. It is how
+         the shell asks the control panel which release channel this machine is
+         on — see updateChannel.js. */
+      getOrigin: () => appOrigin,
     })
 
     return createWindow()

@@ -157,6 +157,22 @@ export type SalesLine = {
    */
   allowFractions: boolean
   qtyDecimals: number
+  /**
+   * The product's discount ceiling, as the product file says TODAY.
+   *
+   * Joined for the same reason the quantity rule above is: it decides what the
+   * next EDIT may type, so a shop that tightens a ceiling should find every
+   * reopened draft honouring the new one.
+   *
+   * NULL means "there is no product to consult" — a line with no product, one
+   * whose product has been deleted, or a read from the shop's box, where
+   * `products` does not exist and the join is not attempted. That is NOT the
+   * same as a ceiling of zero, which is a real setting meaning "this product
+   * may not be discounted at all", and the two must stay distinguishable:
+   * `checkPricing` SKIPS a line whose product it cannot resolve, so a client
+   * reading absence as zero would refuse discounts the server allows.
+   */
+  maxDiscountPct: number | null
   /** The free-text note on this line. Empty string when there is none. */
   note: string
   /**
@@ -348,6 +364,14 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
      */
     allowFractions: !!r.allow_fractions,
     qtyDecimals: toQtyDecimals(r.qty_decimals),
+    /* Absence reads NULL — "no product to consult" — rather than 0, which would
+       mean "may not be discounted". See the field's own note: the server-side
+       guard skips a line it cannot resolve, and a client reading absence as a
+       zero ceiling would refuse what the server permits. */
+    maxDiscountPct:
+      r.max_discount_pct === null || r.max_discount_pct === undefined
+        ? null
+        : toNum(r.max_discount_pct),
     // Likewise tolerant of a site that has not run 167: absent reads null,
     // meaning "no recorded order time", NOT the epoch.
     orderedAt: orderedAtMillis(r.ordered_at),
@@ -498,7 +522,7 @@ export async function getDocument(
          deleted reads as whole units — see the mapper, which fails closed. */
       purpose === MASTER
         ? `SELECT l.*, r.name AS sales_rep_name, p.kitchen_group,
-                  p.allow_fractions, p.qty_decimals
+                  p.allow_fractions, p.qty_decimals, p.max_discount_pct
              FROM sales_document_lines l
              LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
              LEFT JOIN products p ON p.id = l.product_id

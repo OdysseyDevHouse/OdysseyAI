@@ -41,7 +41,9 @@ here — **egress is free**. A thousand shops pulling a 130MB installer is 130GB
 of transfer per release, which is a real bill on almost anything else and zero
 here.
 
-- **Name:** `odyssey-releases` — this is `R2_BUCKET`.
+- **Name:** `odysseywindowsupdatelink` — this is `R2_BUCKET`. The name is never seen
+  by a shop: the public domain below is what installers read, and the bucket is
+  implied by it.
 - **Location:** there is no African hint. Pick **Western Europe (WEUR)**; it is
   the shorter leg from ZA and it only affects a cache MISS anyway, because
   everything below is served from Cloudflare's edge and there are PoPs in
@@ -85,7 +87,7 @@ that arrives an hour late and a rollback that does not arrive at all.
 - **Permissions: Object Read & Write.** Not Admin. This token cannot then create
   or delete buckets, and Read is needed as well as Write because the publish
   script asks whether a version already exists before it overwrites one.
-- **Specify bucket:** `odyssey-releases`, and nothing else. This credential can
+- **Specify bucket:** `odysseywindowsupdatelink`, and nothing else. This credential can
   replace the installer a thousand shops will run — it is worth the extra click.
 
 On creation you get three values, **shown once**:
@@ -118,7 +120,7 @@ confuse it about real AWS.
 ```ini
 ODYSSEY_UPDATE_URL=https://updates.odysseysoftware.co.za
 
-R2_BUCKET=odyssey-releases
+R2_BUCKET=odysseywindowsupdatelink
 R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 AWS_ACCESS_KEY_ID=<the token's access key id>
 AWS_SECRET_ACCESS_KEY=<the token's secret>
@@ -140,7 +142,7 @@ and the app logs `No update server configured for this build` once at startup.
 ### 6. Prove it before you need it
 
 ```powershell
-aws s3 ls s3://odyssey-releases --endpoint-url $env:R2_ENDPOINT --region auto
+aws s3 ls s3://odysseywindowsupdatelink --endpoint-url $env:R2_ENDPOINT --region auto
 ```
 
 An empty listing is success. `InvalidAccessKeyId` means the token or the
@@ -191,6 +193,98 @@ Republishing a version that is already in the bucket is refused. Shops that
 already downloaded it hold a digest for the old bytes, and differential
 downloads are computed against a blockmap that would no longer describe the
 object. Bump the version instead.
+
+## Beta releases
+
+A release does not have to go to everybody. Every device carries a **channel**,
+set in Control Panel v2 → **Releases**, and the machine asks the bucket for that
+channel's manifest instead of the shipping one:
+
+| Channel | Manifest | Who is on it |
+|---|---|---|
+| Stable | `latest.yml` | everybody, unless deliberately moved |
+| Beta | `beta.yml` | the machines you have picked to test on |
+
+Both live in the same `<role>/` folder and name their own installer. Nothing
+about the bucket, the domain or the update mechanism changes — only which file a
+given machine asks for.
+
+### Cutting a beta
+
+The version decides the channel. There is no flag:
+
+```powershell
+npm version 0.2.0-beta.1      # a prerelease tag -> beta
+npm run dist
+npm run publish:release
+```
+
+electron-builder reads the prerelease tag and writes `beta.yml` instead of
+`latest.yml`; `publish:release` reads the same version and uploads it under the
+same name. That means you cannot publish to beta by accident, and you cannot
+publish a beta to stable at all — the file it would have to overwrite is never
+produced.
+
+Then in **Releases**, tick the machines and press *Move to Beta*. They pick it
+up at their next update check (within four hours, or at the next launch).
+
+### Putting a machine on beta
+
+Control Panel v2 → Releases. The chips at the top count the estate by channel
+and filter it; select devices and move them. Needs the **Manage Update Channels
+(v2)** permission — seeing which machines are on beta needs only the ordinary v2
+view, because that is support context.
+
+Every move is written to that site's activity trail, so "why is this till on a
+different version" has an answer with a name and a date on it.
+
+### Getting a machine off beta
+
+Move it back to Stable, and it lands on the stable release **that supersedes the
+beta it is on** — not on today's stable.
+
+This is deliberate. `allowDowngrade` stays off (see `electron/updater.js`)
+because `sql/site` migrations are forward-only and applied once: an older app
+opening a database that is already ahead of it fails in ways nothing detects at
+the moment it happens. So the way off beta is forward.
+
+In practice this is invisible, because **publishing a stable release also
+promotes it onto `beta.yml`**. Semver puts `0.2.0-beta.1` below `0.2.0`, so the
+tester rolls onto the stable release automatically and waits there for the next
+beta. Without that promotion a beta tester would be stranded: `beta.yml` would
+still name the version they are already running, they would see no update, and
+the one machine you gave a customer to test on would quietly become the oldest
+software on the estate.
+
+`--no-promote` skips it, for a stable release testers must not receive. If a
+newer beta is already published — `0.3.0-beta.1` out with testers while `0.2.1`
+ships as a fix — promotion is skipped automatically and says so.
+
+### Checking what is published
+
+```powershell
+curl https://updates.odysseysoftware.co.za/backoffice/latest.yml
+curl https://updates.odysseysoftware.co.za/backoffice/beta.yml
+```
+
+### Pinning one machine without the control panel
+
+```ini
+ODYSSEY_UPDATE_CHANNEL=beta
+```
+
+Read from the environment by `electron/updateChannel.js` and it overrides the
+control panel. For a developer checkout or a support session — it is **not** in
+the `KEYS` list in `make-build-defaults.mjs`, so it cannot be baked into an
+installer and a customer's build can never be born on beta.
+
+### What a machine does when it cannot ask
+
+It keeps the channel it last knew, cached in `update-channel` in userData. A
+machine that has never had an answer is on stable. Every failure — no line, no
+device id, a portal that is down — resolves to stable rather than to beta:
+a tester who is briefly not testing gets noticed, and unreleased software
+arriving on a counter because a fetch failed does not.
 
 ## Checking it works
 

@@ -28,6 +28,7 @@ import {
   TABLE_TD_INPUT,
   TABLE_ROW,
   TABLE_NUMERIC,
+  HeaderActions,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -551,7 +552,11 @@ export function ExpenseForm({
                 ? 'Posting adds this to the supplier account.'
                 : 'Posting takes the money out of the account.')}
             </span>
-            <div className="flex gap-2">
+            {/* Up in the page header — see <HeaderActions>. The sentence
+                beside them stays here, with the form it explains: it says what
+                POSTING does, which is a fact about this form rather than a
+                label for the button. */}
+            <HeaderActions>
               <Button variant="ghost" onClick={() => router.back()}>
                 Cancel
               </Button>
@@ -566,7 +571,7 @@ export function ExpenseForm({
                 <Icons.Check size={15} />
                 {pending ? 'Posting…' : 'Save and post'}
               </Button>
-            </div>
+            </HeaderActions>
           </div>
         </CardFooter>
       </Card>

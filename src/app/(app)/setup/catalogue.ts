@@ -62,7 +62,16 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
     items: [
       /* First in the group: before a shop can do anything else, somebody has to
          be able to sign in — and on a new install the person reading this screen
-         is usually here to let the rest of their staff in. */
+         is usually here to let the rest of their staff in.
+
+         The screen is a MENU ROW under Staff now — see the note beside it in
+         nav.ts — so this tile is a cross-reference rather than the front door.
+         It stays for two reasons: day one, when the owner is working down this
+         hub and has no reason to look under Staff for a login; and every day
+         after, because Staff is a menu area a shop can switch off, and the one
+         screen that lets people back in must not go with it. A cross-reference
+         is safe where a second SIDEBAR row would not be — both read one label
+         from SUBPAGE_LABELS, so they cannot disagree. */
       {
         href: '/setup/users',
         description:

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { requireSiteUser } from '@/lib/auth'
+import { counterActor } from '@/app/(invoicing)/counterActor'
 import { getOrder, FULFILMENT_LABELS, type FulfilmentStatus } from '@/lib/site/salesOrders'
 import { availableToSell } from '@/lib/site/stockMovements'
 import { isEditable } from '@/lib/site/salesDocuments'
@@ -43,8 +44,12 @@ const TONE: Record<FulfilmentStatus, 'success' | 'warning' | 'danger' | 'neutral
 
 export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
   // A hidden menu entry is not a boundary — this URL is typeable.
-  const { site, user, capabilities } = await requireSiteUser()
-  if (!can(capabilities, 'sales.view')) redirect('/not-allowed')
+  const { site, capabilities: sessionCapabilities } = await requireSiteUser()
+  if (!can(sessionCapabilities, 'sales.view')) redirect('/not-allowed')
+  /* The PIN operator's rights and identity, not the browser session's — see
+     `counterActor`. The gate above stays on the session; what the person at
+     the counter may DO to the order comes from their own role. */
+  const { actor, capabilities } = await counterActor()
   const siteId = site.id
   const { id: raw } = await params
 
@@ -94,7 +99,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
     can(capabilities, 'sales.edit')
 
   // Whoever is capturing is pre-selected on every new line, as on an invoice.
-  const { reps, defaultUserId } = repsForLines(users, user.id)
+  const { reps, defaultUserId } = repsForLines(users, actor.userId)
 
   const customer = order.document.customerId
     ? await getTillCustomer(siteId, order.document.customerId)

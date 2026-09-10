@@ -99,6 +99,13 @@ check('/setup/terminals', crumbs('/setup/terminals'), ['Setup', 'Tills'])
 check('/setup/tender-types', crumbs('/setup/tender-types'), ['Setup', 'Tender types'])
 check('the first crumb links back to the hub', breadcrumbFor('/setup/terminals')?.crumbs[0].href, '/setup')
 
+/* Staff, not Setup, even though the route still lives under /setup and the
+   setup hub still carries a tile for it: the MENU names this screen now, and a
+   named row is resolved by the section scan before `hubFor` is ever asked.
+   Roles hangs off it and has to follow — it is reached from a button on the
+   Users screen, so a trail saying "Setup" would name a hub nobody came from. */
+check('/setup/users', crumbs('/setup/users'), ['Staff', 'Users and permissions'])
+check('/setup/roles', crumbs('/setup/roles'), ['Staff', 'Users and permissions', 'Roles & permissions'])
 check('/accounting/vat', crumbs('/accounting/vat'), ['Accounting', 'VAT return'])
 check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', 'Orders'])
 /* A hub screen whose ROUTE lives elsewhere still belongs to the hub that lists
@@ -135,6 +142,12 @@ check('/accounting/assets/depreciation', crumbs('/accounting/assets/depreciation
    figures they price. Their SUBPAGE_LABELS keys stay because the breadcrumb
    and SubpageHref both read them.
 
+   Users and permissions made the same journey and is the one screen that kept
+   its tile as well — the Staff section can be switched off under Menu &
+   modules, and the screen that lets people back in must not go with it. That
+   makes it the single allowed exception to the menu-row-and-hub-tile invariant
+   below, which names it.
+
    Nor is the Online Store. Its Setup hub held four tiles and sat behind a
    second menu row under a section that already had one; the four are now a
    group at the foot of /online-store, and the hub itself is deleted.
@@ -146,9 +159,9 @@ const menuHrefs = new Set(
 )
 const hubScreens = Object.keys(SUBPAGE_LABELS).filter((h) => !menuHrefs.has(h))
 check(
-  'the menu-named keys are the two Setup hubs, Loyalty and the two pay rows',
+  'the menu-named keys are the two Setup hubs, Loyalty, the two pay rows and Users',
   Object.keys(SUBPAGE_LABELS).filter((h) => menuHrefs.has(h)).sort(),
-  ['/jobs/setup', '/loyalty', '/staff/cost', '/staff/pay-rules', '/tickets/setup/desk'],
+  ['/jobs/setup', '/loyalty', '/setup/users', '/staff/cost', '/staff/pay-rules', '/tickets/setup/desk'],
 )
 /* ...and each must still lead somewhere sensible. */
 check('/loyalty', crumbs('/loyalty'), ['Loyalty', 'Members'])
@@ -219,7 +232,11 @@ console.log('\nSynonyms reach screens the menu does not name')
 // The screen is called "Tills". Somebody looking for it types "terminal".
 check('"terminal" finds Setup', found('terminal'), ['Setup'])
 check('"register" finds Setup', found('register'), ['Setup'])
-check('"permissions" finds Setup', found('permissions'), ['Setup'])
+/* Both, and that is the arrangement working rather than a leak: Staff NAMES the
+   screen now, and Setup still lists it as the cross-reference that survives the
+   Staff section being switched off. Roles & permissions is reached from the
+   Users screen, so "permissions" has to reach it from wherever Users is. */
+check('"permissions" finds Staff and Setup', found('permissions'), ['Staff', 'Setup'])
 check('a synonym is still scoped to its subtree', subpageMatches('/reports', 'terminal'), false)
 // Every synonym must name a screen that exists, or it silently matches nothing.
 const strayKeywords = Object.keys(SUBPAGE_KEYWORDS).filter((h) => !(h in SUBPAGE_LABELS))
@@ -449,13 +466,30 @@ check('every item href is unique', [...new Set(duplicates)], [])
 
    Being a menu row and a hub LANDING page is a different thing and is fine —
    that is what the four Setup rows are. What must never happen is a menu row
-   that some hub also lists as one of its tiles. */
+   that some hub also lists as one of its tiles.
+
+   ONE screen is allowed both, deliberately, and it is named here rather than
+   left to slip through: Users and permissions. It is a row under Staff, and
+   Staff is a menu AREA a shop can switch off — so without the tile, hiding the
+   roster would hide the only way to let somebody back in. The drift this rule
+   guards against cannot happen to it either way, because the tile and the row
+   both read their name from SUBPAGE_LABELS. Anything else appearing here is
+   the real thing: two hand-written entries for one screen. */
+const TWO_DOORS_BY_DESIGN = new Set<string>(['/setup/users'])
 const hubTiles = new Set<string>(
   [...SETUP_GROUPS, ...ACCOUNTING_GROUPS, ...ONLINE_STORE_GROUPS,
    ...JOBS_SETUP_GROUPS].flatMap((g) => g.items).map((i) => i.href),
 )
-const bothPlaces = allItems.map((i) => i.href).filter((href) => hubTiles.has(href))
+const bothPlaces = allItems
+  .map((i) => i.href)
+  .filter((href) => hubTiles.has(href) && !TWO_DOORS_BY_DESIGN.has(href))
 check('no screen is both a menu item and a hub tile', bothPlaces, [])
+/* ...and the exception is not stale: it must still BE both, or the entry is
+   quietly excusing something that no longer happens. */
+const staleExceptions = [...TWO_DOORS_BY_DESIGN].filter(
+  (href) => !hubTiles.has(href) || !allItems.some((i) => i.href === href),
+)
+check('the two-doors exception is still earning its place', staleExceptions, [])
 
 /* Every hub subpage must resolve to a hub that exists, or its breadcrumb comes
    out empty and the screen has no way back to the hub that sent them there.

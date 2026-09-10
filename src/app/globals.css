@@ -651,6 +651,10 @@
      without reading. */
   --spacing-touch: 3.5rem; /* 56px — every till control a finger hits */
   --spacing-touch-lg: 4.5rem; /* 72px — Pay / Confirm */
+  /* The phone's own step, between the desk's control and the till's key: worn
+     by a full-width bar that is read more often than it is tapped, where a
+     56px slab costs a fifth of the screen. */
+  --spacing-touch-sm: 2.3125rem; /* 37px — the phone dashboard's period bar */
 }
 
 /* The dark halves. Two blocks saying the same thing, for the same reason every

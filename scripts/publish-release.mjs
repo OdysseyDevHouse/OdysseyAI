@@ -31,6 +31,20 @@
 //   npm run publish:release                 all three, whatever is in release/
 //   npm run publish:release -- backoffice   just one
 //   npm run publish:release -- --dry-run    say what it would do, touch nothing
+//   npm run publish:release -- --no-promote leave beta.yml alone on a stable cut
+//
+// ── STABLE AND BETA, IN ONE FOLDER ──────────────────────────────────────────
+//
+// electron-updater asks for `<channel>.yml`, and `latest` is simply the default
+// channel name — so a beta release is beta.yml sitting beside latest.yml, each
+// naming its own installer. Which one a machine follows is set per device in
+// Control Panel v2 → Releases.
+//
+// This script does not choose. electron-builder writes the manifest name from
+// the version's prerelease tag (0.2.0-beta.1 -> beta.yml, 0.2.0 -> latest.yml)
+// and this reads the same version and uploads the file under the same name. You
+// pick a channel by naming the version, which means you cannot publish to beta
+// by accident and cannot publish a beta to stable at all.
 //
 // Needs the AWS CLI (R2 speaks S3) and, in the environment:
 //
@@ -52,6 +66,7 @@ const ROLES = ['backoffice', 'pos', 'database']
 const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
 const force = args.includes('--force')
+const noPromote = args.includes('--no-promote')
 const wanted = args.filter((a) => !a.startsWith('--'))
 const roles = wanted.length ? wanted : ROLES
 
@@ -68,34 +83,65 @@ const endpoint = req('R2_ENDPOINT')
    installs it, still reports the old version, and downloads it again forever. */
 const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
 
+/**
+ * Which channel a version publishes to.
+ *
+ * A DELIBERATE COPY of app-builder-lib's appInfo.channel — the prerelease tag,
+ * or 'latest' when there is none. It has to be a copy rather than a shared
+ * constant because the two run in different processes at different times, and
+ * this side's job is to CHECK the other rather than to agree with it by
+ * construction: if electron-builder ever stops naming the file this way, the
+ * manifest is simply not where this looks and the build is skipped with a
+ * sentence — instead of a stable installer being uploaded as beta.yml.
+ *
+ * `detectUpdateChannel` defaults to true and nothing in build-config sets
+ * `publish.channel`, so the prerelease tag is the whole rule today.
+ */
+function channelFor(v) {
+  const tag = /^\d+\.\d+\.\d+-([0-9A-Za-z]+)/.exec(String(v))
+  return tag ? tag[1].toLowerCase() : 'latest'
+}
+
+const channel = channelFor(version)
+const manifestName = `${channel}.yml`
+
 console.log(`Publishing Odyssey ${version} to ${bucket} (${endpoint})`)
+console.log(
+  channel === 'latest'
+    ? `Channel: stable (${manifestName}) — every machine not assigned to a test channel.`
+    : `Channel: ${channel} (${manifestName}) — ONLY devices assigned to it in Control Panel → Releases.`,
+)
 if (dryRun) console.log('DRY RUN — nothing will be uploaded.\n')
 
 let published = 0
 for (const role of roles) {
   const dir = join(ROOT, 'release', role)
-  if (!existsSync(join(dir, 'latest.yml'))) {
+  if (!existsSync(join(dir, manifestName))) {
     /* Skipped rather than fatal: `npm run dist:pos` legitimately leaves the
        other two folders untouched, and refusing to publish the one build that
-       was cut would be perverse. */
-    console.log(`· ${role}: no release/${role}/latest.yml — skipped`)
+       was cut would be perverse.
+       It is ALSO what catches a release/ folder holding the PREVIOUS channel's
+       build — a stable latest.yml still sitting there when package.json has
+       moved on to a beta. Looking for the file this version implies means the
+       stale one is invisible here rather than published as if it were current. */
+    console.log(`· ${role}: no release/${role}/${manifestName} — skipped`)
     continue
   }
   publishRole(role, dir)
   published += 1
 }
 
-if (!published) fail('nothing to publish. Run `npm run dist` first.')
-console.log(`\nDone. ${published} build(s) at ${version}.`)
+if (!published) fail(`nothing to publish at ${version}. Run \`npm run dist\` first.`)
+console.log(`\nDone. ${published} build(s) at ${version} on ${channel === 'latest' ? 'stable' : channel}.`)
 
 function publishRole(role, dir) {
-  const manifestPath = join(dir, 'latest.yml')
+  const manifestPath = join(dir, manifestName)
   const manifest = readFileSync(manifestPath, 'utf8')
 
   const declaredVersion = value(manifest, 'version')
   if (declaredVersion !== version) {
     fail(
-      `${role}: release/${role}/latest.yml says ${declaredVersion} but package.json says ${version}. ` +
+      `${role}: release/${role}/${manifestName} says ${declaredVersion} but package.json says ${version}. ` +
         'Rebuild after bumping the version.',
     )
   }
@@ -106,7 +152,7 @@ function publishRole(role, dir) {
   const exe = join(dir, fileName)
   if (!existsSync(exe)) {
     fail(
-      `${role}: latest.yml points at "${fileName}", which is not in release/${role}/. ` +
+      `${role}: ${manifestName} points at "${fileName}", which is not in release/${role}/. ` +
         'That is the artifactName/safe-name mismatch — check build-config for a product name with a space in it.',
     )
   }
@@ -117,16 +163,16 @@ function publishRole(role, dir) {
      older shape, kept for updaters too old to read the list. Verifying the one
      that is not used would be a check that cannot fail in the way it matters. */
   const entry = fileEntry(manifest, fileName)
-  if (!entry) fail(`${role}: latest.yml has no files: entry for "${fileName}".`)
+  if (!entry) fail(`${role}: ${manifestName} has no files: entry for "${fileName}".`)
 
   const actualSize = statSync(exe).size
   if (entry.size && actualSize !== entry.size) {
-    fail(`${role}: ${fileName} is ${actualSize} bytes, latest.yml claims ${entry.size}.`)
+    fail(`${role}: ${fileName} is ${actualSize} bytes, ${manifestName} claims ${entry.size}.`)
   }
 
   const actualSha = createHash('sha512').update(readFileSync(exe)).digest('base64')
   if (actualSha !== entry.sha512) {
-    fail(`${role}: ${fileName} does not match the sha512 in latest.yml. Rebuild.`)
+    fail(`${role}: ${fileName} does not match the sha512 in ${manifestName}. Rebuild.`)
   }
 
   const blockmap = `${exe}.blockmap`
@@ -162,7 +208,120 @@ function publishRole(role, dir) {
   /* LAST, and never cached. See the note at the top of this file: this is the
      line that makes the release visible, and it must not become visible before
      the bytes above landed — nor stay visible for an hour after the next one. */
-  upload(manifestPath, key('latest.yml'), 'text/yaml', 'no-cache, no-store, must-revalidate')
+  upload(manifestPath, key(manifestName), 'text/yaml', 'no-cache, no-store, must-revalidate')
+
+  promoteToBeta(role, manifestPath, key)
+}
+
+/**
+ * A stable release also becomes the beta channel's newest build.
+ *
+ * ── WITHOUT THIS, BETA TESTERS ARE STRANDED ─────────────────────────────────
+ *
+ * A machine on beta compares its own version against beta.yml and nothing else.
+ * Publish 0.2.0-beta.1 to beta, then ship 0.2.0 to stable, and beta.yml still
+ * says 0.2.0-beta.1 — which is the version that machine is already running. It
+ * therefore sees no update, and keeps seeing no update, for as long as it stays
+ * on the channel. Every shop moves on to 0.2.0 and the tester silently does
+ * not.
+ *
+ * The symptom is the worst kind: nothing is broken, nothing is logged, and the
+ * one machine you deliberately gave to a customer to test on is the one running
+ * the oldest software on the estate.
+ *
+ * So stable is copied onto beta.yml as well. It is the same bytes and the same
+ * installer — only a second pointer to it — and it means beta always names the
+ * newest build in existence, which is what the word promises. A tester then
+ * rolls onto the stable release automatically (0.2.0 > 0.2.0-beta.1 in semver,
+ * so it is an UPGRADE and needs no downgrade permission) and waits there for
+ * the next beta.
+ *
+ * ── ONLY EVER FORWARD ───────────────────────────────────────────────────────
+ *
+ * Guarded on the version already published to beta, because the two channels do
+ * not have to move in step: 0.3.0-beta.1 can be out with testers while 0.2.1 is
+ * being shipped to everybody as a fix. Overwriting beta.yml with 0.2.1 there
+ * would be a downgrade for those machines — refused by the app (allowDowngrade
+ * stays off, see electron/updater.js) but wrong on the shelf, and the next
+ * person to read the bucket would have to work out which of the two was really
+ * the newer. So it is skipped, loudly.
+ *
+ * `--no-promote` opts out for the case this cannot know about: a stable release
+ * that testers must NOT receive because the beta they are on is testing
+ * something the release deliberately leaves out.
+ */
+function promoteToBeta(role, manifestPath, key) {
+  if (channel !== 'latest' || noPromote) return
+
+  const current = remoteText(key('beta.yml'))
+  const currentVersion = current ? tryValue(current, 'version') : null
+
+  if (currentVersion && !isNewer(version, currentVersion)) {
+    console.log(
+      `  · beta.yml left at ${currentVersion} — newer than this release, so testers stay ahead.`,
+    )
+    return
+  }
+
+  /* The same file, under a second name. Not a rebuild and not a re-upload of
+     the installer: both channels point at the one set of bytes already in the
+     bucket, so this costs a 400-byte PUT. */
+  console.log(`  ${dryRun ? 'would promote' : 'promoting'} ${version} to beta.yml${currentVersion ? ` (was ${currentVersion})` : ''}`)
+  upload(manifestPath, key('beta.yml'), 'text/yaml', 'no-cache, no-store, must-revalidate')
+}
+
+/**
+ * Is `a` a later release than `b`?
+ *
+ * Enough semver for the one comparison this script makes, and no more: numeric
+ * major/minor/patch, then the rule that decides everything here — a release
+ * with NO prerelease tag outranks the same numbers with one, so 0.2.0 beats
+ * 0.2.0-beta.9. Prerelease tags of the same version are compared as strings,
+ * which orders beta.2 after beta.1 and is the only case that ever arises.
+ *
+ * Not `semver` from npm: this script is run from a checkout that may not have
+ * installed anything, and a release tool that cannot run without node_modules
+ * is one more thing between a fix and the shops.
+ */
+function isNewer(a, b) {
+  const parse = (v) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/.exec(String(v).trim())
+    if (!m) return null
+    return { nums: [Number(m[1]), Number(m[2]), Number(m[3])], pre: m[4] ?? null }
+  }
+  const x = parse(a)
+  const y = parse(b)
+  /* An unparseable version on either side means "do not touch it" — the caller
+     treats false as "leave beta.yml alone", which is the safe direction. */
+  if (!x || !y) return false
+  for (let i = 0; i < 3; i += 1) {
+    if (x.nums[i] !== y.nums[i]) return x.nums[i] > y.nums[i]
+  }
+  if (x.pre === y.pre) return false
+  if (x.pre === null) return true
+  if (y.pre === null) return false
+  return x.pre > y.pre
+}
+
+/**
+ * One small object's contents, or null when it is not there.
+ *
+ * `s3 cp <key> -` writes to stdout. Failure is expected and ordinary — the
+ * first stable release ever published finds no beta.yml — so it is swallowed
+ * rather than reported.
+ */
+function remoteText(key) {
+  const r = aws(['s3', 'cp', `s3://${bucket}/${key}`, '-', '--endpoint-url', endpoint], {
+    allowFailure: true,
+  })
+  if (r.status !== 0) return null
+  return String(r.stdout || '')
+}
+
+/** value(), but null instead of fatal when the key is absent. */
+function tryValue(yaml, key) {
+  const m = yaml.match(new RegExp(`^${key}:\s*(.+)$`, 'm'))
+  return m ? m[1].trim().replace(/^['"]|['"]$/g, '') : null
 }
 
 function upload(from, key, contentType, cacheControl) {

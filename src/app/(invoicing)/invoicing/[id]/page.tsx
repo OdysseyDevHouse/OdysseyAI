@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { requireCapability } from '@/lib/auth'
+import { counterActor } from '@/app/(invoicing)/counterActor'
 import { getDocument, isEditable } from '@/lib/site/salesDocuments'
 import { listPriceStructures, repsForLines } from '@/lib/site/lookups'
 import { listUsers } from '@/lib/site/users'
@@ -36,7 +37,12 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
 
      Every finer question this page asks — may they edit, void, credit, see cost
      — is still asked per control below. This is only the door. */
-  const { siteId, actor, capabilities } = await requireCapability('sales.view')
+  await requireCapability('sales.view')
+  /* The PIN operator, not the browser session — see `counterActor`. Every
+     per-control right below and the default salesperson come from them: the
+     strip at the top of this window names them, and a screen that names one
+     person while granting another's rights is the bug this fixes. */
+  const { siteId, actor, capabilities } = await counterActor()
   const { id } = await params
 
   const documentId = Number(id)

@@ -17,6 +17,7 @@ import {
   Textarea,
   useToast,
   type ComboboxOption,
+  HeaderActions,
 } from '@/components/ui'
 import {
   TICKET_PRIORITIES,
@@ -211,7 +212,9 @@ export default function NewTicket({ canAssign }: { canAssign: boolean }) {
           </CardBody>
         </Card>
 
-        <div className="flex justify-end gap-2">
+        {/* Up in the page header — see <HeaderActions>. Cancel travels with
+            it because this screen has no back arrow. */}
+        <HeaderActions>
           <Button variant="secondary" onClick={() => router.push('/tickets/board')} disabled={pending}>
             Cancel
           </Button>
@@ -219,7 +222,7 @@ export default function NewTicket({ canAssign }: { canAssign: boolean }) {
             <Icons.Plus size={16} />
             {pending ? 'Logging…' : 'Log the ticket'}
           </Button>
-        </div>
+        </HeaderActions>
       </PageBody>
     </>
   )

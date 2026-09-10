@@ -17,6 +17,7 @@ import {
   Icons,
   useToast,
   type ComboboxOption,
+  HeaderActions,
 } from '@/components/ui'
 import type { JobCardInput } from '@/lib/site/jobCards'
 import {
@@ -371,7 +372,10 @@ export default function JobForm({
                 </span>
               )}
             </div>
-            <div className="flex gap-2">
+            {/* Up in the page header — see <HeaderActions>. The note beside
+                them stays with the form it explains. Cancel travels with Save
+                because this screen has no back arrow. */}
+            <HeaderActions>
               <Button variant="secondary" onClick={() => router.back()} disabled={pending}>
                 Cancel
               </Button>
@@ -379,7 +383,7 @@ export default function JobForm({
                 <Icons.Save size={15} />
                 {job ? 'Save job' : 'Log the job'}
               </Button>
-            </div>
+            </HeaderActions>
           </div>
         </CardFooter>
       </Card>

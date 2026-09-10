@@ -801,3 +801,14 @@ export const EDGE_LEAD: Record<string, string> = {
   orange: 'border-l-cat-orange',
   slate: 'border-l-cat-slate',
 }
+
+/**
+ * The id of the slot <PageHeader> leaves for buttons a page sends up to it.
+ *
+ * Here rather than beside <HeaderActions> because PageHeader is a SERVER
+ * component and HeaderActions is a client one: an export of a 'use client'
+ * module reaches a server component as a client reference, not as the string,
+ * so importing it from there would hand PageHeader an id it cannot render.
+ * This file has no directive, so both halves get the same plain constant.
+ */
+export const HEADER_ACTIONS_SLOT = 'page-header-actions'

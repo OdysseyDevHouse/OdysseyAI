@@ -7,7 +7,6 @@ import {
   Card,
   CardHeader,
   CardBody,
-  CardFooter,
   ConfirmModal,
   Field,
   Input,
@@ -16,6 +15,7 @@ import {
   Switch,
   Textarea,
   useToast,
+  HeaderActions,
 } from '@/components/ui'
 import { ACCOUNT_TYPE_LABELS, BANK_ACCOUNT_TYPES, type BankAccountType } from '@/lib/site/cashbookRules'
 import { createAccountAction, updateAccountAction, closeAccountAction } from './actions'
@@ -252,16 +252,16 @@ export function AccountForm({ account }: { account?: AccountFormValues }) {
             </Field>
           </div>
         </CardBody>
-        <CardFooter>
-          <div className="flex w-full items-center justify-end gap-2">
-            <Button variant="secondary" onClick={() => router.back()}>
-              Cancel
-            </Button>
-            <Button disabled={pending} onClick={save}>
-              {isEdit ? 'Save changes' : 'Create account'}
-            </Button>
-          </div>
-        </CardFooter>
+        {/* Up in the page header — see <HeaderActions>. Cancel travels with
+            Save because this screen has no back arrow, so it is the way out. */}
+        <HeaderActions>
+          <Button variant="secondary" onClick={() => router.back()}>
+            Cancel
+          </Button>
+          <Button disabled={pending} onClick={save}>
+            {isEdit ? 'Save changes' : 'Create account'}
+          </Button>
+        </HeaderActions>
       </Card>
 
       {/* Closing lives in its own clearly-separated section rather than beside

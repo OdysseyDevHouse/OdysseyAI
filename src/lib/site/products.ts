@@ -1114,8 +1114,27 @@ export async function createProduct(
   const refusal = await whyTaxRateRefused(siteId, await vatRatePercent(siteId, vat.selling))
   if (refusal) return { ok: false, error: refusal }
 
+  /*
+   * A BRAND-NEW PRODUCT CANNOT BE A REFER, BECAUSE IT HAS NOTHING TO REFER TO.
+   *
+   * updateProduct applies this rule on save (see the note there); this is the
+   * other half of it. Type is a dropdown on the same form, and on the NEW
+   * product screen there is no Refer tab yet — there is no product id to hang
+   * a link off — so choosing "Refer" and saving wrote a refer with no link and
+   * nothing ever came back to fix it. The till then refused every sale of it
+   * with "This refer product has no linked product set up yet", which is how
+   * this was found: a product that had never worked once since it was made.
+   *
+   * Guarded HERE rather than in insertProductTx, because the two paths that
+   * build a ladder — createReferRange and addReferRung — call that directly
+   * and write the link in the same transaction, one statement later. Demoting
+   * there would break every pack size the wizard creates. This closes the one
+   * path that can create the type on its own: the form and the importer.
+   */
+  const productType = toProductType(input.productType) === 'refer' ? 'normal' : input.productType
+
   return siteTransaction(siteId, async (tx) => {
-    const id = await insertProductTx(tx, { ...input, code }, vat, audit)
+    const id = await insertProductTx(tx, { ...input, code, productType }, vat, audit)
     return { ok: true as const, id }
   })
 }
@@ -1377,7 +1396,9 @@ export async function updateProduct(
         input.kitchenGroup === undefined || input.kitchenGroup === null
           ? null
           : input.kitchenGroup.trim().slice(0, 60),
-        toProductType(input.productType),
+        // savedType, NOT toProductType(input.productType): the dangling-refer
+        // rule above is the whole point of computing it.
+        savedType,
         wanted,
         input.departmentId ?? null,
         input.brandId ?? null,

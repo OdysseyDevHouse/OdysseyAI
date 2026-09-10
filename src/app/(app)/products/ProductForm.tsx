@@ -13,6 +13,7 @@ import ProductTypePanel from '@/components/ProductTypePanel'
 import TillTilePanel from './TillTilePanel'
 import ExtraBarcodesModal from './ExtraBarcodesModal'
 import GenerateBarcodeModal from './GenerateBarcodeModal'
+import ManageInstructionsModal from './ManageInstructionsModal'
 import PropertiesPanel from '@/components/PropertiesPanel'
 import type { PriceCalcId } from '@/lib/productProperties'
 import InstructionsPanel from '@/components/InstructionsPanel'
@@ -60,6 +61,7 @@ import {
   ArrowLeftRight,
   Printer,
   LineChart,
+  SlidersHorizontal,
 } from '@/components/ui/icons'
 import { DEFAULT_PRODUCT_TYPE, type ProductTypeId } from '@/lib/productTypes'
 import { DEFAULT_PRODUCT_TAB, type ProductTab } from '@/lib/productTabs'
@@ -311,6 +313,18 @@ export default function ProductForm({
   const [aliases, setAliases] = useState<ProductBarcode[]>(extraBarcodes)
   const [aliasesOpen, setAliasesOpen] = useState(false)
   const [generatorOpen, setGeneratorOpen] = useState(false)
+
+  /* The instruction library, held here for the same reason the alias rows are:
+     the dialog that edits it renders outside the form, and the panel inside the
+     form has to see what it did. Seeded from the server's list and replaced
+     wholesale by each save — nothing reloads the page, so this IS the list from
+     the moment the dialog is used.
+
+     The server sends only ACTIVE groups; the dialog returns the whole library,
+     inactive included, because managing it means seeing what is switched off.
+     What the panel is given is filtered back down below. */
+  const [library, setLibrary] = useState<InstructionGroup[]>(instructionGroups)
+  const [libraryOpen, setLibraryOpen] = useState(false)
   // Existing rows may still hold a hex from before these became tokens;
   // tileClass() falls back to the first swatch rather than rendering nothing.
   const [color, setColor] = useState(product?.imageColor ?? TILE_SWATCHES[0].token)
@@ -958,10 +972,29 @@ export default function ProductForm({
             inputs, and dropping them would detach every instruction on save. */}
         <div className={tab === 'instructions' ? 'flex flex-col gap-4' : 'hidden'}>
           <Card>
-            <SectionTitle icon={<Lightbulb size={16} />}>Instructions</SectionTitle>
+            <SectionTitle
+              icon={<Lightbulb size={16} />}
+              /* Secondary, not primary: Save is the primary act on a screen
+                 with unsaved edits in it, and this one leaves the product
+                 alone entirely. */
+              action={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setLibraryOpen(true)}
+                >
+                  <SlidersHorizontal size={14} />
+                  Manage instructions
+                </Button>
+              }
+            >
+              Instructions
+            </SectionTitle>
             <InstructionsPanel
-              groups={instructionGroups}
+              groups={library}
               attached={attachedInstructions}
+              onManage={() => setLibraryOpen(true)}
             />
           </Card>
         </div>
@@ -1156,6 +1189,19 @@ export default function ProductForm({
         productCode={product?.code ?? suggestedCode ?? ''}
         currentBarcode={barcode}
         onGenerated={setBarcode}
+      />
+
+      {/* ── Instructions tab, continued ──────────────────────────────────── */}
+      {/* The library dialog, opened from the Instructions card. Outside <form>
+          for the reason the barcode dialogs are: it carries its own inputs and
+          saves on its own round trip, so inside the product form its fields
+          would be submitted with the product. Not hidden with the tab either —
+          a <dialog> is only on screen when it is open. */}
+      <ManageInstructionsModal
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        groups={library}
+        onGroupsChange={setLibrary}
       />
 
       {/* Variants and photographs. Rendered after </form> for the same reason

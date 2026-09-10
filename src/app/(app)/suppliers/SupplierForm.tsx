@@ -15,6 +15,7 @@ import {
   SectionTitle,
   Select,
   Textarea,
+  HeaderActions,
 } from '@/components/ui'
 import type { Supplier, SupplierStatus } from '@/lib/site/suppliers'
 import { saveSupplierAction, type SupplierFormState } from './actions'
@@ -76,10 +77,13 @@ export default function SupplierForm({
 
   return (
     <>
-      <div className="flex items-center justify-end gap-2 px-6 pt-4">
+      {/* Up in the page header rather than on a row of its own above the form
+          — see <HeaderActions>. Rendered from in here because the label and
+          the pending state belong to this component. */}
+      <HeaderActions>
         {rowActions}
         <SubmitButton isNew={isNew} />
-      </div>
+      </HeaderActions>
 
       <form id={FORM_ID} action={formAction} className="flex flex-col gap-5 px-6 pt-4 pb-10">
         {supplier && <input type="hidden" name="id" value={supplier.id} />}
