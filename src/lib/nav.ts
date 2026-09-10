@@ -900,7 +900,44 @@ export const SUBPAGE_LABELS = {
   /* "Job workflow", not "Job statuses": the screen configures the stages AND the
      boards that show them, and somebody looking for either should find it. */
   '/jobs/setup': 'Job card setup',
-  '/jobs/setup/workflow': 'Workflow',
+  /* ── The eighteen job card settings ──────────────────────────────────
+     What used to be four tiles, one of which — "Workflow" — was a single route
+     stacking six unrelated panels: stages, boards, kinds of work, crews, kinds
+     of equipment, promises, and a catch-all of twenty-two switches. That page
+     was the only way to reach most of this module's configuration, and its name
+     said none of it: somebody looking for "who signs a job off" had no reason to
+     open a screen called Workflow, and no search term would take them there.
+
+     Each panel is now its own route with its own name, so the hub can list what
+     it actually decides and the search index has eighteen things to match rather
+     than one. /jobs/setup/workflow is gone; nothing redirects to it. */
+  '/jobs/setup/statuses': 'Statuses',
+  /* "Workflow boards", not "Boards": /jobs/board is where somebody WORKS, and
+     two rows both called Boards is how you end up on the one that configures
+     when you meant the one that shows your jobs. */
+  '/jobs/setup/boards': 'Workflow boards',
+  /* "Job types" rather than "Headlines", the word the table uses. A headline is
+     what the row is called in the schema; what a shop is choosing is the kind of
+     work it takes on. */
+  '/jobs/setup/job-types': 'Job types',
+  /* "Web forms", distinct from "Forms" below: this is the PUBLIC one that
+     strangers fill in to ask for work. Forms is what a technician records on
+     site. Two different audiences, two different doors. */
+  '/jobs/setup/web-forms': 'Web forms',
+  '/jobs/setup/document-templates': 'Document templates',
+  /* "Crews", the word a field business uses, rather than the schema's "teams". */
+  '/jobs/setup/crews': 'Crews',
+  '/jobs/setup/notifications': 'Notifications',
+  '/jobs/setup/signoff': 'Job signoff',
+  /* "Service levels", not "SLA": the acronym is what the industry says and the
+     words are what a shop owner reads. /jobs/sla — the screen that REPORTS on
+     them — keeps its own name. */
+  '/jobs/setup/service-levels': 'Service levels',
+  '/jobs/setup/assets': 'Assets',
+  '/jobs/setup/tasks': 'Tasks',
+  '/jobs/setup/job-files': 'Job files',
+  '/jobs/setup/time-tracking': 'Time tracking',
+  '/jobs/setup/parts-stock': 'Parts & stock',
   '/jobs/setup/forms': 'Forms',
   /* "Rules", not "Automations": /setup/alerts is already labelled
      "Alerts & automations", and two screens both calling themselves
@@ -921,7 +958,7 @@ export const SUBPAGE_LABELS = {
   '/setup/laybys': 'Lay-bys',
   /* "Customer portal", not "Customer statements": the screen decides what a
      customer sees of their whole account, of which the statement is one part.
-     The jobs half of the same portal stays on /jobs/setup/workflow. */
+     The jobs half of the same portal is on /jobs/setup/web-forms. */
   '/setup/customer-portal': 'Customer portal',
   '/setup/email': 'Email',
   '/setup/sms': 'Text messages & WhatsApp',

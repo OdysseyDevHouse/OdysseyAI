@@ -170,7 +170,16 @@ check('/loyalty', crumbs('/loyalty'), ['Loyalty', 'Members'])
 check('/loyalty/programme', crumbs('/loyalty/programme'), ['Loyalty', 'Programme'])
 check('/loyalty/tiers', crumbs('/loyalty/tiers'), ['Loyalty', 'Tiers'])
 check('/loyalty/cards', crumbs('/loyalty/cards'), ['Loyalty', 'Punch cards'])
-check('/jobs/setup/workflow', crumbs('/jobs/setup/workflow'), ['Job cards', 'Setup', 'Workflow'])
+/* /jobs/setup/workflow was here. It is gone: that one route stacked six panels
+   and is now eighteen tiles with a route each. Two of them are checked, because
+   the pair is what the split has to get right — a stage and the board that shows
+   it are separate screens now, and both must still land under the same hub. */
+check('/jobs/setup/statuses', crumbs('/jobs/setup/statuses'), ['Job cards', 'Setup', 'Statuses'])
+check('/jobs/setup/boards', crumbs('/jobs/setup/boards'), [
+  'Job cards',
+  'Setup',
+  'Workflow boards',
+])
 /* Two crumbs, not three: the section's Setup hub is gone and this is a tile of
    /online-store itself now. */
 check('/online-store/trading', crumbs('/online-store/trading'), ['Online Store', 'Trading hours'])

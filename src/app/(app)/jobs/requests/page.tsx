@@ -54,7 +54,7 @@ export default async function RequestsPage({
         {!settings.isEnabled && (
           <Callout tone="warning" title="The public form is switched off">
             Nobody can send a request at the moment. Switch it on in{' '}
-            <TextLink href="/jobs/setup/workflow">Job cards &rsaquo; Setup &rsaquo; Workflow</TextLink>. Anything
+            <TextLink href="/jobs/setup/web-forms">Job cards &rsaquo; Setup &rsaquo; Web forms</TextLink>. Anything
             already sent is still listed below.
           </Callout>
         )}

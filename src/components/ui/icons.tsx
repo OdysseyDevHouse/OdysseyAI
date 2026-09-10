@@ -100,6 +100,11 @@ export {
   // domain
   LayoutDashboard,
   Package,
+  // A single piece of CUSTOMER equipment — the machine a job is against, which
+  // the shop services but does not own. Distinct from Package (goods moving)
+  // and Boxes (stock on a shelf): a shop that services boilers it never sold
+  // needs its equipment to look like neither of those.
+  Box as Cube,
   Tags,
   Store,
   Building2,

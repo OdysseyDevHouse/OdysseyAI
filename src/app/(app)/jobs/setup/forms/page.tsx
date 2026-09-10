@@ -8,16 +8,17 @@ export const dynamic = 'force-dynamic'
 /**
  * The forms a business asks its technicians to fill in (§24).
  *
- * ── WHY ITS OWN ROUTE AND NOT A SIXTH PANEL ────────────────────────────────
+ * ── WHY ITS OWN ROUTE ──────────────────────────────────────────────────────
  *
- * /jobs/setup/workflow already stacks five panels, and its own header explains
- * why: they are one thought — how does this business run a job — and splitting
- * them would make five cards nobody can hold in their head.
+ * This screen was carved out back when the rest of job setup shared one route
+ * called Workflow, and the argument then was that a form builder is not a
+ * settings panel: it has a list, a per-form editor, a field editor inside that,
+ * and a version history — a screen with screens in it — and stacking it there
+ * would bury the settings under a builder somebody opens once a quarter.
  *
- * A form builder is not one of those cards. It has a list, a per-form editor, a
- * field editor inside that, and a version history; it is a screen with screens
- * in it. Stacking it there would bury the five settings that belong together
- * under a builder somebody opens once a quarter.
+ * That route has since been split into eighteen, so the argument no longer has to
+ * be made against anything: this is simply one of them. It is kept because it
+ * records why a builder is not a panel, which is still the rule.
  *
  * The precedent is /setup/custom-fields, which is the same shape of thing —
  * defining what gets asked, rather than deciding how work flows.

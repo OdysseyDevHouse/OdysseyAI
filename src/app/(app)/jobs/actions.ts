@@ -97,7 +97,10 @@ import {
   type RequestResult as PartRequestResult,
   type RequestActionResult as PartRequestActionResult,
 } from '@/lib/site/jobPartRequests'
-import { setSetting } from '@/lib/site/settings'
+/* `getSettings` as well as `setSetting`: saveJobSettingsAction takes a PATCH
+   now, so its two pair rules read the stored half they were not sent rather
+   than passing vacuously whenever the other field is absent. */
+import { getSettings, setSetting } from '@/lib/site/settings'
 import { storeUpload, deleteStoredFile } from '@/lib/uploads'
 import {
   setJobPerson,
@@ -463,7 +466,10 @@ export async function saveBoardAction(input: {
   const result = await saveJobBoard(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
   revalidatePath('/jobs/board')
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/boards')
+  /* The statuses screen warns about stages on no board, and ticking one here is
+     what clears it. Without this the warning outlives its cause. */
+  revalidatePath('/jobs/setup/statuses')
   return result
 }
 
@@ -474,7 +480,10 @@ export async function deleteBoardAction(id: number): Promise<BoardActionResult> 
   const result = await deleteJobBoard(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
   revalidatePath('/jobs/board')
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/boards')
+  /* Deleting a board can STRAND stages — the same warning, in the direction
+     that raises it rather than the one that clears it. */
+  revalidatePath('/jobs/setup/statuses')
   return result
 }
 
@@ -484,7 +493,11 @@ export async function saveStatusAction(input: JobStatusInput): Promise<StatusSav
 
   const result = await saveJobStatus(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/statuses')
+  /* The board editor ticks stages by name, so a rename or a switch-off has to
+     reach it — a picker offering a stage that no longer exists is worse than
+     one that is briefly missing a new one. */
+  revalidatePath('/jobs/setup/boards')
   revalidatePath('/jobs')
   return result
 }
@@ -495,7 +508,8 @@ export async function deleteStatusAction(id: number): Promise<StatusSaveResult> 
 
   const result = await deleteJobStatus(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/statuses')
+  revalidatePath('/jobs/setup/boards')
   revalidatePath('/jobs')
   return result
 }
@@ -980,7 +994,7 @@ export async function saveAssetTypeAction(input: AssetTypeInput): Promise<AssetR
 
   const result = await saveAssetType(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/assets')
   revalidateAssets()
   return result
 }
@@ -991,7 +1005,7 @@ export async function deleteAssetTypeAction(id: number): Promise<AssetActionResu
 
   const result = await deleteAssetType(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/assets')
   return result
 }
 
@@ -1100,7 +1114,7 @@ export async function saveHeadlineAction(input: HeadlineInput): Promise<Headline
 
   const result = await saveHeadline(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/job-types')
   revalidatePath('/jobs')
   return result
 }
@@ -1111,7 +1125,7 @@ export async function deleteHeadlineAction(id: number): Promise<ItemResult> {
 
   const result = await deleteHeadline(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/job-types')
   return result
 }
 
@@ -1337,7 +1351,7 @@ export async function saveJobTeamAction(input: {
 
   const result = await saveJobTeam(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/crews')
   revalidatePath('/jobs')
   return result
 }
@@ -1348,7 +1362,7 @@ export async function deleteJobTeamAction(id: number): Promise<TeamActionResult>
 
   const result = await deleteJobTeam(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/crews')
   return result
 }
 
@@ -1494,7 +1508,7 @@ export async function savePolicyAction(
 
   const result = await savePolicy(ctx.siteId, ctx.actor, id, input)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/service-levels')
   revalidatePath('/jobs/sla')
   return result
 }
@@ -1511,7 +1525,7 @@ export async function createPolicyAction(input: PolicyInput): Promise<SlaActionR
 
   const result = await createPolicy(ctx.siteId, ctx.actor, input)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/service-levels')
   revalidatePath('/jobs/sla')
   return result
 }
@@ -1522,7 +1536,7 @@ export async function deletePolicyAction(id: number): Promise<SlaActionResult> {
 
   const result = await deletePolicy(ctx.siteId, ctx.actor, id)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/service-levels')
   revalidatePath('/jobs/sla')
   return result
 }
@@ -1576,126 +1590,206 @@ export async function saveTradingHoursAction(input: {
     if (!saved.ok) return saved
   }
 
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/service-levels')
   revalidatePath('/jobs/sla')
   revalidatePath('/jobs')
   return { ok: true, message: 'Trading hours saved. New jobs will use them from now on.' }
 }
 
 /**
- * The eleven settings that decide how a job behaves.
+ * The twenty-two settings that decide how a job behaves.
  *
- * Accumulated across phases 11 to 15 with no screen at all, so every one of them
- * has been whatever the migration seeded. They save together because they read
- * together: a person setting up notifications wants to say what goes out AND
- * when in one act, and a half-saved group would leave the screen disagreeing
- * with itself.
+ * ── WHY THIS TAKES A PATCH AND NOT THE WHOLE SET ───────────────────────────
+ *
+ * These accumulated across phases 11 to 15 with no screen at all, and arrived on
+ * one — a single card whose heading read "Closing, parts, telling people, and
+ * what happens on its own". They saved together because they were EDITED
+ * together, and taking the full set was then safe: one form held every value, so
+ * every value it sent was current.
+ *
+ * They are edited on four screens now — notifications, signoff, parts & stock and
+ * web forms — and that makes taking the full set actively dangerous. A screen
+ * that owns four of these settings would have to post the other eighteen back
+ * from whatever it happened to read at page load, and any value a sibling screen
+ * changed in between would be silently reverted by a save that looked like it
+ * succeeded. That is the partial-save-wipes-siblings trap, and the fix is not to
+ * make each screen carry the whole aggregate: it is to stop asking for it.
+ *
+ * So every field is optional and ONLY the keys present are written. A screen
+ * sends what it owns. What it does not send, it cannot break.
+ *
+ * ── WHAT THAT COSTS, AND WHY IT IS WORTH IT ────────────────────────────────
+ *
+ * Two validations used to compare a pair of fields — emails-on needs a moment
+ * ticked, feedback-on needs an opening line — and a patch may now carry one half
+ * without the other. Each of those reads the STORED value for the half it was
+ * not given, so the rule still holds across a partial save rather than passing
+ * vacuously whenever the other field is absent.
  *
  * Validated here rather than trusted from the client for the usual reason — the
  * action is the boundary, and a number field is a text input to anybody with
  * curl.
  */
 export async function saveJobSettingsAction(input: {
-  itemsBlockClose: boolean
-  headlineRequired: boolean
-  signatureStatement: string
-  notifyEnabled: boolean
-  notifyAssignee: boolean
-  notifyEvents: string[]
-  autoEscalate: boolean
-  autoVisitReminder: boolean
-  autoVisitHours: number
-  autoInvoice: boolean
-  feedbackEnabled: boolean
-  feedbackIntro: string
-  intakeEnabled: boolean
-  intakeBlurb: string
-  intakeMaxPerPhone: number
-  intakeShowHeadlines: boolean
-  portalEnabled: boolean
-  portalAllowComments: boolean
-  portalAllowUploads: boolean
-  portalAllowQuoteAccept: boolean
-  stockWarnMode: string
-  autoAwaitingParts: boolean
+  itemsBlockClose?: boolean
+  headlineRequired?: boolean
+  signatureStatement?: string
+  notifyEnabled?: boolean
+  notifyAssignee?: boolean
+  notifyEvents?: string[]
+  autoEscalate?: boolean
+  autoVisitReminder?: boolean
+  autoVisitHours?: number
+  autoInvoice?: boolean
+  feedbackEnabled?: boolean
+  feedbackIntro?: string
+  intakeEnabled?: boolean
+  intakeBlurb?: string
+  intakeMaxPerPhone?: number
+  intakeShowHeadlines?: boolean
+  portalEnabled?: boolean
+  portalAllowComments?: boolean
+  portalAllowUploads?: boolean
+  portalAllowQuoteAccept?: boolean
+  stockWarnMode?: string
+  autoAwaitingParts?: boolean
 }): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
   const ctx = await actorForModule('job_cards', 'jobs.setup')
   if ('ok' in ctx) return ctx
 
-  const statement = input.signatureStatement.trim()
-  if (!statement) {
-    return {
-      ok: false,
-      error: 'A signature needs wording above it — a mark with nothing stating what it means is not worth capturing.',
+  /**
+   * The keys to write, built up as each field is validated.
+   *
+   * Typed as `setSetting`'s own key union rather than `string`, so a mistyped
+   * setting name is a compile error here instead of a write that succeeds
+   * against a key nothing ever reads back.
+   */
+  const writes: [Parameters<typeof setSetting>[1], string][] = []
+
+  if (input.signatureStatement !== undefined) {
+    const statement = input.signatureStatement.trim()
+    if (!statement) {
+      return {
+        ok: false,
+        error:
+          'A signature needs wording above it — a mark with nothing stating what it means is not worth capturing.',
+      }
     }
+    if (statement.length > 400) {
+      return {
+        ok: false,
+        error: 'That wording is too long for the pad. Keep it under 400 characters.',
+      }
+    }
+    writes.push(['job_signature_statement', statement])
   }
-  if (statement.length > 400) {
-    return { ok: false, error: 'That wording is too long for the pad. Keep it under 400 characters.' }
+
+  /*
+   * The pair rules below need the half they were not given.
+   *
+   * Read once, and only when a rule actually needs it, so a patch that touches
+   * neither pair costs no extra query.
+   */
+  let stored: Record<string, string> | null = null
+  const readStored = async () => {
+    stored ??= await getSettings(ctx.siteId, [
+      'job_notify_enabled',
+      'job_notify_events',
+      'job_feedback_enabled',
+      'job_feedback_intro',
+    ])
+    return stored
   }
 
   // The set is closed on purpose: a typo would create a fourth "moment" that
   // silently never fires, and nothing would say why.
   const allowed = new Set(['assigned', 'status', 'closed'])
-  const events = input.notifyEvents.filter((e) => allowed.has(e))
-  if (input.notifyEnabled && events.length === 0) {
-    return {
-      ok: false,
-      error: 'Emails are on but nothing would send one. Pick at least one moment, or switch emails off.',
+  const events = input.notifyEvents?.filter((e) => allowed.has(e))
+
+  if (input.notifyEnabled !== undefined || events !== undefined) {
+    /* Whichever half was not sent comes from what is stored, so "emails are on
+       but nothing sends one" cannot be reached by saving the two halves from two
+       screens, or by saving one of them twice. */
+    const on = input.notifyEnabled ?? (await readStored()).job_notify_enabled !== '0'
+    const moments =
+      events ??
+      (await readStored()).job_notify_events
+        .split(',')
+        .map((e) => e.trim())
+        .filter(Boolean)
+    if (on && moments.length === 0) {
+      return {
+        ok: false,
+        error:
+          'Emails are on but nothing would send one. Pick at least one moment, or switch emails off.',
+      }
     }
   }
 
-  const hours = Math.round(input.autoVisitHours)
-  if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
-    return { ok: false, error: 'Remind between 1 and 168 hours before a visit.' }
+  if (input.notifyEnabled !== undefined) {
+    writes.push(['job_notify_enabled', input.notifyEnabled ? '1' : '0'])
+  }
+  if (events !== undefined) writes.push(['job_notify_events', events.join(',')])
+
+  if (input.autoVisitHours !== undefined) {
+    const hours = Math.round(input.autoVisitHours)
+    if (!Number.isFinite(hours) || hours < 1 || hours > 168) {
+      return { ok: false, error: 'Remind between 1 and 168 hours before a visit.' }
+    }
+    writes.push(['job_auto_visit_hours', String(hours)])
   }
 
-  // The intro is the first line of an email going to real customers, so an empty
-  // one is refused rather than sent as a blank line above a bare link.
-  const intro = input.feedbackIntro.trim()
-  if (input.feedbackEnabled && !intro) {
-    return { ok: false, error: 'The rating email needs an opening line.' }
+  if (input.feedbackEnabled !== undefined || input.feedbackIntro !== undefined) {
+    // The intro is the first line of an email going to real customers, so an
+    // empty one is refused rather than sent as a blank line above a bare link.
+    const on = input.feedbackEnabled ?? (await readStored()).job_feedback_enabled === '1'
+    const intro = (input.feedbackIntro ?? (await readStored()).job_feedback_intro).trim()
+    if (on && !intro) return { ok: false, error: 'The rating email needs an opening line.' }
+
+    if (input.feedbackEnabled !== undefined) {
+      writes.push(['job_feedback_enabled', input.feedbackEnabled ? '1' : '0'])
+    }
+    if (input.feedbackIntro !== undefined) {
+      // Saved even when switched off, so turning it back on keeps the wording
+      // somebody wrote rather than resetting to the seeded sentence.
+      writes.push(['job_feedback_intro', intro || 'Thank you for your business. How did we do?'])
+    }
   }
 
-  /*
-   * The cap is clamped rather than refused, on the reservations precedent.
-   *
-   * A nonsense value must not leave a PUBLIC form unprotected while somebody
-   * works out why the save failed, so an unreadable number becomes the default
-   * of three rather than zero.
-   */
-  const cap = Number.isFinite(Number(input.intakeMaxPerPhone))
-    ? Math.max(0, Math.min(100, Math.trunc(Number(input.intakeMaxPerPhone))))
-    : 3
-  const intakeBlurb = input.intakeBlurb.trim()
-  if (input.intakeEnabled && !intakeBlurb) {
-    return { ok: false, error: 'The public form needs a line saying what it is for.' }
+  if (input.intakeEnabled !== undefined || input.intakeBlurb !== undefined) {
+    const blurb = input.intakeBlurb?.trim()
+    /* Only refused when the switch is being turned ON in this same patch: the
+       blurb has a seeded default, so unlike the pairs above there is no state in
+       which the stored value could be empty. */
+    if (input.intakeEnabled === true && blurb !== undefined && !blurb) {
+      return { ok: false, error: 'The public form needs a line saying what it is for.' }
+    }
+    if (input.intakeEnabled !== undefined) {
+      writes.push(['job_intake_enabled', input.intakeEnabled ? '1' : '0'])
+    }
+    if (blurb !== undefined) {
+      writes.push([
+        'job_intake_blurb',
+        blurb || 'Tell us what you need and we will come back to you.',
+      ])
+    }
   }
 
-  // All of them or none, on the trading-hours precedent: a half-saved group
-  // would behave in a way nobody chose.
-  for (const [key, value] of [
-    ['job_items_block_close', input.itemsBlockClose ? '1' : '0'],
-    ['job_headline_required', input.headlineRequired ? '1' : '0'],
-    ['job_signature_statement', statement],
-    ['job_notify_enabled', input.notifyEnabled ? '1' : '0'],
-    ['job_notify_assignee', input.notifyAssignee ? '1' : '0'],
-    ['job_notify_events', events.join(',')],
-    ['job_auto_escalate', input.autoEscalate ? '1' : '0'],
-    ['job_auto_visit_reminder', input.autoVisitReminder ? '1' : '0'],
-    ['job_auto_visit_hours', String(hours)],
-    ['job_auto_invoice', input.autoInvoice ? '1' : '0'],
-    ['job_feedback_enabled', input.feedbackEnabled ? '1' : '0'],
-    // Saved even when switched off, so turning it back on keeps the wording
-    // somebody wrote rather than resetting to the seeded sentence.
-    ['job_feedback_intro', intro || 'Thank you for your business. How did we do?'],
-    ['job_intake_enabled', input.intakeEnabled ? '1' : '0'],
-    ['job_intake_blurb', intakeBlurb || 'Tell us what you need and we will come back to you.'],
-    ['job_intake_max_per_phone', String(cap)],
-    ['job_intake_show_headlines', input.intakeShowHeadlines ? '1' : '0'],
-    ['portal_enabled', input.portalEnabled ? '1' : '0'],
-    ['portal_allow_comments', input.portalAllowComments ? '1' : '0'],
-    ['portal_allow_uploads', input.portalAllowUploads ? '1' : '0'],
-    ['portal_allow_quote_accept', input.portalAllowQuoteAccept ? '1' : '0'],
+  if (input.intakeMaxPerPhone !== undefined) {
+    /*
+     * The cap is clamped rather than refused, on the reservations precedent.
+     *
+     * A nonsense value must not leave a PUBLIC form unprotected while somebody
+     * works out why the save failed, so an unreadable number becomes the default
+     * of three rather than zero.
+     */
+    const cap = Number.isFinite(Number(input.intakeMaxPerPhone))
+      ? Math.max(0, Math.min(100, Math.trunc(Number(input.intakeMaxPerPhone))))
+      : 3
+    writes.push(['job_intake_max_per_phone', String(cap)])
+  }
+
+  if (input.stockWarnMode !== undefined) {
     /*
      * Validated rather than clamped, unlike the cap above: an unrecognised warn
      * mode has no safe nearest value. Falling back to 'inform' is the right
@@ -1703,14 +1797,46 @@ export async function saveJobSettingsAction(input: {
      * warning; storing it here would silently record something other than what
      * was chosen, and a shop that picked 'prevent' would find it had not stuck.
      */
-    ['job_stock_warn_mode', isStockWarnMode(input.stockWarnMode) ? input.stockWarnMode : 'inform'],
-    ['job_auto_awaiting_parts', input.autoAwaitingParts ? '1' : '0'],
-  ] as const) {
+    writes.push([
+      'job_stock_warn_mode',
+      isStockWarnMode(input.stockWarnMode) ? input.stockWarnMode : 'inform',
+    ])
+  }
+
+  /** The plain flags: no validation beyond being present. */
+  const flags: [keyof typeof input, Parameters<typeof setSetting>[1]][] = [
+    ['itemsBlockClose', 'job_items_block_close'],
+    ['headlineRequired', 'job_headline_required'],
+    ['notifyAssignee', 'job_notify_assignee'],
+    ['autoEscalate', 'job_auto_escalate'],
+    ['autoVisitReminder', 'job_auto_visit_reminder'],
+    ['autoInvoice', 'job_auto_invoice'],
+    ['intakeShowHeadlines', 'job_intake_show_headlines'],
+    ['portalEnabled', 'portal_enabled'],
+    ['portalAllowComments', 'portal_allow_comments'],
+    ['portalAllowUploads', 'portal_allow_uploads'],
+    ['portalAllowQuoteAccept', 'portal_allow_quote_accept'],
+    ['autoAwaitingParts', 'job_auto_awaiting_parts'],
+  ]
+  for (const [field, key] of flags) {
+    const value = input[field]
+    if (value !== undefined) writes.push([key, value ? '1' : '0'])
+  }
+
+  /* A patch that asks for nothing is a no-op rather than an error: a screen
+     whose form is untouched should not have to know not to call. */
+  for (const [key, value] of writes) {
     const saved = await setSetting(ctx.siteId, key, value)
     if (!saved.ok) return saved
   }
 
-  revalidatePath('/jobs/setup/workflow')
+  /* Every screen that reads any of these, because a patch from one of them can
+     change what another displays — the signoff wording is quoted on the parts
+     screen's close guard, and the portal switch gates the web form's link. */
+  revalidatePath('/jobs/setup/notifications')
+  revalidatePath('/jobs/setup/signoff')
+  revalidatePath('/jobs/setup/parts-stock')
+  revalidatePath('/jobs/setup/web-forms')
   revalidatePath('/jobs')
   return { ok: true, message: 'Saved.' }
 }
@@ -1721,7 +1847,10 @@ export async function reorderStatusesAction(ids: number[]): Promise<StatusSaveRe
 
   const result = await reorderJobStatuses(ctx.siteId, ctx.actor, ids)
   if (!result.ok) return result
-  revalidatePath('/jobs/setup/workflow')
+  revalidatePath('/jobs/setup/statuses')
+  // The board editor lists stages in this order, and a board draws its columns
+  // in it.
+  revalidatePath('/jobs/setup/boards')
   revalidatePath('/jobs')
   return result
 }

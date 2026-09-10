@@ -17,8 +17,9 @@ export const dynamic = 'force-dynamic'
  *
  * Same reasoning /jobs/setup/forms gives. A rule builder has a list, an editor
  * with three sections, and a lookup of statuses, boards, headlines and people
- * behind every dropdown. Stacked into /jobs/setup/workflow it would bury the
- * five settings people actually change weekly under a screen opened rarely.
+ * behind every dropdown — a builder, not a settings panel. It was carved out of
+ * the single Workflow route for that reason, and that route has since been split
+ * into eighteen, so this is now one of them rather than an exception to one.
  *
  * ── WHY NOT /setup/alerts ──────────────────────────────────────────────────
  *

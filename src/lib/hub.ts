@@ -77,6 +77,27 @@ export type HubIconName =
   /* Training mode's tile — a mortarboard, beside the integrity tools it sits
      with in Setup. */
   | 'GraduationCap'
+  /* ── The job card settings hub (231) ──────────────────────────────────────
+     Five glyphs the eighteen tiles needed and the map did not have. Each is the
+     picture of what its screen DECIDES, not of the module it belongs to: a
+     module's own glyph repeated eighteen times is eighteen tiles nobody can
+     tell apart, which is the whole reason a tile carries one. */
+  /* Workflow boards — columns, matching the kanban the screen configures.
+     Distinct from LayoutGrid, which already means a grid of tiles. */
+  | 'Columns'
+  /* Job files — an open folder rather than a paperclip: what the screen
+     configures is where things are KEPT, not that something is attached. */
+  | 'Folder'
+  /* Job signoff — a pen. The screen is about the signature and who may give
+     it, so the nib rather than a tick, which would read as "done". */
+  | 'Pen'
+  /* Tasks — a clipboard with a list on it. The checklist a technician works
+     down, as opposed to Check, which the kit already spends on "correct". */
+  | 'ClipboardList'
+  /* Assets — customer equipment. A cube, beside Boxes, which means STOCK: the
+     two are different nouns and a shop that services machines it does not sell
+     needs to see that at a glance. */
+  | 'Cube'
 
 /** A screen as written in a catalogue — no label, the href already implies it. */
 export type DeclaredItem<Href extends SubpageHref = SubpageHref> = {

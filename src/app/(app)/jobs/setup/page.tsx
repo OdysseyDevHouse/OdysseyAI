@@ -10,9 +10,15 @@ export const dynamic = 'force-dynamic'
 /**
  * Job cards — Setup.
  *
- * The four screens that decide how work moves, which used to be tiles in the
- * general Setup hub. A shop without the module never sees this, because the
- * gate below turns them away before the catalogue is read.
+ * Eighteen screens in three groups, where there were four in two. The catalogue
+ * carries the argument for the split; what matters here is that this is the ONE
+ * front door, so a shop without the module never sees any of it — the gate below
+ * turns them away before the catalogue is read.
+ *
+ * Tabs are on, which they were not at four tiles: past about a dozen entries a
+ * single scrolling grid stops being a list somebody reads and becomes one they
+ * scan past. Search still reads the whole catalogue regardless of the tab, which
+ * is the point — somebody typing "signature" does not know it lives under Flow.
  */
 export default async function JobsSetupPage({
   searchParams,
@@ -31,7 +37,7 @@ export default async function JobsSetupPage({
     <>
       <PageHeader
         title="Job card setup"
-        subtitle="How work moves, what gets recorded, and where a visit shows up"
+        subtitle="What a job is made of, how it moves, and what gets recorded against it"
       />
       <PageBody>
         <HubView
@@ -39,6 +45,7 @@ export default async function JobsSetupPage({
           noun="job card settings"
           emptyHint="Your role does not include configuring job cards. An owner can grant this under Roles & permissions."
           initialSearch={q ?? ''}
+          tabs
         />
       </PageBody>
     </>

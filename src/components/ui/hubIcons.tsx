@@ -64,6 +64,13 @@ export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
   Stamp: Icons.Stamp,
   History: Icons.History,
   GraduationCap: Icons.GraduationCap,
+  // The job card settings hub (231). See the union in lib/hub.ts for why each
+  // of these five is the glyph it is.
+  Columns: Icons.ColumnsIcon,
+  Folder: Icons.FolderOpen,
+  Pen: Icons.Pencil,
+  ClipboardList: Icons.ClipboardList,
+  Cube: Icons.Cube,
 }
 
 /** One catalogue glyph, at the weight the hubs draw them. */

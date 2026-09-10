@@ -98,7 +98,9 @@ export async function setHeadlineFormsAction(
 
   const result = await setHeadlineForms(ctx.siteId, headlineId, forms)
   if (result.ok) {
-    revalidatePath('/jobs/setup/workflow')
+    // Job types is where a headline's forms are attached, so that is the screen
+    // this changes — it was /jobs/setup/workflow when every panel shared a route.
+    revalidatePath('/jobs/setup/job-types')
     revalidatePath('/jobs')
   }
   return result
