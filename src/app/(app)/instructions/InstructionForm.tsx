@@ -18,6 +18,7 @@ import {
   Input,
   NumberInput,
   Switch,
+  Tooltip,
   type ComboboxOption,
   HeaderActions,
 } from '@/components/ui'
@@ -522,15 +523,17 @@ function OptionRow({
             this line is one a user drags a cursor across to select text in, and
             a draggable parent turns that into a row move. */}
         {draggable && (
-          <span
-            data-kit-ok
-            draggable
-            onDragStart={onDragStart}
-            aria-hidden
-            className="cursor-grab px-1 text-faint transition hover:text-muted"
-          >
-            <DragHandle size={15} />
-          </span>
+          <Tooltip label="Drag to reorder" layout="inline">
+            <span
+              data-kit-ok
+              draggable
+              onDragStart={onDragStart}
+              aria-hidden
+              className="cursor-grab px-1 text-faint transition hover:text-muted"
+            >
+              <DragHandle size={15} />
+            </span>
+          </Tooltip>
         )}
         <Button
           type="button"

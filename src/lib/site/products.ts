@@ -1008,6 +1008,49 @@ async function writePrices(
 }
 
 /**
+ * Applies a typed cost and shelf price to a product that ALREADY EXISTS, from
+ * inside a transaction the caller owns.
+ *
+ * For the refer wizard, whose rows are a mix: the packs above the base are
+ * created by insertProductTx, which takes `lastCost` and `prices` and writes
+ * them — but the BASE is usually a product that is already there, so the
+ * wizard skipped it entirely and everything typed on line 1 was dropped.
+ *
+ * The symptom was specific and bad: build a range from an existing single and
+ * the six-pack and the case came out priced correctly, while the single they
+ * were built from sat at 0.00 cost and no price. Worse, the base is the rung
+ * the other two DERIVE from — cascadeCompositionCosts writes each pack as the
+ * base's cost times its pack size — so the one figure the ladder depends on
+ * was the one figure not saved. It only looked survivable because that cascade
+ * refuses to write a zero, leaving the packs on their typed costs and the
+ * ladder quietly self-inconsistent.
+ *
+ * Deliberately NOT insertProductTx's whole input: a range dialog has no
+ * business rewriting the base's description, type, department or properties.
+ * Cost and price are what its columns collect, so they are what it may set.
+ *
+ * A zero cost is left alone rather than written, matching the cascade and the
+ * wizard's own reading of its boxes: 0 is the empty state of a currency box,
+ * not a decision that the product costs nothing.
+ */
+export async function applyTypedCostTx(
+  tx: PoolConnection,
+  productId: number,
+  costExcl: number | null | undefined,
+  prices: Record<number, number> | undefined,
+): Promise<void> {
+  if (costExcl && costExcl > 0) {
+    // last_cost only. average_cost is a consequence of purchases, and the edit
+    // form refuses to set it here for the same reason.
+    await tx.execute('UPDATE products SET last_cost = ?, last_edit_date = NOW() WHERE id = ?', [
+      costExcl.toFixed(4),
+      productId,
+    ] as never)
+  }
+  await writePrices(tx, productId, prices)
+}
+
+/**
  * The product already holding `code`, or null when the code is free.
  *
  * ONE definition for every path that refuses a duplicate — create, edit, quick
@@ -1345,31 +1388,31 @@ export async function updateProduct(
     }
 
     /*
-     * A REFER WITH NOTHING UNDER IT IS UNSELLABLE, SO IT IS NOT SAVED AS ONE.
+     * CHOOSING "REFER" IS KEPT, EVEN BEFORE ANYTHING IS LINKED.
      *
-     * resolveComponents refuses a refer product that has no link — rightly,
-     * since selling one would take stock off a pile it does not have. But the
-     * type is a dropdown on this form, so it can be set to Refer before any
-     * link exists, and the refusal then lands at the till rather than here.
+     * This save used to demote a link-less refer back to `normal`, because
+     * resolveComponents refuses to sell one — rightly, since it would take
+     * stock off a pile that does not exist — and a mistyped BASE takes every
+     * pack size above it down with it, since they all resolve through it.
      *
-     * Worse, it does not stop at the one product: every pack size pointing at
-     * it resolves THROUGH it, so one mistyped base silently makes the whole
-     * ladder unsellable — which is exactly how it was found.
+     * But the demotion made setting the type at all impossible. The Refer tab
+     * is where the link is made, and the form only offers that tab once the
+     * type IS refer, so saving put the dropdown straight back to Normal and
+     * the tab went with it. There was no order of operations that worked, and
+     * nothing said why — the setting just refused to stick.
      *
-     * The two paths that build a ladder (createReferRange and addReferRung)
-     * write the link in the same transaction as the type and already keep this
-     * rule; this closes the one path that could set the type on its own. A
-     * product genuinely becoming a refer gets its type from those, on the
-     * Refer tab, where the link is made at the same moment.
+     * So the type now stands, and the sale path keeps the invariant, which is
+     * where it belongs: a refer with no link yet is a half-finished product,
+     * not a corrupt one. It is refused at the till by a message that names the
+     * missing link, rather than being quietly turned into something else. The
+     * Refer tab is self-saving, so the link can be added in the same visit —
+     * the demotion is what made it unreachable.
+     *
+     * CREATING one is still refused (see createProduct): on the new-product
+     * screen there is no id to hang a link off, the tab shows "save first",
+     * and the product would land unsellable with no way to finish it.
      */
-    let savedType = toProductType(input.productType)
-    if (savedType === 'refer') {
-      const [linkRows] = (await tx.execute(
-        'SELECT product_id FROM product_refers WHERE product_id = ?',
-        [id] as never,
-      )) as unknown as [RowDataPacket[]]
-      if (!linkRows?.length) savedType = 'normal'
-    }
+    const savedType = toProductType(input.productType)
 
     const [res] = await tx.execute(
       `UPDATE products SET
@@ -1712,6 +1755,25 @@ export type ProductBulkChange =
   | { kind: 'department'; departmentId: number | null }
   | { kind: 'brand'; brandId: number | null }
   | { kind: 'instructionGroup'; groupId: number; mode: 'add' | 'remove' }
+  /**
+   * Which kitchen station a selection's dockets print at.
+   *
+   * Add/remove rather than replace, exactly like instruction groups and
+   * suppliers: the product form owns the whole set because it SHOWS the whole
+   * set, but this dialog names one printer, so it must leave a product's other
+   * stations alone. A grill being added to the pizzas must not unroute them
+   * from the pass.
+   */
+  | { kind: 'kitchenPrinter'; printerId: number; mode: 'add' | 'remove' }
+  /**
+   * The heading a selection prints under on the docket — "Starters", "Mains".
+   *
+   * Separate from the printer for the same reason the product form asks the
+   * two questions separately: the printer decides which paper it comes out of
+   * and the group decides where on that paper it sits. Blank is a legitimate
+   * value meaning "no heading, prints last".
+   */
+  | { kind: 'kitchenGroup'; value: string }
   | {
       kind: 'supplier'
       supplierId: number
@@ -1839,13 +1901,17 @@ export async function bulkUpdateProducts(
 
   const idList = permitted.map((r) => Number(r.id))
 
-  // Four kinds do not write a products column, so they never reach the SET
-  // clause: delete has its own archive-instead rule, instruction groups and
-  // suppliers are join tables, and reorder levels live on
-  // product_location_stock.
+  // Five kinds do not write a products column, so they never reach the SET
+  // clause: delete has its own archive-instead rule, instruction groups,
+  // suppliers and kitchen printers are join tables, and reorder levels live on
+  // product_location_stock. (kitchenGroup is not among them — the heading is a
+  // column on products, so it goes through the SET clause like any other.)
   if (change.kind === 'delete') return bulkDeleteProducts(siteId, permitted, skipped)
   if (change.kind === 'instructionGroup') {
     return bulkInstructionGroup(siteId, idList, change, skipped)
+  }
+  if (change.kind === 'kitchenPrinter') {
+    return bulkKitchenPrinter(siteId, idList, change, skipped)
   }
   if (change.kind === 'supplier') {
     return bulkSupplier(siteId, permitted, change, skipped)
@@ -1890,6 +1956,12 @@ function refuseProductBulk(row: BulkRow, change: ProductBulkChange): string | nu
     if (change.kind === 'supplier' && change.mode === 'add') {
       return 'It is a variant parent — link its variants instead.'
     }
+    // Same reasoning, one step further along: a parent is never what goes on a
+    // sale line, so a docket for it would never print however it is routed.
+    // Removing is still allowed, so a link made before this rule can be undone.
+    if (change.kind === 'kitchenPrinter' && change.mode === 'add') {
+      return 'It is a variant parent — route its variants instead.'
+    }
     if (change.kind === 'delete') return 'It has variants — delete those first.'
   }
 
@@ -1928,6 +2000,16 @@ function validateProductBulk(change: ProductBulkChange): string | null {
       if (!Number.isFinite(change.groupId) || change.groupId <= 0) {
         return 'Choose an instruction group.'
       }
+      return null
+    case 'kitchenPrinter':
+      if (!Number.isFinite(change.printerId) || change.printerId <= 0) {
+        return 'Choose a kitchen printer.'
+      }
+      return null
+    case 'kitchenGroup':
+      // The column is VARCHAR(60) (migration 230) — refuse rather than let
+      // MariaDB silently truncate somebody's heading mid-word.
+      if (change.value.trim().length > 60) return 'A group must be 60 characters or fewer.'
       return null
     case 'supplier':
       if (!Number.isFinite(change.supplierId) || change.supplierId <= 0) {
@@ -1985,6 +2067,10 @@ function productBulkSetClause(change: ProductBulkChange): { sql: string; params:
       return { sql: 'weight_description = ?', params: [change.value.trim() || 'Kg'] }
     case 'priceCalc':
       return { sql: 'price_calc = ?', params: [toPriceCalc(change.value)] }
+    case 'kitchenGroup':
+      // Blank is a real answer — "prints last, under no heading" — so an empty
+      // string is stored rather than being read as "leave it alone".
+      return { sql: 'kitchen_group = ?', params: [change.value.trim()] }
     case 'archive':
       return { sql: 'is_archived = ?', params: [change.archived ? 1 : 0] }
     default:
@@ -2030,6 +2116,67 @@ async function bulkInstructionGroup(
          FROM products p
         WHERE p.id IN (${placeholders})`,
       [change.groupId, ...ids] as never,
+    )
+  })
+
+  return { updated: ids.length, skipped }
+}
+
+/**
+ * Routes the selection to one kitchen station, or stops routing it there.
+ *
+ * A join table like instruction groups, so INSERT IGNORE / DELETE rather than
+ * an UPDATE — and, like suppliers, a MERGE rather than a replace.
+ * `setPrintersForProduct` on the product form owns a product's whole set
+ * because the form shows the whole set; this dialog names ONE printer and must
+ * leave the rest alone. Ticking "link the Grill" across the pizzas must not
+ * unroute them from the pass they were already going to.
+ *
+ * ── UNLINKING THE LAST ONE IS NOT AN ERROR ───────────────────────────────
+ *
+ * A product left with no stations simply stops going to a kitchen, which is
+ * the ordinary state of most of a catalogue rather than a broken one. It may
+ * keep its docket group — the heading it WOULD have printed under — and that
+ * is deliberate: unrouting a course for the summer and putting it back in
+ * winter should not make somebody retype "Mains" fifty times.
+ *
+ * No printer row is validated here. The id comes from a list this shop's own
+ * setup rendered, the FK refuses an id that is not a printer, and IGNORE
+ * absorbs a station deleted between the dialog opening and Apply — the same
+ * trade `setPrintersForProduct` makes for the same reason.
+ */
+async function bulkKitchenPrinter(
+  siteId: number,
+  ids: number[],
+  change: Extract<ProductBulkChange, { kind: 'kitchenPrinter' }>,
+  skipped: ProductBulkResult['skipped'],
+): Promise<ProductBulkResult> {
+  const placeholders = ids.map(() => '?').join(',')
+
+  await siteTransaction(siteId, async (tx) => {
+    if (change.mode === 'remove') {
+      await tx.execute(
+        `DELETE FROM product_kitchen_printers
+          WHERE printer_id = ? AND product_id IN (${placeholders})`,
+        [change.printerId, ...ids] as never,
+      )
+      return
+    }
+
+    // INSERT IGNORE so re-linking a station a product already prints at is a
+    // no-op rather than a duplicate-key error that fails the whole batch.
+    await tx.execute(
+      `INSERT IGNORE INTO product_kitchen_printers (product_id, printer_id)
+       SELECT p.id, ? FROM products p WHERE p.id IN (${placeholders})`,
+      [change.printerId, ...ids] as never,
+    )
+
+    // The same stamp the SET-clause path writes: a PERSON changed where this
+    // food prints, which is exactly what distinguishes last_edit_date from an
+    // updated_at a stock movement also touches.
+    await tx.execute(
+      `UPDATE products SET last_edit_date = NOW() WHERE id IN (${placeholders})`,
+      ids as never,
     )
   })
 

@@ -231,7 +231,11 @@ export default function ProductForm({
   instructionGroups: InstructionGroup[]
   /** Ids of the instructions this product currently asks. */
   attachedInstructions: number[]
-  /** Every active kitchen printer, for the Kitchen tab. Empty hides the tab. */
+  /**
+   * Every active kitchen printer, for the kitchen-printing card on Properties.
+   * Empty hides the card — a shop with nowhere to send food is not asked which
+   * of nothing to send it to.
+   */
   kitchenPrinters: KitchenPrinter[]
   /** Printer ids this product already routes to. */
   attachedKitchenPrinters: number[]
@@ -548,19 +552,6 @@ export default function ProductForm({
               icon: <Truck size={16} />,
               count: productSuppliers.length || undefined,
             },
-            /* Only where the shop has somewhere to send food. A restaurant sees
-               it; a hardware shop that has never set up a printer is not asked
-               a question it has no answer to. */
-            ...(kitchenPrinters.length > 0
-              ? [
-                  {
-                    value: 'kitchen',
-                    label: 'Kitchen',
-                    icon: <Printer size={16} />,
-                    count: attachedKitchenPrinters.length || undefined,
-                  },
-                ]
-              : []),
             // The composition tabs follow the product's type: an ingredient
             // list on a normal product is a question nobody asked.
             ...(productType === 'recipe'
@@ -984,6 +975,28 @@ export default function ProductForm({
               expiresInDays: product?.expiresInDays ?? 0,
             }}
           />
+
+          {/* ── Kitchen printing ───────────────────────────────────────── */}
+          {/* It used to own a tab of its own. It is two answers — which
+              stations, and which course — which is a property of the product
+              in exactly the way "is a scale item" is, so it sits here with the
+              rest of them rather than earning a ninth tab.
+
+              Still hidden with CSS rather than unmounted, for the same reason
+              as before: the ticked printer ids and the group submit as form
+              fields, and dropping them would unroute this product on every
+              save made from another tab. */}
+          {kitchenPrinters.length > 0 && (
+            <Card>
+              <SectionTitle icon={<Printer size={16} />}>Kitchen printing</SectionTitle>
+              <ProductKitchenPanel
+                printers={kitchenPrinters}
+                attached={attachedKitchenPrinters}
+                group={product?.kitchenGroup ?? ''}
+                knownGroups={knownKitchenGroups}
+              />
+            </Card>
+          )}
         </div>
         </fieldset>
 
@@ -1018,24 +1031,6 @@ export default function ProductForm({
             />
           </Card>
         </div>
-
-        {/* ── Kitchen ──────────────────────────────────────────────────── */}
-        {/* Hidden with CSS, never unmounted — the ticked printer ids and the
-            group submit as form fields, and dropping them would unroute this
-            product on every save made from another tab. */}
-        {kitchenPrinters.length > 0 && (
-          <div className={tab === 'kitchen' ? 'flex flex-col gap-4' : 'hidden'}>
-            <Card>
-              <SectionTitle icon={<Printer size={16} />}>Kitchen printing</SectionTitle>
-              <ProductKitchenPanel
-                printers={kitchenPrinters}
-                attached={attachedKitchenPrinters}
-                group={product?.kitchenGroup ?? ''}
-                knownGroups={knownKitchenGroups}
-              />
-            </Card>
-          </div>
-        )}
 
         {/* ── Suppliers ────────────────────────────────────────────────── */}
         {/* Hidden with CSS, never unmounted — the rows submit as hidden inputs

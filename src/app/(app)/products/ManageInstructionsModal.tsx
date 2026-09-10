@@ -13,6 +13,7 @@ import {
   Modal,
   NumberInput,
   Switch,
+  Tooltip,
   useToast,
 } from '@/components/ui'
 import { DragHandle, Lightbulb, Plus, Trash } from '@/components/ui/icons'
@@ -662,22 +663,30 @@ export default function ManageInstructionsModal({
                   >
                     {/* Only the handle starts the drag, so a caret dragged
                         through the name field does not pick the row up. */}
-                    <span
-                      draggable={rows.length > 1}
-                      onDragStart={(e) => {
-                        dragKeyRef.current = row.key
-                        setDragKey(row.key)
-                        // Firefox will not start a drag without data on the transfer.
-                        e.dataTransfer.effectAllowed = 'move'
-                        e.dataTransfer.setData('text/plain', row.key)
-                      }}
-                      aria-hidden
-                      className={`shrink-0 text-faint ${
-                        rows.length > 1 ? 'cursor-grab hover:text-muted' : 'opacity-30'
-                      }`}
+                    {/* side="bottom": this list sits in an overflow-y-auto pane,
+                        which would clip a panel drawn above the top row. */}
+                    <Tooltip
+                      label={rows.length > 1 ? 'Drag to reorder' : 'Add another answer to reorder'}
+                      layout="inline"
+                      side="bottom"
                     >
-                      <DragHandle size={15} />
-                    </span>
+                      <span
+                        draggable={rows.length > 1}
+                        onDragStart={(e) => {
+                          dragKeyRef.current = row.key
+                          setDragKey(row.key)
+                          // Firefox will not start a drag without data on the transfer.
+                          e.dataTransfer.effectAllowed = 'move'
+                          e.dataTransfer.setData('text/plain', row.key)
+                        }}
+                        aria-hidden
+                        className={`shrink-0 text-faint ${
+                          rows.length > 1 ? 'cursor-grab hover:text-muted' : 'opacity-30'
+                        }`}
+                      >
+                        <DragHandle size={15} />
+                      </span>
+                    </Tooltip>
 
                     <Input
                       value={row.name}

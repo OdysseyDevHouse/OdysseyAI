@@ -401,8 +401,15 @@ export default function DeclarationClient({
                 the float when the right answer was the float plus R500. The
                 off-ledger figure is exactly that money, so it decides which
                 sentence is honest.
+
+                Keyed on the SALE COUNT rather than on `tenders.length`, because a
+                drawer holding a float now gets a cash row synthesised for it (see
+                declarationView) so that the float is actually counted. That row
+                is the fix, and testing for an empty list would read it as "a sale
+                happened" and drop the explanation on exactly the shift that needs
+                it most.
               */}
-              {view.tenders.length === 0 && (
+              {view.counters.salesCount === 0 && (
                 <p className="text-sm text-muted">
                   {view.offLedgerCash !== 0 ? (
                     <>
@@ -413,8 +420,14 @@ export default function DeclarationClient({
                       came in against lay-bys and deposits. Count the drawer for the float and
                       that.
                     </>
+                  ) : cashTender ? (
+                    /* A float was put in, so there is money to count even though
+                       nothing was sold. Saying "records the float only" here
+                       invited a signature without a count — the drawer still has
+                       to be opened and agreed with. */
+                    'No sale was rung up on this shift. Count the drawer and declare the float.'
                   ) : (
-                    'Nothing was taken on this shift. Signing off records the float only.'
+                    'Nothing was taken on this shift, and the drawer opened empty.'
                   )}
                 </p>
               )}

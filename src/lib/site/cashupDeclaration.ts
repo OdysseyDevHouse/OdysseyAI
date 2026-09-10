@@ -447,6 +447,62 @@ export async function declarationView(
     }
   })
 
+  /*
+   * ── THE DRAWER IS COUNTED EVEN WHEN NOTHING WAS SOLD ──────────────────────
+   *
+   * `position.tenders` is grouped out of `sales_tenders`, so a tender nobody
+   * used has no row. For card or EFT that is right — there is nothing to
+   * reconcile against a method the shift never touched.
+   *
+   * Cash is different, because cash is the one tender that is in the drawer
+   * BEFORE the first sale. A till opened with a R500 float and no cash sale
+   * produced no cash row at all: no counting grid, no figure to declare, and
+   * nothing recorded against a drawer that really did hold R500. The float was
+   * still inside `expectedCash`, so the money was expected and un-counted at
+   * the same time — the one combination a cash-up exists to prevent.
+   *
+   * So the row is synthesised whenever the drawer should hold anything: the
+   * float, a payout or drop, or off-ledger cash from a lay-by or deposit. Zero
+   * takings, with the float and movements folded in exactly as they would have
+   * been, which makes `expected` the figure it would have carried had one cash
+   * sale been rung up and refunded.
+   *
+   * Guarded on the money rather than added unconditionally: a card-only shift
+   * that opened with no float has an empty drawer, and asking someone to count
+   * nothing invites a signature that means nothing.
+   */
+  const hasCashTender = tenders.some((t) => t.countsAsDrawerCash)
+  const drawerHoldsSomething =
+    position.openingFloat !== 0 || movementsTotal !== 0 || position.offLedgerTotal !== 0
+
+  if (!hasCashTender && drawerHoldsSomething) {
+    /* Found by the flag, not by the code: a site may rename "Cash", and the
+       seeded row is `is_system` so it cannot be deleted out from under this.
+       Inactive is still counted — turning a tender off stops it being OFFERED
+       at the till, which says nothing about the float already in the drawer. */
+    const cashRow = await siteQueryOne<Row>(
+      siteId,
+      `SELECT id, code, name FROM tender_types
+        WHERE counts_as_drawer_cash = 1
+        ORDER BY position ASC, id ASC LIMIT 1`,
+    )
+    if (cashRow) {
+      const tenderTypeId = Number(cashRow.id)
+      tenders.unshift({
+        tenderTypeId,
+        tenderCode: String(cashRow.code),
+        tenderName: String(cashRow.name),
+        countsAsDrawerCash: true,
+        takings: 0,
+        floatIncluded: position.openingFloat,
+        movementsIncluded: movementsTotal,
+        expected: round(position.openingFloat + movementsTotal, 2),
+        declared: declaredByTender.get(tenderTypeId) ?? null,
+        transactionCount: 0,
+      })
+    }
+  }
+
   const countedRows: CountedDenomination[] = counted.map((r) => ({
     denominationId: Number(r.denomination_id),
     label: String(r.label),

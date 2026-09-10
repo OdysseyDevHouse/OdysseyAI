@@ -362,6 +362,74 @@ async function main() {
     })
     ok('*** a signed declaration refuses further edits ***', !afterSigning.ok,
       afterSigning.ok ? '' : afterSigning.error)
+
+    /*
+     * ── A FLOAT MUST BE DECLARED, EVEN WITH NOTHING SOLD ─────────────────
+     *
+     * The tender list is grouped out of `sales_tenders`, so a shift with no
+     * cash sale used to produce NO cash row: nothing to count, nothing to
+     * declare, and a drawer holding the float that the screen never asked
+     * about. `closeShift` expected the float regardless, so the money was
+     * expected and un-counted at once.
+     *
+     * The whole point is that the count is still demanded, so the assertions
+     * are that the row EXISTS, that it expects the float, and that sign-off
+     * REFUSES while it is blank.
+     */
+    const floatOnly = await openShift(SITE, ACTOR, terminalId, 250)
+    if (!floatOnly.ok) throw new Error(`float-only shift did not open: ${floatOnly.error}`)
+    const floatShiftId = floatOnly.shiftId
+    createdShifts.push(floatShiftId)
+
+    const floatView = await declarationView(SITE, floatShiftId)
+    const floatCash = floatView?.tenders.find((t) => t.countsAsDrawerCash)
+    ok('*** a float with no cash sale still gets a cash row ***', !!floatCash,
+      floatCash ? floatCash.tenderName : 'no cash tender on the declaration')
+    ok('  it expects the float', toNum(floatCash?.expected) === 250,
+      String(floatCash?.expected))
+    ok('  with the float folded in, and nothing rung up',
+      toNum(floatCash?.floatIncluded) === 250 && toNum(floatCash?.takings) === 0,
+      `float ${floatCash?.floatIncluded}, takings ${floatCash?.takings}`)
+    ok('  and no sale is claimed against it', Number(floatCash?.transactionCount) === 0,
+      String(floatCash?.transactionCount))
+
+    /* The refusal is the fix: before this there was no row to be blank. */
+    const blankFloat = await finalizeDeclaration(SITE, ACTOR, floatShiftId, {
+      supervisorId: SUPER.id,
+      supervisorName: SUPER.name,
+      smallChange: 0,
+      denominations: [],
+      tenders: {},
+      bankDeclared: 0,
+      bankReference: null,
+      varianceNote: null,
+      note: null,
+    })
+    ok('*** signing off without counting the float is refused ***', !blankFloat.ok,
+      blankFloat.ok ? '' : blankFloat.error)
+
+    /* And counting it agrees — a drawer with only its float is not a variance. */
+    const countedFloat = await finalizeDeclaration(SITE, ACTOR, floatShiftId, {
+      supervisorId: SUPER.id,
+      supervisorName: SUPER.name,
+      smallChange: 0,
+      denominations: [],
+      tenders: { [Number(floatCash?.tenderTypeId)]: 250 },
+      bankDeclared: 0,
+      bankReference: null,
+      varianceNote: null,
+      note: null,
+    })
+    ok('*** declaring the float exactly balances ***', countedFloat.ok,
+      countedFloat.ok ? '' : countedFloat.error)
+    const floatFrozen = await siteQueryOne<any>(
+      SITE,
+      'SELECT declared_total, expected_total, variance FROM shift_declarations WHERE shift_id = ?',
+      [floatShiftId],
+    )
+    ok('  the float is on the record as counted, not as a surplus',
+      toNum(floatFrozen?.declared_total) === 250 && toNum(floatFrozen?.variance) === 0,
+      `declared ${floatFrozen?.declared_total}, variance ${floatFrozen?.variance}`)
   } finally {
     // ── Cleanup ──────────────────────────────────────────────────────────
     // Litter on a UNIQUE column kills unrelated suites — see the note in

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react'
 import Link from 'next/link'
-import { Badge, Button, EmptyState } from '@/components/ui'
+import { Badge, Button, EmptyState, Tooltip } from '@/components/ui'
 import { Close, DragHandle, Plus } from '@/components/ui/icons'
 import type { InstructionGroup } from '@/lib/site/instructions'
 
@@ -194,20 +194,26 @@ export default function InstructionsPanel({
               >
                 {/* Only the handle starts the drag — see the note in
                     InstructionForm's answer rows. */}
-                <span
-                  draggable={selected.length > 1}
-                  onDragStart={(e) => {
-                    dragIdRef.current = g.id
-                    setDragId(g.id)
-                    // Firefox will not start a drag without data on the transfer.
-                    e.dataTransfer.effectAllowed = 'move'
-                    e.dataTransfer.setData('text/plain', String(g.id))
-                  }}
-                  aria-hidden
-                  className={`mt-0.5 text-faint ${selected.length > 1 ? 'cursor-grab hover:text-muted' : 'opacity-30'}`}
+                <Tooltip
+                  label={selected.length > 1 ? 'Drag to reorder' : 'Add another to reorder'}
+                  layout="inline"
+                  className="mt-0.5"
                 >
-                  <DragHandle size={15} />
-                </span>
+                  <span
+                    draggable={selected.length > 1}
+                    onDragStart={(e) => {
+                      dragIdRef.current = g.id
+                      setDragId(g.id)
+                      // Firefox will not start a drag without data on the transfer.
+                      e.dataTransfer.effectAllowed = 'move'
+                      e.dataTransfer.setData('text/plain', String(g.id))
+                    }}
+                    aria-hidden
+                    className={`text-faint ${selected.length > 1 ? 'cursor-grab hover:text-muted' : 'opacity-30'}`}
+                  >
+                    <DragHandle size={15} />
+                  </span>
+                </Tooltip>
 
                 {/* The position, so the order is readable without counting. */}
                 <span className="mt-0.5 w-4 shrink-0 text-xs text-muted numeric">{i + 1}</span>

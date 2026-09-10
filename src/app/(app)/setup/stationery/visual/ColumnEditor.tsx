@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Button, Checkbox, Icons, Input, NumberInput, Select } from '@/components/ui'
+import { Button, Checkbox, Icons, Input, NumberInput, Select, Tooltip } from '@/components/ui'
 import { MAX_COLUMNS, type ColumnSpec } from '@/lib/stationery/blocks'
 
 /**
@@ -79,17 +79,19 @@ function ColumnRow({
        */}
       <div className="flex items-center gap-2">
         {/* Spread first so our own label wins — dnd-kit's says "draggable item". */}
-        <span
-          {...attributes}
-          {...listeners}
-          role="button"
-          tabIndex={0}
-          aria-label={`Move ${col.heading || col.token}`}
-          className="shrink-0 cursor-grab text-faint hover:text-muted"
-          data-kit-ok
-        >
-          <Icons.DragHandle aria-hidden className="h-4 w-4" />
-        </span>
+        <Tooltip label="Drag to reorder" layout="inline">
+          <span
+            {...attributes}
+            {...listeners}
+            role="button"
+            tabIndex={0}
+            aria-label={`Move ${col.heading || col.token}`}
+            className="shrink-0 cursor-grab text-faint hover:text-muted"
+            data-kit-ok
+          >
+            <Icons.DragHandle aria-hidden className="h-4 w-4" />
+          </span>
+        </Tooltip>
 
         <Input
           aria-label="Column heading"

@@ -1465,6 +1465,25 @@ function TooltipSection() {
             </Tooltip>
           </a>
         </div>
+
+        {/* layout="inline": a small control in a flex row, not clipped text.
+            The default block wrapper would take the row's spare width and shove
+            the fields along. This is what every drag handle in the app uses. */}
+        <div className="flex max-w-sm items-center gap-2 rounded-card border border-border bg-surface p-2">
+          <Tooltip label="Drag to reorder" layout="inline">
+            <span
+              data-kit-ok
+              className="flex size-7 shrink-0 cursor-grab items-center justify-center rounded-control text-faint hover:bg-surface-2 hover:text-muted"
+            >
+              <Icons.DragHandle size={15} />
+            </span>
+          </Tooltip>
+          <Input defaultValue="A row that can be dragged" className="min-w-0 flex-1" readOnly />
+        </div>
+        <p className="-mt-2 text-xs text-faint">
+          layout=&quot;inline&quot; — shrinks to what it wraps, for a handle or icon button on a
+          flex row. Every drag handle in the app carries this.
+        </p>
       </CardBody>
     </Card>
   )

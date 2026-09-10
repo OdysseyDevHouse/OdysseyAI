@@ -19,6 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { ColumnsIcon, Check, DragHandle } from './icons'
 import { buttonClass, type ButtonSize } from './styles'
+import { Tooltip } from './Tooltip'
 
 /**
  * Which columns a wide table shows.
@@ -81,15 +82,22 @@ function SortableRow({
         isDragging ? 'relative z-10 bg-surface-2 shadow-pop' : 'hover:bg-surface-2'
       }`}
     >
-      <button
-        type="button"
-        {...attributes}
-        {...listeners}
-        aria-label={`Move ${column.label}`}
-        className="cursor-grab touch-none px-1 py-1.5 text-faint transition hover:text-muted active:cursor-grabbing"
-      >
-        <DragHandle size={14} />
-      </button>
+      {/* The panel this sits in is a fixed-width `w-60` box that scrolls, so it
+          clips on BOTH axes: a tooltip above the first row is cut off by the
+          scroll box, and a centred one is cut off on the left because the handle
+          is the leftmost thing in the row. Down and left-aligned is the only
+          corner with room. */}
+      <Tooltip label="Drag to reorder" layout="inline" side="bottom" align="start">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          aria-label={`Move ${column.label}`}
+          className="cursor-grab touch-none px-1 py-1.5 text-faint transition hover:text-muted active:cursor-grabbing"
+        >
+          <DragHandle size={14} />
+        </button>
+      </Tooltip>
 
       <button
         type="button"

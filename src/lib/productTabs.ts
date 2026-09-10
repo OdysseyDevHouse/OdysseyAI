@@ -16,7 +16,6 @@ export const PRODUCT_TABS = [
   'general',
   'properties',
   'instructions',
-  'kitchen',
   'suppliers',
   'recipe',
   'refer',
@@ -40,5 +39,10 @@ export const DEFAULT_PRODUCT_TAB: ProductTab = 'general'
  * a first visit lands.
  */
 export function toProductTab(value: string | null | undefined): ProductTab {
+  /* Kitchen printing had a tab of its own until it moved in with the rest of
+     the properties. A bookmark or a back button still carrying `?tab=kitchen`
+     lands where the panel actually IS now, rather than on General with the
+     thing it was opened for two tabs away. */
+  if (value === 'kitchen') return 'properties'
   return PRODUCT_TABS.includes(value as ProductTab) ? (value as ProductTab) : DEFAULT_PRODUCT_TAB
 }

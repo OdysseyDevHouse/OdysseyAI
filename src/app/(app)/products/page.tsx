@@ -10,6 +10,7 @@ import { PRODUCT_TYPES, type ProductTypeId } from '@/lib/productTypes'
 import { getGroup } from '@/lib/site/productVariants'
 import { getCostBasis, listBrands, listVatRates } from '@/lib/site/lookups'
 import { listGroups } from '@/lib/site/instructions'
+import { distinctKitchenGroups, listKitchenPrinters } from '@/lib/site/kitchenPrinters'
 import { listLocations } from '@/lib/site/stockLocations'
 import {
   listDepartments,
@@ -169,15 +170,29 @@ export default async function ProductsPage({
   /* The bulk-options lookups load with the list rather than on demand: the
      dialog is a client component, so fetching them when it opens would mean a
      round trip between clicking "Bulk options" and seeing the actions. */
-  const [departments, costBasis, brands, vatRates, instructionGroups, locations] =
-    await Promise.all([
-      listDepartments(siteId, true),
-      getCostBasis(siteId),
-      listBrands(siteId),
-      listVatRates(siteId),
-      listGroups(siteId),
-      listLocations(siteId, false, true),
-    ])
+  const [
+    departments,
+    costBasis,
+    brands,
+    vatRates,
+    instructionGroups,
+    locations,
+    kitchenPrinters,
+    kitchenGroups,
+  ] = await Promise.all([
+    listDepartments(siteId, true),
+    getCostBasis(siteId),
+    listBrands(siteId),
+    listVatRates(siteId),
+    listGroups(siteId),
+    listLocations(siteId, false, true),
+    /* Both caught, like the product form catches them: a shop that has never
+       set up kitchen printing has no rows here, and on an older site the table
+       may not exist at all. Neither is a reason for the whole product list to
+       fail — the two bulk actions simply are not offered. */
+    listKitchenPrinters(siteId).catch(() => []),
+    distinctKitchenGroups(siteId).catch(() => []),
+  ])
 
   // Filtering by a department includes everything beneath it — picking
   // "Fresh Produce" should not hide the products filed under its sub-levels.
@@ -352,6 +367,16 @@ export default async function ProductsPage({
       .map((v) => ({ id: v.id, label: `${v.name} (${v.rate}%)` })),
     instructionGroups: instructionGroups.map((g) => ({ id: g.id, name: g.name })),
     locations: locations.map((l) => ({ id: l.id, name: l.name, isMain: l.isMain })),
+    /* `unconfigured` rides along so the dialog can warn about a station nobody
+        finished setting up — the same badge the product form shows, for the
+        same reason: routing fifty products at a printer that reaches no machine
+        sends fifty dockets nowhere. */
+    kitchenPrinters: kitchenPrinters.map((p) => ({
+      id: p.id,
+      name: p.name,
+      unconfigured: p.unconfigured,
+    })),
+    kitchenGroups,
   }
 
   /* Sorting keeps its own page — unlike a filter, re-ordering does not change

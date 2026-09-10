@@ -12,6 +12,7 @@ import {
   TABLE_HEAD_ROW,
   TABLE_ROW,
   TABLE_TD,
+  Tooltip,
   TABLE_TH,
   useToast,
 } from '@/components/ui'
@@ -163,7 +164,11 @@ export function InstructionsTable({
             >
               {canEdit && (
                 <td className={`${TABLE_TD} cursor-grab text-faint`}>
-                  <DragHandle size={15} aria-hidden />
+                  {/* Leftmost cell of a table that scrolls sideways — see the
+                      note in DepartmentsClient. */}
+                  <Tooltip label="Drag to reorder" layout="inline" align="start" side="bottom">
+                    <DragHandle size={15} aria-hidden />
+                  </Tooltip>
                 </td>
               )}
 

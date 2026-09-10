@@ -22,6 +22,7 @@ import {
 import { getRefer } from '../src/lib/site/productComposition'
 import { createSupplier } from '../src/lib/site/suppliers'
 import { toNum } from '../src/lib/decimals'
+import { derivedCode } from '../src/lib/referCodes'
 
 const SITE = 1
 
@@ -31,7 +32,14 @@ const ok = (label: string, cond: boolean, extra = '') => {
   console.log(`${cond ? 'PASS' : '**FAIL**'}  ${label}${extra ? '  -- ' + extra : ''}`)
 }
 
-const CODE_PATTERN = '^(RG)[0-9]{8}(-[0-9]+)?$'
+/*
+ * Repeating the suffix group: the derived-code tests build codes on top of a
+ * base that already carries one, so a rung reads "RG12345678-900-6". A pattern
+ * allowing only ONE suffix swept the base and left the rungs behind, and a
+ * leaked product code is what makes an unrelated suite fail on its first
+ * assertion.
+ */
+const CODE_PATTERN = '^(RG)[0-9]{8}(-[0-9]+)*$'
 
 async function sweepStrays() {
   const where = `(SELECT id FROM products WHERE code REGEXP '${CODE_PATTERN}')`
@@ -158,6 +166,10 @@ async function main() {
       'SELECT selling_price_incl FROM product_prices WHERE product_id = ? AND price_structure_id = ?',
       [id, defaultStructure]))?.selling_price_incl)
 
+  const costOf = async (id: number) =>
+    toNum((await siteQueryOne<any>(SITE,
+      'SELECT last_cost FROM products WHERE id = ?', [id]))?.last_cost)
+
   ok('*** the base rung kept the price it was given ***', (await priceOf(single)) === 15,
     String(await priceOf(single)))
   ok('*** so did the six-pack — its OWN price, not the base\'s ***', (await priceOf(six)) === 85,
@@ -203,6 +215,52 @@ async function main() {
   ok("*** and it keeps the existing ladder's method, ignoring the one asked for ***",
     extended.ok && (await getRefer(SITE, extended.productIds[1]))?.method === 'normal',
     extended.ok ? String((await getRefer(SITE, extended.productIds[1]))?.method) : '')
+
+  /*
+   * WHAT WAS TYPED ON THE EXISTING ROW HAS TO BE SAVED.
+   *
+   * The wizard offers a cost and a selling price on every line, including the
+   * one holding a product that already exists — and that is nearly always
+   * line 1, because the dialog opens off that product's Refer tab. Those two
+   * figures used to be dropped: `prepared` is null for an existing row, so the
+   * build loop pushed the id and moved on.
+   *
+   * The result was the wrong way round from anything you would guess. The
+   * six-pack and the case, both freshly created, came out priced correctly —
+   * and the single they were built FROM sat at 0.00 with no shelf price. It
+   * also survived the recost afterwards only because cascadeCompositionCosts
+   * refuses to write a zero, so the packs kept the costs typed against them
+   * while the base they are supposed to derive from held nothing.
+   *
+   * Asserted against a base seeded with a DIFFERENT cost, so a pass cannot
+   * come from the seed happening to match.
+   */
+  const priced = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, 'Typed base', 'normal', 0, 0, 3, 1)`, [`RG${stamp}-600`])
+  const typedBase = priced.insertId
+  const typedRange = await createReferRange(SITE, {
+    method: 'normal',
+    rows: [
+      { productId: typedBase, description: 'Typed base', packSize: 1, costExcl: 12,
+        prices: { [defaultStructure]: 20 } },
+      { description: 'Typed six', code: `RG${stamp}-606`, packSize: 6, costExcl: 72,
+        prices: { [defaultStructure]: 110 } },
+    ],
+  })
+  ok('a range can be built on an existing product with a cost typed on its row',
+    typedRange.ok, typedRange.ok ? '' : typedRange.error)
+  ok('*** the EXISTING base keeps the cost typed against it, not 0.00 ***',
+    (await costOf(typedBase)) === 12, String(await costOf(typedBase)))
+  ok('*** and the price typed against it too ***',
+    (await priceOf(typedBase)) === 20, String(await priceOf(typedBase)))
+  // The whole reason the base matters: every pack above it is derived from it.
+  // 6 × 12 is the figure the ladder MEANS, and it is what the cascade writes.
+  if (typedRange.ok) {
+    ok('  and the pack above it derives from that cost (6 × 12)',
+      (await costOf(typedRange.productIds[1])) === 72,
+      String(await costOf(typedRange.productIds[1])))
+  }
 
   /*
    * The usual way in is the Refer tab of a product that is ALREADY type
@@ -536,6 +594,142 @@ async function main() {
     ],
   })
   ok('  and the same barcode twice within one range is too', !sameBarcodeTwice.ok)
+
+  /*
+   * ── Setting the type to Refer on the product form ──────────────────────
+   *
+   * The save used to demote a refer with no link back to 'normal', to keep an
+   * unsellable product out of the catalogue. But the Refer tab — the only
+   * place a link can be MADE — is offered only once the type is refer, so the
+   * demotion made the setting unreachable: pick Refer, save, and the dropdown
+   * was quietly back on Normal with the tab gone. Nothing said why.
+   *
+   * So the type sticks, and the sale path keeps the invariant instead: a refer
+   * with no link yet is half-finished, and the till refuses it by NAME. Both
+   * halves are asserted here, because keeping the type is only safe while that
+   * refusal holds.
+   */
+  console.log('\n── Choosing Refer on the product form ──')
+
+  const { updateProduct, getProduct } = await import('../src/lib/site/products')
+  const { resolveComponents, saveRefer } = await import('../src/lib/site/productComposition')
+
+  /* Seeded by INSERT rather than createProduct, which refuses on a store with
+     no VAT number registered — a setup rule that has nothing to do with this. */
+  const switcher = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, 'Type switch', 'normal', 0, 0, 5, 1)`, [`RG${stamp}-900`])
+  const madeId = switcher.insertId
+
+  /* `prices` is dropped from the spread deliberately: getProduct returns the
+     price ROWS, while ProductInput wants { structureId: incl }, and handing one
+     shape to the other fails inside the price writer rather than here. */
+  const { prices: _ignored, ...beforeSwitch } = (await getProduct(SITE, madeId)) as any
+  const saved = await updateProduct(SITE, madeId, {
+    ...beforeSwitch,
+    code: `RG${stamp}-900`,
+    description: 'Type switch',
+    productType: 'refer',
+  })
+  ok('saving an existing product as a Refer is accepted', saved.ok,
+    saved.ok ? '' : (saved as any).error)
+  ok('*** and the type STAYS refer, rather than reverting to normal ***',
+    (await typeOf(madeId)) === 'refer', await typeOf(madeId))
+
+  // The invariant that lets the type stand: unsellable until it is linked, and
+  // refused in words that name the missing link rather than silently changed.
+  const resolved = await resolveComponents(SITE, madeId, 'refer').catch(() => null)
+  ok('*** but it is still refused at the till while nothing is linked ***',
+    resolved !== null && !resolved.ok,
+    resolved && !resolved.ok ? resolved.error : String(resolved))
+
+  // And once a link exists it resolves — which is the point of keeping the
+  // type: the Refer tab is reachable now, and finishes the job.
+  const nowLinked = await saveRefer(SITE, madeId, single, 6, 'normal')
+  ok('  a link can then be made on the Refer tab', nowLinked.ok,
+    nowLinked.ok ? '' : (nowLinked as any).error)
+  const afterLink = await resolveComponents(SITE, madeId, 'refer').catch(() => null)
+  ok('*** and now it resolves and can be sold ***', afterLink !== null && afterLink.ok,
+    afterLink && !afterLink.ok ? afterLink.error : '')
+
+  // ── Codes derived from the base rung
+  console.log("\n── Codes derived from the base rung ──")
+
+  /*
+   * A pack range is ONE product in the shop head, and its rungs should read
+   * that way on a stock report. Three unrelated auto-numbers made a ladder
+   * impossible to pick out of a list, so the rungs above the base take the
+   * base own code with the pack size after it.
+   *
+   * The rule itself is unit-tested here because it is what the wizard PUTS in
+   * the boxes; the range below then proves the server stores exactly that.
+   */
+  ok("*** a rung code is the base code plus its pack size ***",
+    derivedCode("AMSTEL1", 6) === "AMSTEL1-6", derivedCode("AMSTEL1", 6))
+  ok("  and it follows the size that was typed",
+    derivedCode("AMSTEL1", 24) === "AMSTEL1-24", derivedCode("AMSTEL1", 24))
+  ok("  surrounding space on the base code is ignored",
+    derivedCode("  AMSTEL1  ", 6) === "AMSTEL1-6", derivedCode("  AMSTEL1  ", 6))
+  // No opinion rather than a guess: the caller falls back to auto-numbering.
+  ok("*** no base code yields no derived code, not \"-6\" ***",
+    derivedCode("", 6) === "", derivedCode("", 6))
+  ok("  a pack size of zero yields none either",
+    derivedCode("AMSTEL1", 0) === "", derivedCode("AMSTEL1", 0))
+  /*
+   * products.code is VARCHAR(48). A suffix that would overflow it falls back
+   * to auto-numbering rather than being saved truncated — a truncated code no
+   * longer matches the base it came from, and could collide with a real one.
+   */
+  ok("*** a code that would exceed 48 characters is declined ***",
+    derivedCode("X".repeat(47), 6) === "", "len " + derivedCode("X".repeat(47), 6).length)
+  ok("  and one that exactly fits is kept",
+    derivedCode("X".repeat(46), 6).length === 48, "len " + derivedCode("X".repeat(46), 6).length)
+
+  // Now the whole range, saved with the codes the wizard would have offered.
+  const codeBase = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, "Amstel single", "normal", 0, 0, 12, 1)`, [`RG${stamp}-910`])
+  const derivedRange = await createReferRange(SITE, {
+    method: "normal",
+    rows: [
+      { productId: codeBase.insertId, description: "Amstel single", packSize: 1, costExcl: 12 },
+      { description: "Amstel six", code: derivedCode(`RG${stamp}-910`, 6), packSize: 6, costExcl: 72 },
+      { description: "Amstel case", code: derivedCode(`RG${stamp}-910`, 24), packSize: 24, costExcl: 288 },
+    ],
+  })
+  ok("*** a range built with derived codes saves ***", derivedRange.ok,
+    derivedRange.ok ? "" : derivedRange.error)
+  if (derivedRange.ok) {
+    const saved = await siteQuery<any>(SITE,
+      "SELECT code FROM products WHERE id IN (?, ?) ORDER BY pack_size",
+      [derivedRange.productIds[1], derivedRange.productIds[2]])
+    ok("*** the six-pack was stored as <base>-6 ***",
+      saved[0]?.code === `RG${stamp}-910-6`, String(saved[0]?.code))
+    ok("*** the case was stored as <base>-24 ***",
+      saved[1]?.code === `RG${stamp}-910-24`, String(saved[1]?.code))
+  }
+
+  /*
+   * A derived code can COLLIDE — the shop may already sell something under it.
+   * It must be refused by name rather than silently duplicated, because
+   * findByBarcode-style lookups take the first match and the till would ring
+   * up whichever product was created first.
+   */
+  await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, "Already using that code", "normal", 0, 0, 1, 1)`, [`RG${stamp}-920-6`])
+  const clashBase = await siteExecute(SITE,
+    `INSERT INTO products (code, description, product_type, stock_on_hand, average_cost, last_cost, visible_in_pos)
+     VALUES (?, "Clash base", "normal", 0, 0, 1, 1)`, [`RG${stamp}-920`])
+  const codeClash = await createReferRange(SITE, {
+    method: "normal",
+    rows: [
+      { productId: clashBase.insertId, description: "Clash base", packSize: 1, costExcl: 1 },
+      { description: "Clash six", code: derivedCode(`RG${stamp}-920`, 6), packSize: 6, costExcl: 6 },
+    ],
+  })
+  ok("*** a derived code already in use is refused, not duplicated ***", !codeClash.ok,
+    codeClash.ok ? "created anyway" : codeClash.error)
 
   // ── Cleanup
   await sweepStrays()

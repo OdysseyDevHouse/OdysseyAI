@@ -44,6 +44,12 @@ export type ProductBulkLookups = {
   purchaseVatRates: { id: number; label: string }[]
   instructionGroups: { id: number; name: string }[]
   locations: { id: number; name: string; isMain: boolean }[]
+  /** Empty on a shop that has never set up kitchen printing, which hides both
+      of the kitchen actions rather than offering a picker with nothing in it. */
+  kitchenPrinters: { id: number; name: string; unconfigured: boolean }[]
+  /** Docket headings already in use, so a shop reuses "Starters" rather than
+      inventing it twice — the same suggestion list the product form shows. */
+  kitchenGroups: string[]
 }
 
 type BulkKind = ProductBulkChange['kind']
@@ -154,7 +160,7 @@ export default function ProductListClient({
         open={stage?.view === 'options'}
         onClose={() => setStage(null)}
         onPick={(kind) => setStage({ view: 'form', kind })}
-        groups={optionGroups(canDelete)}
+        groups={optionGroups(canDelete, lookups.kitchenPrinters.length > 0)}
         count={count}
         noun="product"
         recent={recent}
@@ -183,7 +189,7 @@ export default function ProductListClient({
  * per-till behaviour on its properties tab — because that is how someone
  * looking for one of twenty actions narrows down where to look.
  */
-function optionGroups(canDelete: boolean): BulkOptionGroup<BulkKind>[] {
+function optionGroups(canDelete: boolean, hasKitchenPrinters: boolean): BulkOptionGroup<BulkKind>[] {
   const product: BulkOptionGroup<BulkKind> = {
     title: 'Product',
     options: [
@@ -226,6 +232,25 @@ function optionGroups(canDelete: boolean): BulkOptionGroup<BulkKind>[] {
       { key: 'packWeight', label: 'Change pack weight', icon: <Icons.Scale size={15} /> },
       { key: 'weightDescription', label: 'Change pack weight description', icon: <Icons.Scale size={15} /> },
       { key: 'priceCalc', label: 'Change price calculation', icon: <Icons.Calculator size={15} /> },
+      /* Only where the shop has somewhere to send food — the same rule the
+         product form applies to the panel itself. A hardware shop is not
+         offered an action whose picker would be empty. */
+      ...(hasKitchenPrinters
+        ? [
+            {
+              key: 'kitchenPrinter' as const,
+              label: 'Link kitchen printer',
+              icon: <Icons.Printer size={15} />,
+              keywords: 'kitchen docket station bar grill route unlink remove',
+            },
+            {
+              key: 'kitchenGroup' as const,
+              label: 'Change docket group',
+              icon: <Icons.List size={15} />,
+              keywords: 'kitchen course starters mains heading',
+            },
+          ]
+        : []),
     ],
   }
 
@@ -341,6 +366,10 @@ function BulkForms({
   const [supplierResults, setSupplierResults] = useState<SupplierPick[]>([])
   const [searching, startSearch] = useTransition()
   const [preferred, setPreferred] = useState(false)
+
+  /* Derived, not held: `id` already IS the choice, and a second piece of state
+     tracking the same pick is how the two drift apart. */
+  const chosenPrinter = lookups.kitchenPrinters.find((p) => String(p.id) === id) ?? null
 
   const noun = `${count} product${count === 1 ? '' : 's'}`
 
@@ -512,6 +541,79 @@ function BulkForms({
         () => ({ kind: 'instructionGroup', groupId: Number(id), mode }),
         'primary',
         !id,
+      )
+
+    case 'kitchenPrinter':
+      return shell(
+        'Link kitchen printer',
+        <div className="flex flex-col gap-4">
+          <Field
+            label="Kitchen printer"
+            /* Named rather than merely warned about: "one of these is not set
+               up" is useless when the picker is closed, so the hint says WHICH
+               once the choice is made. */
+            hint={
+              chosenPrinter?.unconfigured
+                ? `${chosenPrinter.name} is not finished in Setup → Printing — dockets sent there go nowhere.`
+                : 'The station this food prints at. Each station prints its own copy.'
+            }
+          >
+            <Select value={id} onChange={(e) => setId(e.target.value)}>
+              <option value="">— Choose a printer —</option>
+              {lookups.kitchenPrinters.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.unconfigured ? ' (not set up yet)' : ''}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Action"
+            hint={
+              mode === 'add'
+                ? 'Each product keeps the other stations it already prints at.'
+                : 'Stops printing at this station only. A product left with none stops going to the kitchen, and keeps its docket group.'
+            }
+          >
+            <Select value={mode} onChange={(e) => setMode(e.target.value as 'add' | 'remove')}>
+              <option value="add">Print at this station</option>
+              <option value="remove">Stop printing at this station</option>
+            </Select>
+          </Field>
+        </div>,
+        () => ({ kind: 'kitchenPrinter', printerId: Number(id), mode }),
+        'primary',
+        !id,
+      )
+
+    case 'kitchenGroup':
+      return shell(
+        'Change docket group',
+        <Field
+          label="Group on the docket"
+          /* The blank case is spelled out because it is a real answer, not an
+             unfinished form — and in bulk it is the one that CLEARS fifty
+             headings at once, which nobody should discover by trying it. */
+          hint="The heading these print under — “Starters”, “Mains”, “Fryer”. Leave it blank to clear the heading, and they print last under none. This does not change where they print."
+        >
+          <Input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Mains"
+            maxLength={60}
+            list="bulk-kitchen-group-suggestions"
+          />
+          {/* Same suggestion list as the product form's, for the same reason:
+              one shop spelling "Starters" two ways is a course that cannot be
+              fired in one tap. */}
+          <datalist id="bulk-kitchen-group-suggestions">
+            {lookups.kitchenGroups.map((known) => (
+              <option key={known} value={known} />
+            ))}
+          </datalist>
+        </Field>,
+        () => ({ kind: 'kitchenGroup', value: text }),
       )
 
     case 'supplier':

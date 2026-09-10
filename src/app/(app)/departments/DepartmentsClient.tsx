@@ -21,6 +21,7 @@ import {
   TABLE_TD,
   TABLE_TH,
   tileClass,
+  Tooltip,
   ToolbarSearch,
   useToast,
 } from '@/components/ui'
@@ -559,15 +560,28 @@ function DepartmentRow({
           style={{ paddingLeft: `${depth * INDENT}px` }}
         >
           {canEdit && (
-            <span
-              aria-hidden
-              title={draggable ? 'Drag to reorder' : 'Clear the search to reorder'}
-              className={`text-faint transition-opacity ${
-                draggable ? 'cursor-grab opacity-40 group-hover:opacity-100' : 'opacity-20'
-              }`}
+            /* Was a native title=, which waits about a second before it appears
+               — long enough that a reader wondering why the row will not move
+               has usually given up. The kit tooltip shows at once. */
+            <Tooltip
+              label={draggable ? 'Drag to reorder' : 'Clear the search to reorder'}
+              layout="inline"
+              /* The handle is the leftmost thing in a table that scrolls
+                 sideways, so a centred panel is half cut off by the scroll box.
+                 Hanging from the left edge keeps it inside. Below, because the
+                 first row's panel would otherwise sit on the column heading. */
+              align="start"
+              side="bottom"
             >
-              <Icons.DragHandle size={14} />
-            </span>
+              <span
+                aria-hidden
+                className={`text-faint transition-opacity ${
+                  draggable ? 'cursor-grab opacity-40 group-hover:opacity-100' : 'opacity-20'
+                }`}
+              >
+                <Icons.DragHandle size={14} />
+              </span>
+            </Tooltip>
           )}
 
           {/* The disclosure keeps its slot on childless rows so every name in a

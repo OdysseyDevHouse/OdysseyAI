@@ -39,6 +39,7 @@ export function Tooltip({
   side = 'top',
   align = 'center',
   trigger = 'self',
+  layout = 'block',
   className = '',
 }: {
   /** The full text. Nothing renders if this is empty — no empty bubble. */
@@ -47,6 +48,19 @@ export function Tooltip({
   children: ReactNode
   side?: 'top' | 'bottom'
   align?: 'center' | 'start'
+  /**
+   * How the wrapper itself lays out.
+   *
+   * `block` — the original: fills its column and clamps to it, which is what
+   * the clipped-text cases want, since the wrapper stands in for the text.
+   *
+   * `inline` — shrinks to the thing it wraps and never grows. For a small
+   * control sitting in a flex row — a drag handle, an icon button — where a
+   * `block` wrapper would take the row's spare width and push its siblings
+   * along. It also carries `shrink-0`, because the handle is the one thing on
+   * such a row that must never be squeezed.
+   */
+  layout?: 'block' | 'inline'
   /**
    * What has to be hovered for the panel to show.
    *
@@ -67,7 +81,7 @@ export function Tooltip({
   if (!label) return <>{children}</>
 
   return (
-    <span className={`group/tip relative block min-w-0 max-w-full ${className}`}>
+    <span className={`group/tip relative ${LAYOUT[layout]} ${className}`}>
       {children}
       <span
         role="tooltip"
@@ -102,6 +116,11 @@ export function Tooltip({
 const TRIGGER: Record<string, string> = {
   self: 'group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100',
   card: 'group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100',
+}
+
+const LAYOUT: Record<string, string> = {
+  block: 'block min-w-0 max-w-full',
+  inline: 'inline-flex shrink-0',
 }
 
 const SIDE: Record<string, string> = {

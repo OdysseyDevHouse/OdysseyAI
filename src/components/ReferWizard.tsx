@@ -19,6 +19,7 @@ import {
 } from '@/components/ui'
 import { Trash } from '@/components/ui/icons'
 import { PACK_DESCRIPTIONS } from '@/lib/productProperties'
+import { derivedCode, derivedName } from '@/lib/referCodes'
 import { addVat, markupPercent, removeVat, sellExclFromMarkup } from '@/lib/pricing'
 import type { ReferMethod } from '@/lib/site/productComposition'
 import {
@@ -53,18 +54,6 @@ const METHOD_HINT: Record<ReferMethod, string> = {
 /** A sensible ladder for a new range, so the table is never blank. */
 const DEFAULT_SIZES = [1, 6, 12, 24, 48, 96]
 
-/**
- * The name a rung gets when nobody types one — "Beer 340ml × 6".
- *
- * ONE definition, because three things have to agree about it: the pre-filled
- * description box, the chain sentence under the table, and what is actually
- * created on submit. They were three copies of the same template, and a change
- * to one was a silent disagreement with the other two.
- */
-function derivedName(baseName: string, packSize: number) {
-  return `${baseName.trim() || 'Product'} × ${packSize || '?'}`
-}
-
 /** How many rows still need a product code invented for them. */
 function rowsNeedingCode(rows: Row[]) {
   return rows.filter((r) => !r.productId && !r.code.trim()).length
@@ -89,6 +78,17 @@ type Row = {
    */
   descriptionEdited: boolean
   code: string
+  /**
+   * Whether `code` was typed rather than derived from the base's code.
+   *
+   * Tracked for the same reason `descriptionEdited` is, and it matters more
+   * here: a derived code must keep following the base, so changing line 1's
+   * code or a rung's pack size has to re-derive the rows nobody has claimed —
+   * while a code somebody typed by hand is never overwritten. Comparing
+   * against "what we last generated" breaks the moment a user types exactly
+   * what was offered, which on a short suffix is likely rather than exotic.
+   */
+  codeEdited: boolean
   barcode: string
   packSize: number
   packDescription: string
@@ -104,6 +104,7 @@ function blankRow(index: number, base: string): Row {
     description: '',
     descriptionEdited: false,
     code: '',
+    codeEdited: false,
     barcode: '',
     packSize: DEFAULT_SIZES[index] ?? 0,
     packDescription: index === 0 ? 'None' : 'Pack',
@@ -195,6 +196,9 @@ export default function ReferWizard({
     const rest = [blankRow(1, stamp), blankRow(2, stamp)].map((r) => ({
       ...r,
       description: derivedName(first.description, r.packSize),
+      // Blank when the base has no code of its own yet — a brand-new range
+      // then takes the site's auto-numbers, and the effect below fills them.
+      code: derivedCode(first.code, r.packSize),
     }))
     return [first, ...rest]
   })
@@ -232,11 +236,24 @@ export default function ReferWizard({
       if (!live || !codes.length) return
       setRows((current) => {
         let next = 0
-        return current.map((r) =>
+        const filled = current.map((r) =>
           r.productId || r.code.trim() || next >= codes.length
             ? r
             : { ...r, code: codes[next++] },
         )
+        /*
+         * The rungs above the base take THEIR codes from it, not from the
+         * sequence — so a range numbered automatically still reads as one
+         * family. Done here rather than left to the boxes because the codes
+         * only arrived now: line 1 was blank when the dialog opened, so there
+         * was nothing to derive from until this resolved.
+         */
+        const baseCode = filled[0]?.code ?? ''
+        return filled.map((r, i) => {
+          if (i === 0 || r.productId || r.codeEdited) return r
+          const derived = derivedCode(baseCode, r.packSize)
+          return derived ? { ...r, code: derived } : r
+        })
       })
     })()
     return () => {
@@ -248,22 +265,34 @@ export default function ReferWizard({
   }, [open, autoCode])
 
   /**
-   * Applies an edit, then re-derives every name that is still automatic.
+   * Applies an edit, then re-derives every name and code that is still
+   * automatic.
    *
    * Runs on EVERY patch rather than only on the base's name, because a pack
-   * size carries into the name too — changing line 3 from 12 to 24 has to turn
-   * "Beer × 12" into "Beer × 24" in the box, not just in the chain sentence
-   * underneath it.
+   * size carries into both — changing line 3 from 12 to 24 has to turn
+   * "Beer × 12" into "Beer × 24" in the box and "AMSTEL1-12" into
+   * "AMSTEL1-24", not just the chain sentence underneath it. Renaming or
+   * re-coding line 1 carries the same way.
+   *
+   * A derived code that comes back empty — a base with no code yet, or one too
+   * long to suffix — leaves whatever the box holds alone rather than clearing
+   * it, so an auto-number already filled in is never wiped by an edit
+   * somewhere else on the row.
    */
   const patch = (key: string, next: Partial<Row>) =>
     setRows((current) => {
       const edited = current.map((r) => (r.key === key ? { ...r, ...next } : r))
       const baseName = edited[0]?.description ?? ''
-      return edited.map((r, i) =>
-        i === 0 || r.productId || r.descriptionEdited
-          ? r
-          : { ...r, description: derivedName(baseName, r.packSize) },
-      )
+      const baseCode = edited[0]?.code ?? ''
+      return edited.map((r, i) => {
+        if (i === 0 || r.productId) return r
+        const derived = r.codeEdited ? '' : derivedCode(baseCode, r.packSize)
+        return {
+          ...r,
+          ...(r.descriptionEdited ? null : { description: derivedName(baseName, r.packSize) }),
+          ...(derived ? { code: derived } : null),
+        }
+      })
     })
 
   const addRow = () =>
@@ -271,6 +300,7 @@ export default function ReferWizard({
       if (current.length >= 6) return current
       const added = blankRow(current.length, stamp)
       added.description = derivedName(current[0]?.description ?? '', added.packSize)
+      added.code = derivedCode(current[0]?.code ?? '', added.packSize)
       return [...current, added]
     })
 
@@ -330,7 +360,13 @@ export default function ReferWizard({
     // Caught here rather than by the server, which would only say so after the
     // whole dialog had been filled in.
     if (!autoCode) {
-      const missing = rows.findIndex((r) => !r.productId && !r.code.trim())
+      // A row with a derivable code HAS one — it is what the box is offering
+      // and what submit will send, so refusing it here would block a range
+      // the server would have accepted.
+      const missing = rows.findIndex(
+        (r, i) =>
+          !r.productId && !r.code.trim() && !(i > 0 && derivedCode(rows[0].code, r.packSize)),
+      )
       if (missing >= 0) {
         problem ??= `Line ${missing + 1} needs a product code. This site does not number products automatically.`
       }
@@ -377,7 +413,16 @@ export default function ReferWizard({
           // "Beer × 6" does not have to be typed to be accepted.
           description:
             r.description.trim() || (i === 0 ? '' : derivedName(rows[0].description, r.packSize)),
-          code: r.code,
+          /*
+           * An untouched row takes the code its placeholder was offering, for
+           * the same reason the description does — a suffix nobody edited is
+           * still what the box was promising, and making it be typed to be
+           * accepted would defeat the point of offering it.
+           *
+           * Falls through to blank when there is nothing to derive from, which
+           * is resolveMasterCode's cue to claim the next auto-number.
+           */
+          code: r.code.trim() || (i === 0 ? '' : derivedCode(rows[0].code, r.packSize)),
           barcode: r.barcode,
           packSize: r.packSize,
           packDescription: r.packDescription,
@@ -528,9 +573,24 @@ export default function ReferWizard({
                     <td className={TABLE_TD_INPUT}>
                       <Input
                         value={row.code}
-                        onChange={(e) => patch(row.key, { code: e.target.value })}
+                        onChange={(e) =>
+                          patch(row.key, {
+                            code: e.target.value,
+                            // Clearing the box hands the row back to the
+                            // derived code, the same way the description
+                            // works — otherwise wiping a code to retype it
+                            // would strand the row on nothing.
+                            ...(index > 0 && { codeEdited: e.target.value.trim() !== '' }),
+                          })
+                        }
                         readOnly={locked}
-                        placeholder={autoCode ? 'Auto' : 'Required'}
+                        placeholder={
+                          index > 0 && derivedCode(rows[0].code, row.packSize)
+                            ? derivedCode(rows[0].code, row.packSize)
+                            : autoCode
+                              ? 'Auto'
+                              : 'Required'
+                        }
                         aria-label={`Product code line ${index + 1}`}
                       />
                     </td>
@@ -632,9 +692,11 @@ export default function ReferWizard({
         <p className="text-sm text-muted">
           Cost is VAT-exclusive; selling is VAT-inclusive (the till&rsquo;s retail price). Markup and
           selling update each other off the cost.{' '}
-          {autoCode
-            ? 'Leave a product code blank to have it numbered automatically.'
-            : 'Every new line needs its own product code.'}{' '}
+          {derivedCode(rows[0]?.code ?? '', rows[1]?.packSize ?? 0)
+            ? `Product codes follow the first line — ${derivedCode(rows[0].code, rows[1].packSize)} — unless you type your own.`
+            : autoCode
+              ? 'Leave a product code blank to have it numbered automatically.'
+              : 'Every new line needs its own product code.'}{' '}
           Refine everything afterwards on each product&rsquo;s Edit screen.
         </p>
 

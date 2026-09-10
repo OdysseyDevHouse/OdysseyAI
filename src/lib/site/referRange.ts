@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { round } from '../decimals'
 import {
+  applyTypedCostTx,
   insertProductTx,
   resolveVat,
   validateProduct,
@@ -934,7 +935,17 @@ export async function createReferRange(
     for (const [index, row] of input.rows.entries()) {
       const ready = prepared[index]
       if (!ready) {
-        ids.push(row.productId as number)
+        /*
+         * An EXISTING product on a line still had its cost and price typed on
+         * that line, and both used to be thrown away — `prepared` is null for
+         * it, so the loop pushed the id and moved on. Since line 1 is nearly
+         * always an existing product (the wizard opens off its Refer tab), the
+         * base of the ladder was the one rung created with no cost and no
+         * price, while the packs derived FROM it came out right.
+         */
+        const id = row.productId as number
+        ids.push(id)
+        await applyTypedCostTx(tx, id, row.costExcl, row.prices)
         continue
       }
       ids.push(await insertProductTx(tx, { ...ready.input, code: ready.code }, vat))
