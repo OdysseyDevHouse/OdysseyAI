@@ -18,7 +18,7 @@ import {
   useToast,
   type Column,
 } from '@/components/ui'
-import { createScheduleAction } from './actions'
+import { createScheduleAction, duplicateScheduleAction } from './actions'
 import type { Schedule } from '@/lib/site/priceSchedules'
 
 /**
@@ -127,6 +127,25 @@ export default function ScheduleList({ schedules }: { schedules: Schedule[] }) {
     }
     return rows.filter((r) => r.uiStatus === filter)
   }, [rows, filter])
+
+  /**
+   * Copy a change from the list and open the copy.
+   *
+   * Offered here as well as inside the editor because this is where somebody
+   * looking for "the one I did in April" actually is — making them open it
+   * first, only to copy it and be sent back out, is a round trip for nothing.
+   */
+  function duplicate(id: number) {
+    startTransition(async () => {
+      const result = await duplicateScheduleAction(id)
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      toast.success('Copied. This is the copy — the original is untouched.')
+      router.push(`/pricing-schedules/${result.id}`)
+    })
+  }
 
   function create() {
     const trimmed = name.trim()
@@ -249,6 +268,31 @@ export default function ScheduleList({ schedules }: { schedules: Schedule[] }) {
               rows={visible}
               getRowKey={(r) => r.id}
               onRowClick={(r) => router.push(`/pricing-schedules/${r.id}`)}
+              /* Hidden until the row is hovered: on a list that is mostly
+                 history, a copy button on every row competes with the statuses
+                 and dates people are actually reading down. */
+              actionsOnHover
+              actions={(r) =>
+                r.lineCount > 0 ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    aria-label={`Duplicate ${r.name}`}
+                    title="Duplicate — build a new change from this list"
+                    disabled={busy}
+                    onClick={(e) => {
+                      /* The row itself navigates. Without this, copying also
+                         opens the ORIGINAL, and the push into the copy loses
+                         the race about half the time. */
+                      e.stopPropagation()
+                      duplicate(r.id)
+                    }}
+                  >
+                    <Icons.Copy size={15} />
+                  </Button>
+                ) : undefined
+              }
             />
           )}
         </CardBody>

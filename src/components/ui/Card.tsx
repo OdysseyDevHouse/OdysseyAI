@@ -75,6 +75,16 @@ export function CardHeader({
          by the card, because a border here could only be as tall as the
          header. See globals.css. */
       data-accent-rule={brand ? '' : undefined}
+      /* Lets the block BELOW the header square off its top corners. A table
+         frame inherits the card's radius so it can clip its opaque header band
+         to the card's curve; directly under a CardHeader there is no curve to
+         clip to, and the inherited radius bit a notch of card colour out of
+         each top corner of the band. The header is the one element that knows
+         it owns the card's top edge, so it says so here and TABLE_FRAME keys
+         off it. Not `:first-child` on the frame: a Card renders dialogs as
+         siblings, so a table flush against the card top is often not the first
+         child and would square off corners that really are in the curve. */
+      data-card-header=""
       className={[
         /* Wraps rather than squeezing. The action is shrink-0 and the title
            min-w-0, so without a wrap a header carrying a real toolbar — the

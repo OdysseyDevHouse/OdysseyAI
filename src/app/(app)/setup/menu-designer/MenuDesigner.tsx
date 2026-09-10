@@ -43,7 +43,15 @@ import {
   type MenuActionResult,
   type MenuPayload,
 } from './actions'
-import { BackTile, DepartmentTile, DragOverlayCards, ProductTile, TILE_H } from './tiles'
+import {
+  BackTile,
+  DEPT_COLUMNS,
+  DEPT_TILE_H,
+  DepartmentTile,
+  DragOverlayCards,
+  ProductTile,
+  TILE_H,
+} from './tiles'
 import { NewDepartmentModal } from './NewDepartmentModal'
 import { TileEditorModal, type EditorTarget } from './TileEditorModal'
 import { UnassignedTray } from './UnassignedTray'
@@ -874,82 +882,95 @@ export function MenuDesigner({
                 }
               />
             ) : (
-              <TileGrid tileWidth={168} tileHeight={TILE_H}>
-                {path.length > 0 && (
-                  <BackTile
-                    label={path.length > 1 ? path[path.length - 2].name : 'All departments'}
-                    receiving={
-                      over?.id === 'back' && (active?.kind === 'department' || path.length >= 2)
-                    }
-                    springing={springingId === 'back'}
-                    onClick={() => navigate(pathIds.slice(0, -1))}
-                  />
+              /* Two grids rather than one flow: a department is the LEVEL and a
+                 product is what is filed in it, and a single grid made those one
+                 undifferentiated field of tiles. Splitting them costs nothing in
+                 behaviour — every drop target is the tile's own droppable, and a
+                 reorder has always been within-kind. */
+              <div className="flex flex-col gap-4">
+                {(path.length > 0 || children.length > 0) && (
+                  <TileGrid tileWidth={168} tileHeight={DEPT_TILE_H} columns={DEPT_COLUMNS}>
+                    {path.length > 0 && (
+                      <BackTile
+                        label={path.length > 1 ? path[path.length - 2].name : 'All departments'}
+                        receiving={
+                          over?.id === 'back' && (active?.kind === 'department' || path.length >= 2)
+                        }
+                        springing={springingId === 'back'}
+                        onClick={() => navigate(pathIds.slice(0, -1))}
+                      />
+                    )}
+
+                    {children.map((d) => {
+                      const sections = childrenOf(departments, d.id).length
+                      const items = deepCount(d.id)
+                      const id = `department-${d.id}`
+                      return (
+                        <DepartmentTile
+                          key={id}
+                          department={d}
+                          dragId={id}
+                          detail={
+                            sections
+                              ? `${sections} section${sections === 1 ? '' : 's'} · ${items} product${items === 1 ? '' : 's'}`
+                              : `${items} product${items === 1 ? '' : 's'}`
+                          }
+                          zone={over?.id === id ? over.zone : null}
+                          dimmed={active?.kind === 'department' && active.ids.includes(d.id)}
+                          springing={springingId === id}
+                          canEdit={canEdit}
+                          onOpen={() => navigate([...pathIds, d.id])}
+                          onEdit={() => setEditor({ kind: 'department', id: d.id })}
+                          onToggleVisible={(on) =>
+                            run(
+                              (m) => ({
+                                ...m,
+                                departments: m.departments.map((x) =>
+                                  x.id === d.id ? { ...x, isActive: on } : x,
+                                ),
+                              }),
+                              () => setDepartmentVisibleAction(d.id, on),
+                            )
+                          }
+                        />
+                      )
+                    })}
+                  </TileGrid>
                 )}
 
-                {children.map((d) => {
-                  const sections = childrenOf(departments, d.id).length
-                  const items = deepCount(d.id)
-                  const id = `department-${d.id}`
-                  return (
-                    <DepartmentTile
-                      key={id}
-                      department={d}
-                      dragId={id}
-                      detail={
-                        sections
-                          ? `${sections} section${sections === 1 ? '' : 's'} · ${items} product${items === 1 ? '' : 's'}`
-                          : `${items} product${items === 1 ? '' : 's'}`
-                      }
-                      zone={over?.id === id ? over.zone : null}
-                      dimmed={active?.kind === 'department' && active.ids.includes(d.id)}
-                      springing={springingId === id}
-                      canEdit={canEdit}
-                      onOpen={() => navigate([...pathIds, d.id])}
-                      onEdit={() => setEditor({ kind: 'department', id: d.id })}
-                      onToggleVisible={(on) =>
-                        run(
-                          (m) => ({
-                            ...m,
-                            departments: m.departments.map((x) =>
-                              x.id === d.id ? { ...x, isActive: on } : x,
-                            ),
-                          }),
-                          () => setDepartmentVisibleAction(d.id, on),
-                        )
-                      }
-                    />
-                  )
-                })}
-
-                {gridShown.map((p) => {
-                  const id = `product-${p.id}`
-                  return (
-                    <ProductTile
-                      key={id}
-                      product={p}
-                      dragId={id}
-                      fromTray={false}
-                      selected={selection.has(p.id)}
-                      dimmed={activeIds.has(p.id)}
-                      zone={over?.id === id ? over.zone : null}
-                      canEdit={canEdit}
-                      onClick={(e) => handleProductClick(e, p.id, gridVisual)}
-                      onEdit={() => setEditor({ kind: 'product', id: p.id })}
-                      onToggleVisible={(on) =>
-                        run(
-                          (m) => ({
-                            ...m,
-                            products: m.products.map((x) =>
-                              x.id === p.id ? { ...x, visibleInPos: on } : x,
-                            ),
-                          }),
-                          () => setProductsVisibleAction([p.id], on),
-                        )
-                      }
-                    />
-                  )
-                })}
-              </TileGrid>
+                {gridShown.length > 0 && (
+                  <TileGrid tileWidth={168} tileHeight={TILE_H}>
+                    {gridShown.map((p) => {
+                      const id = `product-${p.id}`
+                      return (
+                        <ProductTile
+                          key={id}
+                          product={p}
+                          dragId={id}
+                          fromTray={false}
+                          selected={selection.has(p.id)}
+                          dimmed={activeIds.has(p.id)}
+                          zone={over?.id === id ? over.zone : null}
+                          canEdit={canEdit}
+                          onClick={(e) => handleProductClick(e, p.id, gridVisual)}
+                          onEdit={() => setEditor({ kind: 'product', id: p.id })}
+                          onToggleVisible={(on) =>
+                            run(
+                              (m) => ({
+                                ...m,
+                                products: m.products.map((x) =>
+                                  x.id === p.id ? { ...x, visibleInPos: on } : x,
+                                ),
+                              }),
+                              () => setProductsVisibleAction([p.id], on),
+                            )
+                          }
+                        />
+                      )
+                    })}
+                  </TileGrid>
+                )}
+              </div>
             )}
 
             {/* Says what is not on screen rather than truncating quietly — a

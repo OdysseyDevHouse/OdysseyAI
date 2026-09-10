@@ -44,12 +44,12 @@ let productId: number | null = null
 
 async function main() {
   // ── Create, and the name clash ────────────────────────────────────────
-  const first = await createBrand(SITE, { name: `${TAG} One`, isActive: true })
+  const first = await createBrand(SITE, { name: `${TAG} One`, isActive: true, onlineImageId: null })
   ok('creates a brand', first.ok, first.ok ? '' : first.error)
   if (!first.ok) return
   made.push(first.id)
 
-  const dupe = await createBrand(SITE, { name: `${TAG} One`, isActive: true })
+  const dupe = await createBrand(SITE, { name: `${TAG} One`, isActive: true, onlineImageId: null })
   ok('refuses a duplicate name', !dupe.ok)
   ok(
     'the refusal names the brand',
@@ -59,32 +59,32 @@ async function main() {
 
   // Case and surrounding space are the same name to MariaDB's collation, which
   // is what stops 'coca cola' becoming a second Coca Cola.
-  const cased = await createBrand(SITE, { name: `  ${TAG.toLowerCase()} one  `, isActive: true })
+  const cased = await createBrand(SITE, { name: `  ${TAG.toLowerCase()} one  `, isActive: true, onlineImageId: null })
   ok('refuses the same name in another case', !cased.ok, cased.ok ? 'created it anyway' : '')
   if (cased.ok) made.push(cased.id)
 
-  const blank = await createBrand(SITE, { name: '   ', isActive: true })
+  const blank = await createBrand(SITE, { name: '   ', isActive: true, onlineImageId: null })
   ok('refuses a blank name', !blank.ok)
   if (blank.ok) made.push(blank.id)
 
-  const long = await createBrand(SITE, { name: 'x'.repeat(121), isActive: true })
+  const long = await createBrand(SITE, { name: 'x'.repeat(121), isActive: true, onlineImageId: null })
   ok('refuses a name past the column width', !long.ok)
   if (long.ok) made.push(long.id)
 
   // ── Rename ────────────────────────────────────────────────────────────
-  const second = await createBrand(SITE, { name: `${TAG} Two`, isActive: true })
+  const second = await createBrand(SITE, { name: `${TAG} Two`, isActive: true, onlineImageId: null })
   if (!second.ok) {
     ok('creates a second brand', false, second.error)
     return
   }
   made.push(second.id)
 
-  const clash = await updateBrand(SITE, second.id, { name: `${TAG} One`, isActive: true })
+  const clash = await updateBrand(SITE, second.id, { name: `${TAG} One`, isActive: true, onlineImageId: null })
   ok('refuses a rename onto another brand', !clash.ok)
 
   // The excludeId branch: saving a brand under the name it already has must
   // not see itself as a clash, or nothing could ever be edited.
-  const same = await updateBrand(SITE, second.id, { name: `${TAG} Two`, isActive: false })
+  const same = await updateBrand(SITE, second.id, { name: `${TAG} Two`, isActive: false, onlineImageId: null })
   ok('allows a save under its own unchanged name', same.ok, same.ok ? '' : same.error)
   const afterSame = await getBrand(SITE, second.id)
   ok('that save still applied the other field', afterSame?.isActive === false)
@@ -109,6 +109,36 @@ async function main() {
     'the product picker still offers the active one',
     picker.some((b) => b.id === first.id),
   )
+
+  // ── The shop picture ──────────────────────────────────────────────────
+  /* 253 keeps no FK, so an id is stored as given and the reader copes with a
+     dangling one. That makes the round trip worth proving directly: a column
+     nothing reads back would look fine from the form and be empty on reload. */
+  const withPic = await updateBrand(SITE, second.id, {
+    name: `${TAG} Two`,
+    isActive: true,
+    onlineImageId: 4242,
+  })
+  ok('saves a picture id', withPic.ok, withPic.ok ? '' : withPic.error)
+  ok('reads the picture id back', (await getBrand(SITE, second.id))?.onlineImageId === 4242)
+  ok(
+    'the listing carries the picture id too',
+    (await listBrandsForSetup(SITE, true)).find((b) => b.id === second.id)?.onlineImageId === 4242,
+  )
+
+  /* Blank means NO picture and must not land as 0: a stored 0 is a real id that
+     resolves to nothing, which renders as a broken picture rather than as none. */
+  const zeroed = await updateBrand(SITE, second.id, {
+    name: `${TAG} Two`,
+    isActive: true,
+    onlineImageId: 0,
+  })
+  ok('accepts a cleared picture', zeroed.ok, zeroed.ok ? '' : zeroed.error)
+  ok('stores a cleared picture as NULL, not 0', (await getBrand(SITE, second.id))?.onlineImageId === null)
+
+  // A new brand starts with no picture — the inline creator on the product form
+  // passes none, and that must not become 0 either.
+  ok('a brand created without a picture has none', (await getBrand(SITE, first.id))?.onlineImageId === null)
 
   // ── A brand in use ────────────────────────────────────────────────────
   /* A real product carrying the brand, because the refusal is driven by a

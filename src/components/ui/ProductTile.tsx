@@ -209,7 +209,14 @@ export function ProductTile({
               lets mt-auto below hold the price on the bottom edge, where a cashier
               finds it in the same place on every tile in the row rather than at a
               height that moves with the length of the description above it. */}
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {/* justify-end with no price: the price is what normally holds the bottom
+              of this block, and a tile that has only a subtitle — a department, whose
+              line is "3 sections · 12 products" — would otherwise leave every pixel of
+              a taller tile as a void beneath it. Sitting the subtitle on the same
+              baseline the price would have taken keeps a mixed row aligned instead. */}
+          <span
+            className={`flex min-w-0 flex-1 flex-col gap-0.5 ${price ? '' : 'justify-end'}`}
+          >
             {subtitle && <span className="truncate text-[13px] text-muted">{subtitle}</span>}
             {price && (
               <span className="numeric mt-auto text-base font-bold text-brand">{price}</span>

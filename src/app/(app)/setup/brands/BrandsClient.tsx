@@ -18,6 +18,8 @@ import {
   useToast,
   type Column,
 } from '@/components/ui'
+import PicturePicker from '@/components/PicturePicker'
+import type { StorefrontImage } from '@/lib/site/storefrontImages'
 import type { Brand } from '@/lib/site/brands'
 import { saveBrandAction, setBrandActiveAction, deleteBrandAction } from './actions'
 
@@ -42,11 +44,22 @@ import { saveBrandAction, setBrandActiveAction, deleteBrandAction } from './acti
  * products it is about to change.
  */
 
-type Draft = { name: string; isActive: boolean }
+/* The picture rides in the draft as the RESOLVED image, not just its id: the
+   picker needs the whole thing to draw its thumbnail before the dialog has
+   fetched anything, and the id is one field off it. */
+type Draft = { name: string; isActive: boolean; image: StorefrontImage | null }
 
-const BLANK: Draft = { name: '', isActive: true }
+const BLANK: Draft = { name: '', isActive: true, image: null }
 
-export default function BrandsClient({ brands }: { brands: Brand[] }) {
+export default function BrandsClient({
+  brands,
+  images,
+}: {
+  brands: Brand[]
+  /** Resolved pictures by brand id — only the brands that have one appear. */
+  images: readonly (readonly [number, StorefrontImage])[]
+}) {
+  const imageFor = new Map(images)
   const [editing, setEditing] = useState<Brand | null>(null)
   const [draft, setDraft] = useState<Draft>(BLANK)
   const [open, setOpen] = useState(false)
@@ -63,14 +76,22 @@ export default function BrandsClient({ brands }: { brands: Brand[] }) {
 
   function openEdit(brand: Brand) {
     setEditing(brand)
-    setDraft({ name: brand.name, isActive: brand.isActive })
+    setDraft({
+      name: brand.name,
+      isActive: brand.isActive,
+      image: imageFor.get(brand.id) ?? null,
+    })
     setOpen(true)
   }
 
   function save() {
     startTransition(async () => {
       const result = await saveBrandAction(
-        { name: draft.name, isActive: draft.isActive },
+        {
+          name: draft.name,
+          isActive: draft.isActive,
+          onlineImageId: draft.image?.id ?? null,
+        },
         editing?.id,
       )
       if (!result.ok) {
@@ -118,6 +139,31 @@ export default function BrandsClient({ brands }: { brands: Brand[] }) {
   }
 
   const columns: Column<Brand>[] = [
+    {
+      key: 'picture',
+      header: 'Picture',
+      /* A narrow thumbnail column rather than a name-cell avatar: the picture
+         is a shop-window image, and the point of showing it in the list is to
+         see at a glance which brands still have none. A brand without one shows
+         an empty frame rather than nothing, so the gap is visible. */
+      cell: (b) => {
+        const image = imageFor.get(b.id)
+        return image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/api/storefront-images/${image.id}`}
+            alt={image.altText || ''}
+            className="h-8 w-14 rounded-control border border-border object-cover"
+          />
+        ) : (
+          <div
+            className="h-8 w-14 rounded-control border border-dashed border-border bg-surface-2"
+            aria-label="No picture"
+          />
+        )
+      },
+      sortValue: (b) => (imageFor.has(b.id) ? 0 : 1),
+    },
     {
       key: 'name',
       header: 'Brand',
@@ -228,6 +274,23 @@ export default function BrandsClient({ brands }: { brands: Brand[] }) {
               placeholder="Coca-Cola"
             />
           </Field>
+          {/* One picture, for the shop only — a brand has no till tile to draw.
+              A department carries two because its icon appears on the POS
+              department rail; there is no brand rail, so a second picker here
+              would promise a tile that never renders. See 253_brand_image.sql.
+              Same library as the storefront's banners and department pictures,
+              so a logo uploaded here can be reused there. */}
+          <Field
+            label="Online store picture"
+            hint="Shown in your shop where products are browsed by brand. Optional."
+          >
+            <PicturePicker
+              value={draft.image?.id ?? null}
+              current={draft.image}
+              onChange={(image) => setDraft({ ...draft, image })}
+            />
+          </Field>
+
           <Switch
             checked={draft.isActive}
             onChange={(next) => setDraft({ ...draft, isActive: next })}

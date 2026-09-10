@@ -37,11 +37,19 @@ export type Brand = {
   isActive: boolean
   /** How many products carry this brand. Drives the delete refusal. */
   productCount: number
+  /**
+   * The shop picture, or null. A raw id, not the resolved image: the row can
+   * name a picture that has since been deleted (253 keeps no FK on purpose),
+   * so a reader that needs to SHOW it resolves the id and falls back to
+   * nothing. Only the brand form does that.
+   */
+  onlineImageId: number | null
 }
 
 export type BrandInput = {
   name: string
   isActive: boolean
+  onlineImageId: number | null
 }
 
 export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
@@ -64,38 +72,50 @@ export async function listBrandsForSetup(
 ): Promise<Brand[]> {
   const rows = await siteQuery<Row>(
     siteId,
-    `SELECT b.id, b.name, b.is_active, COUNT(p.id) AS product_count
+    `SELECT b.id, b.name, b.is_active, b.online_image_id, COUNT(p.id) AS product_count
        FROM brands b
        LEFT JOIN products p ON p.brand_id = b.id
       ${includeInactive ? '' : 'WHERE b.is_active = 1'}
-      GROUP BY b.id, b.name, b.is_active
+      GROUP BY b.id, b.name, b.is_active, b.online_image_id
       ORDER BY b.name ASC`,
   )
-  return rows.map((r) => ({
+  return rows.map(mapBrand)
+}
+
+/** One row to a Brand. Shared so the list and the single read cannot drift. */
+function mapBrand(r: Row): Brand {
+  return {
     id: Number(r.id),
     name: String(r.name),
     isActive: !!r.is_active,
     productCount: Number(r.product_count ?? 0),
-  }))
+    onlineImageId: r.online_image_id === null ? null : Number(r.online_image_id),
+  }
 }
 
 export async function getBrand(siteId: number, id: number): Promise<Brand | null> {
   const row = await siteQueryOne<Row>(
     siteId,
-    `SELECT b.id, b.name, b.is_active, COUNT(p.id) AS product_count
+    `SELECT b.id, b.name, b.is_active, b.online_image_id, COUNT(p.id) AS product_count
        FROM brands b
        LEFT JOIN products p ON p.brand_id = b.id
       WHERE b.id = ?
-      GROUP BY b.id, b.name, b.is_active`,
+      GROUP BY b.id, b.name, b.is_active, b.online_image_id`,
     [id],
   )
-  if (!row) return null
-  return {
-    id: Number(row.id),
-    name: String(row.name),
-    isActive: !!row.is_active,
-    productCount: Number(row.product_count ?? 0),
-  }
+  return row ? mapBrand(row) : null
+}
+
+/**
+ * A picture id posted by a form, or null.
+ *
+ * An empty field means "no picture" and must not become 0 — a 0 would be stored
+ * as a real id that resolves to nothing, which reads as a broken picture rather
+ * than as no picture at all.
+ */
+function imageId(value: number | null | undefined): number | null {
+  const n = Number(value)
+  return Number.isInteger(n) && n > 0 ? n : null
 }
 
 export function validateBrand(input: BrandInput): string | null {
@@ -131,10 +151,11 @@ export async function createBrand(siteId: number, input: BrandInput): Promise<Sa
     return { ok: false, error: `"${name}" already exists.` }
   }
 
-  const res = await siteExecute(siteId, 'INSERT INTO brands (name, is_active) VALUES (?,?)', [
-    name,
-    input.isActive === false ? 0 : 1,
-  ])
+  const res = await siteExecute(
+    siteId,
+    'INSERT INTO brands (name, is_active, online_image_id) VALUES (?,?,?)',
+    [name, input.isActive === false ? 0 : 1, imageId(input.onlineImageId)],
+  )
   return { ok: true, id: res.insertId }
 }
 
@@ -152,11 +173,11 @@ export async function updateBrand(
     return { ok: false, error: `"${name}" already exists.` }
   }
 
-  await siteExecute(siteId, 'UPDATE brands SET name = ?, is_active = ? WHERE id = ?', [
-    name,
-    input.isActive === false ? 0 : 1,
-    id,
-  ])
+  await siteExecute(
+    siteId,
+    'UPDATE brands SET name = ?, is_active = ?, online_image_id = ? WHERE id = ?',
+    [name, input.isActive === false ? 0 : 1, imageId(input.onlineImageId), id],
+  )
   return { ok: true, id }
 }
 

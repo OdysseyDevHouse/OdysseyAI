@@ -37,6 +37,12 @@ export default async function SchedulePage({ params }: { params: Promise<{ id: s
     <>
       <PageHeader
         title={schedule.name}
+        /* The way out. Without it the only route back to the list is the
+           browser's own Back, and a change opened from a toast or a link has
+           no history to go back TO — the list is reachable from the sidebar,
+           but the person is looking at this screen, not at the sidebar. */
+        backHref="/pricing-schedules"
+        backLabel="Back to price changes"
         subtitle="New prices that take effect on their own, at a date and time you choose"
         action={
           /* Labels for THIS change — printed at five, showing the six o'clock
@@ -53,7 +59,17 @@ export default async function SchedulePage({ params }: { params: Promise<{ id: s
         <ScheduleEditor
           schedule={schedule}
           structures={structures.map((s) => ({ id: s.id, name: s.name }))}
-          departments={departments.map((d) => ({ id: d.id, name: d.name }))}
+          /* parentId comes across so both pickers can nest them, and the tile
+             colour and picture so a department is drawn here exactly as it is
+             on the products list and the till — the colour is only learnable if
+             it is the same everywhere. */
+          departments={departments.map((d) => ({
+            id: d.id,
+            parentId: d.parentId,
+            name: d.name,
+            color: d.color,
+            imageId: d.posImageId,
+          }))}
           staleCount={stale.length}
         />
       </PageBody>

@@ -82,6 +82,11 @@ export {
   ColourInput,
   type ControlSize,
 } from './Field'
+export {
+  useFieldErrors,
+  type FieldErrors,
+  type FieldErrorProps,
+} from './useFieldErrors'
 export { FieldMenu } from './FieldMenu'
 export { FileInput } from './FileInput'
 export { Slider } from './Slider'

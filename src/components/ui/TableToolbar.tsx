@@ -85,7 +85,17 @@ export function TableToolbar({
   id?: string
 }) {
   return (
-    <div id={id} className={`${inCard ? TOOLBAR_IN_CARD : ''} ${className}`}>
+    <div
+      id={id}
+      /* Only when it IS the band inside the card: this is what lets the table
+         frame below square off its top corners, which it must do because there
+         is no card curve under a toolbar to clip its header band to. A
+         free-standing toolbar sits above the card entirely and heads nothing,
+         so it must not claim the card's top edge. Same marker CardHeader sets
+         — see TABLE_FRAME. */
+      data-card-header={inCard ? '' : undefined}
+      className={`${inCard ? TOOLBAR_IN_CARD : ''} ${className}`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* The left group takes the space it needs and the actions take the rest.
             When a list carries enough filters to fill the row, the actions wrap

@@ -61,6 +61,7 @@ export function Field({
   htmlFor,
   children,
   className = '',
+  ref,
 }: {
   label?: string
   /** Helper text under the control. Hidden while an error is showing. */
@@ -71,6 +72,15 @@ export function Field({
   htmlFor?: string
   children: ReactNode
   className?: string
+  /**
+   * The field's outer element, so a failed save can scroll to it.
+   *
+   * On the WRAPPER rather than the control: this is the element that carries the
+   * label above and the message below, and scrolling to a bare input puts the
+   * thing explaining it off the top of the screen. `useFieldErrors` hands this
+   * in — it is not something a call site wires by hand.
+   */
+  ref?: React.Ref<HTMLDivElement>
 }) {
   const generatedId = useId()
   const id = htmlFor ?? generatedId
@@ -81,7 +91,7 @@ export function Field({
     <FieldContext.Provider
       value={{ id, describedBy: message ? messageId : undefined, invalid: Boolean(error) }}
     >
-      <div className={className}>
+      <div className={className} ref={ref}>
         {label && (
           <label htmlFor={id} className={FIELD_LABEL}>
             {label}
@@ -767,6 +777,12 @@ export function Checkbox({
    */
   indeterminate?: boolean
 }) {
+  /* Wired to the surrounding Field like every other control, so a tickbox that
+     must be ticked can go red and be announced rather than being the one kind of
+     required field that fails silently. Most checkboxes sit outside a Field and
+     get an undefined id and `invalid: false`, exactly as before. */
+  const wiring = useFieldWiring(id)
+
   return (
     <label className={`inline-flex cursor-pointer items-center gap-2 text-sm text-ink ${className}`}>
       <input
@@ -774,8 +790,12 @@ export function Checkbox({
           if (el) el.indeterminate = indeterminate
         }}
         type="checkbox"
-        id={id}
-        className="size-4 cursor-pointer rounded-[4px] border-border-strong disabled:cursor-not-allowed"
+        id={wiring.id}
+        aria-invalid={wiring.invalid || undefined}
+        aria-describedby={wiring.describedBy}
+        className={`size-4 cursor-pointer rounded-[4px] disabled:cursor-not-allowed ${
+          wiring.invalid ? 'border-danger' : 'border-border-strong'
+        }`}
         {...rest}
       />
       {label}
@@ -786,13 +806,26 @@ export function Checkbox({
 export function Radio({
   label,
   className = '',
+  id,
   ...rest
-}: Omit<ComponentProps<'input'>, 'type' | 'className'> & { label?: ReactNode; className?: string }) {
+}: Omit<ComponentProps<'input'>, 'type' | 'className'> & {
+  label?: ReactNode
+  className?: string
+}) {
+  /* The invalid state only; NOT the id. A radio GROUP shares one Field, so
+     handing every button the Field's single id would put the same id on each of
+     them and point the label at whichever rendered last. */
+  const wiring = useFieldWiring(id)
+
   return (
     <label className={`inline-flex cursor-pointer items-center gap-2 text-sm text-ink ${className}`}>
       <input
         type="radio"
-        className="size-4 cursor-pointer border-border-strong disabled:cursor-not-allowed"
+        id={id}
+        aria-invalid={wiring.invalid || undefined}
+        className={`size-4 cursor-pointer disabled:cursor-not-allowed ${
+          wiring.invalid ? 'border-danger' : 'border-border-strong'
+        }`}
         {...rest}
       />
       {label}
@@ -826,7 +859,11 @@ export function ColourInput({
   disabled?: boolean
   className?: string
 }) {
-  const wiring = useFieldWiring(id, false)
+  /* Reads the Field's invalid state like every other control. It used to be
+     pinned to `false`, which meant a colour field showed the red message under
+     it and kept a calm border above — the one control that disagreed with its
+     own error. */
+  const wiring = useFieldWiring(id)
   // The native swatch rejects anything that is not #rrggbb, and a rejected
   // value makes it silently show black. Fall back while a hex is half-typed.
   const swatchValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'
@@ -847,9 +884,10 @@ export function ColourInput({
         disabled={disabled}
         spellCheck={false}
         placeholder="#1890cd"
+        aria-invalid={wiring.invalid || undefined}
         aria-describedby={wiring.describedBy}
         onChange={(event) => onChange(event.target.value)}
-        className={`${CONTROL} ${CONTROL_H} w-32`}
+        className={`${CONTROL} ${CONTROL_H} w-32 ${wiring.invalid ? INVALID : ''}`}
       />
     </div>
   )

@@ -26,6 +26,7 @@
 import { siteQuery, siteQueryOne, siteExecute } from '../src/lib/siteDb'
 import {
   createSchedule,
+  duplicateSchedule,
   setScheduleLines,
   seedFromCurrent,
   armSchedule,
@@ -353,6 +354,67 @@ async function main() {
       const done = await applyOneSchedule(SITE, byHand.id, ACTOR)
       ok('a change can be applied ahead of its moment by hand', done.ok)
       ok('and the price moved', (await priceOf(p3, structureB)) === 55)
+    }
+
+    /* ── Duplicating one ──────────────────────────────────────────────── */
+
+    if (byHand.ok) {
+      /* Copied from the change that was APPLIED a few lines up, which is the
+         case that matters: its stored before-prices are what the shop charged
+         BEFORE it fired, and a copy that inherited them would measure every
+         difference against a price that no longer exists. */
+      const copy = await duplicateSchedule(SITE, ACTOR, byHand.id)
+      ok('a change can be duplicated', copy.ok, copy.ok ? '' : copy.error)
+      if (copy.ok) {
+        scheduleIds.push(copy.id)
+        const made = await getSchedule(SITE, copy.id)
+        const original = await getSchedule(SITE, byHand.id)
+
+        ok('the copy is a draft', made?.status === 'draft', made?.status)
+        ok('the copy has no moment on it', made?.effectiveAt === '', made?.effectiveAt)
+        ok('the copy is named after the original', made?.name === `${original?.name} (copy)`)
+        ok(
+          'the copy carries the same lines',
+          made?.lines.length === original?.lines.length,
+          `${made?.lines.length} vs ${original?.lines.length}`,
+        )
+        ok(
+          'the copy keeps the new prices',
+          made?.lines[0]?.newPriceIncl === original?.lines[0]?.newPriceIncl,
+        )
+        /* The original applied 55, so the live price IS 55 — the copy's before
+           must read that, not the null the original recorded when nothing had
+           been priced under this type yet. */
+        ok(
+          'the copy reads its before-prices from what the shop charges now',
+          made?.lines[0]?.oldPriceIncl === 55,
+          `${made?.lines[0]?.oldPriceIncl}`,
+        )
+        ok(
+          'the original still reads what it recorded at build time',
+          original?.lines[0]?.oldPriceIncl === null,
+          `${original?.lines[0]?.oldPriceIncl}`,
+        )
+
+        // A name given explicitly wins over the "(copy)" default.
+        const named = await duplicateSchedule(SITE, ACTOR, byHand.id, `ZZ Named ${stamp}`)
+        ok('a duplicate can be named', named.ok)
+        if (named.ok) {
+          scheduleIds.push(named.id)
+          const second = await getSchedule(SITE, named.id)
+          ok('and takes the name it was given', second?.name === `ZZ Named ${stamp}`)
+        }
+
+        // Editable, unlike the applied change it came from.
+        const edited = await setScheduleLines(SITE, copy.id, [
+          { productId: p3, priceStructureId: structureB, newPriceIncl: 61 },
+        ])
+        ok('the copy can be edited', edited.ok, edited.ok ? '' : edited.error)
+        ok('and the original is untouched', (await priceOf(p3, structureB)) === 55)
+      }
+
+      const missing = await duplicateSchedule(SITE, ACTOR, 0)
+      ok('duplicating something that is gone fails cleanly', !missing.ok)
     }
 
     /* ── The audit trail ──────────────────────────────────────────────── */

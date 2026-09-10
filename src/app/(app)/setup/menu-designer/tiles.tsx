@@ -69,6 +69,32 @@ function productTone(product: MenuProduct): CategoryTone {
  */
 export const TILE_H = 136
 
+/**
+ * How tall a DEPARTMENT tile stands, in its own row above the products.
+ *
+ * A department is not one of the things on the shelf, it is the shelf: the level
+ * a manager is deciding about, and the only tile here that opens somewhere. What
+ * separates it from the products below is DEPT_COLUMNS — five wide tiles against
+ * the products' six — rather than height, so the two are one change, not two.
+ *
+ * 128 IS THE FLOOR. It is exactly SHORT_TILE_MAX, and `isShortTile` is a strict
+ * `<`, so this is the last height that still takes the kit's tall layout. One
+ * pixel lower and every department tile flips to a side-by-side row and silently
+ * DROPS its subtitle — the "3 sections · 12 products" line that says how much
+ * menu sits behind the tile. Lower this only by also giving that line somewhere
+ * else to live.
+ */
+export const DEPT_TILE_H = 128
+
+/**
+ * How many department tiles stand across a row.
+ *
+ * Fixed rather than fitted — see `columns` on the kit's TileGrid. A manager
+ * arranges this shelf and then finds a department again by WHERE it sits, so a
+ * wider monitor silently reflowing five into seven moves everything they placed.
+ */
+export const DEPT_COLUMNS = 5
+
 /* ── shared bits ──────────────────────────────────────────────────────────── */
 
 /**
@@ -222,7 +248,7 @@ export function ProductTile({
             onClick(e as unknown as MouseEvent)
           }
         }}
-        className={`group relative cursor-grab touch-manipulation select-none rounded-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+        className={`group relative h-full cursor-grab touch-manipulation select-none rounded-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
           isDragging || dimmed ? 'opacity-40' : ''
         } ${hidden && !selected ? 'opacity-60' : ''}`}
       >
@@ -354,7 +380,7 @@ export function DepartmentTile({
             onOpen()
           }
         }}
-        className={`group relative cursor-grab touch-manipulation select-none rounded-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+        className={`group relative h-full cursor-grab touch-manipulation select-none rounded-card transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
           isDragging || dimmed ? 'opacity-40' : ''
         } ${hidden ? 'opacity-60' : ''} ${
           receiving || springing ? 'ring-2 ring-brand' : ''
@@ -378,7 +404,7 @@ export function DepartmentTile({
              tile promises another screen, and this one opens a level too. Drawn only
              where the promise is kept — see `chevron` on the kit tile. */
           chevron
-          tileHeight={TILE_H}
+          tileHeight={DEPT_TILE_H}
           selected={receiving || springing}
         />
 
@@ -449,7 +475,9 @@ export function BackTile({
         subtitle={receiving ? 'Move up to here' : label}
         icon={<Icons.Reverse size={20} />}
         dashed
-        tileHeight={TILE_H}
+        /* The department row's height, not the product row's: Back leads that row,
+           and a short tile at the head of a tall one is a ragged first cell. */
+        tileHeight={DEPT_TILE_H}
         onClick={onClick}
       />
     </div>

@@ -1,0 +1,39 @@
+-- ============================================================================
+-- A picture on a brand — for the shop, and only for the shop.
+--
+-- ── WHY ONE COLUMN AND NOT TWO ──────────────────────────────────────────
+--
+-- Departments carry two (064_department_images.sql): a till icon and a shop
+-- picture, because those are different pictures doing different jobs. A brand
+-- gets only the second one, because the first has nothing to draw. The till's
+-- department rail is a fixed set of tiles somebody taps to navigate; there is
+-- no brand rail, no brand tile, and no moment at the counter where a clerk
+-- picks a product by its maker's logo. Adding pos_image_id here would be a
+-- column with no reader — and a picker on the form promising a till tile that
+-- never appears.
+--
+-- The shop side is the opposite: a storefront genuinely does browse by brand,
+-- and a logo is exactly what a shopper recognises.
+--
+-- ── WHY IT POINTS AT storefront_images ──────────────────────────────────
+--
+-- Same reasoning as 064. That table already owns "a picture this shop
+-- uploaded": magic-byte verification on the way in, the serving routes and
+-- their sandbox CSP, the picker UI and the library cap. A second uploads table
+-- would duplicate every one of those, and the copy is the one that would miss a
+-- check. It also means one library across the app, so a picture uploaded for a
+-- brand can be reused as a banner or a department picture and the other way
+-- round — which is what an owner expects of something called "your pictures".
+--
+-- ── WHY NO FOREIGN KEY ──────────────────────────────────────────────────
+--
+-- Same rule 061 and 064 already follow: a picture may be deleted while a brand
+-- still names it, and that is not an error. Every reader resolves a missing id
+-- to null and falls back to showing no picture. storefront_images is written to
+-- on the assumption that nothing references it, and a reader must cope with a
+-- dangling id regardless — the row can vanish between the read and the render.
+-- One rule enforced in one place beats two that can disagree.
+-- ============================================================================
+
+ALTER TABLE brands
+  ADD COLUMN online_image_id BIGINT UNSIGNED NULL DEFAULT NULL;

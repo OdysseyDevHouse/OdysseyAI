@@ -2,9 +2,11 @@
 
 import { revalidatePath } from 'next/cache'
 import { actorFor } from '@/lib/auth'
+import type { FieldProblems } from '@/lib/fieldErrors'
 import {
   createSchedule,
   updateSchedule,
+  duplicateSchedule,
   deleteSchedule,
   setScheduleLines,
   removeScheduleLine,
@@ -20,6 +22,7 @@ import {
   type LineInput,
   type SeedScope,
 } from '@/lib/site/priceSchedules'
+import { listDepartments, departmentFilterIds } from '@/lib/site/departments'
 import type { RepriceScope } from '@/lib/site/reprice'
 import type { RepriceRule } from '@/lib/repricing'
 
@@ -34,8 +37,19 @@ import type { RepriceRule } from '@/lib/repricing'
  * for Friday is setting a price.
  */
 
-export type ScheduleActionResult = { ok: true; message: string } | { ok: false; error: string }
-export type CreateResult = { ok: true; id: number } | { ok: false; error: string }
+/**
+ * `field` and `problems` come along for the ride — see lib/fieldErrors.ts.
+ *
+ * These actions already return the library's failure unchanged (`if
+ * (!result.ok) return result`), so widening the type is all that is needed for
+ * the field information to reach the screen.
+ */
+export type ScheduleActionResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string; field?: string; problems?: FieldProblems }
+export type CreateResult =
+  | { ok: true; id: number }
+  | { ok: false; error: string; field?: string; problems?: FieldProblems }
 
 /**
  * The list, the editor, and everywhere a price is READ.
@@ -82,6 +96,23 @@ export async function deleteScheduleAction(id: number): Promise<ScheduleActionRe
   return { ok: true, message: 'Price change deleted.' }
 }
 
+/**
+ * Copy a change so a second one can be built from the same list.
+ *
+ * Returns the new id rather than a message: the caller navigates straight into
+ * the copy, because "duplicate" is never the whole intention — the reason to
+ * make one is to go and change something on it.
+ */
+export async function duplicateScheduleAction(id: number, name?: string): Promise<CreateResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  const result = await duplicateSchedule(ctx.siteId, ctx.actor, id, name)
+  if (!result.ok) return result
+  revalidate()
+  return result
+}
+
 export async function setLinesAction(
   scheduleId: number,
   lines: LineInput[],
@@ -125,7 +156,20 @@ export async function seedFromCurrentAction(
   const ctx = await actorFor('products.edit')
   if ('ok' in ctx) return ctx
 
-  const result = await seedFromCurrent(ctx.siteId, scheduleId, scope)
+  /*
+   * A ticked department means that branch — "Drinks" is Drinks, Beer and
+   * Imported. Expanded HERE, against the tree, rather than trusting the browser
+   * to have sent every descendant: the picker ticks only the parent (it treats
+   * children as implied, so one branch is one chip rather than eleven), and a
+   * scope taken literally would seed the handful of products filed directly on
+   * the parent and silently miss every sub-department under it.
+   */
+  const departments = await listDepartments(ctx.siteId)
+  const departmentIds = scope.departmentIds?.length
+    ? (departmentFilterIds(departments, scope.departmentIds) ?? undefined)
+    : undefined
+
+  const result = await seedFromCurrent(ctx.siteId, scheduleId, { ...scope, departmentIds })
   if (!result.ok) return result
   revalidate()
   return {

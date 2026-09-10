@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useCallback, useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge,
@@ -19,6 +19,9 @@ import {
   Input,
   Modal,
   ToolbarSearch,
+  TreeSelect,
+  departmentTreeOptions,
+  useFieldErrors,
   useToast,
   TABLE,
   TABLE_HEAD_ROW,
@@ -28,6 +31,7 @@ import {
   TABLE_ROW,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
+import type { FieldProblems } from '@/lib/fieldErrors'
 import {
   saveScheduleAction,
   setLinesAction,
@@ -40,6 +44,7 @@ import {
   applyNowAction,
   revertScheduleAction,
   deleteScheduleAction,
+  duplicateScheduleAction,
 } from '../actions'
 import type { Schedule, ScheduleLine } from '@/lib/site/priceSchedules'
 
@@ -70,11 +75,71 @@ const PAGE_SIZE = 50
 
 type Structure = { id: number; name: string }
 
+/**
+ * A department as this screen needs it: its name, and what it sits under.
+ *
+ * `parentId` rather than a nested shape because that is how the table stores it
+ * and how every other picker in the app receives it — nesting it on the server
+ * would mean un-nesting it again here to answer "is this covered by that".
+ */
+type DepartmentNode = {
+  id: number
+  parentId: number | null
+  name: string
+  /**
+   * The tile's stored colour token and picture, carried so this screen's
+   * pickers draw a department exactly as the products list and the till draw
+   * it. Both render fine when absent — a grey tile with a tag on it — which is
+   * why they are required rather than optional: a call site that forgot to map
+   * them would look merely plain, and nobody would ever find it.
+   */
+  color: string | null
+  imageId: number | null
+}
+
+/**
+ * The tree in reading order, each row carrying how deep it sits.
+ *
+ * A department whose parent is not in the list is treated as top level rather
+ * than dropped: it is a real department with real products, and hiding it
+ * because of a missing row above it would silently shrink the scope somebody
+ * thought they had chosen.
+ */
+function flattenDepartments(
+  all: readonly DepartmentNode[],
+): { department: DepartmentNode; depth: number }[] {
+  const present = new Set(all.map((d) => d.id))
+  const byParent = new Map<number | null, DepartmentNode[]>()
+  for (const d of all) {
+    const parent = d.parentId !== null && present.has(d.parentId) ? d.parentId : null
+    const bucket = byParent.get(parent)
+    if (bucket) bucket.push(d)
+    else byParent.set(parent, [d])
+  }
+
+  const out: { department: DepartmentNode; depth: number }[] = []
+  /* Iterative with a seen set rather than recursive: the parent column is a
+     self-reference, and a cycle in it would blow the stack on a screen whose
+     only job is to list some names. */
+  const seen = new Set<number>()
+  const walk = (parent: number | null, depth: number) => {
+    for (const d of byParent.get(parent) ?? []) {
+      if (seen.has(d.id)) continue
+      seen.add(d.id)
+      out.push({ department: d, depth })
+      walk(d.id, depth + 1)
+    }
+  }
+  walk(null, 0)
+  return out
+}
+
 /** One product, with whatever this change does to it under each price type. */
 type PivotRow = {
   productId: number
   code: string
   description: string
+  departmentId: number | null
   byStructure: Map<number, ScheduleLine>
 }
 
@@ -112,7 +177,7 @@ export default function ScheduleEditor({
 }: {
   schedule: Schedule & { lines: ScheduleLine[] }
   structures: Structure[]
-  departments: { id: number; name: string }[]
+  departments: DepartmentNode[]
   staleCount: number
 }) {
   const router = useRouter()
@@ -123,12 +188,19 @@ export default function ScheduleEditor({
   const armed = schedule.status === 'armed'
   const applied = schedule.status === 'applied'
 
+  const errors = useFieldErrors()
+
   const [name, setName] = useState(schedule.name)
   const moment = splitMoment(schedule.effectiveAt)
   const [date, setDate] = useState(moment.date)
   const [time, setTime] = useState(moment.time)
 
   const [search, setSearch] = useState('')
+  /* A LIST, because the picker is the multi-select one the products list uses:
+     "show me Bakery and Drinks" is one filter, not two visits. Empty is the
+     filter being off — the same thing "All departments" says there. */
+  const [departmentFilter, setDepartmentFilter] = useState<number[]>([])
+  const [onlyChanging, setOnlyChanging] = useState(false)
   const [shown, setShown] = useState(PAGE_SIZE)
   const [seeding, setSeeding] = useState(false)
   const [confirmRevert, setConfirmRevert] = useState(false)
@@ -152,6 +224,7 @@ export default function ScheduleEditor({
           productId: line.productId,
           code: line.code,
           description: line.description,
+          departmentId: line.departmentId,
           byStructure: new Map(),
         }
         byProduct.set(line.productId, row)
@@ -161,14 +234,120 @@ export default function ScheduleEditor({
     return [...byProduct.values()]
   }, [schedule.lines])
 
+  /**
+   * The departments this change actually touches, in the shop's own order.
+   *
+   * Built from the LINES rather than from every department the shop has: a
+   * change covering three of forty must not offer the other thirty-seven, each
+   * of which can only ever empty the table.
+   */
+  const usedDepartments = useMemo(() => {
+    /*
+     * A product is filed on the DEEPEST department it belongs to, so counting
+     * only the ids the lines carry lists nothing but leaves: a shop with
+     * "Drinks › Beer" and "Drinks › Wine" got two entries and no way to say
+     * "all of Drinks" — which on a thousand-line change is the filter somebody
+     * actually wants. So each line counts toward its own department AND every
+     * ancestor above it, and picking a parent takes the branch.
+     */
+    const byId = new Map(departments.map((d) => [d.id, d]))
+    const counts = new Map<number, number>()
+    for (const row of rows) {
+      if (row.departmentId === null) continue
+      const seen = new Set<number>()
+      let current: number | null = row.departmentId
+      while (current !== null && !seen.has(current)) {
+        seen.add(current)
+        counts.set(current, (counts.get(current) ?? 0) + 1)
+        current = byId.get(current)?.parentId ?? null
+      }
+    }
+    /* Depth-first rather than in the flat order the page was handed, so the
+       dropdown reads as the tree it is — a parent immediately above its own
+       children — instead of listing "Beer" eleven entries away from "Drinks". */
+    return flattenDepartments(departments)
+      .filter(({ department }) => counts.has(department.id))
+      .map(({ department, depth }) => ({
+        ...department,
+        depth,
+        count: counts.get(department.id) ?? 0,
+      }))
+  }, [rows, departments])
+
+  /**
+   * The rows the picker draws, through the same builder the products list uses.
+   *
+   * Shared rather than mapped here so the three things a call site gets wrong
+   * cannot drift: which tone a department carries (it has to be the same colour
+   * here as on the till, or the colour stops being learnable), where its picture
+   * comes from, and what happens to one whose parent is missing.
+   *
+   * Only the departments this change actually touches, each with its count. A
+   * change covering three of forty must not offer the other thirty-seven, every
+   * one of which could only ever empty the table.
+   */
+  const departmentOptions = useMemo(
+    () =>
+      departmentTreeOptions(
+        usedDepartments.map((d) => ({
+          id: d.id,
+          parentId: d.parentId,
+          name: d.name,
+          color: d.color,
+          imageId: d.imageId,
+          count: d.count,
+        })),
+        { allLabel: `All departments (${rows.length})` },
+      ),
+    [usedDepartments, rows.length],
+  )
+
+  /**
+   * The chosen department and everything under it.
+   *
+   * A set rather than a walk per row: this is checked once per line on a list
+   * that runs to tens of thousands, and re-climbing the tree for each of them
+   * would be the one thing on this screen fast enough to notice.
+   */
+  const inScope = useMemo(() => {
+    if (departmentFilter.length === 0) return null
+    const out = new Set<number>(departmentFilter)
+    let added = true
+    /* Repeated passes rather than recursion — the parent column is a
+       self-reference, and this terminates on the pass that adds nothing
+       however the rows are ordered or mis-parented. */
+    while (added) {
+      added = false
+      for (const d of departments) {
+        if (d.parentId !== null && out.has(d.parentId) && !out.has(d.id)) {
+          out.add(d.id)
+          added = true
+        }
+      }
+    }
+    return out
+  }, [departmentFilter, departments])
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
-    if (!term) return rows
-    return rows.filter(
-      (r) =>
-        r.description.toLowerCase().includes(term) || r.code.toLowerCase().includes(term),
-    )
-  }, [rows, search])
+    return rows.filter((r) => {
+      if (inScope && (r.departmentId === null || !inScope.has(r.departmentId))) return false
+      if (onlyChanging) {
+        /* A seeded list is mostly prices that are not moving — they are there
+           so they CAN be edited, and they are dropped at arming. Once the
+           editing is done, this is the list somebody wants to check before
+           they schedule it. */
+        const moves = [...r.byStructure.values()].some(
+          (l) => l.oldPriceIncl === null || l.oldPriceIncl !== l.newPriceIncl,
+        )
+        if (!moves) return false
+      }
+      if (!term) return true
+      return (
+        r.description.toLowerCase().includes(term) || r.code.toLowerCase().includes(term)
+      )
+    })
+  }, [rows, search, inScope, onlyChanging])
 
   const pageRows = useMemo(() => filtered.slice(0, shown), [filtered, shown])
 
@@ -179,13 +358,30 @@ export default function ScheduleEditor({
 
   /* ── Mutations ──────────────────────────────────────────────────────── */
 
-  function run(action: () => Promise<{ ok: true; message: string } | { ok: false; error: string }>) {
+  /**
+   * Every mutation on this screen, and where a refusal lands.
+   *
+   * A refusal that NAMES a field is put under that field and scrolled to —
+   * "Choose when this change should happen." is about the date box, and saying
+   * so in the corner of the screen while the box itself sits unmarked is how
+   * somebody ends up hunting for what is wrong. One that names no field still
+   * toasts, because an error with nowhere to go is still an error.
+   */
+  function run(
+    action: () => Promise<
+      | { ok: true; message: string }
+      | { ok: false; error: string; field?: string; problems?: FieldProblems }
+    >,
+  ) {
     startTransition(async () => {
       const result = await action()
       if (!result.ok) {
-        toast.error(result.error)
+        if (!errors.showResult(result)) return
+        // Nothing to pin it to — say it the old way rather than swallowing it.
+        if (!result.field && !result.problems?.length) toast.error(result.error)
         return
       }
+      errors.clear()
       toast.success(result.message)
       router.refresh()
     })
@@ -194,6 +390,26 @@ export default function ScheduleEditor({
   function saveHeader() {
     const at = date && time ? `${date}T${time}` : ''
     run(() => saveScheduleAction(schedule.id, { name: name.trim(), effectiveAt: at }))
+  }
+
+  /**
+   * Copy this change and go straight into the copy.
+   *
+   * Navigating rather than staying put and toasting: nobody duplicates a price
+   * change to admire it — they do it to work on the numbers, and leaving them
+   * on the original with a copy somewhere behind them is one more thing to go
+   * and find. The copy is a draft with no date, so nothing can fire off this.
+   */
+  function duplicate() {
+    startTransition(async () => {
+      const result = await duplicateScheduleAction(schedule.id)
+      if (!result.ok) {
+        toast.error(result.error)
+        return
+      }
+      toast.success('Copied. This is the copy — the original is untouched.')
+      router.push(`/pricing-schedules/${result.id}`)
+    })
   }
 
   function setPrice(line: ScheduleLine, value: number) {
@@ -222,28 +438,40 @@ export default function ScheduleEditor({
         />
         <CardBody className="flex flex-col gap-4">
           <div className="flex flex-wrap gap-4">
-            <Field label="Name" className="min-w-56 flex-1">
+            {/* Each field's mark clears as soon as it is edited: leaving it red
+                while somebody is visibly fixing it reads as the form not
+                noticing. */}
+            <Field label="Name" className="min-w-56 flex-1" {...errors.field('name')}>
               <Input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  errors.clearField('name')
+                }}
                 onBlur={saveHeader}
                 disabled={!editable || busy}
               />
             </Field>
-            <Field label="Date" className="w-44">
+            <Field label="Date" className="w-44" {...errors.field('effectiveDate')}>
               <Input
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  setDate(e.target.value)
+                  errors.clearField('effectiveDate')
+                }}
                 onBlur={saveHeader}
                 disabled={!editable || busy}
               />
             </Field>
-            <Field label="Time" className="w-32">
+            <Field label="Time" className="w-32" {...errors.field('effectiveTime')}>
               <Input
                 type="time"
                 value={time}
-                onChange={(e) => setTime(e.target.value)}
+                onChange={(e) => {
+                  setTime(e.target.value)
+                  errors.clearField('effectiveTime')
+                }}
                 onBlur={saveHeader}
                 disabled={!editable || busy}
               />
@@ -329,14 +557,74 @@ export default function ScheduleEditor({
           }
           action={
             schedule.lines.length > 0 ? (
-              <ToolbarSearch
-                value={search}
-                onChange={(v) => {
-                  setSearch(v)
-                  setShown(PAGE_SIZE)
-                }}
-                placeholder="Find a product"
-              />
+              /* Three narrowings side by side, because they answer different
+                 questions: "where is this one product", "show me just the
+                 bakery", and "what is actually moving". A list seeded from
+                 three departments is thousands of rows long, and the search box
+                 alone only helps somebody who can already name what they want. */
+              <div className="flex flex-wrap items-center gap-2">
+                {onlyChanging || departmentFilter.length > 0 ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setDepartmentFilter([])
+                      setOnlyChanging(false)
+                      setShown(PAGE_SIZE)
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : null}
+
+                <Button
+                  variant={onlyChanging ? 'secondary' : 'ghost'}
+                  size="sm"
+                  aria-pressed={onlyChanging}
+                  onClick={() => {
+                    setOnlyChanging(!onlyChanging)
+                    setShown(PAGE_SIZE)
+                  }}
+                >
+                  <Icons.Filter size={15} />
+                  Only what is changing
+                </Button>
+
+                {/* The same picker the products list uses, so a department is
+                    found the same way in both places: one level at a time with
+                    a branch opening beside it, rather than as a flat run of
+                    forty entries all opening with the same two words. Ticking a
+                    branch takes everything under it — `inScope` does the
+                    widening here, the way descendantIds does there. */}
+                {usedDepartments.length > 1 && (
+                  <TreeSelect
+                    aria-label="Filter by department"
+                    backLabel="Back to departments"
+                    icon={<Icons.LayoutGrid size={16} />}
+                    options={departmentOptions}
+                    values={departmentFilter.map(String)}
+                    /* A callback rather than `urlFilter`: this screen is a
+                       client component holding its filter in state, where the
+                       products list is a Server Component that keeps its own in
+                       the URL. Same picker, the other half of its interface. */
+                    onChangeMany={(next) => {
+                      setDepartmentFilter(next.map(Number).filter((n) => Number.isFinite(n) && n > 0))
+                      setShown(PAGE_SIZE)
+                    }}
+                    manyNoun="departments"
+                    className="w-48"
+                  />
+                )}
+
+                <ToolbarSearch
+                  value={search}
+                  onChange={(v) => {
+                    setSearch(v)
+                    setShown(PAGE_SIZE)
+                  }}
+                  placeholder="Find a product"
+                />
+              </div>
             ) : undefined
           }
         />
@@ -353,11 +641,34 @@ export default function ScheduleEditor({
               }
             />
           ) : filtered.length === 0 ? (
+            /* Which of the three narrowings emptied it decides what this says.
+               "No product matches ''" — with the search box empty — is what it
+               used to say when the department filter was the one hiding
+               everything, and it sends somebody looking for a typo they did not
+               make. */
             <EmptyState
               icon={<Icons.Search size={22} />}
               title="Nothing matched"
-              hint={`No product here matches “${search}”.`}
-              action={<Button variant="secondary" onClick={() => setSearch('')}>Clear the search</Button>}
+              hint={
+                search.trim()
+                  ? `No product here matches “${search.trim()}”.`
+                  : onlyChanging
+                    ? 'Nothing in this part of the list changes a price yet.'
+                    : 'Nothing on this change is filed under that department.'
+              }
+              action={
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSearch('')
+                    setDepartmentFilter([])
+                    setOnlyChanging(false)
+                    setShown(PAGE_SIZE)
+                  }}
+                >
+                  Show everything again
+                </Button>
+              }
             />
           ) : (
             <div className="overflow-x-auto">
@@ -485,6 +796,16 @@ export default function ScheduleEditor({
                 disabled={busy}
               >
                 Delete
+              </Button>
+            )}
+            {/* On EVERY status, not just drafts. The strongest reason to copy
+                one is that it has already been applied: last April's increase
+                is the list October's wants, and an applied change cannot be
+                edited — copying is the only way to reuse it. */}
+            {schedule.lines.length > 0 && (
+              <Button variant="secondary" onClick={duplicate} disabled={busy}>
+                <Icons.Copy size={15} />
+                Duplicate
               </Button>
             )}
             {armed && (
@@ -633,6 +954,7 @@ function PriceCell({
   )
 }
 
+
 /**
  * "Take the menu I have and give it new pricing" — the primary way in.
  *
@@ -640,6 +962,25 @@ function PriceCell({
  * owner edits a list that already reads like their menu. Untouched lines are
  * dropped when it is scheduled, so bringing in the whole shop and changing four
  * things schedules four changes.
+ *
+ * ── WHY THE DEPARTMENT LIST IS A TREE WITH A FILTER ──────────────────────
+ *
+ * Departments nest, and this list used to be flat: every sub-department sat at
+ * the same indent as its parent in one alphabetical run, so "Beef" and "Beer"
+ * were neighbours and nothing said which shelf either belonged to. A shop with
+ * a hundred of them scrolled a short window hunting for a name whose parent it
+ * could already see.
+ *
+ * So: indented under their parents, with a filter box above. Typing keeps a
+ * department whose own name matches, every ancestor above it — a hit deep in
+ * the tree arrives with its context rather than as an orphan line — and
+ * everything beneath it, since a branch shown with nothing under it reads as
+ * empty.
+ *
+ * Ticking a parent means the whole branch. The ids are expanded against the
+ * tree in `seedFromCurrentAction`, where the products list and bulk pricing
+ * expand theirs, so all three screens agree on what "Drinks" covers. A parent
+ * with only some of its children ticked shows the dash.
  */
 function SeedModal({
   open,
@@ -652,7 +993,7 @@ function SeedModal({
   open: boolean
   onClose: () => void
   structures: Structure[]
-  departments: { id: number; name: string }[]
+  departments: DepartmentNode[]
   busy: boolean
   onSeed: (scope: {
     priceStructureIds: number[]
@@ -666,16 +1007,117 @@ function SeedModal({
     structures.length > 0 ? [structures[0].id] : [],
   )
   const [depts, setDepts] = useState<number[]>([])
+  const [find, setFind] = useState('')
 
   const toggle = (list: number[], id: number) =>
     list.includes(id) ? list.filter((x) => x !== id) : [...list, id]
+
+  /* Depth-first, so a child always sits directly under its parent and one
+     indent in. Built here rather than taken as a prop: it is a view of the
+     tree, and the page around this dialog has no other use for it. */
+  const ordered = useMemo(() => flattenDepartments(departments), [departments])
+
+  const byId = useMemo(() => new Map(departments.map((d) => [d.id, d])), [departments])
+
+  /**
+   * Every id from `id` up to the root, itself included.
+   *
+   * Guarded by a seen set rather than trusted: the tree comes from a
+   * self-referencing table, and one row pointing at its own descendant would
+   * otherwise spin here forever.
+   */
+  const lineage = useCallback(
+    (id: number): number[] => {
+      const chain: number[] = []
+      const seen = new Set<number>()
+      let current: number | null = id
+      while (current !== null && !seen.has(current)) {
+        seen.add(current)
+        chain.push(current)
+        current = byId.get(current)?.parentId ?? null
+      }
+      return chain
+    },
+    [byId],
+  )
+
+  const visible = useMemo(() => {
+    const term = find.trim().toLowerCase()
+    if (!term) return ordered
+
+    const keep = new Set<number>()
+    for (const { department } of ordered) {
+      if (!department.name.toLowerCase().includes(term)) continue
+      for (const id of lineage(department.id)) keep.add(id)
+    }
+    /* A second pass for the descendants of a hit — done from each row's own
+       lineage rather than by walking children, so it stays one pass over the
+       list however wide a branch is. */
+    for (const { department } of ordered) {
+      if (keep.has(department.id)) continue
+      if (lineage(department.id).some((id) => id !== department.id && keep.has(id))) {
+        keep.add(department.id)
+      }
+    }
+    return ordered.filter(({ department }) => keep.has(department.id))
+  }, [ordered, find, lineage])
+
+  /** Ticked, or sitting under something ticked — the branch rule, made visible. */
+  const covered = useMemo(() => {
+    const chosen = new Set(depts)
+    const out = new Set<number>(chosen)
+    for (const { department } of ordered) {
+      if (out.has(department.id)) continue
+      if (lineage(department.id).some((id) => id !== department.id && chosen.has(id))) {
+        out.add(department.id)
+      }
+    }
+    return out
+  }, [depts, ordered, lineage])
+
+  /** Parents showing the dash: something inside is on, they themselves are not. */
+  const partial = useMemo(() => {
+    const out = new Set<number>()
+    for (const id of covered) {
+      for (const ancestor of lineage(id)) {
+        if (ancestor !== id && !covered.has(ancestor)) out.add(ancestor)
+      }
+    }
+    return out
+  }, [covered, lineage])
+
+  function tickDepartment(id: number) {
+    setDepts((current) => {
+      if (current.includes(id)) return current.filter((x) => x !== id)
+      /* A parent absorbs its children: with Drinks ticked, "Drinks and Beer" is
+         the same scope as "Drinks", and keeping both would count the branch
+         twice in the summary beside the heading. */
+      const kept = current.filter((other) => other !== id && !lineage(other).includes(id))
+      return [...kept, id]
+    })
+  }
+
+  const chosenLabel =
+    depts.length === 0
+      ? 'The whole shop'
+      : depts.length === 1
+        ? (byId.get(depts[0])?.name ?? '1 department')
+        : `${depts.length} departments`
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="Start from my current prices"
-        /* A long form: the default 60vh cap made it read through a letterbox with
+      /* The subject in the corner, the way every section heading carries its
+         own — a dialog arriving with no mark of what it is about reads as a
+         system prompt rather than as part of pricing. */
+      titleMedia={
+        <span className="flex size-12 items-center justify-center rounded-card border border-accent/25 bg-accent-soft text-accent">
+          <Icons.Tag size={22} />
+        </span>
+      }
+      /* A long form: the default 60vh cap made it read through a letterbox with
          empty desktop above and below. Still a MAX, so a short one stays short. */
       bodyGrows
       description="Brings today's prices in so you can edit the ones that are changing."
@@ -698,41 +1140,109 @@ function SeedModal({
         </>
       }
     >
-      <div className="flex flex-col gap-5">
-        <Field
-          label="Which price types"
-          hint="Pick more than one to move them together in a single change."
-        >
-          <div className="flex flex-wrap gap-x-5 gap-y-2">
-            {structures.map((s) => (
-              <Checkbox
-                key={s.id}
-                checked={picked.includes(s.id)}
-                onChange={() => setPicked(toggle(picked, s.id))}
-                label={s.name}
-              />
-            ))}
+      {/* Two bordered panels rather than two bare fields. The dialog asks two
+          separate questions and the second is a scrolling list — unframed, that
+          list runs into the price types above it and the whole body reads as
+          one undifferentiated column. */}
+      <div className="flex flex-col gap-4">
+        <section className="rounded-card border border-border p-4">
+          <h3 className="text-sm font-semibold text-ink">Which price types?</h3>
+          <p className="mt-1 text-xs text-muted">
+            Pick more than one to move them together in a single change.
+          </p>
+          {/* Boxed targets rather than a run of bare ticks: this choice decides
+              what the change even is, and it goes wrong often enough — a shop
+              raising retail while wholesale quietly stays put — to deserve
+              something you cannot skim past. */}
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {structures.map((s) => {
+              const on = picked.includes(s.id)
+              return (
+                <Checkbox
+                  key={s.id}
+                  checked={on}
+                  onChange={() => setPicked(toggle(picked, s.id))}
+                  label={<span className="font-medium">{s.name}</span>}
+                  className={`h-control rounded-control border px-3 transition ${
+                    on
+                      ? 'border-brand bg-brand-soft'
+                      : 'border-border bg-surface hover:border-border-strong'
+                  }`}
+                />
+              )
+            })}
           </div>
-        </Field>
+        </section>
 
-        <Field
-          label="Which departments"
-          hint="Leave all unticked for the whole shop."
-        >
-          {/* Bounded on purpose — a picker among the dialog's other fields, so
-              unbounded it would push them off screen. Grows with the display
-              instead of sitting at a fixed 192px. */}
-          <div className="flex max-h-[26vh] min-h-48 flex-col gap-2 overflow-y-auto">
-            {departments.map((d) => (
-              <Checkbox
-                key={d.id}
-                checked={depts.includes(d.id)}
-                onChange={() => setDepts(toggle(depts, d.id))}
-                label={d.name}
-              />
-            ))}
+        <section className="rounded-card border border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-ink">Which departments?</h3>
+            {/* The count sits with the question rather than under the list: on a
+                filtered list most ticks are scrolled out of sight, and this is
+                the only thing that says the filter is not the whole selection. */}
+            <span className="text-xs text-muted">{chosenLabel}</span>
           </div>
-        </Field>
+
+          {/* Only once the list is long enough to scroll. Below that it is a box
+              that can only ever hide things. */}
+          {ordered.length > 8 && (
+            <div className="mt-3">
+              <Input
+                value={find}
+                onChange={(e) => setFind(e.target.value)}
+                placeholder="Filter departments"
+                icon={<Icons.Search size={15} />}
+                aria-label="Filter departments"
+              />
+            </div>
+          )}
+
+          <div className="mt-3 max-h-[34vh] min-h-48 overflow-y-auto rounded-control border border-border">
+            {visible.length === 0 ? (
+              <p className="px-3 py-6 text-center text-sm text-muted">
+                No department matches that.
+              </p>
+            ) : (
+              visible.map(({ department, depth }) => {
+                const on = depts.includes(department.id)
+                const under = !on && covered.has(department.id)
+                return (
+                  <div
+                    key={department.id}
+                    /* Full-width rows, not a stack of inline labels: a tick
+                       target that stops at the end of the word is a target you
+                       miss, and the banding is what makes an indented tree read
+                       as levels rather than as ragged text.
+                       The indent sits HERE rather than on the Checkbox, which
+                       spreads everything it does not recognise onto its inner
+                       <input> — a style prop passed there padded the box, not
+                       the row, and every level came out flush. */
+                    style={{ paddingLeft: `${0.75 + depth * 1.25}rem` }}
+                    className="border-b border-border last:border-b-0 odd:bg-surface-2/50"
+                  >
+                    <Checkbox
+                      checked={on || under}
+                      indeterminate={!on && !under && partial.has(department.id)}
+                      /* A department covered by its parent shows ticked and
+                         locked. Leaving it clear would be a lie — its products
+                         ARE coming in — and letting it toggle alone would
+                         contradict the parent that put it there. */
+                      disabled={under}
+                      onChange={() => tickDepartment(department.id)}
+                      label={department.name}
+                      className="w-full py-2 pr-3"
+                    />
+                  </div>
+                )
+              })
+            )}
+          </div>
+
+          <p className="mt-2 text-xs text-muted">
+            Leave all unticked for the whole shop. Ticking a department takes
+            everything under it.
+          </p>
+        </section>
       </div>
     </Modal>
   )

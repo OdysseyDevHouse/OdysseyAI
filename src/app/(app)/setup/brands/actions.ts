@@ -113,7 +113,15 @@ export async function createBrandInlineAction(input: {
   const ctx = await actorFor('products.edit')
   if ('ok' in ctx) return ctx
 
-  const result = await createBrand(ctx.siteId, { name: input.name, isActive: true })
+  /* No picture from here: the product form asks for a NAME, and a picture
+     chooser in that dialog would be a second job wedged into the moment
+     somebody is filing a product. It is added later on Setup → Brands, which is
+     also where the picture can be seen at the size it is used. */
+  const result = await createBrand(ctx.siteId, {
+    name: input.name,
+    isActive: true,
+    onlineImageId: null,
+  })
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidateBrandScreens()

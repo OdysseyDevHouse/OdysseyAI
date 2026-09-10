@@ -4,6 +4,7 @@ import { siteExecute, siteQuery, siteQueryOne, siteTransaction } from '../siteDb
 import { toNum } from '../decimals'
 import { safeDateTime } from '../storefrontModel'
 import type { PendingSchedule } from '../priceSchedules'
+import { failedField, type FieldProblems } from '../fieldErrors'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { planReprice, writePriceRows, recordPriceRemoval, type RepriceScope } from './reprice'
 import type { RepriceRule } from '../repricing'
@@ -39,6 +40,8 @@ export type ScheduleLine = {
   description: string
   priceStructureId: number
   structureName: string
+  /** Where the product is filed, so the editor can narrow a long list. */
+  departmentId: number | null
   newPriceIncl: number
   oldPriceIncl: number | null
   origin: 'typed' | 'rule'
@@ -59,8 +62,19 @@ export type Schedule = {
   changingCount: number
 }
 
-export type SaveResult = { ok: true; id: number } | { ok: false; error: string }
-export type ActionResult = { ok: true } | { ok: false; error: string }
+/**
+ * `field` and `problems` ride ALONGSIDE `error`, never instead of it.
+ *
+ * The sentence stays exactly where it was, so an unconverted caller keeps
+ * working; the additions are what let a converted screen put the message under
+ * the control it names and scroll somebody to it. See lib/fieldErrors.ts.
+ */
+export type SaveResult =
+  | { ok: true; id: number }
+  | { ok: false; error: string; field?: string; problems?: FieldProblems }
+export type ActionResult =
+  | { ok: true }
+  | { ok: false; error: string; field?: string; problems?: FieldProblems }
 
 /**
  * How far ahead a till is told about.
@@ -166,8 +180,11 @@ export async function getSchedule(
 
   const rows = await siteQuery<Row>(
     siteId,
+    /* The department comes across so the editor can filter by it. A change
+       seeded from three departments is three departments long, and the search
+       box only finds a product somebody can already name. */
     `SELECT l.id, l.product_id, l.price_structure_id, l.new_price_incl, l.old_price_incl,
-            l.origin, p.code, p.description, ps.name AS structure_name
+            l.origin, p.code, p.description, p.department_id, ps.name AS structure_name
        FROM price_schedule_lines l
        JOIN products p ON p.id = l.product_id
        JOIN price_structures ps ON ps.id = l.price_structure_id
@@ -185,6 +202,7 @@ export async function getSchedule(
       description: String(r.description),
       priceStructureId: Number(r.price_structure_id),
       structureName: String(r.structure_name),
+      departmentId: r.department_id === null ? null : Number(r.department_id),
       newPriceIncl: toNum(r.new_price_incl),
       oldPriceIncl: r.old_price_incl === null ? null : toNum(r.old_price_incl),
       origin: String(r.origin) as 'typed' | 'rule',
@@ -202,7 +220,7 @@ export async function createSchedule(
   input: ScheduleInput,
 ): Promise<SaveResult> {
   const name = String(input.name ?? '').trim()
-  if (!name) return { ok: false, error: 'Give this price change a name.' }
+  if (!name) return failedField('name', 'Give this price change a name.')
 
   const result = await siteExecute(
     siteId,
@@ -227,7 +245,7 @@ export async function updateSchedule(
   input: ScheduleInput,
 ): Promise<ActionResult> {
   const name = String(input.name ?? '').trim()
-  if (!name) return { ok: false, error: 'Give this price change a name.' }
+  if (!name) return failedField('name', 'Give this price change a name.')
 
   // Only a draft may be edited. An armed change is already in the tills, and
   // moving its moment or its prices underneath them is how the two disagree.
@@ -269,6 +287,79 @@ export async function deleteSchedule(siteId: number, actor: Actor, id: number): 
     detail: `Price change "${String(current.name)}" deleted`,
   })
   return { ok: true }
+}
+
+/**
+ * Copy a price change, lines and all, as a fresh draft.
+ *
+ * Building the list is the expensive part. A shop that spent an afternoon
+ * picking four hundred products and now wants to try the same list at different
+ * numbers — or run last April's increase again in October — should not have to
+ * assemble it a second time.
+ *
+ * ── WHAT DELIBERATELY DOES NOT COME ACROSS ───────────────────────────────
+ *
+ * The copy is always a DRAFT with no moment on it, whatever the original was.
+ * An armed schedule copied as armed would fire twice, and inheriting a date
+ * that has already passed would make the copy "due now" the instant it appears.
+ * Choosing when is the one thing that has to stay deliberate.
+ *
+ * `old_price_incl` is re-read from what the shop charges TODAY rather than
+ * copied across. On a duplicate of an APPLIED change the stored "before" is the
+ * price from before that change fired, which is not what anybody is charging
+ * now — copied, it would show the owner a rise measured against a price that
+ * stopped existing months ago, and every difference on the screen would be
+ * wrong by the size of the first change.
+ */
+export async function duplicateSchedule(
+  siteId: number,
+  actor: Actor,
+  id: number,
+  name?: string,
+): Promise<SaveResult> {
+  const source = await siteQueryOne<Row>(siteId, `SELECT name FROM price_schedules WHERE id = ?`, [
+    id,
+  ])
+  if (!source) return { ok: false, error: 'That price change no longer exists.' }
+
+  const wanted = (String(name ?? '').trim() || `${String(source.name)} (copy)`).slice(0, 120)
+
+  return siteTransaction(siteId, async (tx) => {
+    const [head] = await tx.execute(
+      `INSERT INTO price_schedules (name, effective_at, status, created_by, updated_by)
+       VALUES (?, '', 'draft', ?, ?)`,
+      [wanted, actor.userName, actor.userName],
+    )
+    const newId = Number((head as { insertId?: number }).insertId ?? 0)
+
+    /*
+     * Copied by one INSERT ... SELECT rather than read into the app and written
+     * back: a whole-catalogue change is 40 000 lines, and round-tripping them
+     * through Node to change nothing but the schedule id would be a megabyte of
+     * traffic and a long transaction behind a button that should feel instant.
+     */
+    await tx.execute(
+      `INSERT INTO price_schedule_lines
+         (schedule_id, product_id, price_structure_id, new_price_incl, old_price_incl, origin)
+       SELECT ?, l.product_id, l.price_structure_id, l.new_price_incl,
+              pp.selling_price_incl, l.origin
+         FROM price_schedule_lines l
+         LEFT JOIN product_prices pp
+                ON pp.product_id = l.product_id
+               AND pp.price_structure_id = l.price_structure_id
+        WHERE l.schedule_id = ?`,
+      [newId, id],
+    )
+
+    await logActivityTx(tx, actor, {
+      entity: 'price_schedule',
+      entityId: newId,
+      action: 'create',
+      detail: `Price change "${wanted}" copied from "${String(source.name)}"`,
+    })
+
+    return { ok: true as const, id: newId }
+  })
 }
 
 /* ── Lines ────────────────────────────────────────────────────────────────── */
@@ -375,6 +466,16 @@ async function requireDraft(siteId: number, scheduleId: number): Promise<ActionR
 
 export type SeedScope = {
   priceStructureIds: number[]
+  /**
+   * EXACT department ids to match, not branches to expand.
+   *
+   * Departments nest, and the picker lets the owner tick a parent — which means
+   * "this and everything under it". That expansion happens in the action, via
+   * `departmentFilterIds`, the same helper the products list and bulk pricing
+   * use, so the three screens cannot disagree about what ticking "Drinks" means.
+   * Left to this layer it would need the whole tree loaded to answer a question
+   * the caller has already answered.
+   */
   departmentIds?: number[]
   brandIds?: number[]
   includeArchived?: boolean
@@ -491,7 +592,7 @@ export async function staleLines(siteId: number, scheduleId: number): Promise<Sc
   const rows = await siteQuery<Row>(
     siteId,
     `SELECT l.id, l.product_id, l.price_structure_id, l.new_price_incl, l.old_price_incl,
-            l.origin, p.code, p.description, ps.name AS structure_name,
+            l.origin, p.code, p.description, p.department_id, ps.name AS structure_name,
             pp.selling_price_incl AS live_incl
        FROM price_schedule_lines l
        JOIN products p ON p.id = l.product_id
@@ -510,6 +611,7 @@ export async function staleLines(siteId: number, scheduleId: number): Promise<Sc
     description: String(r.description),
     priceStructureId: Number(r.price_structure_id),
     structureName: String(r.structure_name),
+    departmentId: r.department_id === null ? null : Number(r.department_id),
     newPriceIncl: toNum(r.new_price_incl),
     oldPriceIncl: r.old_price_incl === null ? null : toNum(r.old_price_incl),
     origin: String(r.origin) as 'typed' | 'rule',
@@ -556,9 +658,14 @@ export async function armSchedule(
     return { ok: false, error: 'This change is already scheduled.' }
   }
 
+  /* Named against the DATE box: the moment is two controls, and the date is the
+     one somebody fills in first and the one further up the row, so it is where
+     the eye goes when the form says the moment is missing. */
   const when = String(schedule.effective_at ?? '')
-  if (!when) return { ok: false, error: 'Choose when this change should happen.' }
-  if (when <= wallClockNow()) return { ok: false, error: 'Choose a time in the future.' }
+  if (!when) return failedField('effectiveDate', 'Choose when this change should happen.')
+  if (when <= wallClockNow()) {
+    return failedField('effectiveDate', 'Choose a time in the future.')
+  }
 
   await siteExecute(
     siteId,

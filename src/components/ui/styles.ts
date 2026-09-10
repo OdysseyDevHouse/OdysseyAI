@@ -353,11 +353,45 @@ export const TABLE_SCROLLER = 'overflow-auto'
  *
  * `rounded-[inherit]` rather than a literal `rounded-card` because a table is
  * only SOMETIMES the first thing in its card: put a toolbar above it and the
- * top corners must stay square. Inheriting means the frame takes a radius only
- * where it actually sits in a rounded corner, and 0 everywhere else — one
- * class that is right in both places, with nothing for a caller to remember.
+ * top corners must stay square.
+ *
+ * ── WHY INHERIT ALONE WAS NOT ENOUGH ──────────────────────────────────────
+ *
+ * `rounded-[inherit]` was doing that job on the BOTTOM corners only, and
+ * silently getting the top ones wrong. `border-radius: inherit` copies the
+ * parent's VALUE — it does not ask where the child sits — so a frame under a
+ * CardHeader still took the full 12px on its top corners and rounded them
+ * against a straight card edge. The header band is opaque (`bg-surface-2`), so
+ * the curve bit a notch of card colour out of each top corner of the grey band:
+ * the same defect this token exists to prevent, just moved from the card's
+ * corner to the middle of its edge. Measured on /setup/brands, the frame sits
+ * 96px below the card top with a 12px radius; /suppliers is 72px down. Only the
+ * tables that ARE their card's first child (/products, /customers, both at 1px)
+ * looked right, which is why it survived.
+ *
+ * `:first-child` looks like the position test to reach for, and it is wrong
+ * here: a Card renders its dialogs as siblings, so on /customers a hidden
+ * `<dialog>` sits before the frame and the table stops being the first child
+ * while still sitting at the very top of the card. Selecting on it squared off
+ * the corners of a header band that WAS in the card's corner — the original
+ * notch, inverted.
+ *
+ * What the frame is really asking is "is there a rounded card corner at my top
+ * edge", and the element that knows is the one that owns that edge: the
+ * CardHeader above it, when there is one. So the top corners are inherited as
+ * before, and a frame that FOLLOWS a CardHeader squares them off, keyed off
+ * the `data-card-header` marker that component sets. No frame has to know its
+ * own position, and a table alone in its card is untouched.
+ *
+ * `~` and not `+`: a Card renders its dialogs as siblings, so on /suppliers a
+ * hidden `<dialog>` sits between the header and the frame and the adjacent
+ * combinator missed it — the notch survived on exactly the screens with a
+ * dialog in the middle. The general combinator asks the question that is
+ * actually being asked ("is a header anywhere above me in this card"), and a
+ * header is always before the table it heads.
  */
-export const TABLE_FRAME = 'rounded-[inherit] overflow-hidden p-0'
+export const TABLE_FRAME =
+  'rounded-[inherit] overflow-hidden p-0 [[data-card-header]~&]:rounded-t-none'
 
 /**
  * The header row of a scrolling table. Sticks to the top of TABLE_SCROLLER so
