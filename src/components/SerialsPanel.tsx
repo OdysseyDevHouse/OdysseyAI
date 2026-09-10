@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 import {
   Badge,
   Button,
@@ -13,13 +13,14 @@ import {
   type Column,
   type SegmentedOption,
 } from '@/components/ui'
-import { StatusError, StatusSuccess, Plus, Ban } from '@/components/ui/icons'
+import { StatusError, StatusSuccess, Plus, Ban, Pencil } from '@/components/ui/icons'
 /* Labels from the client-safe module; the Serial shape is a type-only import,
    which erases at compile time and so cannot drag the pool into the bundle. */
 import { SERIAL_LABELS, isHeld, type SerialStatus } from '@/lib/serialStatus'
 import type { Serial } from '@/lib/site/serials'
 import {
   addSerialsAction,
+  editSerialAction,
   writeOffSerialAction,
   type SerialActionState,
 } from '@/app/(app)/products/serialActions'
@@ -40,6 +41,7 @@ import {
 
 const CAPTURE_FORM = 'serial-capture-form'
 const WRITEOFF_FORM = 'serial-writeoff-form'
+const EDIT_FORM = 'serial-edit-form'
 
 const TONE: Record<SerialStatus, 'success' | 'neutral' | 'warning' | 'danger'> = {
   in_stock: 'success',
@@ -139,7 +141,22 @@ export default function SerialsPanel({
   const empty: SerialActionState = { error: null, message: null }
   const [addState, addAction] = useActionState(addSerialsAction, empty)
   const [offState, offAction] = useActionState(writeOffSerialAction, empty)
+  const [editState, editAction] = useActionState(editSerialAction, empty)
   const [writingOff, setWritingOff] = useState<Serial | null>(null)
+  const [editing, setEditing] = useState<Serial | null>(null)
+
+  /*
+   * Closes the edit panel once the save has actually landed.
+   *
+   * Keyed on the message rather than closing in an onClick: the action is a
+   * form submission, so at click time nothing has been saved yet and closing
+   * there would hide a refusal the user needs to read. The revalidate has
+   * re-rendered the rows by the time a message exists, so the panel goes away
+   * exactly when the table behind it shows the new date.
+   */
+  useEffect(() => {
+    if (editState.message) setEditing(null)
+  }, [editState.message])
   /* In stock by default. It is the slice somebody opening this tab almost
      always wants — what have I got — and the other two grow forever, so
      defaulting to Sold would mean a screen that gets slower and less useful
@@ -314,6 +331,15 @@ export default function SerialsPanel({
           {addState.message}
         </p>
       )}
+      {/* The edit's own confirmation, up here with the capture one rather than
+          inside the panel — the panel closes on success, so a message living in
+          it would unmount at the moment it had something to say. */}
+      {editState.message && (
+        <p className="flex items-center gap-2 rounded-md bg-success-soft px-3 py-2 text-sm text-success-ink">
+          <StatusSuccess size={15} />
+          {editState.message}
+        </p>
+      )}
 
       <div className="flex flex-col gap-4 rounded-card border border-border p-4">
         <span className="text-sm font-medium text-ink">Capture serial numbers</span>
@@ -380,21 +406,118 @@ export default function SerialsPanel({
               columns={columns}
               rows={visible}
               getRowKey={(row) => row.id}
-              actions={(row) =>
-                row.status === 'in_stock' || row.status === 'returned' ? (
+              actions={(row) => (
+                <div className="flex items-center gap-1">
+                  {/* On EVERY unit, whatever its status — including sold and
+                      written-off ones. That is the point rather than an
+                      oversight: the warranty question is asked about units that
+                      have LEFT, so refusing the correction once a unit is sold
+                      would refuse it in exactly the case it exists for. */}
                   <Button
                     type="button"
-                    variant="danger-ghost"
+                    variant="ghost"
                     size="sm"
-                    onClick={() => setWritingOff(row)}
+                    onClick={() => {
+                      setEditing(row)
+                      setWritingOff(null)
+                    }}
                   >
-                    <Ban size={15} />
-                    Write off
+                    <Pencil size={15} />
+                    Edit
                   </Button>
-                ) : null
-              }
+                  {(row.status === 'in_stock' || row.status === 'returned') && (
+                    <Button
+                      type="button"
+                      variant="danger-ghost"
+                      size="sm"
+                      onClick={() => {
+                        setWritingOff(row)
+                        setEditing(null)
+                      }}
+                    >
+                      <Ban size={15} />
+                      Write off
+                    </Button>
+                  )}
+                </div>
+              )}
             />
           )}
+        </div>
+      )}
+
+      {/*
+        Correcting what is known about one unit.
+
+        `key` on the panel, not just on the inputs: the fields are uncontrolled
+        (defaultValue), so opening Edit on a second unit while the first was
+        still open would leave the previous unit's date in the boxes above the
+        new unit's number. Keying the panel to the serial id remounts it, which
+        is what makes each open start from the unit actually being edited.
+      */}
+      {editing && (
+        <div
+          key={editing.id}
+          className="flex flex-col gap-3 rounded-card border border-border p-4"
+        >
+          <span className="text-sm font-medium text-ink">
+            Edit serial <span className="numeric">{editing.serial}</span>
+          </span>
+          {editState.error && (
+            <p role="alert" className="text-sm text-danger">
+              {editState.error}
+            </p>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Warranty until"
+              hint="The manufacturer's expiry date. Leave empty if there is none."
+            >
+              {/* Keyed on the UNIT.
+                  These are uncontrolled inputs, so `defaultValue` is only read
+                  when the element is first created. Belt and braces alongside
+                  the panel's own key — remounting is what makes opening Edit on
+                  a second unit show THAT unit's date rather than the last one's,
+                  and a key here says so at the element that depends on it.
+
+                  Note there is a second input named `warrantyUntil` on this
+                  screen, in the capture box above. They stay separate because
+                  each names its own form via `form={id}` — verified in the
+                  browser: the edit form submits the unit's date while the
+                  capture box independently holds whatever was typed there. */}
+              <Input
+                key={`warranty-${editing.id}`}
+                name="warrantyUntil"
+                form={EDIT_FORM}
+                type="date"
+                defaultValue={editing.warrantyUntil ?? ''}
+              />
+            </Field>
+            <Field label="Note" hint="Anything worth keeping against this unit">
+              <Input
+                key={`note-${editing.id}`}
+                name="note"
+                form={EDIT_FORM}
+                maxLength={190}
+                defaultValue={editing.note ?? ''}
+              />
+            </Field>
+          </div>
+          <input type="hidden" name="serialId" form={EDIT_FORM} value={editing.id} />
+          <div className="flex gap-2">
+            <Button type="submit" form={EDIT_FORM} variant="primary">
+              Save changes
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+          </div>
+          {/* Says the edit is recorded, before it is made rather than after.
+              The people most likely to change a warranty date are the people who
+              should know somebody can see that they did. */}
+          <p className="text-xs text-muted">
+            Changes are recorded against your name in the audit trail, with the old and new values.
+          </p>
         </div>
       )}
 
@@ -429,6 +552,9 @@ export default function SerialsPanel({
         <input type="hidden" name="productId" value={productId} />
       </form>
       <form id={WRITEOFF_FORM} action={offAction}>
+        <input type="hidden" name="productId" value={productId} />
+      </form>
+      <form id={EDIT_FORM} action={editAction}>
         <input type="hidden" name="productId" value={productId} />
       </form>
     </div>

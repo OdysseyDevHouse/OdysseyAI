@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { requireActor, actorFor, actorForOrThrow } from '@/lib/auth'
-import { addSerials, writeOffSerial } from '@/lib/site/serials'
+import { addSerials, updateSerialDetails, writeOffSerial } from '@/lib/site/serials'
 
 /**
  * Serial capture, saved on its own rather than with the product form.
@@ -65,6 +65,43 @@ export async function addSerialsAction(
     error: null,
     message: `Added ${result.added} serial number${result.added === 1 ? '' : 's'}.${skipped}`,
   }
+}
+
+/**
+ * Corrects the warranty date (and note) on one unit.
+ *
+ * Guarded on `products.edit`, not `stock.adjust` like the write-off below it.
+ * The two differ because the write-off DESTROYS STOCK VALUE, which is a stock
+ * decision; this changes what the shop knows about a box whose quantity, cost
+ * and location are all untouched. Somebody who may correct a product's details
+ * may correct these.
+ *
+ * Every edit is written to the audit trail with its before and after — see the
+ * `serial` entity — because a warranty expiry quietly changed is a claim allowed
+ * or refused a year later.
+ */
+export async function editSerialAction(
+  _prev: SerialActionState,
+  form: FormData,
+): Promise<SerialActionState> {
+  const ctx = await actorForOrThrow('products.edit')
+  const { siteId, actor } = ctx
+
+  const serialId = Number(form.get('serialId'))
+  const productId = Number(form.get('productId'))
+  if (!Number.isFinite(serialId) || serialId <= 0) {
+    return { error: 'That serial no longer exists.', message: null }
+  }
+
+  const result = await updateSerialDetails(siteId, actor, serialId, {
+    warrantyUntil: String(form.get('warrantyUntil') ?? '').trim() || null,
+    note: String(form.get('note') ?? '').trim() || null,
+  })
+  if (!result.ok) return { error: result.error, message: null }
+
+  if (Number.isFinite(productId) && productId > 0) revalidatePath(`/products/${productId}`)
+
+  return { error: null, message: 'Serial updated.' }
 }
 
 export async function writeOffSerialAction(

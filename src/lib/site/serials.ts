@@ -5,7 +5,7 @@ import { customerDbPrefix } from './customerDb'
 import { toNum } from '@/lib/decimals'
 import { mainLocationId } from './stockLocations'
 import { recordMovement } from './stockMovements'
-import type { Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 
 /**
  * Serial numbers — knowing which individual unit went where.
@@ -261,7 +261,9 @@ export async function addSerials(
 ): Promise<AddResult> {
   const product = await siteQueryOne<Row>(
     siteId,
-    'SELECT id, product_type FROM products WHERE id = ?',
+    // `description` for the audit line below — the trail names what was
+    // captured, not a bare product id nobody can look up at a glance.
+    'SELECT id, product_type, description FROM products WHERE id = ?',
     [productId],
   )
   if (!product) return { ok: false, error: 'That product no longer exists.' }
@@ -320,6 +322,32 @@ export async function addSerials(
             ? `Serial number captured on the product screen: ${fresh[0]}`
             : `${fresh.length} serial numbers captured on the product screen`,
       })
+    })
+
+    /* Who brought these units into stock.
+     *
+     * One entry for the BATCH rather than one per unit: fifty serials pasted off
+     * a delivery note is one act by one person, and fifty audit rows would bury
+     * the day's real changes under a wall of near-identical lines. The numbers
+     * themselves are on the units, and each has its own `received` movement.
+     *
+     * entityId is null for the same reason — the entry is about several rows, so
+     * naming one of them would be a lie about the other forty-nine. The product
+     * is named in the detail, which is what somebody scanning the trail reads.
+     * Null even for a batch of one, so the shape of the entry does not depend on
+     * how many numbers happened to be pasted in.
+     *
+     * Outside the transaction, after it commits: `logActivity` swallows its own
+     * errors precisely so a failed audit row cannot roll back the stock it was
+     * describing. Inside it, that guarantee would be inverted. */
+    await logActivity(siteId, actor, {
+      entity: 'serial',
+      entityId: null,
+      action: 'capture',
+      detail:
+        fresh.length === 1
+          ? `Captured serial ${fresh[0]} for ${String(product.description ?? productId)}`
+          : `Captured ${fresh.length} serial numbers for ${String(product.description ?? productId)}`,
     })
   }
 
@@ -1037,6 +1065,98 @@ export async function countSerialsTx(
   return { ok: true, missing: missing.length, found: resurrect.length + newUnits.length }
 }
 
+/**
+ * Corrects what is KNOWN about a unit — its warranty date and its note.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ *
+ * The warranty date is captured with the numbers off a delivery note, and it is
+ * the field most often left blank: whoever is typing fifty serials has the box
+ * in front of them and not the supplier's terms. It surfaces a year later at the
+ * counter, when the answer to "is this still under warranty" is a claim allowed
+ * or refused — and until now there was nothing on any screen that could set it.
+ * Writing the unit off and recapturing it would have been the only way, which
+ * destroys the receipt history to fix a typo.
+ *
+ * ── WHAT IT DELIBERATELY WILL NOT TOUCH ───────────────────────────────────
+ *
+ * The serial NUMBER itself, the status, the cost and the location. Each of those
+ * is a fact about where the unit is or what it is worth, owned by the paths that
+ * move stock — and a serial number quietly edited is a different unit wearing an
+ * old history. This is only for what the shop KNOWS about the box.
+ *
+ * A sold or written-off unit may still be corrected, on purpose: a warranty
+ * question is asked about units that have LEFT, and refusing the fix on the
+ * grounds that the unit is gone would refuse it in exactly the case that matters.
+ */
+export async function updateSerialDetails(
+  siteId: number,
+  actor: Actor,
+  serialId: number,
+  input: { warrantyUntil: string | null; note: string | null },
+): Promise<ReturnResult> {
+  const before = await siteQueryOne<Row>(
+    siteId,
+    `SELECT s.id, s.serial, s.warranty_until, s.note, p.description
+       FROM product_serials s JOIN products p ON p.id = s.product_id
+      WHERE s.id = ?`,
+    [serialId],
+  )
+  if (!before) return { ok: false, error: 'That serial no longer exists.' }
+
+  /*
+   * Validated HERE rather than trusted from the form.
+   *
+   * `addSerials` passes its date straight through, which is safe only because
+   * the capture field is `type="date"` and the browser will not submit rubbish
+   * from it. A server action is a public endpoint regardless of the control in
+   * front of it, and a malformed string reaching a DATE column stores 0000-00-00
+   * — a date that is not a date, silently answering "expired" forever.
+   */
+  const warranty = input.warrantyUntil?.trim() || null
+  if (warranty !== null) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(warranty)) {
+      return { ok: false, error: 'Give the warranty date as a real date, or leave it empty.' }
+    }
+    const parsed = new Date(`${warranty}T00:00:00Z`)
+    if (Number.isNaN(parsed.getTime()) || !parsed.toISOString().startsWith(warranty)) {
+      return { ok: false, error: 'That is not a real date — check the day and month.' }
+    }
+  }
+
+  const note = input.note?.trim().slice(0, 190) || null
+  const wasWarranty = (before.warranty_until as string | null) ?? null
+  const wasNote = (before.note as string | null) ?? null
+
+  // Nothing to do, and nothing to log: an audit trail full of "changed X from
+  // 5 to 5" is how a real change becomes hard to find.
+  if (warranty === wasWarranty && note === wasNote) return { ok: true }
+
+  await siteExecute(
+    siteId,
+    'UPDATE product_serials SET warranty_until = ?, note = ? WHERE id = ?',
+    [warranty, note, serialId],
+  )
+
+  /* The before and the after, both, in `changes` — which is the whole point of
+     logging this one. "Who extended the warranty on this unit by a year" is the
+     question, and it cannot be answered by a line that records only the new
+     value. */
+  const changes: Record<string, { from: unknown; to: unknown }> = {}
+  if (warranty !== wasWarranty) changes.warrantyUntil = { from: wasWarranty, to: warranty }
+  if (note !== wasNote) changes.note = { from: wasNote, to: note }
+
+  await logActivity(siteId, actor, {
+    entity: 'serial',
+    entityId: serialId,
+    action: 'edit_details',
+    detail: `${String(before.description)} — serial ${String(before.serial)}`,
+    changes,
+  })
+
+  return { ok: true }
+}
+
 /** Takes a serial permanently out — lost, stolen or scrapped. */
 export async function writeOffSerial(
   siteId: number,
@@ -1073,6 +1193,21 @@ export async function writeOffSerial(
      VALUES (?, 'written_off', ?, ?, ?)`,
     [serialId, actor.userId, actor.userName.slice(0, 120), reason.trim().slice(0, 190)],
   )
+
+  /* In the audit trail as well as the movement row above, and the duplication is
+     deliberate: the movement answers "what happened to this unit" on the unit's
+     own history, while the audit screen answers "what did this PERSON do today"
+     across every record in the shop. A write-off destroys stock value on
+     somebody's say-so, which is exactly the kind of thing read from the second
+     direction. Ordinary SALES are not logged here — see the note on the
+     `serial` entity. */
+  await logActivity(siteId, actor, {
+    entity: 'serial',
+    entityId: serialId,
+    action: 'write_off',
+    detail: `Serial ${String(serial.serial)} written off — ${reason.trim().slice(0, 190)}`,
+    changes: { status: { from: String(serial.status), to: 'written_off' } },
+  })
 
   return { ok: true }
 }

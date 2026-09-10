@@ -183,6 +183,22 @@ export type ActivityEntity =
      answers who changed the warranty date, who moved it to another site, and who
      retired it. A warranty expiry quietly edited is a dispute waiting to happen. */
   | 'customer_asset'
+  /* An individual serial-numbered UNIT: captured, written off, sent back to the
+     supplier, or its warranty date corrected. entityId is the serial row.
+     Deliberately separate from `product`, which answers "who changed what this
+     thing costs"; this answers "who changed what we know about THIS box".
+
+     The warranty date is why it exists, and it is the same reason
+     `customer_asset` above gives: a shop that finds a unit was captured without
+     a warranty date fixes it months later, and the fix is a claim being allowed
+     or refused. An expiry quietly edited is a dispute waiting to happen, so the
+     before and after go in `changes` where the audit screen prints them.
+
+     Selling one is NOT logged here. `serial_movements` is already an immutable
+     record of every unit that moved, with the document and the person on it, and
+     duplicating each till sale into the audit trail would bury the handful of
+     entries this is for. See the same call on `loyalty`. */
+  | 'serial'
   /* The machine door: an API key minted or revoked, a webhook endpoint added
      or its secret rotated. Standing access with no person behind it is
      exactly what a trail must record the granting of. */
