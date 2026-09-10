@@ -8,6 +8,7 @@ import {
   EmptyState,
   Field,
   Input,
+  Modal,
   SegmentedControl,
   Textarea,
   type Column,
@@ -455,70 +456,95 @@ export default function SerialsPanel({
         new unit's number. Keying the panel to the serial id remounts it, which
         is what makes each open start from the unit actually being edited.
       */}
-      {editing && (
-        <div
-          key={editing.id}
-          className="flex flex-col gap-3 rounded-card border border-border p-4"
-        >
-          <span className="text-sm font-medium text-ink">
-            Edit serial <span className="numeric">{editing.serial}</span>
-          </span>
-          {editState.error && (
-            <p role="alert" className="text-sm text-danger">
-              {editState.error}
-            </p>
-          )}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field
-              label="Warranty until"
-              hint="The manufacturer's expiry date. Leave empty if there is none."
-            >
-              {/* Keyed on the UNIT.
-                  These are uncontrolled inputs, so `defaultValue` is only read
-                  when the element is first created. Belt and braces alongside
-                  the panel's own key — remounting is what makes opening Edit on
-                  a second unit show THAT unit's date rather than the last one's,
-                  and a key here says so at the element that depends on it.
+      {/*
+        A DIALOG rather than a panel under the table.
 
-                  Note there is a second input named `warrantyUntil` on this
-                  screen, in the capture box above. They stay separate because
-                  each names its own form via `form={id}` — verified in the
-                  browser: the edit form submits the unit's date while the
-                  capture box independently holds whatever was typed there. */}
-              <Input
-                key={`warranty-${editing.id}`}
-                name="warrantyUntil"
-                form={EDIT_FORM}
-                type="date"
-                defaultValue={editing.warrantyUntil ?? ''}
-              />
-            </Field>
-            <Field label="Note" hint="Anything worth keeping against this unit">
-              <Input
-                key={`note-${editing.id}`}
-                name="note"
-                form={EDIT_FORM}
-                maxLength={190}
-                defaultValue={editing.note ?? ''}
-              />
-            </Field>
+        The row being edited can be anywhere in a list that grows a row per unit
+        forever, so a panel at the bottom put the fields a long scroll away from
+        the serial they belonged to — on a product with fifty units, clicking
+        Edit appeared to do nothing at all. A dialog comes to the reader, names
+        the unit in its own title, and dims the table so there is no question
+        which row is being changed.
+
+        Mounted only while a unit is being edited, so the uncontrolled fields
+        inside start from that unit's values every time — the same reason the
+        keys below exist, and the reason `editing` is the whole condition rather
+        than `open={editing !== null}` on a permanently-mounted dialog.
+      */}
+      {editing && (
+        <Modal
+          open
+          onClose={() => setEditing(null)}
+          title={`Edit serial ${editing.serial}`}
+          description="The warranty date is what the counter checks a claim against."
+          size="md"
+          /* Half-typed work: a stray click on the backdrop must not discard it —
+             the same call ContactsPanel makes for the same reason. */
+          closeOnBackdrop={false}
+          footer={
+            <>
+              <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              {/* In the FOOTER, not the body: a dialog's body scrolls at 60vh,
+                  and a primary button living in it can end up below the fold. */}
+              <Button type="submit" form={EDIT_FORM} variant="primary">
+                Save changes
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            {editState.error && (
+              <p role="alert" className="text-sm text-danger">
+                {editState.error}
+              </p>
+            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field
+                label="Warranty until"
+                hint="The manufacturer's expiry date. Leave empty if there is none."
+              >
+                {/* Keyed on the UNIT.
+                    These are uncontrolled inputs, so `defaultValue` is only read
+                    when the element is first created. Belt and braces alongside
+                    the dialog only being mounted while a unit is being edited —
+                    remounting is what makes opening Edit on a second unit show
+                    THAT unit's date rather than the last one's.
+
+                    Note there is a second input named `warrantyUntil` on this
+                    screen, in the capture box above. They stay separate because
+                    each names its own form via `form={id}` — verified in the
+                    browser: the edit form submits the unit's date while the
+                    capture box independently holds whatever was typed there. */}
+                <Input
+                  key={`warranty-${editing.id}`}
+                  name="warrantyUntil"
+                  form={EDIT_FORM}
+                  type="date"
+                  defaultValue={editing.warrantyUntil ?? ''}
+                />
+              </Field>
+              <Field label="Note" hint="Anything worth keeping against this unit">
+                <Input
+                  key={`note-${editing.id}`}
+                  name="note"
+                  form={EDIT_FORM}
+                  maxLength={190}
+                  defaultValue={editing.note ?? ''}
+                />
+              </Field>
+            </div>
+            <input type="hidden" name="serialId" form={EDIT_FORM} value={editing.id} />
+            {/* Says the edit is recorded, before it is made rather than after.
+                The people most likely to change a warranty date are the people
+                who should know somebody can see that they did. */}
+            <p className="text-xs text-muted">
+              Changes are recorded against your name in the audit trail, with the old and new
+              values.
+            </p>
           </div>
-          <input type="hidden" name="serialId" form={EDIT_FORM} value={editing.id} />
-          <div className="flex gap-2">
-            <Button type="submit" form={EDIT_FORM} variant="primary">
-              Save changes
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
-              Cancel
-            </Button>
-          </div>
-          {/* Says the edit is recorded, before it is made rather than after.
-              The people most likely to change a warranty date are the people who
-              should know somebody can see that they did. */}
-          <p className="text-xs text-muted">
-            Changes are recorded against your name in the audit trail, with the old and new values.
-          </p>
-        </div>
+        </Modal>
       )}
 
       {writingOff && (
