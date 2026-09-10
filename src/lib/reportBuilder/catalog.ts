@@ -4519,6 +4519,270 @@ const BATCHES_SOURCE: CatalogSource = {
   ],
 }
 
+/* ── serial numbers ────────────────────────────────────────────────────────── */
+
+/**
+ * What happened to each individual unit — received, sold, written off, sent
+ * back.
+ *
+ * ── WHY THE MOVEMENT TABLE AND NOT `product_serials` ──────────────────────
+ *
+ * `product_serials` holds one row per unit carrying its CURRENT status, which
+ * makes it a fine answer to "what have I got" — and the product screen's
+ * serials tab already is that answer. It is the wrong shape for this report,
+ * because a unit can be sold, come back, and be sold again: the serial row
+ * keeps only the latest of those, so a month's sales counted off it would
+ * silently lose every unit that has moved since. `serial_movements` keeps the
+ * whole thread, one row per thing that happened, which is what makes a period
+ * filter mean anything.
+ *
+ * So this is a `timeline`, dated by when the movement was recorded. Asking it
+ * for last month gives what MOVED last month rather than what happens to be
+ * sitting in that state today — those are different questions, and only the
+ * first one is a movement report.
+ *
+ * ── THE JOIN IS NOT CALLED `doc` ──────────────────────────────────────────
+ *
+ * run.ts treats a join literally named `doc` as the parent carrying the date
+ * range's column, so calling it that would make every serial report filter on
+ * a `sales_documents` column that does not exist here. This source dates from
+ * its own table; the sale is only a lookup. Named `sale` for that reason —
+ * the same trap the kitchen source documents.
+ *
+ * `document_id` is nullable and means different tables for different actions
+ * (a receipt names a GRV, an adjustment names an adjustment), so the sale join
+ * is LEFT and its columns are empty on anything that was not a sale. That is
+ * honest rather than lossy: the action column says which kind it was.
+ */
+const SERIAL_MOVEMENTS_SOURCE: CatalogSource = {
+  key: 'serialMovements',
+  label: 'Serial number movement',
+  description:
+    'Every individual unit and what happened to it — received, sold, written off or returned, with the number, the document and who did it.',
+  category: 'Stock',
+  permission: 'stock.view',
+  shape: 'timeline',
+  table: 'serial_movements',
+  dateColumn: 'created_at',
+  joins: [
+    /* `always`, not on demand: without the unit there is no serial number and
+       no product, which is every reason to open this report. */
+    { name: 'serial', sql: 'INNER JOIN product_serials sn ON sn.id = t.serial_id', always: true },
+    { name: 'product', sql: 'LEFT JOIN products pm ON pm.id = sn.product_id', needs: ['serial'] },
+    /* The shared department and brand joins read alias `pm` but declare no
+       `needs` of their own — every other source carrying them pulls the
+       product join in for its own reasons, so the omission has never shown.
+       Here the product is reached THROUGH the serial, so a report asking only
+       for the department would emit these two with no `pm` to hang off.
+       Spread with the dependency added rather than edited in place: the shared
+       constants are used by a dozen sources and this is a fact about THIS
+       source's join chain. */
+    { ...PRODUCT_DEPT_JOIN, needs: ['product'] },
+    { ...PRODUCT_BRAND_JOIN, needs: ['product'] },
+    /* NOT named 'doc' — see the header. */
+    { name: 'sale', sql: 'LEFT JOIN sales_documents sd ON sd.id = t.document_id' },
+    {
+      name: 'serialCustomer',
+      sql: 'LEFT JOIN {C}customers sc ON sc.id = sn.customer_id',
+      needs: ['serial'],
+    },
+    { name: 'fromLocation', sql: 'LEFT JOIN stock_locations sfl ON sfl.id = t.from_location_id' },
+    { name: 'toLocation', sql: 'LEFT JOIN stock_locations stl ON stl.id = t.to_location_id' },
+  ],
+  fields: [
+    /* What happened. The values are written by the code that moves units —
+       serials.ts, salesPosting.ts, stockAdjustments.ts — rather than
+       constrained by an ENUM, so this list is the documented set and a picker
+       beats guessing the spelling of 'written_off'. */
+    enumField(
+      'action',
+      'What happened',
+      't.action',
+      ['received', 'sold', 'returned', 'written_off', 'returned_to_supplier', 'transferred', 'adjusted'],
+      { starter: true },
+      {
+        received: 'Received',
+        sold: 'Sold',
+        returned: 'Returned by customer',
+        written_off: 'Written off',
+        returned_to_supplier: 'Returned to supplier',
+        transferred: 'Transferred',
+        adjusted: 'Adjusted',
+      },
+    ),
+    {
+      key: 'serial',
+      label: 'Serial number',
+      type: 'text',
+      expr: 'sn.serial',
+      needs: ['serial'],
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'productCode',
+      label: 'Product code',
+      type: 'text',
+      expr: 'pm.code',
+      needs: ['product'],
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    {
+      key: 'productDescription',
+      label: 'Description',
+      type: 'text',
+      expr: 'pm.description',
+      needs: ['product'],
+      starter: true,
+      group: FIELD_GROUPS.IDENTITY,
+    },
+    { key: 'movedAt', label: 'Date', type: 'datetime', expr: 't.created_at', starter: true, group: FIELD_GROUPS.DATES },
+    {
+      key: 'userName',
+      label: 'By',
+      type: 'text',
+      expr: 't.user_name',
+      starter: true,
+      group: FIELD_GROUPS.PEOPLE,
+    },
+    /* The unit's status TODAY, beside what happened to it on this row. The two
+       differ on purpose: a unit sold in March and returned in April has a
+       'sold' movement row and a current status of 'returned', and seeing both
+       is how somebody works out that the March sale did not stick. */
+    enumField(
+      'currentStatus',
+      'Status now',
+      'sn.status',
+      ['in_stock', 'sold', 'returned', 'written_off', 'returned_to_supplier'],
+      { needs: ['serial'] },
+      {
+        in_stock: 'In stock',
+        sold: 'Sold',
+        returned: 'Returned — not resellable',
+        written_off: 'Written off',
+        returned_to_supplier: 'Returned to supplier',
+      },
+    ),
+    {
+      key: 'department',
+      label: 'Department',
+      type: 'text',
+      expr: 'pdm.name',
+      needs: ['productDept'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'brand',
+      label: 'Brand',
+      type: 'text',
+      expr: 'pb.name',
+      needs: ['productBrand'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    /* Clickable through to the sale, which is the whole point of tracing a
+       unit: the row says a serial went out, and the number gets you to who
+       took it. Empty on a movement whose document is not a sale. */
+    {
+      key: 'saleNumber',
+      label: 'Document',
+      type: 'document',
+      expr: 'sd.document_number',
+      needs: ['sale'],
+      link: { kind: 'sale', idExpr: 't.document_id' },
+      group: FIELD_GROUPS.IDENTITY,
+      hint: 'The sale a unit went out on. Empty where the movement was a receipt, adjustment or transfer.',
+    },
+    {
+      key: 'customerName',
+      label: 'Customer',
+      type: 'text',
+      expr: 'sc.name',
+      needs: ['serialCustomer'],
+      group: FIELD_GROUPS.PEOPLE,
+      hint: 'Who holds the unit now, taken from the unit itself rather than this movement.',
+    },
+    {
+      key: 'fromLocation',
+      label: 'Moved from',
+      type: 'text',
+      expr: 'sfl.code',
+      needs: ['fromLocation'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    {
+      key: 'toLocation',
+      label: 'Moved to',
+      type: 'text',
+      expr: 'stl.code',
+      needs: ['toLocation'],
+      group: FIELD_GROUPS.CLASSIFICATION,
+    },
+    /* One row is one unit, so counting rows counts units — and that makes
+       "units written off this month" a sum rather than a thing to eyeball.
+       Kept out of the footer total on the unit cost for the usual reason: an
+       average of costs is not a number anybody wants added up. */
+    {
+      key: 'units',
+      label: 'Units',
+      type: 'number',
+      expr: '1',
+      numeric: true,
+      group: FIELD_GROUPS.QUANTITIES,
+      hint: 'One per movement — sum it to count units moved.',
+    },
+    {
+      key: 'costExcl',
+      label: 'Unit cost',
+      type: 'currency',
+      expr: 'sn.cost_excl',
+      numeric: true,
+      noTotal: true,
+      needs: ['serial'],
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    /* What the movement was worth at cost. This is the figure a write-off
+       report exists to produce — "we lost R14,000 of handsets" rather than
+       "we lost nine handsets". */
+    {
+      key: 'movementValue',
+      label: 'Value at cost',
+      type: 'currency',
+      expr: 'sn.cost_excl',
+      numeric: true,
+      needs: ['serial'],
+      permission: 'products.cost',
+      group: FIELD_GROUPS.COST,
+    },
+    {
+      key: 'warrantyUntil',
+      label: 'Warranty until',
+      type: 'date',
+      expr: 'sn.warranty_until',
+      needs: ['serial'],
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'receivedAt',
+      label: 'Received',
+      type: 'datetime',
+      expr: 'sn.received_at',
+      needs: ['serial'],
+      group: FIELD_GROUPS.DATES,
+    },
+    {
+      key: 'note',
+      label: 'Reason / note',
+      type: 'text',
+      expr: 't.note',
+      group: FIELD_GROUPS.OTHER,
+      hint: 'What was typed when the unit was written off or adjusted.',
+    },
+    ...timeBuckets('created_at', { hours: true }),
+  ],
+}
+
 /* ── job cards ─────────────────────────────────────────────────────────────── */
 
 /**
@@ -6680,6 +6944,7 @@ export const SOURCES: CatalogSource[] = [
   ADJUSTMENT_LINES_SOURCE,
   PRODUCT_SUPPLIERS_SOURCE,
   BATCHES_SOURCE,
+  SERIAL_MOVEMENTS_SOURCE,
   SUPPLIER_TXN_SOURCE,
   LOYALTY_LEDGER_SOURCE,
   LOYALTY_MEMBERS_SOURCE,

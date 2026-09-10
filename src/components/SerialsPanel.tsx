@@ -8,8 +8,10 @@ import {
   EmptyState,
   Field,
   Input,
+  SegmentedControl,
   Textarea,
   type Column,
+  type SegmentedOption,
 } from '@/components/ui'
 import { StatusError, StatusSuccess, Plus, Ban } from '@/components/ui/icons'
 /* Labels from the client-safe module; the Serial shape is a type-only import,
@@ -50,6 +52,57 @@ const TONE: Record<SerialStatus, 'success' | 'neutral' | 'warning' | 'danger'> =
   returned_to_supplier: 'neutral',
 }
 
+/**
+ * The three slices this tab is filtered into, and which statuses fall in each.
+ *
+ * There are five statuses and three slices, so two of them share. That is
+ * deliberate: the question this screen answers is "what shape is my stock in",
+ * and from that angle a faulty unit still sitting on the shelf is a thing I
+ * hold, while one that has gone back to the supplier is a thing that has left
+ * without being sold. Giving each of the five its own slice would have made two
+ * tabs that are empty on almost every product, and a reader hunting a serial
+ * would have to guess which of five to look in.
+ *
+ * Every unit lands in exactly one slice — the badge in the row still names the
+ * real status, so nothing is hidden by the grouping, only gathered.
+ */
+const SLICES = ['in_stock', 'sold', 'written_off'] as const
+type Slice = (typeof SLICES)[number]
+
+const SLICE_OF: Record<SerialStatus, Slice> = {
+  in_stock: 'in_stock',
+  // Faulty and unsellable, but physically here and awaiting a decision — which
+  // is the in-stock tab's business, not the write-off tab's.
+  returned: 'in_stock',
+  sold: 'sold',
+  written_off: 'written_off',
+  // Gone and credited. Not a sale, so it belongs with the units that left
+  // without earning anything.
+  returned_to_supplier: 'written_off',
+}
+
+const SLICE_LABEL: Record<Slice, string> = {
+  in_stock: 'In stock',
+  sold: 'Sold',
+  written_off: 'Written off',
+}
+
+/** Shown when a slice is empty, in the words of what that slice means. */
+const SLICE_EMPTY: Record<Slice, { title: string; hint: string }> = {
+  in_stock: {
+    title: 'No units in stock',
+    hint: 'Every unit captured for this product has been sold, written off or sent back. Capture the numbers off a delivery note above to bring more in.',
+  },
+  sold: {
+    title: 'Nothing sold yet',
+    hint: 'Units are marked sold automatically when they go out on a sale, and this is where they land — so you can find who bought a particular one when it comes back under warranty.',
+  },
+  written_off: {
+    title: 'Nothing written off',
+    hint: 'Units that were lost, scrapped or sent back to the supplier show here, with the reason kept against each one.',
+  },
+}
+
 function formatDate(value: Date | string | null): string {
   if (!value) return '—'
   const d = typeof value === 'string' ? new Date(value) : value
@@ -82,6 +135,11 @@ export default function SerialsPanel({
   const [addState, addAction] = useActionState(addSerialsAction, empty)
   const [offState, offAction] = useActionState(writeOffSerialAction, empty)
   const [writingOff, setWritingOff] = useState<Serial | null>(null)
+  /* In stock by default. It is the slice somebody opening this tab almost
+     always wants — what have I got — and the other two grow forever, so
+     defaulting to Sold would mean a screen that gets slower and less useful
+     every year the shop trades. */
+  const [slice, setSlice] = useState<Slice>('in_stock')
 
   if (productId === null) {
     return (
@@ -119,6 +177,20 @@ export default function SerialsPanel({
      locations whose units happen to be together still gets one code repeated,
      which is the correct answer to "where is it". */
   const hasLocations = new Set(serials.map((s) => s.locationCode).filter(Boolean)).size > 1
+
+  /* Counted over ALL the units rather than the visible slice, so the bar says
+     how many are behind each tab before it is opened — the count is most of the
+     reason to put a number on a segment at all. */
+  const sliceCount: Record<Slice, number> = { in_stock: 0, sold: 0, written_off: 0 }
+  for (const s of serials) sliceCount[SLICE_OF[s.status]] += 1
+
+  const sliceOptions: SegmentedOption<Slice>[] = SLICES.map((value) => ({
+    value,
+    label: SLICE_LABEL[value],
+    count: sliceCount[value],
+  }))
+
+  const visible = serials.filter((s) => SLICE_OF[s.status] === slice)
 
   const columns: Column<Serial>[] = [
     {
@@ -286,24 +358,39 @@ export default function SerialsPanel({
           hint="Add the numbers off the delivery note above. A serial product cannot be sold until its units are captured."
         />
       ) : (
-        <DataTable
-          columns={columns}
-          rows={serials}
-          getRowKey={(row) => row.id}
-          actions={(row) =>
-            row.status === 'in_stock' || row.status === 'returned' ? (
-              <Button
-                type="button"
-                variant="danger-ghost"
-                size="sm"
-                onClick={() => setWritingOff(row)}
-              >
-                <Ban size={15} />
-                Write off
-              </Button>
-            ) : null
-          }
-        />
+        /* The bar shows even when the open slice is empty — it is how somebody
+           gets back out of an empty tab, and hiding it would strand them. */
+        <div className="flex flex-col gap-4">
+          <SegmentedControl
+            options={sliceOptions}
+            value={slice}
+            onChange={setSlice}
+            aria-label="Which units to show"
+          />
+
+          {visible.length === 0 ? (
+            <EmptyState title={SLICE_EMPTY[slice].title} hint={SLICE_EMPTY[slice].hint} />
+          ) : (
+            <DataTable
+              columns={columns}
+              rows={visible}
+              getRowKey={(row) => row.id}
+              actions={(row) =>
+                row.status === 'in_stock' || row.status === 'returned' ? (
+                  <Button
+                    type="button"
+                    variant="danger-ghost"
+                    size="sm"
+                    onClick={() => setWritingOff(row)}
+                  >
+                    <Ban size={15} />
+                    Write off
+                  </Button>
+                ) : null
+              }
+            />
+          )}
+        </div>
       )}
 
       {writingOff && (

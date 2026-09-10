@@ -1324,6 +1324,151 @@ export const TEMPLATES: ReportTemplate[] = [
       sort: { key: "movementValue_sum", dir: "desc" },
     }),
   },
+  {
+    /**
+     * Serial number movement — where each individual unit went.
+     *
+     * A DETAIL report, not a summary, and that is the whole point of it: the
+     * question a serial shop asks is "which unit", and a row per unit carrying
+     * its number is the only answer. Grouping it would count units and throw
+     * away the numbers, which is what the ordinary product movement report
+     * already does perfectly well.
+     *
+     * The default cut is deliberately unfiltered — every action, so the report
+     * opens showing the full movement of every unit and the "What happened"
+     * column does the separating. The cuts below are the three questions that
+     * get asked by name; each is a filter on that same column, so anybody
+     * wanting a fourth can set one in the builder without needing us.
+     */
+    id: "serial-movement",
+    name: "Serial number movement",
+    description:
+      "Every unit and what happened to it — received, sold, written off or returned, with the number and the document.",
+    category: "Stock",
+    permission: "stock.view",
+    /* Each cut is asked for by name — "what serials did we write off" — so each
+       earns its own tile rather than hiding behind a dropdown. */
+    splitVariants: true,
+    spec: spec({
+      source: "serialMovements",
+      columns: [
+        { field: "movedAt" },
+        { field: "action" },
+        { field: "serial" },
+        { field: "productCode" },
+        { field: "productDescription" },
+        { field: "saleNumber" },
+        { field: "customerName" },
+        { field: "userName" },
+        { field: "note" },
+      ],
+      sort: { key: "movedAt", dir: "desc" },
+    }),
+    variants: [
+      {
+        key: "all",
+        label: "Everything",
+        name: "Serial number movement",
+        description:
+          "Every unit and what happened to it — received, sold, written off or returned, with the number and the document.",
+        spec: spec({
+          source: "serialMovements",
+          columns: [
+            { field: "movedAt" },
+            { field: "action" },
+            { field: "serial" },
+            { field: "productCode" },
+            { field: "productDescription" },
+            { field: "saleNumber" },
+            { field: "customerName" },
+            { field: "userName" },
+            { field: "note" },
+          ],
+          sort: { key: "movedAt", dir: "desc" },
+        }),
+      },
+      {
+        key: "sold",
+        label: "Sold",
+        name: "Serial numbers sold",
+        description:
+          "Which units went out, on which document, to whom — the warranty trail.",
+        spec: spec({
+          source: "serialMovements",
+          columns: [
+            { field: "movedAt" },
+            { field: "serial" },
+            { field: "productCode" },
+            { field: "productDescription" },
+            { field: "saleNumber" },
+            { field: "customerName" },
+            /* The unit's status TODAY beside the sale that took it. A row
+               reading "sold in March, returned now" is exactly the one a
+               manager wants to find, and without this column it looks
+               identical to a sale that stuck. */
+            { field: "currentStatus" },
+            { field: "userName" },
+          ],
+          filters: [{ field: "action", op: "eq", value: "sold" }],
+          sort: { key: "movedAt", dir: "desc" },
+        }),
+      },
+      {
+        key: "written-off",
+        label: "Written off",
+        name: "Serial numbers written off",
+        description:
+          "Units lost, stolen or scrapped — with the reason given and what they cost.",
+        spec: spec({
+          source: "serialMovements",
+          columns: [
+            { field: "movedAt" },
+            { field: "serial" },
+            { field: "productCode" },
+            { field: "productDescription" },
+            /* The reason is the reason this cut exists — a write-off with no
+               note beside it is a number nobody can act on. */
+            { field: "note" },
+            { field: "movementValue" },
+            { field: "userName" },
+          ],
+          filters: [{ field: "action", op: "eq", value: "written_off" }],
+          sort: { key: "movedAt", dir: "desc" },
+        }),
+      },
+      {
+        key: "returned",
+        label: "Returned",
+        name: "Serial numbers returned",
+        description:
+          "Units that came back — from a customer, or sent on to the supplier.",
+        spec: spec({
+          source: "serialMovements",
+          columns: [
+            { field: "movedAt" },
+            { field: "action" },
+            { field: "serial" },
+            { field: "productCode" },
+            { field: "productDescription" },
+            { field: "saleNumber" },
+            { field: "customerName" },
+            { field: "currentStatus" },
+            { field: "note" },
+          ],
+          /* Both kinds of return in one cut: "in" from a customer and "out" to
+             the supplier are two ends of the same story, and a faulty unit is
+             followed by asking what happened to it after it came back. The
+             action column separates them. */
+          /* Comma-separated, not an array: `in` splits the value string on
+             commas (run.ts filterClause). */
+          filters: [
+            { field: "action", op: "in", value: "returned,returned_to_supplier" },
+          ],
+          sort: { key: "movedAt", dir: "desc" },
+        }),
+      },
+    ],
+  },
 
   /* ── Customers ───────────────────────────────────────────────────────────── */
   {
