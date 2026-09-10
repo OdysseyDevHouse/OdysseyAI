@@ -293,6 +293,12 @@ export async function GET(req: NextRequest) {
          exactly the shops that chose not to have one. */
       'lot_capture_mode',
       'lot_capture_strict',
+      /* Whether the serial picker may list the units on hand (235). Shipped
+         for the same reason as the lot pair: a shop that turned the list OFF
+         did so to stop a clerk tapping the first row, and a till that dropped
+         back to listing them mid-outage would hand that habit straight back at
+         the moment nobody is watching. */
+      'serial_capture_mode',
       'sales_number_scope',
       'store_number',
       /* Whether a disconnected till may sell on account. It arrives as a page

@@ -38,6 +38,7 @@ export default function StockTrackingClient({
   const [saved, setSaved] = useState(initial)
   const [mode, setMode] = useState(initial.lotCaptureMode)
   const [strict, setStrict] = useState(initial.lotCaptureStrict)
+  const [serialMode, setSerialMode] = useState(initial.serialCaptureMode)
   /* ── THE OLD BARCODE VALUES, HELD AND NOT EDITED ────────────────────────
    *
    * No control on this screen changes them any more — scale barcodes moved to
@@ -58,13 +59,16 @@ export default function StockTrackingClient({
 
   const capturing = mode !== 'fefo'
   const dirty =
-    mode !== saved.lotCaptureMode || (capturing && strict !== saved.lotCaptureStrict)
+    mode !== saved.lotCaptureMode ||
+    (capturing && strict !== saved.lotCaptureStrict) ||
+    serialMode !== saved.serialCaptureMode
 
   function save() {
     startTransition(async () => {
       const result = await saveStockTrackingSettingsAction({
         lotCaptureMode: mode,
         lotCaptureStrict: strict,
+        serialCaptureMode: serialMode,
         ...legacyBarcode,
       })
 
@@ -147,6 +151,52 @@ export default function StockTrackingClient({
           The clerk picks from the lots on hand, with the one due to sell next already selected — so
           the usual case is one tap. It is still a tap per item, which is why most shops want this
           only where a lot has to be answered for.
+        </Callout>
+      )}
+
+      {/* Its own group, not a row under lot capture: batches and serials are
+          different products with different rules, and a shop that sells
+          laptops and no perishables should not have to read the lot section to
+          find this. */}
+      <SettingGroup
+        title="Which unit a serial-numbered sale hands over"
+        description="Only affects serial-tracked products. Everything else is unchanged."
+      >
+        <SettingRow
+          icon={<Icons.Barcode size={16} />}
+          label="Serial capture"
+          description="How the clerk names the unit going out."
+          htmlFor="serial-mode"
+        >
+          <Select
+            id="serial-mode"
+            className="w-64"
+            value={serialMode}
+            onChange={(e) => setSerialMode(e.target.value === 'scan' ? 'scan' : 'list')}
+          >
+            <option value="list">Scan, or pick from the units on hand</option>
+            <option value="scan">Scan or type the number only</option>
+          </Select>
+        </SettingRow>
+      </SettingGroup>
+
+      {serialMode === 'list' && (
+        <Callout tone="brand" title="The list is the fallback, and also the lazy path">
+          The clerk can scan the number off the box or pick the unit from the ones in stock. Picking
+          is the kind option when a label will not read — and it is the one a clerk under pressure
+          taps without looking, which puts unit A in the customer&rsquo;s hands and unit B on the
+          invoice. That surfaces months later as a warranty claim on a unit the system still says is
+          on the shelf.
+        </Callout>
+      )}
+
+      {serialMode === 'scan' && (
+        <Callout tone="warning" title="A damaged label has to be typed by hand">
+          The units on hand are not listed, so the number has to come off the box every time — which
+          is the point: the paperwork can only name the unit that was actually read. The number is
+          still checked against stock, so a wrong one is refused rather than sold. Where a label is
+          unreadable the clerk types it, and if the unit cannot be identified at all the sale needs
+          the office.
         </Callout>
       )}
 

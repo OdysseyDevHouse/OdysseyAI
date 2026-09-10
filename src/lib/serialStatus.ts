@@ -33,6 +33,42 @@ export const SERIAL_LABELS: Record<SerialStatus, string> = {
   returned_to_supplier: 'Returned to supplier',
 }
 
+/* ── How the till names the unit (§235) ──────────────────────────────────── */
+
+/**
+ * Whether the till may OFFER the units on hand, or insists on the number.
+ *
+ *   'list'  scan the box, or pick the unit from the ones in stock.
+ *   'scan'  the list is not shown; the number is scanned or typed.
+ *
+ * The list is the kind fallback for a label that will not read, and it is also
+ * the path a clerk under pressure takes without looking — tapping the first row
+ * puts unit A in the customer's hands and unit B on the invoice. Nothing at the
+ * till can catch that, because both units are real and sellable; it surfaces
+ * months later as a warranty claim on a unit the system says is still on the
+ * shelf. Shops that have been bitten turn the list off.
+ */
+export type SerialCaptureMode = 'list' | 'scan'
+
+/**
+ * Resolves the stored setting into the rule in force.
+ *
+ * Lives beside the labels rather than in `lib/site/serials.ts` for the reason
+ * given at the top of this file: the till is a client component and has to make
+ * the SAME decision the server would, so the resolver has to be reachable from
+ * the browser bundle without dragging the database pool in with it.
+ *
+ * Anything that is not the explicit 'scan' resolves to 'list'. That direction
+ * matters: an unset row, an unrecognised value or a catalog that predates this
+ * setting all leave the till behaving exactly as it did before this shipped,
+ * rather than a shop discovering mid-sale that its picker has gone.
+ */
+export function serialCaptureFor(settings: {
+  serial_capture_mode?: string | null
+}): SerialCaptureMode {
+  return settings.serial_capture_mode === 'scan' ? 'scan' : 'list'
+}
+
 /* ── Allocating a serial to a job line (§31) ─────────────────────────────── */
 
 /**

@@ -122,12 +122,14 @@ export const SETTINGS_CATEGORIES = [
   {
     key: 'stock-tracking',
     label: 'Stock tracking',
-    blurb: 'Lots, expiry and scale labels',
-    description: 'Which lot a sale comes from, and when the till asks for it.',
+    blurb: 'Lots, serials and expiry',
+    description: 'Which lot and which unit a sale comes from, and what the till asks for.',
     icon: 'Barcode',
     tone: 'violet',
+    /* Serial words as well as lot words: somebody stopping cashiers picking
+       units off a list searches "serial", and the tab was unfindable that way. */
     keywords:
-      'lot batch expiry traceability recall fefo earliest expiry gs1 barcode databar scale plu weighed label capture prompt clerk shelf life best before',
+      'lot batch expiry traceability recall fefo earliest expiry gs1 barcode databar scale plu weighed label capture prompt clerk shelf life best before serial serial number unit imei warranty scan pick list',
     /* Same gate as its /setup page, which used requireModuleCapability — lot
        capture decides how a feature the shop may not have bought behaves. */
     module: 'inventory_advanced',

@@ -237,6 +237,7 @@ import { SerialModal } from './SerialModal'
 import type { TillLot } from '@/lib/site/batches'
 import type { VariantAxis } from '@/lib/site/productVariants'
 import { lotCaptureFor, type LotCapture } from '@/lib/gs1'
+import { serialCaptureFor, type SerialCaptureMode } from '@/lib/serialStatus'
 import { GiftCardModal, GiftCardBalanceModal } from './GiftCardModal'
 import { lookupGiftCardAction } from './giftCardActions'
 import { QuickKeyPanel } from './QuickKeyPanel'
@@ -998,7 +999,9 @@ export default function PosShell({
    * through here, which is the point — each names its own machine.
    */
   const [serialling, setSerialling] = useState<TillProduct | null>(null)
-  const [serialOptions, setSerialOptions] = useState<{ id: number; serial: string }[]>([])
+  const [serialOptions, setSerialOptions] = useState<
+    { id: number; serial: string; receivedAt: string | null }[]
+  >([])
   const [serialsLoading, setSerialsLoading] = useState(false)
 
   /**
@@ -1361,10 +1364,16 @@ export default function PosShell({
    * the old one rather than a wrong new one.
    */
   const [lotCapture, setLotCapture] = useState<LotCapture>({ mode: 'fefo', strict: false })
+  /* Read in the same pass, and defaulting the same way: 'list' is what every
+     till did before this setting existed, so the answer during those few
+     milliseconds is the old behaviour rather than a new wrong one. */
+  const [serialCapture, setSerialCapture] = useState<SerialCaptureMode>('list')
   useEffect(() => {
     let cancelled = false
     void storedSettings(siteId).then((stored) => {
-      if (!cancelled) setLotCapture(lotCaptureFor(stored))
+      if (cancelled) return
+      setLotCapture(lotCaptureFor(stored))
+      setSerialCapture(serialCaptureFor(stored))
     })
     return () => {
       cancelled = true
@@ -7710,6 +7719,7 @@ export default function PosShell({
         <SerialModal
           product={serialling}
           units={serialOptions}
+          capture={serialCapture}
           loading={serialsLoading}
           onCancel={() => setSerialling(null)}
           onConfirm={(unit) => {

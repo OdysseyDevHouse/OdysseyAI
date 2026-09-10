@@ -256,6 +256,30 @@ export const SETTING_DEFAULTS = {
      stored 1 read as a promise the till never keeps. Never applied at SYNC
      either: a queued sale is money that already changed hands. */
   lot_capture_strict: '0',
+
+  /* How the till names WHICH serial-numbered unit is being handed over.
+
+     'list'  the clerk may scan the number or pick it from the units on hand.
+     'scan'  the list is not offered; the number has to be scanned or typed.
+
+     ── WHY THE SECOND MODE EXISTS ──────────────────────────────────────────
+
+     The list is the kind thing to offer and it is also the lazy path: a clerk
+     under pressure taps the first row rather than reading the box, and the
+     paperwork retires unit A while unit B leaves the shop. Nothing catches
+     that at the till — both units are real, in stock and sellable — so it
+     surfaces months later as a warranty claim on a unit the system says is
+     still on the shelf. Shops that have been bitten want the option to make
+     the number come off the box.
+
+     'list' is the default because it is the one that cannot strand a counter:
+     under 'scan' a unit whose label will not read has to be typed by hand, and
+     a shop should choose that deliberately rather than discover it mid-sale.
+
+     This is about how the unit is IDENTIFIED, not whether it is required —
+     a serial item has always needed a unit before the line exists. */
+  serial_capture_mode: 'list',
+
   /** How far a drawer may be out before an explanation is required at cash-up. */
   cashup_variance_tolerance: '5.00',
 
@@ -1877,6 +1901,11 @@ export function validateSetting(key: SettingKey, value: string): string | null {
        both values are known to be the ones in force. */
     case 'lot_capture_strict':
       return value === '0' || value === '1' ? null : 'Use 1 or 0.'
+
+    case 'serial_capture_mode':
+      return value === 'list' || value === 'scan'
+        ? null
+        : 'Choose whether the clerk may pick from the list, or must scan or type the number.'
 
     case 'cashup_variance_tolerance': {
       const tolerance = Number(value)

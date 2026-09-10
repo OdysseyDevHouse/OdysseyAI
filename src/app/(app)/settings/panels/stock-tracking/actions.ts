@@ -16,6 +16,8 @@ import { lotCaptureFor } from '@/lib/gs1'
 export type StockTrackingSettings = {
   lotCaptureMode: 'fefo' | 'barcode' | 'prompt'
   lotCaptureStrict: boolean
+  /** Whether the till may offer the units on hand as a list, or insists on the number. */
+  serialCaptureMode: 'list' | 'scan'
   barcodePrefix: string
   barcodePluLength: string
   barcodeValueDivisor: string
@@ -42,6 +44,7 @@ export async function loadStockTrackingSettingsAction(): Promise<
   const settings = await getSettings(ctx.siteId, [
     'lot_capture_mode',
     'lot_capture_strict',
+    'serial_capture_mode',
     'barcode_variable_prefix',
     'barcode_plu_length',
     'barcode_value_divisor',
@@ -57,6 +60,10 @@ export async function loadStockTrackingSettingsAction(): Promise<
     settings: {
       lotCaptureMode: capture.mode,
       lotCaptureStrict: capture.strict,
+      /* Anything but the explicit 'scan' is the permissive default, so a
+         missing row — every site that has never opened this screen — leaves the
+         till behaving exactly as it always has. */
+      serialCaptureMode: settings.serial_capture_mode === 'scan' ? 'scan' : 'list',
       barcodePrefix: settings.barcode_variable_prefix ?? '2',
       barcodePluLength: settings.barcode_plu_length ?? '5',
       barcodeValueDivisor: settings.barcode_value_divisor ?? '100',
@@ -92,6 +99,7 @@ export async function saveStockTrackingSettingsAction(
   for (const [key, value] of [
     ['lot_capture_mode', input.lotCaptureMode],
     ['lot_capture_strict', strict],
+    ['serial_capture_mode', input.serialCaptureMode],
     ['barcode_variable_prefix', input.barcodePrefix.trim()],
     ['barcode_plu_length', input.barcodePluLength.trim()],
     ['barcode_value_divisor', input.barcodeValueDivisor.trim()],

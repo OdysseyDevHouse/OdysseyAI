@@ -202,7 +202,7 @@ export async function lotsForProductAction(
 export async function serialsForProductAction(
   productId: number,
   terminalId?: number | null,
-): Promise<{ id: number; serial: string }[]> {
+): Promise<{ id: number; serial: string; receivedAt: string | null }[]> {
   const ctx = await actorForOrThrow('sales.till')
   const { siteId } = ctx
   /*
@@ -218,7 +218,21 @@ export async function serialsForProductAction(
    */
   const locationId = (await tillLocation(siteId, terminalId)) ?? (await mainLocationId(siteId))
   const units = await availableSerials(siteId, productId, locationId)
-  return units.map((unit) => ({ id: unit.id, serial: unit.serial }))
+  return units.map((unit) => ({
+    id: unit.id,
+    serial: unit.serial,
+    /* When the unit came in — shown beside it in the picker so a counter can
+       hand over the oldest one rather than whichever is nearest.
+       ISO, not a formatted date: the pool runs at timezone 'Z', so the
+       driver's Date holds the stored wall-clock reading in its UTC fields and
+       `toISOString` hands it back unchanged. The till reads it with getUTC*.
+       Formatting it here would send a server-locale string to a browser that
+       cannot parse it back. */
+    receivedAt:
+      unit.receivedAt instanceof Date && !Number.isNaN(unit.receivedAt.getTime())
+        ? unit.receivedAt.toISOString()
+        : null,
+  }))
 }
 
 /**
