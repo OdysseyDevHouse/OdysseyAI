@@ -31,6 +31,9 @@ import type { KitchenPrinter } from '@/lib/site/kitchenPrinters'
 import type { RecipeLine } from '@/lib/site/productComposition'
 import type { ChainRung } from '@/lib/site/referRange'
 import type { Serial } from '@/lib/site/serials'
+/* The client-safe module, not lib/site/serials — that one is `server-only` and
+   importing a function off it would pull mysql2 into this bundle. */
+import { isHeld } from '@/lib/serialStatus'
 import type { ProductSupplier } from '@/lib/site/productSuppliers'
 import type { ProductBarcode } from '@/lib/site/productBarcodes'
 import {
@@ -579,7 +582,19 @@ export default function ProductForm({
                     value: 'serials',
                     label: 'Serials',
                     icon: <Barcode size={16} />,
-                    count: serials.length || undefined,
+                    /* IN STOCK only, not every unit ever captured.
+                       The badge answers "how many have I got", which is the
+                       question somebody glancing at a tab is asking. Counting
+                       sold and written-off units answered "how many has this
+                       product ever had", a figure that only ever grows and that
+                       disagreed with both the quantity on hand beside it and
+                       the In stock tab inside. A product with three on the
+                       shelf and four long gone read as 7.
+
+                       `returned` counts too, matching the panel's own In stock
+                       slice: the unit is faulty but it is still here, and it is
+                       what the drift check compares against stock on hand. */
+                    count: serials.filter((s) => isHeld(s.status)).length || undefined,
                   },
                 ]
               : []),

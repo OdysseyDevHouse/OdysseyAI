@@ -33,6 +33,28 @@ export const SERIAL_LABELS: Record<SerialStatus, string> = {
   returned_to_supplier: 'Returned to supplier',
 }
 
+/**
+ * Whether a unit is one the shop still HOLDS.
+ *
+ * `in_stock` plus `returned`: the second is faulty and not sellable, but it is
+ * on a shelf and waiting for somebody to decide about it, which makes it a
+ * thing you have rather than a thing that has gone. `sold`, `written_off` and
+ * `returned_to_supplier` have all left the building.
+ *
+ * Shared rather than written twice because two screens must agree about it —
+ * the Serials tab's badge on the product form, and the In stock slice inside
+ * the panel it opens. A badge saying 4 over a tab listing 3 is the kind of
+ * disagreement nobody reports and everybody stops trusting.
+ *
+ * NOT the same question as the stock invariant, which compares `stock_on_hand`
+ * against `in_stock` ALONE — a faulty return is held but not sellable, so it
+ * must not count towards the quantity a customer can buy. See `reconcileSerials`
+ * and the drift badge, which both deliberately exclude it.
+ */
+export function isHeld(status: SerialStatus): boolean {
+  return status === 'in_stock' || status === 'returned'
+}
+
 /* ── How the till names the unit (§235) ──────────────────────────────────── */
 
 /**

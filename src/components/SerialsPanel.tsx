@@ -16,7 +16,7 @@ import {
 import { StatusError, StatusSuccess, Plus, Ban } from '@/components/ui/icons'
 /* Labels from the client-safe module; the Serial shape is a type-only import,
    which erases at compile time and so cannot drag the pool into the bundle. */
-import { SERIAL_LABELS, type SerialStatus } from '@/lib/serialStatus'
+import { SERIAL_LABELS, isHeld, type SerialStatus } from '@/lib/serialStatus'
 import type { Serial } from '@/lib/site/serials'
 import {
   addSerialsAction,
@@ -69,16 +69,21 @@ const TONE: Record<SerialStatus, 'success' | 'neutral' | 'warning' | 'danger'> =
 const SLICES = ['in_stock', 'sold', 'written_off'] as const
 type Slice = (typeof SLICES)[number]
 
-const SLICE_OF: Record<SerialStatus, Slice> = {
-  in_stock: 'in_stock',
-  // Faulty and unsellable, but physically here and awaiting a decision — which
-  // is the in-stock tab's business, not the write-off tab's.
-  returned: 'in_stock',
-  sold: 'sold',
-  written_off: 'written_off',
-  // Gone and credited. Not a sale, so it belongs with the units that left
-  // without earning anything.
-  returned_to_supplier: 'written_off',
+/**
+ * Which slice a status falls in.
+ *
+ * The In stock arm is `isHeld` itself rather than a list repeating it — the tab
+ * BADGE on the product form counts with that same function, so a unit this puts
+ * in the In stock slice is a unit the badge counted, by construction rather than
+ * by two lists being kept in step. A faulty return is held: not sellable, but on
+ * a shelf and awaiting a decision.
+ *
+ * Of what is left, `sold` is its own answer and everything else — written off,
+ * or sent back to the supplier — is a unit that left without earning anything.
+ */
+function sliceOf(status: SerialStatus): Slice {
+  if (isHeld(status)) return 'in_stock'
+  return status === 'sold' ? 'sold' : 'written_off'
 }
 
 const SLICE_LABEL: Record<Slice, string> = {
@@ -182,7 +187,7 @@ export default function SerialsPanel({
      how many are behind each tab before it is opened — the count is most of the
      reason to put a number on a segment at all. */
   const sliceCount: Record<Slice, number> = { in_stock: 0, sold: 0, written_off: 0 }
-  for (const s of serials) sliceCount[SLICE_OF[s.status]] += 1
+  for (const s of serials) sliceCount[sliceOf(s.status)] += 1
 
   const sliceOptions: SegmentedOption<Slice>[] = SLICES.map((value) => ({
     value,
@@ -190,7 +195,7 @@ export default function SerialsPanel({
     count: sliceCount[value],
   }))
 
-  const visible = serials.filter((s) => SLICE_OF[s.status] === slice)
+  const visible = serials.filter((s) => sliceOf(s.status) === slice)
 
   const columns: Column<Serial>[] = [
     {
