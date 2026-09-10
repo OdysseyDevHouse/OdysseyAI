@@ -122,6 +122,14 @@ export type SalesLine = {
   /** The individual unit this line sold, chosen at the till (235). */
   serialId: number | null
   /**
+   * That unit's serial NUMBER, joined for display.
+   *
+   * Null when the line names no unit — and also on a line whose unit has since
+   * been purged, which is why the id above is not reconstructed from it. The
+   * id is what the sale posted; this is only what a person reads.
+   */
+  serialNumber: string | null
+  /**
    * The answers given when the till asked this product's questions.
    *
    * Read back for the same reason they are stored: a recalled table bill has to
@@ -345,6 +353,10 @@ function mapLine(r: Row, instructions: SalesLineInstruction[] = []): SalesLine {
     // Tolerant of a site that has not run 234, like kitchenGroup below.
     batchNo: r.batch_no === null || r.batch_no === undefined ? null : String(r.batch_no),
     serialId: r.serial_id === null || r.serial_id === undefined ? null : Number(r.serial_id),
+    // Absent rather than null on the box branch, which does not join it — the
+    // ?? covers both and reads the same either way: no number to show.
+    serialNumber:
+      r.serial_number === null || r.serial_number === undefined ? null : String(r.serial_number),
     instructions,
     note: String(r.line_note ?? ''),
     // Joined from the product; absent on a line whose product is gone, which
@@ -520,12 +532,19 @@ export async function getDocument(
          type, so they should follow the product file as it stands rather than
          as it stood when the document was saved. A line whose product has been
          deleted reads as whole units — see the mapper, which fails closed. */
+      /* `serial_number` joins on the MASTER branch only, beside the product
+         columns and for the same reason they are there: a reopened draft holds
+         the unit's ID, and a person checking the line against the box in their
+         hand needs the NUMBER. The box branch below joins neither — see the
+         note above about `products` not existing there. */
       purpose === MASTER
         ? `SELECT l.*, r.name AS sales_rep_name, p.kitchen_group,
-                  p.allow_fractions, p.qty_decimals, p.max_discount_pct
+                  p.allow_fractions, p.qty_decimals, p.max_discount_pct,
+                  sn.serial AS serial_number
              FROM sales_document_lines l
              LEFT JOIN sales_reps r ON r.id = l.sales_rep_id
              LEFT JOIN products p ON p.id = l.product_id
+             LEFT JOIN product_serials sn ON sn.id = l.serial_id
             WHERE l.document_id = ? ORDER BY l.line_number ASC, l.id ASC`
         : `SELECT l.*, r.name AS sales_rep_name
              FROM sales_document_lines l

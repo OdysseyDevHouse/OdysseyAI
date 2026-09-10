@@ -8,7 +8,8 @@ import { listPriceStructures, repsForLines } from '@/lib/site/lookups'
 import { listUsers } from '@/lib/site/users'
 import { can } from '@/lib/site/permissions'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
-import { getNumericSetting } from '@/lib/site/settings'
+import { getNumericSetting, getSettings } from '@/lib/site/settings'
+import { serialCaptureFor } from '@/lib/serialStatus'
 import { getTillCustomer } from '@/lib/site/tillCustomers'
 import InvoiceEditor from '@/app/(invoicing)/invoicing/[id]/InvoiceEditor'
 import { QuotePanel } from './QuotePanel'
@@ -47,8 +48,17 @@ export default async function QuoteEditorPage({
   const documentId = Number(id)
   if (!Number.isFinite(documentId) || documentId <= 0) notFound()
 
-  const [document, quote, structures, users, tenders, cashRounding, specials, deposits] =
-    await Promise.all([
+  const [
+    document,
+    quote,
+    structures,
+    users,
+    tenders,
+    cashRounding,
+    specials,
+    deposits,
+    stockSettings,
+  ] = await Promise.all([
     getDocument(site.id, documentId),
     getQuote(site.id, documentId),
     listPriceStructures(site.id),
@@ -60,6 +70,8 @@ export default async function QuoteEditorPage({
     // Money held to secure this quote (172). It follows the quote onto the
     // invoice when it converts — see convertToInvoice.
     depositSummary(site.id, documentId),
+    // And it names its units the same way (235).
+    getSettings(site.id, ['serial_capture_mode']),
   ])
 
   if (!document) notFound()
@@ -85,6 +97,7 @@ export default async function QuoteEditorPage({
         defaultRepUserId={defaultUserId}
         tenders={tenders}
         cashRounding={cashRounding}
+        serialCapture={serialCaptureFor(stockSettings)}
         specials={specials}
         customer={customer}
         // A quote stays editable while it is open. Once accepted it is the

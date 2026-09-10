@@ -60,9 +60,16 @@ import ProductSearchModal, {
   type ProductSearchPick,
 } from '@/components/products/ProductSearchModal'
 import { AskDetailsModal } from '@/app/(pos)/pos/AskDetailsModal'
+/* The till's unit picker, borrowed whole rather than reimplemented — the same
+   way AskDetailsModal above is. "Which one of these am I handing over" is the
+   same question at a counter as at a till, and two copies of it would be two
+   places for the scan box to drift. */
+import { SerialModal } from '@/app/(pos)/pos/SerialModal'
+import type { SerialCaptureMode } from '@/lib/serialStatus'
 import {
   finaliseInvoiceAction,
   getInvoiceCustomerAction,
+  invoiceSerialsAction,
   saleRecordAction,
   saveInvoiceAction,
   type InvoicePayload,
@@ -105,6 +112,24 @@ type EditorLine = {
    * never directly — zero and null mean opposite things here.
    */
   maxDiscountPct: number | null
+  /**
+   * WHICH individual unit this line sells, on a serial-tracked product (235).
+   *
+   * On the LINE rather than gathered at finalise, matching the till and for the
+   * reason migration 235 gives: a value that exists only at finalise cannot
+   * survive a save, and an invoice is captured, saved and reopened across
+   * several sittings far more often than a till sale is. A draft that has
+   * promised a particular laptop has to still know which one tomorrow morning.
+   *
+   * `serialLabel` rides beside it so the grid can SHOW the number without
+   * re-reading the units — the id is what posts, the label is what a person
+   * checks against the box in their hand.
+   *
+   * Null on every ordinary line, and on a serial line that has not been asked
+   * yet — which the save guard below is what stops reaching the server.
+   */
+  serialId: number | null
+  serialLabel: string | null
   /**
    * Whether this product may be sold in fractions, and to how many places.
    *
@@ -224,6 +249,7 @@ export default function InvoiceEditor({
   defaultRepUserId = null,
   tenders,
   cashRounding,
+  serialCapture,
   customer: initialCustomer,
   editable,
   canOverrideDiscount,
@@ -249,6 +275,8 @@ export default function InvoiceEditor({
   defaultRepUserId?: number | null
   tenders: TenderType[]
   cashRounding: number
+  /** Whether the unit picker may list what is on hand, or insists on the number. */
+  serialCapture: SerialCaptureMode
   /** The attached account's credit position, or null for a once-off. */
   customer: TillCustomer | null
   editable: boolean
@@ -381,6 +409,12 @@ export default function InvoiceEditor({
          default only fills a gap, and only while the document can still be
          changed: a finalised invoice is a record, not a form. */
       salesRepUserId: l.salesRepUserId ?? (editable ? defaultRepUserId : null),
+      /* The unit a saved line already promised, carried straight back. Without
+         this a draft reopened tomorrow would come back having forgotten which
+         laptop it named, and the save guard would ask for it again — on a line
+         the customer has already been quoted. */
+      serialId: l.serialId,
+      serialLabel: l.serialNumber,
       qty: l.qty,
       unitPriceIncl: l.unitPriceIncl,
       discountPct: l.discountPct,
@@ -429,6 +463,67 @@ export default function InvoiceEditor({
     description: boolean
     price: boolean
   } | null>(null)
+
+  /**
+   * A serial product waiting for somebody to say WHICH unit (235).
+   *
+   * `product` is what the answer gets appended as; `line` names an EXISTING
+   * line when the picker was opened from the grid to change or fill in its
+   * unit, and is null when a new line is being added. One piece of state for
+   * both because only one picker can be open at a time, and the two differ
+   * only in what happens when it confirms.
+   */
+  const [askingSerial, setAskingSerial] = useState<{
+    product: TillProduct | null
+    line: string | null
+    productId: number
+    description: string
+  } | null>(null)
+  const [serialUnits, setSerialUnits] = useState<
+    { id: number; serial: string; receivedAt: string | null }[]
+  >([])
+  const [serialsLoading, setSerialsLoading] = useState(false)
+  /* The description/price answers, held while the unit question is asked after
+     them. A product can want all three, and the first two would otherwise be
+     lost between the two dialogs. */
+  const [pendingAnswers, setPendingAnswers] = useState<{
+    description: string
+    price: number
+  } | null>(null)
+
+  /**
+   * Opens the unit picker and fetches what is on the shelf.
+   *
+   * The units are read on every open rather than cached: an invoice sits open
+   * for a long time and another counter may have sold one in the meantime, so
+   * a cached list is how two documents promise the same laptop. `checkSellable`
+   * at post time is the real guard, but asking fresh means the usual case is
+   * answered correctly rather than caught.
+   */
+  function askForSerial(
+    found: TillProduct | null,
+    existing?: { key: string; productId: number; description: string },
+  ) {
+    const productId = existing?.productId ?? found?.id ?? null
+    if (productId === null) return
+
+    setAskingSerial({
+      product: found,
+      line: existing?.key ?? null,
+      productId,
+      description: existing?.description ?? found?.description ?? 'this product',
+    })
+    setSerialUnits([])
+    setSerialsLoading(true)
+    /* The DEVICE, not a terminal: this screen never picks a till and cannot
+       name one, so the server resolves the room from the machine exactly as
+       every save on this screen already does. An unclaimed machine comes back
+       empty, which the picker reads as "none on hand here". */
+    void invoiceSerialsAction(productId, device)
+      .then((rows) => setSerialUnits(rows))
+      .catch(() => setSerialUnits([]))
+      .finally(() => setSerialsLoading(false))
+  }
 
   const [tendering, setTendering] = useState(false)
   const [receipt, setReceipt] = useState<{
@@ -715,6 +810,12 @@ export default function InvoiceEditor({
           productType: product.productType,
           departmentId: product.departmentId,
           salesRepUserId: null,
+          /* A promotion cannot name a unit — nobody chose this line, the deal
+             put it here. A serial product given away therefore lands needing
+             its unit answered like any other, which `refuseMissingSerial`
+             catches before the sale posts. */
+          serialId: null,
+          serialLabel: null,
           qty: reward.qty,
           // Free, not marked down: a discount is something a person chose to
           // give, while this is the promotion paying out as it was set up.
@@ -851,10 +952,40 @@ export default function InvoiceEditor({
       setAskingDetails({ product: found, description: wantsDescription, price: wantsPrice })
       return
     }
+    /*
+     * WHICH unit, on a serial-tracked product (235).
+     *
+     * Asked HERE, at the moment the line is created, rather than gathered at
+     * finalise the way job-card invoicing supplies its units. Two reasons, and
+     * the first is the bug this closes: nothing on this screen ever asked, so a
+     * serial product could be captured, saved, and was refused at ISSUE with
+     * "choose 1 serial number — 0 selected" — the same shape of failure the
+     * till had before 235, on a document that may by then have been quoted to
+     * the customer.
+     *
+     * The second is that an invoice is reopened far more than a till sale is.
+     * A unit named at finalise would have to be re-chosen every sitting; one
+     * named on the line is saved with it.
+     *
+     * After the description/price prompt rather than before, so a product that
+     * asks all three asks in the order the answers are needed — the unit is the
+     * last question because it is the only one about a physical object.
+     */
+    if (found.productType === 'serial') {
+      askForSerial(found)
+      return
+    }
     appendLine(found)
   }
 
-  function appendLine(found: TillProduct, answers?: { description: string; price: number }) {
+  function appendLine(
+    found: TillProduct,
+    answers?: { description: string; price: number },
+    /* The unit, when one has just been picked. Passed in rather than read from
+       state because the picker closes as it confirms, and a line built from
+       state a render later would be built from a cleared one. */
+    unit?: { id: number; serial: string } | null,
+  ) {
     setLines((current) => [
       ...current,
       {
@@ -869,6 +1000,8 @@ export default function InvoiceEditor({
         // Inheritance wins so that deliberately re-attributing one line carries
         // down the rest of the order rather than snapping back.
         salesRepUserId: current[current.length - 1]?.salesRepUserId ?? defaultRepUserId,
+        serialId: unit?.id ?? null,
+        serialLabel: unit?.serial ?? null,
         qty: 1,
         /* A percentage charge opens at nothing: its stored figure is the RATE,
            and the reprice effect turns that into money against the rest of the
@@ -1064,6 +1197,11 @@ export default function InvoiceEditor({
         specialId: l.rewardSpecialId ?? lineSpecials[i]?.specialId ?? null,
         vatRatePct: l.vatRatePct,
         unitCostExcl: l.unitCostExcl,
+        /* The unit this line promises. Whitelisted like everything else here,
+           and the cost of forgetting it is the same one the till's
+           `salePayloadLines` warns about: not a lost note, but a sale refused
+           at the tender pad with the customer already waiting. */
+        serialId: l.serialId,
       })),
     }
   }
@@ -1082,6 +1220,40 @@ export default function InvoiceEditor({
   function refuseOverCeiling(): boolean {
     if (!discountRefusal) return false
     toast.error(discountRefusal)
+    return true
+  }
+
+  /**
+   * Stops a FINALISE whose serial lines have not said which unit (235).
+   *
+   * `finaliseDocument` refuses the same document with almost the same sentence.
+   * This is in front of it for the reason `refuseOverCeiling` is: the refusal
+   * arrives at the TENDER PAD otherwise — money already being counted out — and
+   * the customer is standing there while somebody works out which laptop the
+   * invoice meant. Caught here it is a toast on the grid, next to the line that
+   * needs answering, with the picker one click away.
+   *
+   * Only on the paths that POST. A draft is allowed to be half-captured — that
+   * is what a draft is for, and an order taken over the phone is often written
+   * up before anybody walks to the shelf. The unit is required at the moment
+   * stock actually moves, which is finalise.
+   *
+   * Returns true when it refused, matching its neighbour.
+   */
+  function refuseMissingSerial(): boolean {
+    const missing = lines.filter((l) => l.productType === 'serial' && !l.serialId)
+    if (missing.length === 0) return false
+
+    /* Name the first one rather than counting them. "2 lines need a serial
+       number" makes somebody hunt; the description is what they scan the grid
+       for, and the rest are found the same way once this one is answered. */
+    toast.error(
+      missing.length === 1
+        ? `${missing[0].description}: choose which unit is going out.`
+        : `${missing[0].description} and ${missing.length - 1} other line${
+            missing.length === 2 ? '' : 's'
+          } need a serial number.`,
+    )
     return true
   }
 
@@ -1193,6 +1365,9 @@ export default function InvoiceEditor({
    */
   function takePayment() {
     if (refuseOverCeiling()) return
+    /* Before the pad OPENS, which is the whole point: this is the moment the
+       old refusal arrived, with the customer's card already out. */
+    if (refuseMissingSerial()) return
     startTransition(async () => {
       const saved = await saveInvoiceAction(payload())
       if (!saved.ok) {
@@ -1205,6 +1380,10 @@ export default function InvoiceEditor({
 
   function finalise(taken: { tenderTypeId: number; amount: number; reference?: string | null }[]) {
     if (refuseOverCeiling()) return
+    /* Again here, not only in takePayment: finalise is reachable without the
+       pad (a zero-total invoice, an account sale), and this is the last gate
+       before stock moves. */
+    if (refuseMissingSerial()) return
     startTransition(async () => {
       const result = await finaliseInvoiceAction(payload(), taken)
       if (!result.ok) {
@@ -1577,6 +1756,58 @@ export default function InvoiceEditor({
                         {line.productCode && (
                           <div className="text-xs text-muted">{line.productCode}</div>
                         )}
+                        {/*
+                          WHICH unit this line promises (235).
+
+                          Under the description rather than in a column of its
+                          own: only serial lines have one, and a column would be
+                          empty on every row of an ordinary invoice while taking
+                          width from the descriptions that are the point of the
+                          grid. It sits with the product code because it is the
+                          same kind of fact — what this line IS, rather than a
+                          figure about it.
+
+                          Always shown on a serial line, including when nothing
+                          has been chosen. A line quietly missing its unit until
+                          the tender pad refuses it is the bug being fixed; a
+                          line that says "Choose a unit" in warning colours is
+                          the fix.
+                        */}
+                        {line.productType === 'serial' && (
+                          <div className="mt-1">
+                            {line.serialLabel ? (
+                              <button
+                                type="button"
+                                disabled={!editable}
+                                onClick={() =>
+                                  askForSerial(null, {
+                                    key: line.key,
+                                    productId: line.productId ?? 0,
+                                    description: line.description,
+                                  })
+                                }
+                                className="numeric text-xs text-brand underline-offset-2 hover:underline disabled:no-underline disabled:text-muted"
+                              >
+                                {line.serialLabel}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={!editable}
+                                onClick={() =>
+                                  askForSerial(null, {
+                                    key: line.key,
+                                    productId: line.productId ?? 0,
+                                    description: line.description,
+                                  })
+                                }
+                                className="text-xs font-medium text-warning-ink underline-offset-2 hover:underline disabled:no-underline disabled:text-muted"
+                              >
+                                Choose a unit
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </td>
 
                       <td className={TABLE_TD_INPUT}>
@@ -1871,7 +2102,66 @@ export default function InvoiceEditor({
             onConfirm={(answers) => {
               const { product } = askingDetails
               setAskingDetails(null)
+              /* A serial product that ALSO asks for a description or a price
+                 asks for its unit next, rather than landing on the invoice
+                 without one — `addWithPrompts` returns before reaching the
+                 serial check when it opens this dialog, so the second question
+                 has to be asked on the way out of it. */
+              if (product.productType === 'serial') {
+                setPendingAnswers(answers)
+                askForSerial(product)
+                return
+              }
               appendLine(product, answers)
+            }}
+          />
+        )}
+
+        {/*
+          WHICH unit is going out (235).
+
+          The till's own picker, not a copy of it: same scan box, same list, and
+          the same `serial_capture_mode` setting deciding whether the list is
+          offered at all — a shop that stopped its cashiers picking off a list
+          did so because of what that habit costs, and the habit is no better in
+          the back office.
+        */}
+        {askingSerial && (
+          <SerialModal
+            product={
+              (askingSerial.product ?? {
+                id: askingSerial.productId,
+                description: askingSerial.description,
+              }) as TillProduct
+            }
+            units={serialUnits}
+            capture={serialCapture}
+            loading={serialsLoading}
+            onCancel={() => {
+              setAskingSerial(null)
+              setPendingAnswers(null)
+            }}
+            onConfirm={(unit) => {
+              const asking = askingSerial
+              const answers = pendingAnswers
+              setAskingSerial(null)
+              setPendingAnswers(null)
+
+              /* Filling in or changing an EXISTING line's unit, rather than
+                 adding one. The line keeps everything else it had — only the
+                 unit it promises changes. */
+              if (asking.line) {
+                setLines((current) =>
+                  current.map((l) =>
+                    l.key === asking.line
+                      ? { ...l, serialId: unit.id, serialLabel: unit.serial }
+                      : l,
+                  ),
+                )
+                return
+              }
+
+              if (asking.product) appendLine(asking.product, answers ?? undefined, unit)
             }}
           />
         )}

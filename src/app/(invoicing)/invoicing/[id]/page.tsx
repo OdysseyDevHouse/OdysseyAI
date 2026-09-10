@@ -7,7 +7,8 @@ import { listUsers } from '@/lib/site/users'
 import { liveSpecials } from '@/lib/site/specials'
 import { can } from '@/lib/site/permissions'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
-import { getNumericSetting } from '@/lib/site/settings'
+import { getNumericSetting, getSettings } from '@/lib/site/settings'
+import { serialCaptureFor } from '@/lib/serialStatus'
 import { getTillCustomer } from '@/lib/site/tillCustomers'
 import InvoiceEditor from './InvoiceEditor'
 import { depositSummary } from '@/lib/site/deposits'
@@ -58,6 +59,7 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
     deposits,
     voidReasons,
     returnReasons,
+    stockSettings,
   ] = await Promise.all([
     getDocument(siteId, documentId),
     listPriceStructures(siteId),
@@ -78,6 +80,11 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
        it. Batched here so the dialog opens with them already in hand. */
     listSalesReasons(siteId, 'void'),
     listSalesReasons(siteId, 'return'),
+    /* Whether the unit picker may list what is on hand (235). Batched here
+       rather than read in the editor: this window has no offline settings store
+       the way the till does, and a prop that arrives with the page cannot show
+       the list for a moment before deciding not to. */
+    getSettings(siteId, ['serial_capture_mode']),
   ])
   if (!document) notFound()
 
@@ -125,6 +132,9 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
         defaultRepUserId={defaultUserId}
         tenders={tenders}
         cashRounding={cashRounding}
+        /* Resolved through the same pure function the till uses, so the counter
+           and the till cannot disagree about what the shop chose. */
+        serialCapture={serialCaptureFor(stockSettings)}
         customer={customer}
         editable={isEditable(document.status)}
         canOverrideDiscount={can(capabilities, 'sales.discount_override')}

@@ -10,7 +10,8 @@ import { listPriceStructures, repsForLines } from '@/lib/site/lookups'
 import { listUsers } from '@/lib/site/users'
 import { can } from '@/lib/site/permissions'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
-import { getNumericSetting } from '@/lib/site/settings'
+import { getNumericSetting, getSettings } from '@/lib/site/settings'
+import { serialCaptureFor } from '@/lib/serialStatus'
 import { getTillCustomer } from '@/lib/site/tillCustomers'
 import InvoiceEditor from '@/app/(invoicing)/invoicing/[id]/InvoiceEditor'
 import { formatMoney } from '@/lib/decimals'
@@ -70,7 +71,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
    * and branching a Promise.all to save them on a delivered order would trade a
    * few milliseconds for a second code path.
    */
-  const [availability, structures, users, tenders, cashRounding, specials] = await Promise.all([
+  const [availability, structures, users, tenders, cashRounding, specials, stockSettings] = await Promise.all([
     availableToSell(siteId, productIds),
     listPriceStructures(siteId),
     listUsers(siteId),
@@ -78,6 +79,8 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
     getNumericSetting(siteId, 'sales_cash_rounding'),
     // An order is priced like an invoice, so it sees the same promotions.
     liveSpecials(siteId),
+    // And it names its units the same way (235).
+    getSettings(siteId, ['serial_capture_mode']),
   ])
 
   const canDeliver = status === 'open' || status === 'part_delivered'
@@ -167,6 +170,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           defaultRepUserId={defaultUserId}
           tenders={tenders}
           cashRounding={cashRounding}
+          serialCapture={serialCaptureFor(stockSettings)}
           specials={specials}
           customer={customer}
           editable

@@ -18,7 +18,9 @@ import {
 } from '@/lib/site/salesDocuments'
 import { finaliseDocument } from '@/lib/site/salesPosting'
 import { loadSaleRecord, type SaleRecordSnapshot } from '@/lib/site/saleRecord'
-import { terminalForDevice } from '@/lib/site/terminals'
+import { terminalForDevice, terminalStockLocationId } from '@/lib/site/terminals'
+import { availableSerials } from '@/lib/site/serials'
+import { mainLocationId } from '@/lib/site/stockLocations'
 import { listTenderTypes } from '@/lib/site/tenderTypes'
 import { serialsForInvoice } from '@/lib/site/jobSerials'
 import {
@@ -50,6 +52,8 @@ export type InvoiceLinePayload = {
   discountPct: number
   vatRatePct: number
   unitCostExcl: number
+  /** WHICH unit, on a serial-tracked line (235). Null on everything else. */
+  serialId?: number | null
 }
 
 export type InvoicePayload = {
@@ -114,6 +118,70 @@ function toLineInputs(lines: InvoiceLinePayload[]): LineInput[] {
     discountPct: line.discountPct,
     vatRatePct: line.vatRatePct,
     unitCostExcl: line.unitCostExcl,
+    /* Carried through to the line so the unit is SAVED with the draft, not
+       gathered at finalise. `saveDraft` writes it to sales_document_lines
+       .serial_id, and `finaliseDocument` reads it from there — see 235. */
+    serialId: line.serialId ?? null,
+  }))
+}
+
+/**
+ * The units on hand for a serial product, for the picker on the line grid (235).
+ *
+ * ── WHY THIS EXISTS RATHER THAN CALLING THE TILL'S ────────────────────────
+ *
+ * `serialsForProductAction` in (app)/sales does the same read, and this window
+ * is already gated on `sales.till` at its PIN door — so calling it would work.
+ * Two things make a separate action the right one anyway.
+ *
+ * The capability is the smaller reason: every other action on this screen is
+ * gated on `sales.edit`, and a reader working out what an invoicing user needs
+ * should not have to discover that one call in the middle of it asks for a
+ * different right.
+ *
+ * The LOCATION is the real one. The till's version takes a terminalId, which
+ * this screen does not have — it holds an opaque browser device id and lets
+ * the server turn that into a terminal, exactly as `saveInvoiceAction` does.
+ * Passing null instead would read main, and an invoice captured on a counter
+ * whose till sells from the trade room would offer units standing in another
+ * building — then refuse them at issue, because posting resolves the room from
+ * the document's own terminal. The list has to be scoped to the room the sale
+ * will actually come out of.
+ *
+ * An unclaimed machine returns nothing rather than falling back to main, for
+ * the same reason `saveInvoiceAction` refuses one outright: it cannot issue an
+ * invoice at all, so offering it units to promise would be a longer road to
+ * the same refusal.
+ */
+export async function invoiceSerialsAction(
+  productId: number,
+  deviceId: string | null,
+): Promise<{ id: number; serial: string; receivedAt: string | null }[]> {
+  const ctx = await actorForOrThrow('sales.edit')
+  const { siteId } = ctx
+
+  if (!Number.isFinite(productId) || productId <= 0) return []
+
+  const terminal = deviceId ? await terminalForDevice(siteId, deviceId) : null
+  if (!terminal) return []
+
+  /* `?? mainLocationId` for the reason availableSerials' own docblock gives: an
+     explicit null there means "every room, wherever it is", which is a stock
+     take's question and the opposite of a counter's. A terminal with no
+     override sells from main, so main is what it must be told. */
+  const locationId =
+    (await terminalStockLocationId(siteId, terminal.id)) ?? (await mainLocationId(siteId))
+  const units = await availableSerials(siteId, productId, locationId)
+
+  return units.map((unit) => ({
+    id: unit.id,
+    serial: unit.serial,
+    // ISO, read back with getUTC* — the pool runs at timezone 'Z'. See the
+    // till's copy of this mapping.
+    receivedAt:
+      unit.receivedAt instanceof Date && !Number.isNaN(unit.receivedAt.getTime())
+        ? unit.receivedAt.toISOString()
+        : null,
   }))
 }
 
