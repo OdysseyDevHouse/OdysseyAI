@@ -2,6 +2,7 @@ import 'server-only'
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
+import { placementsFor } from './stockBins'
 
 /**
  * The places stock is kept, inside one site.
@@ -53,6 +54,9 @@ export type StockLocation = {
   productCount: number
   /** Movements recorded against it — the history that makes deletion refuseable. */
   movementCount: number
+  /** Shelves set up in this room (254), and bins across them. Both zero on most sites. */
+  shelfCount: number
+  binCount: number
 }
 
 /**
@@ -101,6 +105,8 @@ function mapLocation(r: Row): StockLocation {
     sortOrder: Number(r.sort_order ?? 0),
     productCount: Number(r.product_count ?? 0),
     movementCount: Number(r.movement_count ?? 0),
+    shelfCount: Number(r.shelf_count ?? 0),
+    binCount: Number(r.bin_count ?? 0),
   }
 }
 
@@ -118,7 +124,12 @@ const SELECT_LOCATION = `
          (SELECT COUNT(*) FROM product_location_stock pls
            WHERE pls.location_id = l.id AND pls.stock_on_hand <> 0) AS product_count,
          (SELECT COUNT(*) FROM stock_movements m
-           WHERE m.location_id = l.id)                              AS movement_count
+           WHERE m.location_id = l.id)                              AS movement_count,
+         (SELECT COUNT(*) FROM stock_shelves sh
+           WHERE sh.location_id = l.id)                             AS shelf_count,
+         (SELECT COUNT(*) FROM stock_bins b
+             JOIN stock_shelves sh2 ON sh2.id = b.shelf_id
+           WHERE sh2.location_id = l.id)                            AS bin_count
     FROM stock_locations l
 `
 
@@ -574,6 +585,28 @@ export type LocationStock = {
   stockOnHand: number
   minStock: number
   maxStock: number
+  /**
+   * Every spot in this room the product is kept in (254), primary first.
+   *
+   * A LIST rather than one value: a pick face on the floor and a bulk pallet in
+   * the racking is the ordinary case, and a single field could only ever name
+   * one of them — which is how somebody counts the pick face, posts a variance,
+   * and writes off the pallet nobody walked to.
+   *
+   * Empty on every site that has never set a shelf up, which is most of them,
+   * and the screens read empty as "do not show a bin column at all" rather than
+   * as a blank one. See hasAnyShelves() in stockBins.ts.
+   */
+  placements: PlacementRef[]
+}
+
+/** One spot, flattened for the screens. */
+export type PlacementRef = {
+  shelfId: number
+  binId: number | null
+  /** What the screen prints: "A03 · 2", or "A03" when no bin is named. */
+  label: string
+  isPrimary: boolean
 }
 
 /**
@@ -603,6 +636,31 @@ export async function locationStockFor(
     [productId],
   )
 
+  /*
+   * The placements come as a SECOND query rather than a join.
+   *
+   * A product may be kept in several spots in one room, so joining them here
+   * would multiply the stock row by its placements — and then every caller
+   * summing stockOnHand across locations would double-count the pile. That is
+   * the kind of bug that shows up as a stock valuation being quietly wrong.
+   *
+   * Cheap: one indexed read of a table holding at most a handful of rows per
+   * product, on a page that already runs a dozen queries.
+   */
+  const placements = await placementsFor(siteId, productId)
+  const byLocation = new Map<number, PlacementRef[]>()
+  for (const p of placements) {
+    const ref: PlacementRef = {
+      shelfId: p.shelfId,
+      binId: p.binId,
+      label: p.label,
+      isPrimary: p.isPrimary,
+    }
+    const list = byLocation.get(p.locationId)
+    if (list) list.push(ref)
+    else byLocation.set(p.locationId, [ref])
+  }
+
   return rows.map((r) => ({
     locationId: Number(r.location_id),
     code: String(r.code),
@@ -612,7 +670,38 @@ export async function locationStockFor(
     stockOnHand: toNum(r.stock_on_hand),
     minStock: toNum(r.min_stock),
     maxStock: toNum(r.max_stock),
+    placements: byLocation.get(Number(r.location_id)) ?? [],
   }))
+}
+
+/**
+ * The reorder levels for one product in one location, and nothing else.
+ *
+ * locationStockFor() answers this too, but it reads every room the site has and
+ * then a second query for every placement in them — which is the right shape for
+ * a product page and the wrong one entirely for the importer, which asks this
+ * once per row of a spreadsheet that may run to thousands. Two indexed columns
+ * from one row is what that caller actually needs.
+ *
+ * Zeroes when the product has never been stocked in that location, which is the
+ * same answer the row would give and saves the caller a null check. saveLocationLevels
+ * upserts, so there being no row yet is ordinary rather than exceptional.
+ */
+export async function levelsFor(
+  siteId: number,
+  productId: number,
+  locationId: number,
+): Promise<{ minStock: number; maxStock: number }> {
+  const row = await siteQueryOne<Row>(
+    siteId,
+    `SELECT min_stock, max_stock FROM product_location_stock
+      WHERE product_id = ? AND location_id = ? LIMIT 1`,
+    [productId, locationId],
+  )
+  return {
+    minStock: row ? toNum(row.min_stock) : 0,
+    maxStock: row ? toNum(row.max_stock) : 0,
+  }
 }
 
 /**

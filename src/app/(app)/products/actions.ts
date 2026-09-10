@@ -19,6 +19,10 @@ import { fanoutProduct, fanoutCodeRename } from '@/lib/site/productFanout'
 import { setGroupsForProduct } from '@/lib/site/instructions'
 import { setPrintersForProduct } from '@/lib/site/kitchenPrinters'
 import { saveLocationLevels } from '@/lib/site/stockLocations'
+import { setPlacements } from '@/lib/site/stockBins'
+/* The same parser the SCREEN encodes with — see lib/placements.ts. Keeping the
+   two halves of that format in one file is the point of it existing. */
+import { parseSpot } from '@/lib/placements' 
 import { listPriceStructures, listVatRates } from '@/lib/site/lookups'
 import { listDepartments } from '@/lib/site/departments'
 import { listReasons, postNewAdjustment } from '@/lib/site/stockAdjustments'
@@ -165,6 +169,79 @@ function readLocationLevels(form: FormData): Record<number, LocationLevels> {
       ensure(Number(max[1])).maxStock = toNumber(value)
     }
   }
+  return out
+}
+
+/**
+ * Where the product is kept, typed into the per-LOCATION table (254).
+ *
+ * Three fields per location, because a product may be kept in SEVERAL spots in
+ * one room — a pick face and a bulk pallet — and one input could only ever name
+ * one of them:
+ *
+ *   locBinSet_<locationId>      present when this form ASKED about the location
+ *   locBin_<locationId>         repeated, once per spot
+ *   locBinPrimary_<locationId>  which of them somebody gets sent to
+ *
+ * Each spot holds both levels of the answer: "12" is shelf 12, "12:34" is bin 34
+ * on shelf 12. Encoded into one value because shelf-or-bin is a single choice to
+ * the person making it — see BinPicker for why it is not two chained dropdowns.
+ *
+ * ── WHY THE MARKER FIELD EXISTS ────────────────────────────────────────────
+ *
+ * The submitted list is the complete intended set, so anything absent is
+ * removed — otherwise the screen could never be used to take a bin away. That
+ * makes "no locBin_ fields at all" ambiguous: it means both "cleared them all"
+ * and "this form never showed the column", and the panel hides the column
+ * entirely on a site with no shelves. Reading the second as the first would wipe
+ * every placement in the site the first time somebody saved a product.
+ *
+ * The marker settles it. Only locations the form actually asked about are
+ * touched; everything else is left exactly as it was.
+ *
+ * The `loc` prefix is not decoration: minStock_<n> already means the linked
+ * STORE with site id n, and an unprefixed location id would collide with a site
+ * id in that pattern — routing a warehouse bin into another store's fan-out.
+ */
+type LocationPlacements = { shelfId: number; binId: number | null; isPrimary?: boolean }[]
+
+function readLocationPlacements(form: FormData): Record<number, LocationPlacements> {
+  const out: Record<number, LocationPlacements> = {}
+
+  // The marker first, so a location that was asked about but left empty still
+  // gets an entry — that is the "cleared them all" case.
+  for (const [key] of form.entries()) {
+    const marker = /^locBinSet_(\d+)$/.exec(key)
+    if (marker) out[Number(marker[1])] ??= []
+  }
+
+  for (const [key, value] of form.entries()) {
+    const match = /^locBin_(\d+)$/.exec(key)
+    if (!match) continue
+    const locationId = Number(match[1])
+    // No marker means the form did not ask about this location. Ignoring the
+    // stray value is safer than inventing a set from half a submission.
+    if (out[locationId] === undefined) continue
+
+    const spot = parseSpot(String(value ?? ''))
+    if (spot) out[locationId].push(spot)
+  }
+
+  for (const [key, value] of form.entries()) {
+    const match = /^locBinPrimary_(\d+)$/.exec(key)
+    if (!match) continue
+    const list = out[Number(match[1])]
+    if (!list) continue
+
+    const spot = parseSpot(String(value ?? ''))
+    if (!spot) continue
+    const found = list.find((p) => p.shelfId === spot.shelfId && p.binId === spot.binId)
+    // Absent from the list is not an error worth refusing a save over:
+    // setPlacements promotes the first entry when nobody is marked, which is
+    // what a list showing the primary first already means.
+    if (found) found.isPrimary = true
+  }
+
   return out
 }
 
@@ -374,6 +451,18 @@ export async function saveProductAction(
       minStock: levels.minStock ?? 0,
       maxStock: levels.maxStock ?? 0,
     }).catch(() => {})
+  }
+
+  // Where it is kept, per location. A placement is a label and never a movement,
+  // so this writes no stock history — see stockBins.ts.
+  //
+  // Not allowed to fail the save that already succeeded, for the same reason the
+  // levels above are not: the product is written, and throwing here would show an
+  // error for a save that did happen. The commonest failure is a stale dropdown
+  // naming a shelf somebody deleted in another tab, which is worth ignoring
+  // rather than losing the edit over.
+  for (const [locationId, placements] of Object.entries(readLocationPlacements(form))) {
+    await setPlacements(siteId, result.id, Number(locationId), placements).catch(() => {})
   }
 
   // Which instructions this product asks. Only ticked ids are submitted, so the

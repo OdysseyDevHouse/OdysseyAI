@@ -1,0 +1,47 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- A count sheet warns about the OTHER bins.
+--
+-- 254 lets a product be kept in more than one spot in a room: a pick face on
+-- the shop floor and a bulk pallet in the racking is the ordinary arrangement
+-- in any business big enough to want bins at all.
+--
+-- ── WHY THIS IS A CORRECTNESS FIX AND NOT A CONVENIENCE ──────────────────
+--
+-- A stock take line states ONE counted figure for the whole location. The
+-- sheet is sorted by the main spot, so a counter walks to the pick face,
+-- counts 12, writes 12 — and the 240 on the pallet in the next aisle are
+-- never counted. Posting then writes off 240 units as shrinkage, produces a
+-- GL journal for the loss, and the count that was supposed to correct the
+-- books has instead falsified them.
+--
+-- Nothing in 254 prevents that, and no amount of care by the counter can,
+-- because the sheet never told them there was a second pile. So the sheet has
+-- to say so, on the line, at the moment they are looking at it.
+--
+-- ── WHY IT IS COPIED ONTO THE LINE ───────────────────────────────────────
+--
+-- Same reason shelf_code and bin_code are, and the same reason product_code
+-- and description have always been: the room gets re-racked, the product gets
+-- moved, and a sheet printed in March has to keep saying what the person
+-- walking around with it was told. Resolving it live at render time would
+-- show today's arrangement against a count taken under a different one.
+--
+-- Stored as the CODES, joined for reading, rather than as ids or JSON. This
+-- column is only ever displayed — nothing filters or joins on it — and the
+-- alternative is a query at render time to turn ids back into the words that
+-- were already known when the sheet was built.
+--
+-- 190 characters, matching the note columns either side of it. A product in
+-- so many places that the list overflows has a filing problem that a wider
+-- column would not fix, and the screen says "and more" rather than lying by
+-- truncation.
+--
+-- DDL auto-commits, so every step here is re-runnable.
+--
+-- NOTE: no apostrophes in comments anywhere in this file. The runner sends it
+-- as one multipleStatements batch, and a lone quote character inside a comment
+-- can be read as opening a string literal, swallowing the SQL that follows.
+-- ─────────────────────────────────────────────────────────────────────────
+
+ALTER TABLE stock_take_lines
+  ADD COLUMN IF NOT EXISTS alt_bins VARCHAR(190) NULL AFTER bin_code;

@@ -1,6 +1,7 @@
 import { requireCapability, requireSite } from '@/lib/auth'
 import { logoFileName } from '@/lib/site/documentLogo'
 import { readSiteProfile } from '@/lib/site/siteProfile'
+import { refreshSiteProfile } from '@/lib/sites'
 import { taxIdentity } from '@/lib/site/taxIdentity'
 import { PageHeader, PageBody } from '@/components/ui'
 import StoreInfoClient, { type StoreDetails } from './StoreInfoClient'
@@ -45,16 +46,58 @@ export const dynamic = 'force-dynamic'
 export default async function StoreInfoPage() {
   // A hidden menu entry is not a boundary — this URL is typeable.
   await requireCapability('setup.edit')
-  const site = await requireSite()
+  const seen = await requireSite()
 
-  const editable = site.connectionType === 'cloud'
+  const editable = seen.connectionType === 'cloud'
 
   /*
    * How old the offline copy is, and only where one is actually being read. A
    * store editing its own details is talking to the control panel directly, so
    * there is no staleness to report and nothing useful to say.
    */
-  const mirrored = editable ? null : await readSiteProfile(site.id).catch(() => null)
+  let mirrored = editable ? null : await readSiteProfile(seen.id).catch(() => null)
+
+  /*
+   * ── THE ONE SCREEN THAT WAITS FOR THE MIRROR ──────────────────────────────
+   *
+   * Everywhere else in the app the offline copy is refreshed in the background
+   * and the render in hand uses whatever it already had — see
+   * refreshProfileInBackground. A page showing a stock list must not stop to
+   * ask the control panel what the shop is called.
+   *
+   * This page is the exception, because these details ARE its subject. Somebody
+   * opening it has usually just been told their address or VAT number was
+   * corrected, and showing them the old one — under a note saying when the copy
+   * was last confirmed — is the screen answering a question with the very
+   * staleness it is reporting.
+   *
+   * ── BUT NOT ON EVERY RENDER, AND THAT MATTERS MOST WHEN IT FAILS ──────────
+   *
+   * The call is awaited, so its cost is paid by somebody looking at the screen.
+   * When the portal ANSWERS that is a fraction of a second; when it cannot, it
+   * is the full four-second timeout — and a shop with no line would have paid
+   * that on every single load of this page, including every reload after a save
+   * and every 404 from a portal that has not been deployed with the route yet.
+   * A screen that got slower the more broken things were is the wrong shape.
+   *
+   * So a copy confirmed within the last minute is taken as current. That is far
+   * shorter than the fifteen-minute background window because this screen has a
+   * person waiting on it, and long enough that reloading, saving, or coming
+   * straight back does not pay the wait again.
+   */
+  const MAX_AGE_MS = 60_000
+  const stale = !mirrored || Date.now() - mirrored.mirroredAt.getTime() > MAX_AGE_MS
+
+  /*
+   * Null when the portal could not be asked, and then the mirror stands: this
+   * page must still draw with no line at all, which is most of the reason the
+   * mirror exists.
+   */
+  const fresh = !editable && stale ? await refreshSiteProfile(seen.id).catch(() => null) : null
+  const site = fresh ?? seen
+  /* Re-read only when something was actually written, so "last confirmed" shows
+     the moment this render refreshed it rather than the previous one. */
+  if (fresh) mirrored = (await readSiteProfile(site.id).catch(() => null)) ?? mirrored
 
   const logoFile = await logoFileName(site.id)
 

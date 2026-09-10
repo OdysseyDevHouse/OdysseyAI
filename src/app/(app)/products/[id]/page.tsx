@@ -19,6 +19,7 @@ import { listRecipe } from '@/lib/site/productComposition'
 import { listSerials } from '@/lib/site/serials'
 import { listProductSuppliers } from '@/lib/site/productSuppliers'
 import { locationStockFor } from '@/lib/site/stockLocations'
+import { binOptionsFor } from '@/lib/site/stockBins'
 import {
   ButtonLink,
   Callout,
@@ -88,17 +89,29 @@ export default async function EditProductPage({
   const site = await requireSite()
   const siteId = site.id
 
-  const [product, departments, brands, vatRates, structures, costBasis, stores, locationStock] =
-    await Promise.all([
-      getProduct(siteId, productId),
-      listDepartments(siteId),
-      listBrands(siteId),
-      listVatRates(siteId),
-      listPriceStructures(siteId),
-      getCostBasis(siteId),
-      linkedStores(siteId),
-      locationStockFor(siteId, productId),
-    ])
+  const [
+    product,
+    departments,
+    brands,
+    vatRates,
+    structures,
+    costBasis,
+    stores,
+    locationStock,
+    binOptions,
+  ] = await Promise.all([
+    getProduct(siteId, productId),
+    listDepartments(siteId),
+    listBrands(siteId),
+    listVatRates(siteId),
+    listPriceStructures(siteId),
+    getCostBasis(siteId),
+    linkedStores(siteId),
+    locationStockFor(siteId, productId),
+    // Empty on every site that has never set a shelf up, which is what the
+    // Inventory panel reads to leave the bin column out altogether (254).
+    binOptionsFor(siteId),
+  ])
 
   if (!product) notFound()
 
@@ -350,6 +363,7 @@ export default async function EditProductPage({
           linkedStores={linked}
           ownership={ownership}
           locationStock={locationStock}
+          binOptions={binOptions}
           linkedLines={linkedLines}
           sharesCost={sharing.sharesCost}
           sharesSelling={sharing.sharesSelling}

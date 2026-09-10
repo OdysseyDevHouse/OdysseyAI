@@ -57,6 +57,26 @@ contextBridge.exposeInMainWorld('odyssey', {
    */
   role: appRole(),
   /**
+   * Is this a developer's checkout rather than an installed copy?
+   *
+   * Decided by `app.isPackaged` — but in MAIN, and relayed here through the
+   * environment, because `app` does not exist in a preload. `require('electron')`
+   * in this process answers with the renderer's half of the module and nothing
+   * else: nativeImage, shell, clipboard, contextBridge, crashReporter,
+   * ipcRenderer, webFrame, webUtils. Reading `app.isPackaged` here throws, and a
+   * throw at this point takes `window.odyssey` with it — every consumer then
+   * decides it is running in a browser.
+   *
+   * Nothing else may turn this on. main.js DELETES the variable in a packaged
+   * build before any window exists, so a stray `ODYSSEY_DEV=1` in a customer's
+   * environment cannot reach the renderer — which matters, because what this
+   * gates is a sign-in form that fills itself in.
+   *
+   * A browser reads undefined, which is the honest answer: there is no shell
+   * here to be running in debug.
+   */
+  isDev: process.env.ODYSSEY_DEV === '1',
+  /**
    * Odyssey Database Setup's own channels, and the first IPC in this app.
    *
    * ── A NAMED SURFACE, NOT A GENERIC ONE ────────────────────────────────────
@@ -88,6 +108,24 @@ contextBridge.exposeInMainWorld('odyssey', {
     recentErrors: () => ipcRenderer.invoke('diagnostics:recent-errors'),
     logPath: () => ipcRenderer.invoke('diagnostics:log-path'),
     openLog: () => ipcRenderer.invoke('diagnostics:open-log'),
+  },
+  /**
+   * Updates, for the technician standing at the machine.
+   *
+   * THREE VERBS, and the same rule as the bridges either side of this one:
+   * one verb per thing the caller needs, and no `invoke(channel, args)`
+   * escape hatch. `install` restarts the app, which is the strongest thing
+   * anything in this file can do — a generic bridge would make that reachable
+   * by any script the renderer ever loads.
+   *
+   * Present on every build, absent in a browser. The Updates screen checks
+   * for it and shows the web build the one honest thing it can say: this copy
+   * of Odyssey is served, not installed, so there is nothing to update.
+   */
+  updates: {
+    state: () => ipcRenderer.invoke('updates:state'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    install: () => ipcRenderer.invoke('updates:install'),
   },
   /**
    * The print engine: network, USB and PDF.

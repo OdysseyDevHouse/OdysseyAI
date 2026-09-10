@@ -1,6 +1,6 @@
 {
   "name": "odyssey-ai",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "private": true,
   "description": "OdysseyAI — multi-store point of sale back office (web + Windows)",
   "author": "Point of Sale (Pty) Ltd",
@@ -14,6 +14,7 @@
     "check:storefront-routing": "node scripts/check-storefront-routing.mjs",
     "shot": "node --env-file=.env.local scripts/screenshot.mjs",
     "clean:profiles": "node scripts/clean-chrome-profiles.mjs",
+    "dev:key": "node --env-file=.env scripts/dev-site-key.mjs",
     "dev:desktop": "concurrently -k -n next,electron -c blue,magenta \"npm:dev:desktop:next\" \"npm:dev:desktop:electron\"",
     "mobile:sync": "cap sync",
     "mobile:android": "cap open android",

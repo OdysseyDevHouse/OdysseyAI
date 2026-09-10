@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Badge,
   Button,
+  ButtonLink,
   Card,
   CardHeader,
   ConfirmModal,
@@ -126,6 +127,21 @@ export default function LocationsClient({ locations }: { locations: StockLocatio
                       so both buttons would only ever produce a toast saying no, or
                       (in the edit case) let it be deactivated, which hides a pile
                       that still fills. Same reasoning as "Make main" above. */}
+                  {/* Not offered for the transit pile: it is a van in the
+                      abstract rather than a room, nothing is ever put away in
+                      it by hand, and a shelf register for it would be a screen
+                      that can only ever describe somewhere that does not exist. */}
+                  {!location.isTransit && (
+                    <ButtonLink
+                      variant="secondary"
+                      size="sm"
+                      href={`/setup/locations/${location.id}/shelves`}
+                    >
+                      <Icons.StackedBands size={15} />
+                      Shelves
+                    </ButtonLink>
+                  )}
+
                   {!location.isTransit && (
                     <>
                       <Button
@@ -216,6 +232,16 @@ function describe(location: StockLocation): string {
   if (location.movementCount > 0) {
     parts.push(
       `${location.movementCount} movement${location.movementCount === 1 ? '' : 's'}`,
+    )
+  }
+  /* Only when there are some. A site that has never set shelves up should not be
+     told it has none — that reads as something missing rather than a feature it
+     has not switched on, and the Shelves button is already there to be found. */
+  if (location.shelfCount > 0) {
+    parts.push(
+      `${location.shelfCount} shelf${location.shelfCount === 1 ? '' : 'ves'}${
+        location.binCount > 0 ? `, ${location.binCount} bin${location.binCount === 1 ? '' : 's'}` : ''
+      }`,
     )
   }
   if (parts.length === 0) parts.push('empty')

@@ -87,7 +87,7 @@ export default async function PayRulesPage({
               </p>
               <p className="mt-1 text-muted">
                 Whether a person ordinarily works Sundays is set on their own record, under Staff
-                &rarr; People, because it differs between a weekend team and an office.
+                &rarr; Employment, because it differs between a weekend team and an office.
               </p>
             </div>
           </div>

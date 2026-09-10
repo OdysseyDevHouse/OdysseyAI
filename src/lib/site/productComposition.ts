@@ -574,6 +574,128 @@ export function stockedReferSql(alias = 'p'): string {
 }
 
 /**
+ * Which of these products carry a pile of their OWN — the packs a receipt
+ * lands on directly.
+ *
+ * The set-shaped complement of explodingProducts(). A subtract pack explodes
+ * and the receipt reaches the base by itself; a NORMAL pack does not, and the
+ * quantity and the cost both stop on the pack. Purchasing needs to know which
+ * it just received so the cost can be carried down the ladder afterwards.
+ *
+ * Built on stockedReferSql() rather than on `method = 'normal'` written out
+ * again, so "carries its own pile" has one definition and the stock take, the
+ * reorder list and this agree by construction.
+ *
+ * One query for a whole document, not one per line: a 200-line delivery would
+ * otherwise be 200 round trips to answer a question about a handful of them.
+ */
+export async function stockedPacks(
+  siteId: number,
+  productIds: readonly number[],
+): Promise<Set<number>> {
+  const ids = [...new Set(productIds)].filter((id) => id > 0)
+  if (ids.length === 0) return new Set()
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT p.id
+       FROM products p
+      WHERE p.id IN (${ids.map(() => '?').join(',')})
+        AND ${stockedReferSql('p')}`,
+    ids,
+  )
+  return new Set(rows.map((r) => Number(r.id)))
+}
+
+/**
+ * Carries the cost of a pack that was just bought DOWN to the base of its
+ * ladder.
+ *
+ * ── WHY THE COST HAS TO TRAVEL DOWNWARD AT ALL ───────────────────────────
+ *
+ * Every other cost path in this app runs the other way: a figure is authored
+ * on the base and cascadeCompositionCosts() climbs it up through every pack
+ * and recipe built on that base. That is right for a SUBTRACT pack, because
+ * receiving one lands the receipt on the base already.
+ *
+ * Under NORMAL refers it is not. Ten cases received are ten cases owned, so
+ * the receipt lands on the case, and the case is the TOP of the ladder — the
+ * upward walk finds nothing below it to correct. The single kept whatever it
+ * was last bought at, every sibling rung hanging off that single kept it too,
+ * and the shop went on selling singles at last quarter's cost out of a case
+ * it bought this morning. The only thing that ever moved the single was
+ * physically breaking a case open, and even that moved the average alone.
+ *
+ * So: divide by the chain's factors down to the base, write it there, and let
+ * the existing upward walk carry it back over every rung and sibling. One
+ * write here and the propagation that already exists does the rest — a second
+ * walk that knew how to go down would be a second definition of the same
+ * arithmetic.
+ *
+ * ── WHAT IT WRITES, AND WHY BOTH COLUMNS ─────────────────────────────────
+ *
+ * last_cost and average_cost, exactly as the upward walk writes them. On a
+ * ladder the whole point is that the rungs agree: a case at R240 is a single
+ * at R10 whichever column the site prices from. It does mean the base's
+ * blended average is REPLACED rather than blended — the singles already on the
+ * shelf were bought at the old price — and that is the deliberate trade for a
+ * ladder that reads consistently end to end.
+ *
+ * ── WHAT IT REFUSES ──────────────────────────────────────────────────────
+ *
+ * A chain ending in a recipe, because a made item's cost is a sum of its
+ * ingredients and dividing a pack price across them is a guess. A chain that
+ * never reaches a plain product inside MAX_DEPTH, which is a cycle. And a base
+ * that was RECEIVED IN ITS OWN RIGHT on the same document — a real cost paid
+ * for the single beats one derived from the case beside it.
+ *
+ * Returns the base it wrote so the caller can seed the upward walk there, or
+ * null when it wrote nothing.
+ */
+export async function pushReferCostDown(
+  siteId: number,
+  packId: number,
+  packUnitCostExcl: number,
+  receivedDirectly?: ReadonlySet<number>,
+): Promise<{ baseId: number; unitCostExcl: number } | null> {
+  if (!(packUnitCostExcl > 0)) return null
+
+  let baseId = packId
+  let unitCost = packUnitCostExcl
+  // Seeded as `refer` so a chain that never reaches a plain product — which is
+  // what running out of depth means — fails the check below rather than
+  // writing a cost onto whatever rung the loop happened to stop on.
+  let baseType: ProductTypeId = 'refer'
+
+  for (let depth = 0; depth <= MAX_DEPTH; depth++) {
+    const link = await getRefer(siteId, baseId)
+    if (!link) break
+    if (link.factor <= 0 || link.targetId === baseId) return null
+
+    // Each factor is relative to its IMMEDIATE target (103), so the divisions
+    // compound down the chain: a pallet of 20 cases of 24 divides by 20 and
+    // then by 24, never by 480 in one step.
+    unitCost = round(unitCost / link.factor, 4)
+    baseId = link.targetId
+    baseType = link.targetType
+    if (link.targetType !== 'refer') break
+  }
+
+  if (baseId === packId) return null
+  if (baseType === 'refer' || baseType === 'recipe') return null
+  if (receivedDirectly?.has(baseId)) return null
+  if (!(unitCost > 0)) return null
+
+  await siteExecute(
+    siteId,
+    'UPDATE products SET last_cost = ?, average_cost = ? WHERE id = ?',
+    [unitCost.toFixed(4), unitCost.toFixed(4), baseId],
+  )
+
+  return { baseId, unitCostExcl: unitCost }
+}
+
+/**
  * Which of these products can be refilled by breaking a bigger pack open.
  *
  * ── WHY THIS IS NOT A PRODUCT-TYPE CHECK ─────────────────────────────────

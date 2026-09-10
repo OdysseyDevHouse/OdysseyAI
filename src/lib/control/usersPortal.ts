@@ -3,11 +3,11 @@ import { portalConfig, send } from './portalApi'
 import type { SiteGrant, UserSiteAccess, ProvisionInput, ProvisionResult } from '../controlUsers'
 
 /**
- * Users and permissions, asked over HTTPS instead of a MySQL socket.
+ * Staff and permissions, asked over HTTPS instead of a MySQL socket.
  *
  * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
  *
- * Setup → Users and permissions was the last screen in the app with no portal
+ * Setup → Staff and permissions was the last screen in the app with no portal
  * path at all, and on a desktop install that did not mean a degraded screen: it
  * meant a dead one. `pool()` refuses to open a control-database socket in a
  * packaged build — deliberately, see db.ts — so `siteGrantsFor` threw before it

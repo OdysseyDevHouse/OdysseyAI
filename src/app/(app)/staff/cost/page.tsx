@@ -91,7 +91,7 @@ export default async function CostPage({
             title={`${missingRates.length} ${missingRates.length === 1 ? 'person has' : 'people have'} no pay rate on file`}
           >
             {missingRates.map((l) => l.userName).join(', ')} worked in this period but cannot be
-            costed. Add their terms under Staff → People, then calculate again.
+            costed. Add their terms under Staff → Employment, then calculate again.
           </Callout>
         )}
 

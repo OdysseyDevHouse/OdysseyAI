@@ -213,7 +213,16 @@ export default function CountSheet({
   const showSignoff = Object.keys(flagged).length > 0
 
   /** Code + description + counted, plus whichever of the rest are rendered. */
-  const columnCount = 3 + (blind ? 0 : 2) + (showSignoff ? 1 : 0)
+  /*
+   * Whether this sheet was built in a room with shelves.
+   *
+   * Read off the LINES rather than asked of the location, because the codes were
+   * copied onto them when the sheet was built — so a sheet counted before the
+   * racking was described keeps reading exactly as it did, and a reprint of an
+   * old sheet never grows a column its paper version did not have.
+   */
+  const showBins = lines.some((l) => l.shelfCode !== null)
+  const columnCount = 3 + (showBins ? 1 : 0) + (blind ? 0 : 2) + (showSignoff ? 1 : 0)
 
   const save = useCallback(
     async (lineId: number, text: string) => {
@@ -417,6 +426,12 @@ export default function CountSheet({
           line.parentDescription ?? '',
           line.axis1,
           line.axis2,
+          // Typing a shelf code narrows the sheet to one bay, which is how a
+          // count actually gets done — one person, one rack, finish it before
+          // moving on. Without this the only way to that is scrolling.
+          line.shelfCode ?? '',
+          line.binCode ?? '',
+          line.altBins ?? '',
         ]
           .join(' ')
           .toLowerCase()
@@ -614,6 +629,11 @@ export default function CountSheet({
               <tr className={TABLE_HEAD_ROW}>
                 <th className={TABLE_TH}>Code</th>
                 <th className={TABLE_TH}>Description</th>
+                {/* After the description rather than before the code: the
+                    shelf band above the rows already says where you are, so
+                    this is the detail that separates two rows in the same bay,
+                    not the thing being scanned for. */}
+                {showBins && <th className={TABLE_TH}>Bin</th>}
                 {/* On a blind sheet these two columns are not hidden with CSS
                     or blanked out — they are not rendered at all. A greyed cell
                     or a "•••" placeholder is an invitation to go and find the
@@ -643,8 +663,47 @@ export default function CountSheet({
                 const startsGroup =
                   line.parentId !== null && line.parentId !== previous?.parentId
 
+                /* A band whenever the shelf changes — including at the very top,
+                   where `previous` is null and every sheet therefore opens with
+                   one. Computed off the VISIBLE list for the same reason the
+                   variant heading is: filtering to "uncounted" must not strand a
+                   band above nothing, or drop it from the rows that remain. */
+                const startsShelf =
+                  showBins && (index === 0 || line.shelfCode !== previous?.shelfCode)
+
                 return (
                   <Fragment key={line.id}>
+                    {startsShelf && (
+                      /* The outer level, so it is heavier than the variant
+                         heading that can sit beneath it: a stronger rule above
+                         and the shelf glyph, rather than a colour. Colour in this
+                         app marks exceptions, and a shelf is structure. */
+                      <tr className="border-t border-border-strong bg-surface-2">
+                        <td colSpan={columnCount} className="px-4 py-2">
+                          <span className="inline-flex items-center gap-2">
+                            <Icons.StackedBands size={14} className="text-muted" />
+                            {line.shelfCode ? (
+                              <span className="text-sm font-medium text-ink">
+                                {line.shelfCode}
+                              </span>
+                            ) : (
+                              <>
+                                <span className="text-sm font-medium text-ink">Not on a shelf</span>
+                                {/* Says what to DO about it, because this block
+                                    is counted differently — there is no bay to
+                                    walk to, so these are found by code. */}
+                                <span className="text-xs text-muted">
+                                  no bin recorded — find these by code
+                                </span>
+                              </>
+                            )}
+                            <span className="text-xs text-muted">
+                              {visible.filter((l) => l.shelfCode === line.shelfCode).length} lines
+                            </span>
+                          </span>
+                        </td>
+                      </tr>
+                    )}
                     {startsGroup && (
                       /* One shelf, one heading. Without it five sizes of the
                          same shirt read as five unrelated products, and the
@@ -737,6 +796,34 @@ export default function CountSheet({
                           </div>
                         )}
                       </td>
+
+                      {showBins && (
+                        <td className={`${TABLE_TD} whitespace-nowrap text-ink-2`}>
+                          {/* Only the bin. The shelf is in the band above every
+                              row it covers, and repeating it here would put the
+                              same three characters down the whole column —
+                              burying the one part that changes from row to row. */}
+                          {line.binCode ?? (
+                            <span className="text-faint">
+                              {line.shelfCode ? 'shelf' : '—'}
+                            </span>
+                          )}
+                          {/* The other piles.
+                              A WARNING and not a quiet note, because this is the
+                              one thing on the row that can make a correct-looking
+                              count wrong: the line takes ONE figure for the whole
+                              location, so counting this bin alone posts the rest
+                              off as shrinkage. It has to be read before the number
+                              is written, not after. */}
+                          {line.altBins && (
+                            <span className="mt-0.5 flex items-center gap-1 text-xs text-warning-ink">
+                              <Icons.StatusWarning size={12} />
+                              also in {line.altBins}
+                            </span>
+                          )}
+                        </td>
+                      )}
+
                       {!blind && (
                         <td className={`${TABLE_TD} ${TABLE_NUMERIC} text-muted`}>
                           {formatQty(line.snapshotQty)}

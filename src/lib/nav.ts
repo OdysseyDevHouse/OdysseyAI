@@ -404,32 +404,21 @@ export const NAV: NavSection[] = [
     /* Base-package, so no `module` — every shop is entitled to the clock and the
        timesheets. But plenty never keep a roster: a two-person shop that pays
        cash has no use for the roster rows. See `menuArea` — and note that
-       switching this area off takes the whole section, which is why Users and
+       switching this area off takes the whole section, which is why Staff and
        permissions keeps a tile in the setup hub as well. */
     menuArea: 'staff',
     items: [
-      /* The clock leads: it is the screen somebody opens every morning, while
-         People is opened when a person joins or their terms change. */
-      { label: 'Clock in and out', href: '/staff/clock', icon: Clock, built: true, capability: 'staff.clock', description: 'Start and end a shift on the floor' },
-      { label: 'Timesheets', href: '/staff/timesheets', icon: ClipboardList, built: true, capability: 'staff.view_own', description: 'Hours worked, and approving them for pay' },
-      { label: 'Leave', href: '/staff/leave', icon: CalendarRange, built: true, capability: 'staff.view_own', description: 'Requests, balances and who is away when' },
-      { label: 'People', href: '/staff', icon: Contact, built: true, capability: 'staff.view_all', description: 'Everyone who works here and their terms' },
-      { label: 'Commission', href: '/commission', icon: Percent, built: true, capability: 'commission.view_own', description: 'What each person earned on what they sold' },
-      /* Beside Commission: both are what a person takes home ON TOP of their
-         hours. It was a row under Sales, next to the cash-up — paying tips out
-         does happen at the end of a shift — but the question it answers is
-         about a PERSON, which is what this section is for. Its capability is
-         still `sales.cashup`, because the drawer is where the money is counted. */
-      { label: 'Tips', href: '/sales/tips', icon: HandCoins, built: true, capability: 'sales.cashup', keywords: 'tips gratuity payout share waiter pool collected', description: 'What was collected, and paying it out to staff' },
-      /* First of the configuration rows, because it is the one opened most:
-         every person who joins needs a login, where pay rules are set once and
-         revisited about as often as the law changes.
+      /* Leads the section: nobody can clock in until they have a login, so this
+         is the row a new shop opens before any other, and the one revisited
+         whenever somebody joins or leaves. That puts it ahead of the clock,
+         which is otherwise the screen opened most — the frequency ordering the
+         rest of this section follows resumes below it.
 
          It was a tile in the setup hub — the first one, on the theory that a new
          shop lets its staff in before anything else. That is still true of DAY
          ONE, and it is why the tile stays; but after day one "who may sign in"
          is asked whenever somebody joins or leaves, which is the same moment
-         People and Timesheets are opened, and it was three sections away from
+         Employment and Timesheets are opened, and it was three sections away from
          both. The route is unchanged, so every link, bookmark and
          `revalidatePath('/setup/users')` still lands.
 
@@ -441,11 +430,25 @@ export const NAV: NavSection[] = [
          screen is called. Same reasoning `/setup/modules` records for carrying
          no `module`: the screen that lets you back in must never be the one
          hidden. */
-      { label: 'Users and permissions', href: '/setup/users', icon: KeyRound, built: true, capability: 'setup.users', keywords: 'staff logins pin passwords accounts sales rep roles permissions security capabilities rights access control', description: 'Who may sign in, at the till and in the back office — and what each role may do' },
+      { label: 'Staff and permissions', href: '/setup/users', icon: KeyRound, built: true, capability: 'setup.users', keywords: 'staff logins pin passwords accounts sales rep roles permissions security capabilities rights access control', description: 'Who may sign in, at the till and in the back office — and what each role may do' },
+      /* The clock leads the daily rows: it is the screen somebody opens every
+         morning, while Employment is opened when a person joins or their terms
+         change. */
+      { label: 'Clock in and out', href: '/staff/clock', icon: Clock, built: true, capability: 'staff.clock', description: 'Start and end a shift on the floor' },
+      { label: 'Timesheets', href: '/staff/timesheets', icon: ClipboardList, built: true, capability: 'staff.view_own', description: 'Hours worked, and approving them for pay' },
+      { label: 'Leave', href: '/staff/leave', icon: CalendarRange, built: true, capability: 'staff.view_own', description: 'Requests, balances and who is away when' },
+      { label: 'Employment', href: '/staff', icon: Contact, built: true, capability: 'staff.view_all', description: 'Everyone who works here and their terms' },
+      { label: 'Commission', href: '/commission', icon: Percent, built: true, capability: 'commission.view_own', description: 'What each person earned on what they sold' },
+      /* Beside Commission: both are what a person takes home ON TOP of their
+         hours. It was a row under Sales, next to the cash-up — paying tips out
+         does happen at the end of a shift — but the question it answers is
+         about a PERSON, which is what this section is for. Its capability is
+         still `sales.cashup`, because the drawer is where the money is counted. */
+      { label: 'Tips', href: '/sales/tips', icon: HandCoins, built: true, capability: 'sales.cashup', keywords: 'tips gratuity payout share waiter pool collected', description: 'What was collected, and paying it out to staff' },
       /* The two configuration rows, last: they are SET ONCE and decide what
-         every figure above them comes to, where the five rows above are opened
-         in the course of a normal week. Same ordering rule the rest of this
-         section follows — how often a row is used, not how important it is.
+         every figure above them comes to, where the daily rows above are opened
+         in the course of a normal week. Same ordering rule those rows follow —
+         how often a row is used, not how important it is.
 
          They were tiles in the setup hub until now, which put "what an hour is
          worth" three sections away from the timesheet it prices. Leave types
@@ -853,7 +856,7 @@ export const SUBPAGE_LABELS = {
      the cross-reference the Staff section explains. The key stays for both:
      the tile reads its name from here, and so does the breadcrumb of
      /setup/roles below, which hangs off this screen. */
-  '/setup/users': 'Users and permissions',
+  '/setup/users': 'Staff and permissions',
   '/setup/audit': 'Audit trail',
   /* '/setup/api' was here. It moved to /settings → "System". */
   '/setup/roles': 'Roles & permissions',
@@ -912,6 +915,7 @@ export const SUBPAGE_LABELS = {
   '/tickets/setup/desk': 'Desk setup',
   '/setup/custom-fields': 'Custom fields',
   '/setup/reconciliation': 'Reconciliation',
+  '/setup/updates': 'Updates',
   '/setup/opening-balances': 'Opening balances',
   '/setup/import': 'Import data',
   '/setup/laybys': 'Lay-bys',
@@ -1198,6 +1202,7 @@ export const SUBPAGE_KEYWORDS: Partial<Record<SubpageHref, string>> = {
     'rotating menus breakfast lunch dinner day part daypart time of day service hours schedule till pos grid',
   '/setup/tables': 'restaurant hospitality floor sections covers waiter bills',
   '/setup/reconciliation': 'drift integrity check invariants audit',
+  '/setup/updates': 'update version upgrade release beta channel install restart patch build',
   '/setup/opening-balances': 'import migration debtors creditors go live',
   '/setup/import': 'csv xlsx excel spreadsheet upload bulk load migrate products customers suppliers departments stock take',
   '/setup/laybys': 'deposit cancellation fee terms instalments',

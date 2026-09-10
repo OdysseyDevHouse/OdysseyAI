@@ -9,6 +9,7 @@ import { recordMovement } from './stockMovements'
 import {
   explodingProducts,
   resolveComponents,
+  stockedPacks,
   type ResolvedComponent,
 } from './productComposition'
 import { mainLocationIdTx } from './stockLocations'
@@ -195,7 +196,21 @@ export type ReceiveInput = {
 }
 
 export type ReceiveResult =
-  | { ok: true; documentId: number; documentNumber: string; totalExcl: number }
+  | {
+      ok: true
+      documentId: number
+      documentNumber: string
+      totalExcl: number
+      /**
+       * Every product whose stored cost this receipt rewrote — the lines
+       * themselves, and everything the cost cascade reached above and below
+       * them. Exactly the product pages that are now stale, and the only place
+       * that knows which they are: a case received under normal refers moves
+       * the single and every sibling pack, through a ladder no caller can name
+       * in advance. Handed back so the action can expire precisely those.
+       */
+      recosted: number[]
+    }
   | { ok: false; error: string }
 
 /**
@@ -721,6 +736,26 @@ export async function receiveGoods(
     composed.set(index, resolved.components)
   }
 
+  /*
+   * The other half of the same question: which lines are packs that carry a
+   * pile of their OWN.
+   *
+   * A subtract pack explodes above and the receipt reaches the base by itself,
+   * so the cost cascade after the commit climbs from a base that has just been
+   * paid for. A NORMAL pack does not explode — the quantity and the cost both
+   * stop on the pack, which is the TOP of its ladder, so the upward walk finds
+   * nothing below it to correct and the single goes on reporting whatever it
+   * was last bought at. Collected here and carried down after the commit.
+   *
+   * Read from the LINK rather than from the line's product type, for the same
+   * reason explodingProducts() is: the type says a product is a refer, only
+   * the method says whether this receipt lands on it.
+   */
+  const packLines = await stockedPacks(
+    siteId,
+    input.lines.filter((l) => l.productId).map((l) => l.productId as number),
+  )
+
   const subtotalExcl = computed.reduce((sum, c) => round(sum + c.netExcl, 2), 0)
   const vatTotal = computed.reduce((sum, c) => round(sum + c.vat, 2), 0)
   // The document's charge figure is the WHOLE delivery cost, because that is
@@ -937,6 +972,19 @@ export async function receiveGoods(
        * until the transaction is committed.
        */
       const costMoved = new Set<number>()
+
+      /*
+       * The NORMAL-METHOD packs this receipt landed on, with what one of them
+       * actually cost, for the push down the ladder after the commit.
+       *
+       * Kept apart from costMoved because the two are spent differently: that
+       * set seeds a walk UP from a product whose cost is already right, while
+       * these are the packs whose ladder below them is now wrong. The landed
+       * cost rides along rather than being re-read — it is the figure divided
+       * by the chain factors, and re-reading average_cost would divide a blend
+       * of this delivery and the last one.
+       */
+      const packsReceived: { productId: number; unitCostExcl: number }[] = []
 
       /*
        * Which price the GRV moves: the DEFAULT structure, resolved once.
@@ -1199,6 +1247,12 @@ export async function receiveGoods(
         )
         costMoved.add(line.productId)
 
+        // A pack that carries its own pile is the top of a ladder nothing else
+        // will correct: the walk after the commit only climbs. See packLines.
+        if (packLines.has(line.productId)) {
+          packsReceived.push({ productId: line.productId, unitCostExcl: c.landedUnitCost })
+        }
+
         /*
          * THE PRICE MOVE (193) — queued here, written once after the loop.
          *
@@ -1341,8 +1395,42 @@ export async function receiveGoods(
 
       // costMoved rides out with the result rather than being hoisted above
       // the transaction: it is only meaningful once these writes committed.
-      return { documentId, documentNumber, costMoved: [...costMoved] }
+      return { documentId, documentNumber, costMoved: [...costMoved], packsReceived }
     })
+
+    /*
+     * A PACK bought under normal refers moves its ladder DOWNWARD first.
+     *
+     * Ten cases received are ten cases owned, so the receipt landed on the case
+     * and the walk below — which only ever climbs — would find nothing under it
+     * to correct. The single kept last quarter's cost, and so did every sibling
+     * rung hanging off that single, while the shop sold out of a case it bought
+     * this morning. Dividing by the chain factors and writing the base is the
+     * one write that fixes all of them, because seeding the upward walk there
+     * carries the new figure back over every rung including the case itself.
+     *
+     * The base is skipped when it was RECEIVED IN ITS OWN RIGHT on this same
+     * document: a real cost paid for the single beats one derived from the case
+     * sitting on the line above it.
+     *
+     * Swallows its own failures on the same terms as the walk it feeds — the
+     * goods are on the shelf either way.
+     */
+    const receivedDirectly = new Set(posted.costMoved)
+    const cascadeFrom = new Set(posted.costMoved)
+    const { pushReferCostDown } = await import('./productComposition')
+    for (const pack of posted.packsReceived) {
+      const base = await pushReferCostDown(
+        siteId,
+        pack.productId,
+        pack.unitCostExcl,
+        receivedDirectly,
+      ).catch(() => null)
+      // Seeded LAST, so on a delivery carrying both a case and its single the
+      // walk from the base runs after the walk from the pack and has the final
+      // word on every rung between them.
+      if (base) cascadeFrom.add(base.baseId)
+    }
 
     /*
      * Everything built out of whatever this receipt repriced.
@@ -1364,8 +1452,11 @@ export async function receiveGoods(
      * written or read the pre-receipt figure and spread that.
      */
     const { cascadeReferCosts } = await import('./referRange')
-    for (const productId of posted.costMoved) {
-      await cascadeReferCosts(siteId, productId).catch(() => [])
+    const recosted = new Set(cascadeFrom)
+    for (const productId of cascadeFrom) {
+      for (const id of await cascadeReferCosts(siteId, productId).catch(() => [])) {
+        recosted.add(id)
+      }
     }
 
     // The supplier ledger, after the receipt is safely committed — the same
@@ -1494,6 +1585,7 @@ export async function receiveGoods(
       documentId: posted.documentId,
       documentNumber: posted.documentNumber,
       totalExcl: subtotalExcl,
+      recosted: [...recosted],
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'The receipt could not be posted.'

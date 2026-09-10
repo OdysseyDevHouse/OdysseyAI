@@ -47,6 +47,9 @@ export type HubIconName =
   | 'Palette'
   | 'Settings'
   | 'ShieldCheck'
+  /* Updates (/setup/updates) — the one hub tile about the app itself.
+     rather than about the shop's data. */
+  | 'Download'
   | 'Coins'
   | 'LineChart'
   | 'BarChart'

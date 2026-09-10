@@ -69,12 +69,32 @@ let appOrigin = null
 let runtimeMode = null
 
 /**
- * Is this URL the till?
+ * The pathname of `url`, but only when the URL is OURS.
  *
  * Matched on the app's OWN origin as well as the path, so that a link to
  * somebody else's `/pos` — a supplier's site, a documentation page — still goes
  * to the browser rather than being adopted as our point of sale. The URL is
  * whatever the renderer asked to open, so it is not trusted to be ours.
+ *
+ * `appOrigin` first, and the window's own address only as a fallback: this is
+ * asked by CHILD windows too — the till and the invoicing window each judge the
+ * links followed out of them — and `mainWindow` is the wrong thing to measure
+ * those against. It is fixed before anything can navigate, so by the time a
+ * renderer can ask to open a window it is already known.
+ */
+function ownPathname(url) {
+  try {
+    const target = new URL(url)
+    const own = appOrigin || new URL(mainWindow.webContents.getURL()).origin
+    if (target.origin !== own) return null
+    return target.pathname
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Is this URL the till?
  *
  * `/pos` and everything under it: the till redirects to `/pos-unlock` when the
  * session has expired, and that screen belongs in the same window as the till
@@ -92,14 +112,30 @@ function windowTitle() {
 }
 
 function isTillUrl(url) {
-  try {
-    const target = new URL(url)
-    const own = new URL(mainWindow.webContents.getURL())
-    if (target.origin !== own.origin) return false
-    return target.pathname === '/pos' || target.pathname.startsWith('/pos-')
-  } catch {
-    return false
-  }
+  const pathname = ownPathname(url)
+  if (!pathname) return false
+  return pathname === '/pos' || pathname.startsWith('/pos-')
+}
+
+/**
+ * Is this URL the trade counter?
+ *
+ * The invoicing screens are the till's sibling, not a back-office page: the
+ * sidebar hands them a named target so they open BESIDE the back office, and
+ * src/lib/openTill.ts explains why. Without this branch that target reached the
+ * external case below, and pressing Invoicing threw the operator out into
+ * Chrome — a different browser profile, so a different session cookie and a
+ * sign-in screen instead of the register.
+ *
+ * A PREFIX rather than the four hrefs the sidebar knows about, because the
+ * window navigates itself once it is open: `/invoicing/{id}` is where every
+ * document is actually written, and a list of exact paths would send the second
+ * click — the one that opens a document — somewhere else entirely.
+ */
+function isInvoicingUrl(url) {
+  const pathname = ownPathname(url)
+  if (!pathname) return false
+  return pathname === '/invoicing' || pathname.startsWith('/invoicing/')
 }
 
 function waitForServer(url, timeoutMs = 60000) {
@@ -439,6 +475,81 @@ function devWindowIcon() {
   return path.join(__dirname, '..', 'public', 'logo-icon.png')
 }
 
+/**
+ * A second shop window inside the shell, rather than a tab in somebody's
+ * browser.
+ *
+ * The size and chrome are the main window's, because these are not dialogs —
+ * they are screens a person stands at all day. The preload is the same one, and
+ * that is the part that matters most: without it `window.odyssey` is undefined,
+ * and the page decides it is running in a browser.
+ */
+function shopWindowOptions(title) {
+  return {
+    width: 1400,
+    height: 900,
+    minWidth: 1024,
+    minHeight: 640,
+    backgroundColor: '#0f1216',
+    title,
+    icon: devWindowIcon(),
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  }
+}
+
+/**
+ * Where a `window.open` goes.
+ *
+ * THE TILL AND THE TRADE COUNTER get their own window inside the shell: they
+ * are second screens the shop runs alongside the back office, and a cashier
+ * must not lose a half-scanned basket — or an operator a half-written invoice —
+ * because somebody looked up a supplier invoice. Handing either to
+ * `shell.openExternal` boots it into Chrome, where it is a different browser
+ * profile — different session cookie, different device id in localStorage, no
+ * offline outbox — so it lands on a sign-in or clerk PIN gate as an unlicensed
+ * machine. That is why these cannot just fall through to the external branch.
+ *
+ * One window each, not one per press: the links carry NAMED targets, and a
+ * named target reuses the window already opened under that name. See
+ * src/lib/openTill.ts, which is where those names are decided.
+ *
+ * Everything else — a supplier's website, a help link — still opens in the
+ * user's own browser rather than inside the app.
+ *
+ * Shared by the main window and every window it opens, so that the rule does
+ * not change depending on which of the shop's windows a link was followed from.
+ */
+function windowOpenHandler({ url }) {
+  /* On the TILL build the main window already IS the till, so a second one
+     would be a duplicate of the screen the cashier is looking at — with its own
+     claim on a table and its own half-scanned basket. That build has no trade
+     counter either: it is a back-office register, and appRole.js is where the
+     machine's purpose is decided. Everything external still goes to the
+     browser, via the branch below.
+
+     The setup wizard is excluded alongside it for the opposite reason: it has
+     no shop to open anything against until it has finished running. */
+  if (!isPos() && !isDatabaseSetup()) {
+    if (isTillUrl(url)) {
+      return { action: 'allow', overrideBrowserWindowOptions: shopWindowOptions('Odyssey POS') }
+    }
+    if (isInvoicingUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: shopWindowOptions('Odyssey Invoicing'),
+      }
+    }
+  }
+
+  shell.openExternal(url)
+  return { action: 'deny' }
+}
+
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -490,71 +601,23 @@ async function createWindow() {
      where that never happens. */
   mainWindow.once('ready-to-show', () => mainWindow?.show())
 
-  /*
-   * Where a `window.open` goes.
-   *
-   * THE TILL gets its own window inside the shell: it is a second screen the
-   * shop runs alongside the back office, and a cashier must not lose a
-   * half-scanned basket because somebody looked up a supplier invoice. Handing
-   * it to `shell.openExternal` would boot it into Chrome, where it is a
-   * different browser profile — different session cookie, different device id
-   * in localStorage, no offline outbox — so it would land on the clerk PIN gate
-   * as an unlicensed machine. That is why this cannot just fall through to the
-   * external branch below.
-   *
-   * Everything else — a supplier's website, a help link — still opens in the
-   * user's own browser rather than inside the app.
-   */
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    /* On the TILL build the main window already IS the till, so a second one
-       would be a duplicate of the screen the cashier is looking at — with its
-       own claim on a table and its own half-scanned basket. Everything external
-       still goes to the browser, via the branch below. */
-    /* The setup wizard is excluded alongside the till, for the opposite
-       reason: the till already IS the till, and this build has no till to open
-       — nor a shop to open it against, until it has finished running. */
-    if (isTillUrl(url) && !isPos() && !isDatabaseSetup()) {
-      /* One till, not one per press: the link carries a NAMED target, and a
-         named target reuses the window already opened under that name. */
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 1400,
-          height: 900,
-          minWidth: 1024,
-          minHeight: 640,
-          backgroundColor: '#0f1216',
-          title: 'Odyssey POS',
-          icon: devWindowIcon(),
-          webPreferences: {
-            preload: path.join(__dirname, 'preload.js'),
-            contextIsolation: true,
-            nodeIntegration: false,
-          },
-        },
-      }
-    }
-
-    shell.openExternal(url)
-    return { action: 'deny' }
-  })
+  mainWindow.webContents.setWindowOpenHandler(windowOpenHandler)
 
   /*
-   * The till window inherits none of the above — a window created by the open
-   * handler is a fresh `webContents` with the DEFAULT behaviour, which is to
-   * open any further `window.open` as another plain in-app window. So a help or
-   * supplier link followed FROM the till would spawn a chrome-less window with
-   * no way back, rather than going to the browser like everywhere else.
+   * A window created by the open handler inherits NONE of the above — it is a
+   * fresh `webContents` with Chromium's default behaviour, which is to open any
+   * further `window.open` as another plain in-app window. So a help or supplier
+   * link followed FROM the till would spawn a chrome-less window with no way
+   * back, rather than going to the browser like everywhere else.
    *
-   * `did-create-window` is where that window is handed over, so the same rule is
-   * applied to it. The till itself never re-opens the till, so this branch only
-   * has the external case to deal with.
+   * `did-create-window` is where that window is handed over, so the SAME rule
+   * is applied to it — the whole rule, not just its external half. The trade
+   * counter's Lay-bys and Invoicing screens both carry a "start a sale at the
+   * till" button, and an external-only handler here sent those to Chrome for
+   * exactly the reason the main window's used to send Invoicing there.
    */
   mainWindow.webContents.on('did-create-window', (child) => {
-    child.webContents.setWindowOpenHandler(({ url }) => {
-      shell.openExternal(url)
-      return { action: 'deny' }
-    })
+    child.webContents.setWindowOpenHandler(windowOpenHandler)
   })
 
   /*
@@ -682,6 +745,22 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(() => {
+    /* ── IS THIS A DEVELOPER'S CHECKOUT? SETTLED ONCE, HERE ────────────────
+     *
+     * `app.isPackaged` is the only thing that decides it, and this is the only
+     * process that can read it: a preload gets the renderer's half of the
+     * `electron` module, where `app` does not exist. The renderer inherits this
+     * environment when it is spawned, which is why the answer is written down
+     * before any window is created.
+     *
+     * DELETED rather than left alone in a packaged build. What it gates is a
+     * sign-in form that fills itself in with test credentials, so an inherited
+     * `ODYSSEY_DEV=1` from a customer's environment must not be able to reach
+     * the renderer and be believed.
+     */
+    if (app.isPackaged) delete process.env.ODYSSEY_DEV
+    else process.env.ODYSSEY_DEV = '1'
+
     /* Which of the three builds this is. Named once here because the log line
        below and the diagnostics beneath it both want the same answer. */
     const role = isPos() ? 'pos' : isDatabaseSetup() ? 'database' : 'backoffice'
@@ -722,6 +801,24 @@ if (!app.requestSingleInstanceLock()) {
       if (file) shell.showItemInFolder(file)
       return file
     })
+
+    /* ── UPDATES, WHEN SOMEBODY ASKS ────────────────────────────────────
+     *
+     * The background timer covers the shop; this covers the technician. Both
+     * drive the SAME updater — see the note on checkNow() in updater.js about
+     * why there is deliberately only one implementation of "check".
+     *
+     * Over IPC rather than an HTTP route, like diagnostics:* above and for the
+     * same reason: a localhost route that could restart the app would be
+     * reachable by anything else running on the machine.
+     *
+     * Registered unconditionally. The Database Setup build never opens the
+     * screen that calls these, and a missing bridge is harder to diagnose than
+     * a verb nothing invokes.
+     */
+    ipcMain.handle('updates:state', () => updater.snapshot())
+    ipcMain.handle('updates:check', () => updater.checkNow())
+    ipcMain.handle('updates:install', () => updater.installNow())
 
     /* ── THE PRINT ENGINE ──────────────────────────────────────────────
      *

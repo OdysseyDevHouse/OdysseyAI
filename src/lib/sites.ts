@@ -3,6 +3,8 @@ import { cache } from 'react'
 import type { RowDataPacket } from 'mysql2/promise'
 import { query, queryOne, execute } from './db'
 import { keepsProfile, readSiteProfile, writeSiteProfile } from './site/siteProfile'
+import { portalConfig } from './control/portalApi'
+import * as sitePortal from './control/sitePortal'
 
 export type SiteRole = 'owner' | 'manager' | 'staff'
 
@@ -345,6 +347,87 @@ export function isStoreDetailsUnavailable(err: unknown): err is StoreDetailsUnav
   )
 }
 
+/**
+ * How old the mirror may get before this machine asks the portal about it.
+ *
+ * ── WHY A WINDOW AND NOT EVERY PAGE ─────────────────────────────────────────
+ *
+ * getSite() runs on every authenticated page and is not memoised across
+ * requests, so asking on each one would be a round trip per click to answer a
+ * question whose answer is static configuration. That is the exact cost the
+ * mirror exists to avoid, and reintroducing it over HTTPS instead of MySQL
+ * would not make it cheaper.
+ *
+ * Fifteen minutes is chosen against what it is for: support corrects an address
+ * or a VAT number in the control panel and rings the shop to say so. A quarter
+ * of an hour is inside that conversation. Nothing here gates trading — unlike
+ * the licence lease, which is why that one refreshes on a five-hour timer in
+ * the shell rather than opportunistically here.
+ */
+const PROFILE_REFRESH_MS = 15 * 60_000
+
+/** In-process, so N page renders in the same window make at most one call. */
+let profileAskedAt = 0
+let profileAsking = false
+
+/**
+ * Ask the control panel what this shop is, and write down the answer.
+ *
+ * ── WHY THIS EXISTS AT ALL ──────────────────────────────────────────────────
+ *
+ * The mirror was designed to be rewritten off the back of every successful
+ * control read — "on a machine with a line it is never more than one page load
+ * old", as siteProfile.ts still puts it. That was true until the control socket
+ * was banned on desktop, after which there were no successful control reads and
+ * the sentence quietly became false. The mirror went write-once: whatever it
+ * held when the machine was set up, for ever.
+ *
+ * Nothing failed. Support would change an address in the control panel, the
+ * change would never arrive, and the shop would go on printing the old one on
+ * every invoice with both sides believing it had been fixed.
+ *
+ * Returns null when the portal could not be asked, and the caller keeps what it
+ * has: a stale mirror is bad, and a mirror overwritten with nothing is worse.
+ */
+export async function refreshSiteProfile(siteId: number): Promise<Site | null> {
+  /* The route answers for the store that SIGNED the request and no other, so a
+     back office looking at some other store must not take its answer for this
+     one. Same test as updateSiteVatNumber and revokeSiteAccess. */
+  if (portalConfig()?.siteId !== siteId) return null
+
+  const site = await sitePortal.fetchSiteDetails()
+  if (!site || site.id !== siteId) return null
+
+  await writeSiteProfile(site).catch(() => {})
+  return site
+}
+
+/**
+ * Refresh the mirror behind this render, if it is old enough to be worth it.
+ *
+ * Deliberately not awaited by its caller: the page already has an answer, and
+ * making somebody wait on a network call to be told what they were about to be
+ * told anyway is the round trip this whole design is avoiding. The new copy
+ * lands for the next render.
+ *
+ * `profileAskedAt` is stamped BEFORE the call, so a portal that is down costs
+ * one attempt per window rather than one per page load.
+ */
+function refreshProfileInBackground(siteId: number, mirroredAt: Date): void {
+  if (profileAsking) return
+  const now = Date.now()
+  if (now - mirroredAt.getTime() < PROFILE_REFRESH_MS) return
+  if (now - profileAskedAt < PROFILE_REFRESH_MS) return
+
+  profileAsking = true
+  profileAskedAt = now
+  void refreshSiteProfile(siteId)
+    .catch(() => null)
+    .finally(() => {
+      profileAsking = false
+    })
+}
+
 export async function getSite(siteId: number): Promise<Site | null> {
   /* ── ON A DESKTOP INSTALL THE MIRROR IS THE PRIMARY ANSWER ───────────────
    *
@@ -361,14 +444,29 @@ export async function getSite(siteId: number): Promise<Site | null> {
    * than mid-request — a scheduled act that involves moving the data, not a
    * surprise.
    *
-   * Freshness is deliberately NOT checked. Unlike the licence lease, nothing
-   * here gates trading, so a stale shop name is a cosmetic wrong and a round
-   * trip per click is not worth avoiding it. writeSiteProfile() below refreshes
-   * the mirror whenever the control database is read for any other reason.
+   * Freshness is not checked ON THE WAY OUT — the mirrored answer is returned
+   * whatever its age, because nothing here gates trading and a round trip per
+   * click is not worth avoiding a cosmetically stale shop name.
+   *
+   * ── BUT IT IS NO LONGER REFRESHED BY ACCIDENT ───────────────────────────
+   *
+   * This used to say that writeSiteProfile() below keeps the copy current
+   * "whenever the control database is read for any other reason", and that it
+   * is therefore never more than one page load old. That stopped being true the
+   * day a desktop build stopped opening the control socket: the branch below is
+   * now unreachable on desktop, so nothing rewrote the mirror and a change made
+   * in the control panel never arrived at the shop at all.
+   *
+   * So the refresh is asked for explicitly, in the background, at most once per
+   * window — see refreshProfileInBackground. The render in hand still answers
+   * from the copy it already had; the new one lands for the next.
    */
   if (keepsProfile()) {
     const mirrored = await readSiteProfile(siteId)
-    if (mirrored) return mirrored.site
+    if (mirrored) {
+      refreshProfileInBackground(siteId, mirrored.mirroredAt)
+      return mirrored.site
+    }
   }
 
   let row: SiteRow | null
@@ -540,6 +638,75 @@ export const SITE_DETAIL_LIMITS = {
   email: 255,
   contactName: 150,
 } as const satisfies Record<keyof SiteDetails, number>
+
+/**
+ * Set this shop's VAT number, and nothing else about it.
+ *
+ * ── WHY THIS IS NOT JUST updateSiteDetails WITH ONE FIELD CHANGED ───────────
+ *
+ * Because on the build that needs it there is no socket to write with. A local
+ * store may edit exactly one thing about itself — see LOCAL_EDITABLE in
+ * setup/store-info/actions.ts for why that one — and a local store is a desktop
+ * install, where pool() refuses the control database outright. The save came
+ * back as "this needs an internet connection" on a machine whose line was
+ * perfect, and it could not have said anything else: the refusal carries no
+ * errno, so isControlUnreachable counts it as offline deliberately.
+ *
+ * So the one write a desktop store is allowed gets the transport a desktop
+ * store has. Same treatment as devices.ts and controlUsers.ts, same reason: the
+ * transport moved, the rules did not.
+ *
+ * ── AND WHY IT NARROWS TO ONE COLUMN ON BOTH TRANSPORTS ─────────────────────
+ *
+ * The caller used to overlay the VAT number onto a whole SiteDetails built from
+ * the mirror and post all eleven columns back. That works, and it carries a
+ * hazard the overlay's own comment names: the mirror can be stale, so a save
+ * could write yesterday's address over something support changed this morning.
+ * Naming one column removes the hazard rather than managing it, and it makes
+ * the two transports do the same thing — which is the point of having two.
+ *
+ * ── WHY THE PORTAL IS ONLY RIGHT FOR THE SIGNING SITE ───────────────────────
+ *
+ * The route acts on the store that signed the request and can act on no other.
+ * A cloud back office editing some other store's row must therefore not use it,
+ * exactly as in revokeSiteAccess and accountsWithAccessTo — hence the siteId
+ * test rather than a bare portalAvailable().
+ *
+ * Returns false when no row moved — an archived site, or an id that is gone.
+ */
+export async function updateSiteVatNumber(siteId: number, vatNumber: string | null): Promise<boolean> {
+  if (portalConfig()?.siteId === siteId) {
+    const viaPortal = await sitePortal.saveVatNumber(vatNumber)
+    /* Null alone falls through. A refusal is an ANSWER — re-running it against
+       the direct connection would let a bad key revert this to the socket. */
+    if (viaPortal) {
+      if (!viaPortal.ok) {
+        if (viaPortal.archived) return false
+        throw new Error(viaPortal.error)
+      }
+      /* Re-mirror from what the control panel says landed, not from what we
+         asked for. On desktop this is the only thing that refreshes the copy at
+         all: getSite() answers from site_profile and never reads cp2_sites, so
+         without this the screen would keep showing the old number after a save
+         that worked. Unawaited failure is fine — the row changed either way. */
+      void writeSiteProfile(viaPortal.site).catch(() => {})
+      return true
+    }
+  }
+
+  const result = await execute(
+    `UPDATE cp2_sites SET vat_number = ?, updated_at = NOW()
+      WHERE id = ? AND status IN ('active','suspended')`,
+    [vatNumber, siteId],
+  )
+  if (result.affectedRows === 0) return false
+
+  /* Same re-read as updateSiteDetails, and for the same reason: getSite writes
+     the mirror off the back of a successful read, so one piece of code stays
+     responsible for the copy. */
+  await getSite(siteId).catch(() => null)
+  return true
+}
 
 /**
  * Change what this shop says it is.

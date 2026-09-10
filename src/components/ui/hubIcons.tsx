@@ -41,6 +41,7 @@ export const HUB_ICONS: Record<HubIconName, LucideIcon> = {
   Palette: Icons.Palette,
   Settings: Icons.Settings,
   ShieldCheck: Icons.ShieldCheck,
+  Download: Icons.Download,
   Coins: Icons.Coins,
   LineChart: Icons.LineChart,
   BarChart: Icons.BarChart,

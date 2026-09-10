@@ -67,6 +67,7 @@ import {
   PinPad,
   NumPad,
   NumPadDisplay,
+  PadPopover,
   TenderTile,
   SignaturePad,
   LaneWeek,
@@ -249,6 +250,7 @@ export default function StyleGuidePage() {
         <DrawerSection />
         <PinPadSection />
         <NumPadSection />
+        <PadPopoverSection />
         <SignaturePadSection />
         <LaneWeekSection />
         <ComboboxSection />
@@ -3359,6 +3361,89 @@ function NumPadSection() {
             layout="plaque"
             suffix="%"
             tone="danger"
+          />
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function PadPopoverSection() {
+  const [entry, setEntry] = useState('')
+  const [qty, setQty] = useState('')
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
+  /* Which box is aimed — the same shape the cash-up keeps, because it is the
+     aim and not a second `open` flag that decides whether the keys are up. */
+  const [aimed, setAimed] = useState<'amount' | 'qty' | null>(null)
+
+  const value = aimed === 'qty' ? qty : entry
+  const write = aimed === 'qty' ? setQty : setEntry
+
+  function aim(box: 'amount' | 'qty', el: HTMLElement) {
+    setAimed(box)
+    setAnchor(el)
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="PadPopover"
+        description="<PadPopover /> — the number pad, brought to the box being typed into instead of parked in a panel. For a screen whose subject is a LIST of figures: the cash-up counts eleven denominations and eight tenders, and a permanent pad spent 250px of that screen on keys nobody was pressing. It never takes the focus, so the box keeps its caret, a physical keyboard keeps working, and a caller's onBlur does not fire on every keypress"
+      />
+      <div className="flex flex-wrap items-start gap-8 px-5 py-5">
+        <Spec name="anchor" note="the element it hangs off — captured from the focus or tap that aimed it" />
+        <Spec name="open" note="usually just “a box is aimed”; there is no second flag to disagree with it" />
+        <Spec name="label" note="the pad names its own box — a floating pad with no caption is one you look away to identify" />
+        <Spec name="onEnter + hint" note="the caller's Enter, and one line saying what it will do" />
+        <Spec name="onClose" note="tapped outside, or Escape — the caller decides what that commits" />
+        <Spec
+          name="it never covers the box"
+          note="below and right-aligned, flipping above and then beside as the room runs out"
+        />
+
+        <div className="w-full max-w-sm">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            Tap a box — the keys come to it
+          </p>
+          <div className="flex items-end gap-3">
+            <Field label="Amount" className="w-40">
+              <Input
+                icon={<span className="text-sm font-medium text-muted">R</span>}
+                className="numeric text-right"
+                inputMode="decimal"
+                value={entry}
+                onFocus={(e) => aim('amount', e.currentTarget)}
+                onClick={(e) => aim('amount', e.currentTarget)}
+                onChange={(e) => setEntry(e.target.value.replace(/[^0-9.]/g, ''))}
+              />
+            </Field>
+            <Field label="How many" className="w-28">
+              <Input
+                className="numeric text-right"
+                inputMode="numeric"
+                value={qty}
+                onFocus={(e) => aim('qty', e.currentTarget)}
+                onClick={(e) => aim('qty', e.currentTarget)}
+                onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, ''))}
+              />
+            </Field>
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            {aimed === null
+              ? 'Nothing aimed — no keys on screen.'
+              : `Typing into ${aimed === 'qty' ? 'How many' : 'Amount'}.`}
+          </p>
+
+          <PadPopover
+            open={aimed !== null}
+            anchor={anchor}
+            label={aimed === 'qty' ? 'How many' : 'Amount'}
+            value={value}
+            onChange={write}
+            maxDecimals={aimed === 'qty' ? 0 : 2}
+            onEnter={() => setAimed(null)}
+            hint="Enter banks this figure."
+            onClose={() => setAimed(null)}
           />
         </div>
       </div>

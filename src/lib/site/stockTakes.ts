@@ -86,6 +86,28 @@ export type StockTakeLine = {
   productCode: string | null
   description: string
   productType: string
+  /**
+   * Where this line was counted, copied onto it when the sheet was built (254).
+   *
+   * A code and not an id, and that is the whole reason it is stored at all: an id
+   * would resolve to wherever the product lives NOW, and a sheet has to keep
+   * saying what was on the paper somebody walked around with. Rooms get re-racked
+   * between a count and the argument about it.
+   *
+   * Null on every line of a sheet built in a location with no shelves, which is
+   * what the count screen reads to decide whether the bin column exists at all.
+   */
+  shelfCode: string | null
+  binCode: string | null
+  /**
+   * The OTHER spots this product is kept in, when it has more than one (255).
+   *
+   * The sheet states one counted figure for the whole location, so a counter who
+   * walks to the main bin and does not know about the bulk pallet in the next
+   * aisle writes a figure that posts the pallet off as shrinkage. This is the
+   * line telling them, at the moment they are looking at it.
+   */
+  altBins: string | null
   lineMode: LineMode
   snapshotQty: number
   /** NULL means NOT YET COUNTED, which is not the same fact as counted-as-zero. */
@@ -196,6 +218,9 @@ function mapLine(r: Row): StockTakeLine {
     productCode: (r.product_code as string | null) ?? null,
     description: String(r.description),
     productType: String(r.product_type ?? 'normal'),
+    shelfCode: (r.shelf_code as string | null) ?? null,
+    binCode: (r.bin_code as string | null) ?? null,
+    altBins: (r.alt_bins as string | null) ?? null,
     lineMode: String(r.line_mode) as LineMode,
     snapshotQty: toNum(r.snapshot_qty),
     countedQty: r.counted_qty === null || r.counted_qty === undefined ? null : toNum(r.counted_qty),
@@ -318,7 +343,8 @@ export async function getStockTake(siteId: number, id: number): Promise<StockTak
      * down the shelf. Sorting here instead would re-order a sheet that has
      * already been printed and half counted.
      */
-    `SELECT s.id, s.product_id, s.product_code, s.description, s.line_mode,
+    `SELECT s.id, s.product_id, s.product_code, s.description,
+            s.shelf_code, s.bin_code, s.alt_bins, s.line_mode,
             s.snapshot_qty, s.counted_qty, s.entered_qty, s.posted_qty_before,
             s.variance_qty, s.unit_cost_excl, s.serial_ids, s.counted_at,
             s.counted_by, s.note, s.movement_id,
@@ -410,7 +436,18 @@ export function validateStockTake(input: StockTakeInput): string | null {
 async function buildSheetLines(
   tx: PoolConnection,
   input: StockTakeInput,
-): Promise<Array<{ productId: number; code: string | null; description: string; qty: number; cost: number }>> {
+): Promise<
+  Array<{
+    productId: number
+    code: string | null
+    description: string
+    qty: number
+    cost: number
+    shelfCode: string | null
+    binCode: string | null
+    altBins: string | null
+  }>
+> {
   const clauses: string[] = [
     'p.is_archived = 0',
     'p.has_variants = 0',
@@ -440,35 +477,81 @@ async function buildSheetLines(
   }
 
   /*
-   * A group's variants land together, in the order the shelf is stacked.
+   * THE SHEET IS BUILT IN WALK ORDER.
    *
-   * The rows are otherwise ordered by code, which scatters a shirt's five sizes
-   * through the sheet whenever their codes are not sequential — and codes very
-   * often are not. Someone counting then walks past the same shelf five times.
+   * Shelf and bin come FIRST, so counting follows a route through the room
+   * rather than a route through the catalogue. Before 254 the only key available
+   * was the product code, which is alphabetical — and no room is arranged
+   * alphabetically, so a counter criss-crossed the aisles and had no way to
+   * finish one bay before starting the next.
    *
-   * So a variant sorts under its PARENT's code, then by variant_sort — the
-   * order the picker uses, because sizes are not alphabetical (Large, Medium,
-   * Small is not a shelf). An ordinary product sorts by its own code, exactly
-   * as before, and the two interleave on one key.
+   * sort_order before code on both levels, because that pair IS the route: a
+   * site puts its shelves in the sequence somebody actually walks them, and the
+   * setup screen lists them in exactly this order so what is on screen is what
+   * gets printed.
+   *
+   * ── UNPLACED PRODUCTS GO LAST ─────────────────────────────────────────
+   *
+   * `sh.id IS NULL` sorts them to the end as one block rather than scattering
+   * them through the walk under an empty shelf. Nobody can be sent to a bay for
+   * them, so they are a different job — found by code, at the end — and a sheet
+   * that mixed them in would keep interrupting the route with products that have
+   * no place in it. A site with no shelves at all has every line in this block,
+   * which is why the ordering below then collapses to exactly what it was before
+   * this feature existed.
+   *
+   * ── VARIANTS STILL GROUP, BUT UNDER THE BIN ───────────────────────────
+   *
+   * The existing key follows unchanged as the tiebreak, so a shirt's five sizes
+   * still land together — WITHIN a bin. Five sizes genuinely kept in five
+   * different bins now separate, and that is the correct answer rather than a
+   * regression: the sheet's job is to match the shelf, and the shelf has them
+   * apart.
    *
    * This is a sheet-BUILD decision, so it is fixed in line_number at creation.
-   * A printed sheet and the screen then always agree, however the catalogue is
-   * reorganised afterwards.
+   * A printed sheet and the screen then always agree, however the catalogue or
+   * the racking is reorganised afterwards.
    */
   const [rows] = await tx.execute(
     `SELECT p.id, p.code, p.description,
             COALESCE(pls.stock_on_hand, 0) AS on_hand,
-            COALESCE(NULLIF(p.average_cost, 0), p.last_cost, 0) AS cost
+            COALESCE(NULLIF(p.average_cost, 0), p.last_cost, 0) AS cost,
+            sh.code AS shelf_code, b.code AS bin_code,
+            /* The other spots this product is kept in, as the words a counter
+               needs. A correlated subquery rather than a join, because a join
+               would multiply the product row by its overflow bins and the whole
+               sheet would grow duplicate lines — which uq_take_line_product
+               would then refuse, failing the sheet outright. */
+            (SELECT GROUP_CONCAT(
+                      CONCAT(sh2.code, IF(b2.code IS NULL, '', CONCAT(' · ', b2.code)))
+                      ORDER BY sh2.sort_order, sh2.code, b2.sort_order, b2.code
+                      SEPARATOR ', ')
+               FROM product_placements pp2
+               JOIN stock_shelves sh2 ON sh2.id = pp2.shelf_id
+               LEFT JOIN stock_bins b2 ON b2.id = pp2.bin_id
+              WHERE pp2.product_id = p.id
+                AND pp2.location_id = ?
+                AND pp2.is_primary = 0) AS alt_bins
        FROM products p
        LEFT JOIN product_location_stock pls
               ON pls.product_id = p.id AND pls.location_id = ?
        LEFT JOIN products parent ON parent.id = p.parent_id
+       /* is_primary: a product with an overflow bay is counted once, at the
+          place somebody is actually sent to. */
+       LEFT JOIN product_placements pp
+              ON pp.product_id = p.id AND pp.location_id = ? AND pp.is_primary = 1
+       LEFT JOIN stock_shelves sh ON sh.id = pp.shelf_id
+       LEFT JOIN stock_bins    b  ON b.id  = pp.bin_id
       WHERE ${clauses.join(' AND ')}
-      ORDER BY COALESCE(parent.code, p.code) ASC,
+      ORDER BY sh.id IS NULL,
+               sh.sort_order ASC, sh.code ASC,
+               b.id IS NULL,
+               b.sort_order ASC, b.code ASC,
+               COALESCE(parent.code, p.code) ASC,
                p.parent_id IS NOT NULL,
                p.variant_sort ASC, p.axis_1_value ASC, p.axis_2_value ASC,
                p.code ASC, p.id ASC`,
-    [input.locationId, ...params] as never,
+    [input.locationId, input.locationId, input.locationId, ...params] as never,
   )
 
   return (rows as Row[]).map((r) => ({
@@ -477,6 +560,9 @@ async function buildSheetLines(
     description: String(r.description ?? ''),
     qty: toNum(r.on_hand),
     cost: toNum(r.cost),
+    shelfCode: (r.shelf_code as string | null) ?? null,
+    binCode: (r.bin_code as string | null) ?? null,
+    altBins: (r.alt_bins as string | null) ?? null,
   }))
 }
 
@@ -564,13 +650,19 @@ export async function createStockTake(
       const CHUNK = 500
       for (let i = 0; i < lines.length; i += CHUNK) {
         const chunk = lines.slice(i, i + CHUNK)
-        const values = chunk.map(() => '(?,?,?,?,?,?,?,?)').join(',')
+        const values = chunk.map(() => '(?,?,?,?,?,?,?,?,?,?,?)').join(',')
         const params = chunk.flatMap((line, j) => [
           takeId,
           i + j + 1,
           line.productId,
           line.code,
           line.description.slice(0, 190),
+          // Copied onto the line, exactly as product_code and description above
+          // are and for the same reason: the sheet has to keep saying where each
+          // product was counted after the room is re-racked.
+          line.shelfCode,
+          line.binCode,
+          line.altBins?.slice(0, 190) ?? null,
           line.qty.toFixed(3),
           line.cost.toFixed(4),
           lineMode,
@@ -578,7 +670,7 @@ export async function createStockTake(
         await tx.execute(
           `INSERT INTO stock_take_lines
              (stock_take_id, line_number, product_id, product_code, description,
-              snapshot_qty, unit_cost_excl, line_mode)
+              shelf_code, bin_code, alt_bins, snapshot_qty, unit_cost_excl, line_mode)
            VALUES ${values}`,
           params as never,
         )

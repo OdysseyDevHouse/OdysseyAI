@@ -19,7 +19,7 @@ import { MODAL_PANEL } from '@/components/ui/styles'
 import { buildPageIndex, groupHits, searchPages, type PageHit } from '@/lib/pageSearch'
 import { SETTING_ANCHOR_EVENT } from '@/components/SettingAnchor'
 import type { NavSection } from '@/lib/nav'
-import { TILL_TARGET, opensTill } from '@/lib/openTill'
+import { TILL_TARGET, INVOICING_TARGET, opensTill, opensInInvoicingWindow } from '@/lib/openTill'
 import type { SearchHit, SearchSection } from '@/app/api/search/route'
 
 /**
@@ -248,6 +248,13 @@ export default function GlobalSearch({
       /* No 'noopener' feature: it would strip the window's name and open a
          SECOND till on every search — see the note in lib/openTill.ts. */
       window.open(href, TILL_TARGET)
+      return
+    }
+    /* The trade counter is the same story under its own name: "Open invoicing"
+       is a row in this list, and pushing it here would swallow the back office
+       on the one route that reaches it by search rather than by sidebar. */
+    if (opensInInvoicingWindow(href)) {
+      window.open(href, INVOICING_TARGET)
       return
     }
     router.push(href)

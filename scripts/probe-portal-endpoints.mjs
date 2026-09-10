@@ -400,6 +400,27 @@ record(
   dbShape,
 )
 
+/* ── Staff and permissions ───────────────────────────────────────────────────
+ *
+ * These four are the ones with no fallback worth the name. Every other read in
+ * this file degrades to MySQL on a desktop install and merely fails; these are
+ * loaded by a SERVER COMPONENT, so a 404 here is not a degraded screen but a
+ * dead one — pool() refuses the socket, the component throws, and the shop gets
+ * an error card. That is what made them worth adding to this inventory.
+ *
+ * The granter is taken from /users/accounts rather than guessed: the portal
+ * scopes grants to stores the granter actually holds, so a made-up id answers
+ * an empty list and a broken route would look identical to a working one.
+ */
+const accountsRes = await send('GET', '/users/accounts')
+record('users accounts', 'GET', '/users/accounts', accountsRes, (p) =>
+  p && Array.isArray(p.accounts) ? null : 'no accounts[] in the payload',
+)
+const probeUserIds = (accountsRes.payload?.accounts ?? [])
+  .map((a) => Number(a?.id))
+  .filter((id) => Number.isFinite(id) && id > 0)
+const probeGranter = probeUserIds[0] ?? 0
+
 /* ── The signed posts that read rather than write ─────────────────────────── */
 
 console.log('\n  Signed posts (read-only)\n')
@@ -422,6 +443,36 @@ record(
   '/licence/offer',
   await send('POST', '/licence/offer', { serial: PROBE_SERIAL }),
   (p) => (p && typeof p === 'object' ? null : 'the body is not an object'),
+)
+
+/* usersPortal.ts:83 — the multi-store tick list on the edit form. */
+record(
+  'users grants',
+  'POST',
+  '/users/grants',
+  await send('POST', '/users/grants', { granter: probeGranter, target: null }),
+  (p) => (p && Array.isArray(p.grants) ? null : 'no grants[] in the payload'),
+)
+
+/* usersPortal.ts:107 — what each of them may ALREADY open. The edit form
+   overwrites this on save, so a wrong answer here rewrites somebody's access. */
+record(
+  'users access',
+  'POST',
+  '/users/access',
+  await send('POST', '/users/access', { granter: probeGranter, userIds: probeUserIds }),
+  (p) => (p && p.access && typeof p.access === 'object' ? null : 'no access{} in the payload'),
+)
+
+/* usersPortal.ts:139 — "does this address already have a login". Asked with an
+   address that cannot exist, so the answer is a known null and nothing is
+   disclosed about anyone real. */
+record(
+  'users lookup-email',
+  'POST',
+  '/users/lookup-email',
+  await send('POST', '/users/lookup-email', { email: 'probe@example.invalid' }),
+  (p) => (p && 'id' in p ? null : 'no id in the payload'),
 )
 
 /* ── Signature negatives — proves the portal is CHECKING, not just answering ── */
@@ -454,6 +505,9 @@ const WRITES = [
   ['POST', '/billing/modules/remove', 'billingWritePortal.scheduleRemoval'],
   ['POST', '/billing/modules/cancel-removal', 'billingWritePortal.cancelRemoval'],
   ['POST', '/billing/devices', 'billingWritePortal.setRequestedDevices — orders tills'],
+  ['POST', '/users/provision', 'usersPortal.provisionControlAccount — creates a login'],
+  ['POST', '/users/revoke', 'usersPortal.revokeSiteAccess — takes a store away'],
+  ['POST', '/site/vat', 'sitePortal.saveVatNumber — changes what prints on tax invoices'],
 ]
 
 console.log('\n  Writes\n')

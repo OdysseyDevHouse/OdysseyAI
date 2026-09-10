@@ -104,8 +104,8 @@ check('the first crumb links back to the hub', breadcrumbFor('/setup/terminals')
    named row is resolved by the section scan before `hubFor` is ever asked.
    Roles hangs off it and has to follow — it is reached from a button on the
    Users screen, so a trail saying "Setup" would name a hub nobody came from. */
-check('/setup/users', crumbs('/setup/users'), ['Staff', 'Users and permissions'])
-check('/setup/roles', crumbs('/setup/roles'), ['Staff', 'Users and permissions', 'Roles & permissions'])
+check('/setup/users', crumbs('/setup/users'), ['Staff', 'Staff and permissions'])
+check('/setup/roles', crumbs('/setup/roles'), ['Staff', 'Staff and permissions', 'Roles & permissions'])
 check('/accounting/vat', crumbs('/accounting/vat'), ['Accounting', 'VAT return'])
 check('/online-store/orders', crumbs('/online-store/orders'), ['Online Store', 'Orders'])
 /* A hub screen whose ROUTE lives elsewhere still belongs to the hub that lists
@@ -142,7 +142,7 @@ check('/accounting/assets/depreciation', crumbs('/accounting/assets/depreciation
    figures they price. Their SUBPAGE_LABELS keys stay because the breadcrumb
    and SubpageHref both read them.
 
-   Users and permissions made the same journey and is the one screen that kept
+   Staff and permissions made the same journey and is the one screen that kept
    its tile as well — the Staff section can be switched off under Menu &
    modules, and the screen that lets people back in must not go with it. That
    makes it the single allowed exception to the menu-row-and-hub-tile invariant
@@ -469,7 +469,7 @@ check('every item href is unique', [...new Set(duplicates)], [])
    that some hub also lists as one of its tiles.
 
    ONE screen is allowed both, deliberately, and it is named here rather than
-   left to slip through: Users and permissions. It is a row under Staff, and
+   left to slip through: Staff and permissions. It is a row under Staff, and
    Staff is a menu AREA a shop can switch off — so without the tile, hiding the
    roster would hide the only way to let somebody back in. The drift this rule
    guards against cannot happen to it either way, because the tile and the row

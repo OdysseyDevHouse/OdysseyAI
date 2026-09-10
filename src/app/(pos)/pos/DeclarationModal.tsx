@@ -17,7 +17,7 @@ import {
   Icons,
   Input,
   Modal,
-  NumPad,
+  PadPopover,
   RowDisclosure,
   Select,
   TABLE,
@@ -249,6 +249,22 @@ export default function DeclarationModal({
    * buffer alone produced one bug or the other every time.
    */
   const [editing, setEditing] = useState(false)
+
+  /**
+   * The box the pad is hanging off, as an element.
+   *
+   * The pad is no longer a fixed block at the bottom of panel 1 — it is
+   * summoned by the box being typed into and drawn beside it, so it needs the
+   * box itself rather than merely knowing which one is aimed. Captured from
+   * the focus (or tap) that aimed it, because the alternative is a ref per
+   * input across three panels and eleven denominations.
+   *
+   * Held ALONGSIDE `target` rather than derived from it: `target` is what the
+   * arithmetic is about, this is only where the keys go, and an element in the
+   * middle of the count's own state would be the one piece of it that cannot be
+   * reasoned about.
+   */
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
 
   /* Loaded on open rather than held: a shift's takings move with every sale,
      so a view cached from the last time this was opened would be counting
@@ -519,7 +535,12 @@ export default function DeclarationModal({
 
   /** Focus moved, or Enter pressed: bank what was typed, then aim at the new box. */
   const aim = useCallback(
-    (next: Target, seed = '') => {
+    (next: Target, seed = '', el: HTMLElement | null = null) => {
+      /* Set here rather than inside the updater below: a state updater runs
+         during render, and aiming the pad at a DOM node from inside one is the
+         kind of side effect that fires twice in development and once in
+         production. */
+      setAnchorEl(next === null ? null : el)
       setTarget((current) => {
         setEntry((typed) => {
           if (current && typed !== '') commit(current, typed)
@@ -556,6 +577,20 @@ export default function DeclarationModal({
     return String(bankDeclared)
   }, [editing, entry, target, declared, qty, bankDeclared, smallChange])
 
+  /**
+   * The aim, dropped WITHOUT banking what is in the buffer.
+   *
+   * `aim(null)` is the ordinary way to put the keys away and it commits, which
+   * is right for every dismissal a person performs. This is for the one case
+   * where the BOX is about to disappear — see toggleCounting.
+   */
+  function dropAim() {
+    setTarget(null)
+    setAnchorEl(null)
+    setEntry('')
+    setEditing(false)
+  }
+
   /** The pad wrote to the buffer, so it is a live edit from here. */
   const typeInto = useCallback((next: string) => {
     setEditing(true)
@@ -570,40 +605,127 @@ export default function DeclarationModal({
     [view],
   )
 
+  /* ── What the aim is, read without rebinding ──────────────────────────────
+     `onEnter` is the window's Enter handler, so it must not be rebuilt on every
+     keystroke — a listener torn down and re-added per digit is how one press
+     ends up handled twice. It reads the live aim and buffer through these
+     instead of closing over them. */
+  const targetRef = useRef(target)
+  targetRef.current = target
+  const entryRef = useRef(entry)
+  entryRef.current = entry
+
+  /* The board, so Enter can find the next box by name and put the focus in it.
+     Scoped to this dialog rather than the document: the POS never unmounts a
+     modal (see padKeys.ts), so a document-wide query is a query across screens
+     that are merely closed. */
+  const boardRef = useRef<HTMLDivElement>(null)
+
+  /** The name a box answers to — `data-pad-box` on every one of them. */
+  function boxKey(t: Target) {
+    if (!t) return ''
+    return t.kind === 'denomination' || t.kind === 'tender' ? `${t.kind}:${t.id}` : t.kind
+  }
+
+  /**
+   * Aims the pad at a box — from a focus OR a tap, and it needs both.
+   *
+   * The pad can be dismissed while its box keeps the focus, and a second tap on
+   * a box the browser already considers focused fires no focus event at all. On
+   * focus alone the keys would then refuse to come back to the box the cashier
+   * is plainly tapping.
+   *
+   * Already aimed here, only the anchor is refreshed. Re-aiming would commit the
+   * half-typed figure and then re-seed the box from the value it held BEFORE
+   * that commit — a box reading 3 over a count of 35.
+   */
+  const aimBox = useCallback(
+    (next: Target, seed: string, el: HTMLElement | null) => {
+      if (next !== null && targetRef.current !== null && boxKey(next) === boxKey(targetRef.current)) {
+        setAnchorEl(el)
+        return
+      }
+      aim(next, seed, el)
+    },
+    [aim],
+  )
+
   const onEnter = useCallback(() => {
-    setTarget((current) => {
-      /*
-        THE BUFFER ALWAYS CLEARS; WHERE THE AIM GOES IS WHAT DIFFERS.
+    const current = targetRef.current
+    const typed = entryRef.current
 
-        On a denomination, Enter moves DOWN a row — the buffer empties for the
-        pile about to be counted and the row just left renders its committed
-        quantity.
+    /*
+      THE BUFFER ALWAYS CLEARS; WHERE THE AIM GOES IS WHAT DIFFERS.
 
-        Otherwise the aim is DROPPED entirely. It used to stay put with the
-        typed string retained, so the box would not look empty — but the buffer
-        belongs to whatever is aimed, so that "100" followed the cashier to the
-        next tender they touched and committed itself there a second time.
+      On a denomination, Enter moves DOWN a row — the buffer empties for the
+      pile about to be counted and the row just left renders its committed
+      quantity.
 
-        With no target the box falls back to its committed value, which is the
-        same figure on screen and nothing left to leak. The pad greys out until
-        another box is tapped, which is honest: there is nothing to type into.
-      */
-      const movingOn =
-        current?.kind === 'denomination' &&
-        denominationOrder.indexOf(current.id) < denominationOrder.length - 1
+      Otherwise the aim is DROPPED entirely. It used to stay put with the typed
+      string retained, so the box would not look empty — but the buffer belongs
+      to whatever is aimed, so that "100" followed the cashier to the next
+      tender they touched and committed itself there a second time.
 
-      setEntry((typed) => {
-        if (current && typed !== '') commit(current, typed)
-        return ''
-      })
-      /* Committed, not cleared — the box goes back to showing its figure. */
-      setEditing(false)
+      With no target the box falls back to its committed value, which is the
+      same figure on screen and nothing left to leak. The pad closes, which is
+      honest: there is nothing to type into.
+    */
+    if (current && typed !== '') commit(current, typed)
+    setEntry('')
+    /* Committed, not cleared — the box goes back to showing its figure. */
+    setEditing(false)
 
-      if (!movingOn) return current
-      const at = denominationOrder.indexOf((current as { kind: 'denomination'; id: number }).id)
-      return { kind: 'denomination', id: denominationOrder[at + 1] }
-    })
-  }, [commit, denominationOrder])
+    const at = current?.kind === 'denomination' ? denominationOrder.indexOf(current.id) : -1
+    if (at < 0 || at >= denominationOrder.length - 1) {
+      aim(null)
+      return
+    }
+
+    const nextId = denominationOrder[at + 1]
+    setTarget({ kind: 'denomination', id: nextId })
+    /*
+      AND THE FOCUS FOLLOWS THE AIM.
+
+      It used to stay on the row just counted, which was harmless while the pad
+      was a fixed block at the bottom of the panel. A pad that hangs off the
+      focused box cannot afford it: the keys would be left beside the row above
+      the one they are typing into. Focusing the next box re-aims through
+      `aimBox`, which is what carries the anchor with it.
+    */
+    boardRef.current
+      ?.querySelector<HTMLInputElement>(`[data-pad-box="denomination:${nextId}"]`)
+      ?.focus()
+  }, [aim, commit, denominationOrder])
+
+  /**
+   * What the pad says it is typing into.
+   *
+   * The keys float over the board now rather than sitting under it in a panel
+   * with a heading, so the pad has to name its own box: a floating pad with no
+   * caption is one you have to look away from to identify, which on a count is
+   * the moment you lose your place in the drawer.
+   */
+  const padLabel = useMemo(() => {
+    if (!target || !view) return ''
+    if (target.kind === 'denomination') {
+      const d = view.denominations.find((x) => x.id === target.id)
+      return d ? `${d.label} · how many` : 'How many'
+    }
+    if (target.kind === 'tender') {
+      const t = view.tenders.find((x) => x.tenderTypeId === target.id)
+      return t ? `${t.tenderName} · declared` : 'Declared'
+    }
+    if (target.kind === 'smallChange') return 'Small change · amount'
+    return 'Bank declared · amount'
+  }, [target, view])
+
+  /* Enter does two different things, so it says which. On any denomination but
+     the last it drops to the next pile — the reason a drawer can be counted
+     without reaching for the screen. Anywhere else it banks the figure and puts
+     the keys away. */
+  const padDropsDown =
+    target?.kind === 'denomination' &&
+    denominationOrder.indexOf(target.id) < denominationOrder.length - 1
 
   /* Enter is the pad's own key and belongs to it, not the dialog — a cash-up is
      not a form that submits, and letting Enter fall through to the footer would
@@ -695,6 +817,20 @@ export default function DeclarationModal({
    */
   function toggleCounting() {
     if (signed || !cashTender) return
+    /*
+      THE KEYS GO BEFORE THE BOXES DO.
+
+      Folding the grid away unmounts every denomination box, and the pad hangs
+      off one of them — left aimed, it would be positioned against an element
+      that is no longer in the document.
+
+      Dropped rather than banked, deliberately. The line below commits the
+      grid's total as the cash figure from the counts as they stand; banking the
+      buffer here would land the pile in `qty` AFTER that total was taken, and
+      the tender and the grid would disagree by exactly one pile. A half-typed
+      pile is lost either way — which is what folding a count away means.
+    */
+    if (countingCash) dropAim()
     setCountingCash((wasOpen) => {
       if (wasOpen) {
         commit({ kind: 'tender', id: cashTender.tenderTypeId }, String(declaredCash))
@@ -753,8 +889,9 @@ export default function DeclarationModal({
       onClose={onClose}
       size="full"
       bodyFills
-      /* The pad bar spends a fixed ~250px of the body on touch-size keys, so
-         the content above it needs more than 70vh to stay readable. */
+      /* Still tall, though the pad no longer sits in the body: three panels of
+         figures and a denomination grid want every row of a till screen they
+         can get, and the height the keys used to take is now the count's. */
       bodyTall
       title="Cash-up / Cash declaration"
       /* The screen's crest. `titleMedia` is the kit's own slot for this, so the
@@ -849,11 +986,12 @@ export default function DeclarationModal({
         )
       ) : (
         /* `min-h-0` and NOT `overflow-y-auto`: the body no longer scrolls as
-           one piece. Panel 1 pins its pad to its own bottom, and a pad inside a
-           scrolling parent slides away with everything else however it is
-           positioned — the parent is what moves. So the height stops here and
-           each column overflows inside itself. */
-        <div className="flex min-h-0 flex-col gap-4">
+           one piece. Each column has its own subject and its own length — the
+           count is eleven denominations deep while the counters beside it are a
+           fixed grid — and scrolling all three together means dragging the
+           finished panels past to reach the row being counted. So the height
+           stops here and each column overflows inside itself. */
+        <div ref={boardRef} className="flex min-h-0 flex-col gap-4">
           {/*
             ── A SIGNED CASH-UP IS THE SAME BOARD, READ-ONLY ──────────────────
 
@@ -909,14 +1047,12 @@ export default function DeclarationModal({
               `min-h-0 xl:flex-1` so the row takes the height the body has left
               rather than its content's height — which is what lets panel 1 be a
               fixed-height box with a scroller in it. Below xl the columns stack
-              and the whole thing scrolls normally, because a stacked pad at the
-              bottom of a phone-shaped modal would cover the boxes it types
-              into. */}
+              and the whole thing scrolls normally: three panes each scrolling
+              inside a phone-shaped modal is three scrollbars and no page. */}
           {/* The middle and right columns are wider than an equal split:
               "Direct deposit" wrapped onto two lines in the tender table and
               the supervisor's name truncated mid-word, both because a third
-              each is not what this content needs. The count column is the one
-              with a fixed-width pad in it, so it is the one that can be pinned. */}
+              each is not what this content needs. */}
           {/* Panel 1 got the width the merge needs. At 25rem it was sized for
               a column of labelled boxes; it now holds a four-column table with
               the denomination grid nested inside it, and at the old width the
@@ -924,26 +1060,26 @@ export default function DeclarationModal({
               other two columns hold read-only figures and give the room up more
               cheaply than the count can do without it. */}
           <div className="grid min-h-0 flex-1 auto-rows-fr gap-4 xl:grid-cols-[minmax(0,38rem)_minmax(0,1fr)_minmax(0,1fr)]">
-            {/* ── 1 · Everything being declared, and the pad that types it ──
-                THE PAD IS FIXED TO THE BOTTOM; THE DECLARATION SCROLLS ABOVE IT.
+            {/* ── 1 · Everything being declared ─────────────────────────────
+                THE WHOLE PANEL IS THE DECLARATION. THE KEYS ARE A VISITOR.
 
-                The pad used to sit beside the boxes, which kept both on screen
-                but cost the count half its width — and once cash, its
-                denomination grid and every other tender lived in one panel,
-                the column beside a 12rem pad was too narrow to read.
+                A pad has lived in this panel twice — first beside the boxes,
+                which cost the count half its width, then bolted under them,
+                which cost it ~250px of height. Both were the same mistake at a
+                different angle: permanent room for keys that are only wanted
+                while a box is being typed into, taken out of the one panel on
+                this board that has a LIST to read. On a tabletop till that left
+                the declaration showing through a slot two or three rows deep.
 
-                Below and fixed is the arrangement a till actually wants: the
-                keys never move, they are near the thumb at the bottom of the
-                screen, and the list above scrolls to whatever is being counted.
-                `shrink-0` on the pad and `min-h-0 overflow-y-auto` on the list
-                is what splits them — without `min-h-0` the list refuses to
-                shrink below its content and pushes the pad off the panel, which
-                is the flex-column trap this codebase has hit before. */}
+                The keys come to the box now (PadPopover, at the foot of this
+                file), so the panel is the list and nothing else: `min-h-0
+                overflow-y-auto` on the scroller inside a `fills` panel, and the
+                only fixed thing under it is one line of type saying where the
+                keys went. */}
             <Panel n={1} title="Declare your takings" fills>
               <div className="flex min-h-0 flex-1 flex-col gap-4">
-              {/* The whole declaration in one scroller. The pad is no longer in
-                  here competing for the height — it spans the modal's own
-                  bottom, under all three columns. */}
+              {/* The whole declaration in one scroller, and nothing competing
+                  with it for the panel's height. */}
               {/* `till-pane`: a 12px thumb and contained overscroll, because
                   this is read at arm's length and dragged with a finger. The
                   app's 8px default is both invisible and unhittable on a
@@ -954,8 +1090,8 @@ export default function DeclarationModal({
                   computes overflow-x to `auto` as well, so a single stray
                   pixel from a future badge or a long tender name would put a
                   12px scrollbar (see .till-pane) across the bottom of the
-                  count, right where the pad begins. This pane scrolls DOWN.
-                  Saying so is cheaper than rediscovering it. */}
+                  count. This pane scrolls DOWN. Saying so is cheaper than
+                  rediscovering it. */}
               <div className="till-pane min-w-0 flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto">
                 {/*
                   "Nothing was taken" is only true if nothing was taken.
@@ -997,8 +1133,9 @@ export default function DeclarationModal({
                   what is being said it took, and the gap between them.
 
                   `table-fixed` so the columns divide the width they are GIVEN.
-                  Left to itself the table sizes to its content and spills under
-                  the pad, which is what put the Amount column behind the keys.
+                  Left to itself the table sizes to its content and spills out
+                  of the pane, which is what once put the Amount column behind
+                  the pad that used to sit under it.
                 */}
                 {view.tenders.length > 0 && (
                   <table className={`${TABLE} table-fixed`}>
@@ -1181,13 +1318,31 @@ export default function DeclarationModal({
                                      come to disagree. */
                                   readOnly={signed || (isCash && countingCash)}
                                   disabled={locked}
+                                  /* The name the pad finds this box by when the
+                                     aim moves without a finger — see onEnter. */
+                                  data-pad-box={`tender:${t.tenderTypeId}`}
+                                  /* Focus AND tap: a box that already holds the
+                                     focus fires no focus event, so a second tap
+                                     on it is the only thing that can call the
+                                     keys back after the pad was dismissed. */
                                   onFocus={
                                     signed || (isCash && countingCash)
                                       ? undefined
-                                      : () =>
-                                          aim(
+                                      : (e) =>
+                                          aimBox(
                                             { kind: 'tender', id: t.tenderTypeId },
                                             value === undefined ? '' : String(value),
+                                            e.currentTarget,
+                                          )
+                                  }
+                                  onClick={
+                                    signed || (isCash && countingCash)
+                                      ? undefined
+                                      : (e) =>
+                                          aimBox(
+                                            { kind: 'tender', id: t.tenderTypeId },
+                                            value === undefined ? '' : String(value),
+                                            e.currentTarget,
                                           )
                                   }
                                   onChange={(e) =>
@@ -1286,13 +1441,27 @@ export default function DeclarationModal({
                                                 value={dAimed ? entry : n === 0 ? '' : String(n)}
                                                 disabled={locked}
                                                 readOnly={signed}
+                                                /* What Enter looks for when it
+                                                   drops to the next pile. */
+                                                data-pad-box={`denomination:${d.id}`}
                                                 onFocus={
                                                   signed
                                                     ? undefined
-                                                    : () =>
-                                                        aim(
+                                                    : (e) =>
+                                                        aimBox(
                                                           { kind: 'denomination', id: d.id },
                                                           n === 0 ? '' : String(n),
+                                                          e.currentTarget,
+                                                        )
+                                                }
+                                                onClick={
+                                                  signed
+                                                    ? undefined
+                                                    : (e) =>
+                                                        aimBox(
+                                                          { kind: 'denomination', id: d.id },
+                                                          n === 0 ? '' : String(n),
+                                                          e.currentTarget,
                                                         )
                                                 }
                                                 onChange={(e) =>
@@ -1359,11 +1528,26 @@ export default function DeclarationModal({
                                         }
                                         disabled={locked}
                                         readOnly={signed}
+                                        data-pad-box="smallChange"
                                         onFocus={
                                           signed
                                             ? undefined
-                                            : () =>
-                                                aim({ kind: 'smallChange' }, String(smallChange))
+                                            : (e) =>
+                                                aimBox(
+                                                  { kind: 'smallChange' },
+                                                  String(smallChange),
+                                                  e.currentTarget,
+                                                )
+                                        }
+                                        onClick={
+                                          signed
+                                            ? undefined
+                                            : (e) =>
+                                                aimBox(
+                                                  { kind: 'smallChange' },
+                                                  String(smallChange),
+                                                  e.currentTarget,
+                                                )
                                         }
                                         onChange={(e) =>
                                           typeInto(
@@ -1405,58 +1589,25 @@ export default function DeclarationModal({
               </div>
 
               {/*
-                ── THE PAD, ANCHORED TO THIS PANEL ───────────────────────────
+                ── THE KEYS ARE NOT HERE ANY MORE ────────────────────────────
 
-                `shrink-0` under a `min-h-0 overflow-y-auto` list: the list gives
-                way, the keys never do. It briefly spanned the whole dialog
-                instead, which bought the declaration height but put the pad at
-                the bottom of a modal whose columns scroll — so on a short screen
-                you could scroll the keys out of reach, which is the one thing a
-                numpad must never do.
+                A pad used to be bolted to the bottom of this panel: ~250px of
+                keys, permanently on screen, taken out of the one panel on the
+                board that has something to read. On a tabletop till that left
+                the declaration itself showing through a slot two or three rows
+                deep — a drawer of eleven denominations counted through a
+                letterbox.
 
-                Here it cannot move at all. The panel owns its height, the list
-                inside it scrolls, and the keys sit under that list wherever the
-                scroll happens to be.
+                The keys now come to the box instead (see PadPopover below), so
+                what is left here is one line saying so. Discoverability is the
+                whole job of it: a cashier who has always seen keys on this
+                screen must not conclude the till has lost them.
               */}
-              {/* Gone entirely on a signed cash-up: a pad that cannot type is
-                  a third of the panel spent telling somebody so, and the
-                  record it sits under is the thing they opened this to read. */}
-              <div className={`shrink-0 border-t border-border pt-3 ${signed ? 'hidden' : ''}`}>
-                <div className="flex items-start justify-center gap-3">
-                  {/* A stable key size under the thumb — not a fraction, which
-                      would resize the keys every time the column did. */}
-                  <div className="w-[13rem] shrink-0">
-                    <NumPad
-                      value={padValue}
-                      onChange={typeInto}
-                      /* Whole numbers when counting a pile of notes, decimals
-                         when declaring a machine slip. */
-                      maxDecimals={target?.kind === 'denomination' ? 0 : 2}
-                      disabled={locked || target === null}
-                    />
-                  </div>
-                  {/* Beside the keys rather than under them: stacked, the button
-                      and its hint were the first things pushed off the panel. */}
-                  <div className="flex min-w-0 flex-1 flex-col gap-2">
-                    <Button
-                      variant="primary"
-                      size="touch"
-                      disabled={locked || target === null}
-                      onClick={onEnter}
-                    >
-                      Enter
-                      {/* The arrow says what the key DOES — drops to the next
-                         row — which the word alone does not. */}
-                      <Icons.ArrowRight size={16} />
-                    </Button>
-                    <p className="text-xs text-muted">
-                      {target === null
-                        ? 'Tap a box to start counting — the pad types into it.'
-                        : 'Enter drops to the next row down.'}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              {!signed && (
+                <p className="shrink-0 border-t border-border pt-2 text-xs text-muted">
+                  Tap any box to count it — the number pad opens beside it.
+                </p>
+              )}
               </div>
             </Panel>
 
@@ -1503,7 +1654,16 @@ export default function DeclarationModal({
                       data-lpignore="true"
                       value={target?.kind === 'bank' ? entry : bankDeclared.toFixed(2)}
                       disabled={locked}
-                      onFocus={() => aim({ kind: 'bank' }, String(bankDeclared))}
+                      data-pad-box="bank"
+                      /* The pad reaches this panel now. It never did before: the
+                         keys lived at the bottom of panel 1, so the bag figure
+                         was the one amount on the board a till typed by hand. */
+                      onFocus={(e) =>
+                        aimBox({ kind: 'bank' }, String(bankDeclared), e.currentTarget)
+                      }
+                      onClick={(e) =>
+                        aimBox({ kind: 'bank' }, String(bankDeclared), e.currentTarget)
+                      }
                       onChange={(e) =>
                         typeInto(e.target.value.replace(',', '.').replace(/[^0-9.]/g, ''))
                       }
@@ -1764,6 +1924,44 @@ export default function DeclarationModal({
 
             </div>
           </div>
+
+          {/*
+            ── THE PAD, SUMMONED BY THE BOX IT TYPES INTO ────────────────────
+
+            Rendered here, at the end of the board, but positioned against
+            whatever is aimed — it is `fixed`, so where it sits in the markup
+            decides nothing but its stacking. It draws inside the <dialog>
+            rather than through a portal, because a portal to document.body
+            would put it UNDER a modal drawn in the top layer.
+
+            `open` is simply "a box is aimed", which is what makes the pad
+            arrive on a tap and leave on Escape, on a tap elsewhere, and on the
+            Enter that finishes the last row — all of it already expressed by
+            the aim rather than by a second piece of state that could disagree
+            with it.
+
+            Never on a signed cash-up: those boxes are inert, and keys that
+            cannot type are keys in the way of a record somebody opened this to
+            read.
+          */}
+          <PadPopover
+            open={!signed && target !== null}
+            anchor={anchorEl}
+            label={padLabel}
+            value={padValue}
+            onChange={typeInto}
+            /* Whole numbers when counting a pile of notes, decimals when
+               declaring a machine slip. */
+            maxDecimals={target?.kind === 'denomination' ? 0 : 2}
+            disabled={locked}
+            onEnter={onEnter}
+            hint={
+              padDropsDown ? 'Enter drops to the next row down.' : 'Enter banks this figure.'
+            }
+            /* Dismissed — bank whatever is in the buffer rather than dropping
+               it. Somebody who has typed 240 and tapped away meant the 240. */
+            onClose={() => aim(null)}
+          />
         </div>
       )}
     </Modal>

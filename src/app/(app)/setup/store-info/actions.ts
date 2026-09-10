@@ -5,6 +5,7 @@ import { actorFor, requireSite } from '@/lib/auth'
 import { setLogo, clearLogo } from '@/lib/site/documentLogo'
 import {
   updateSiteDetails,
+  updateSiteVatNumber,
   isControlUnreachable,
   SITE_DETAIL_LIMITS,
   type SiteDetails,
@@ -222,44 +223,31 @@ export async function saveStoreDetailsAction(form: FormData): Promise<ActionResu
 
   if (locked) {
     /*
-     * ── THE LOCAL PATH: ONE FIELD, AND THE REST TAKEN FROM THE MIRROR ───────
+     * ── THE LOCAL PATH: ONE FIELD, AND ONLY THAT FIELD ─────────────────────
      *
-     * Built by starting from what the site already says it is and overlaying
-     * only the permitted keys. The other direction — taking the form and
-     * blanking what is not allowed — is the one that loses data: a local store
-     * reading its details out of a possibly-stale mirror would post that copy
-     * back and overwrite anything support changed since.
-     *
-     * `updateSiteDetails` writes every column, so the unchanged ones have to
-     * carry their real current values rather than nulls.
+     * Compared against what the site already says it is, and then written by
+     * name. This used to overlay the permitted keys onto a whole SiteDetails
+     * built from the mirror and post all eleven columns back — which worked,
+     * and carried the hazard the overlay was written to avoid: the mirror can
+     * be stale, so a save could put yesterday's address over something support
+     * changed this morning. `updateSiteVatNumber` names one column instead, so
+     * there is nothing else in the statement to be stale.
      */
-    const current: SiteDetails = {
-      companyName: site.companyName,
-      tradingName: site.tradingName,
-      registrationNumber: site.registrationNumber,
+    const current: Pick<SiteDetails, (typeof LOCAL_EDITABLE)[number]> = {
       vatNumber: site.vatNumber,
-      address1: site.address1,
-      address2: site.address2,
-      address3: site.address3,
-      postalCode: site.postalCode,
-      phone: site.phone,
-      email: site.email,
-      contactName: site.contactName,
     }
-    const merged = { ...current }
-    for (const key of LOCAL_EDITABLE) merged[key] = parsed.details[key]
 
     /* Nothing to do — and saying so beats a success message for a write that
        would change nothing, which is what a local store gets if it edits the
        address fields the screen already showed it as read-only. */
-    const touched = LOCAL_EDITABLE.some((key) => merged[key] !== current[key])
+    const touched = LOCAL_EDITABLE.some((key) => parsed.details[key] !== current[key])
     if (!touched) {
       return { ok: false, error: locked }
     }
 
     let localChanged: boolean
     try {
-      localChanged = await updateSiteDetails(site.id, merged)
+      localChanged = await updateSiteVatNumber(site.id, parsed.details.vatNumber)
     } catch (err) {
       console.error('[store-info] could not save the VAT number', err)
       /*
@@ -271,6 +259,16 @@ export async function saveStoreDetailsAction(form: FormData): Promise<ActionResu
        * note above on why that helper rather than a code test here. Everything else
        * reached the control panel and was refused there, and telling somebody
        * to check their connection about it wastes their afternoon.
+       *
+       * ── THIS ONCE FIRED ON A MACHINE WITH A PERFECT LINE ──────────────────
+       *
+       * isControlUnreachable counts ControlDbUnavailableOnDesktop as offline,
+       * deliberately — to the person reading, a refused socket and a dead line
+       * are the same situation. But there was no portal route for this write,
+       * so on a desktop install EVERY save reached that refusal and every shop
+       * was told to check a connection that was fine. The remedy was not a
+       * better message: it was the route, so that the sentence below is only
+       * ever printed when it is true. See lib/control/sitePortal.ts.
        */
       if (isControlUnreachable(err)) {
         return {

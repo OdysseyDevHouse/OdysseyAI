@@ -3,7 +3,7 @@ import {
   createProduct, updateProduct, getProduct,
   type ProductInput, type Product,
 } from '@/lib/site/products'
-import { saveLocationLevels, locationStockFor } from '@/lib/site/stockLocations'
+import { saveLocationLevels, levelsFor } from '@/lib/site/stockLocations'
 import { saveProductSuppliers } from '@/lib/site/productSuppliers'
 import { loadLookups, norm } from '../lookups'
 import { mergeForUpdate, fileSpeaksTo } from '../merge'
@@ -626,9 +626,11 @@ async function currentLevels(
 ): Promise<{ minStock: number; maxStock: number }> {
   // A file naming only a minimum must not reset the maximum to zero, which
   // saveLocationLevels would read as 'no ceiling'.
-  const rows = await locationStockFor(ctx.siteId, productId)
-  const row = rows.find((r) => r.locationId === locationId)
-  return { minStock: row?.minStock ?? 0, maxStock: row?.maxStock ?? 0 }
+  //
+  // levelsFor and not locationStockFor: this runs once per row of the file, and
+  // that one reads every room in the site plus a placement query, to hand back
+  // two numbers from one of them.
+  return levelsFor(ctx.siteId, productId, locationId)
 }
 
 function locationName(ctx: ApplyContext, id: number): string {

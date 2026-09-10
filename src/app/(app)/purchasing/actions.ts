@@ -234,6 +234,16 @@ export async function receiveGoodsAction(input: ReceiveInput): Promise<ReceiveAc
   revalidatePath('/purchasing')
   revalidatePath('/products')
   revalidatePath(`/suppliers/${input.supplierId}`)
+
+  // The products whose cost this receipt actually moved, expired one by one.
+  // The list above covers the grid, but a receipt reprices products that were
+  // never on it — a case bought under normal refers moves the single below it
+  // and every sibling pack — and their pages would go on serving the old cost
+  // out of the router cache until something unrelated evicted it. That is the
+  // shape of "the cost did not update" even when the database is right.
+  for (const productId of result.recosted) {
+    revalidatePath(`/products/${productId}`)
+  }
   return result
 }
 

@@ -7,6 +7,7 @@ import DepartmentPicker from '@/components/DepartmentPicker'
 import BrandPicker from '@/components/BrandPicker'
 import PricingPanel, { type StoreLine } from '@/components/PricingPanel'
 import LocationStockPanel, { type LocationStockRow } from '@/components/LocationStockPanel'
+import type { LocationBinOptions } from '@/lib/site/stockBins'
 import LinkedStoresPanel from '@/components/LinkedStoresPanel'
 import type { LinkedProductView } from '@/lib/site/productFanout'
 import ProductTypePanel from '@/components/ProductTypePanel'
@@ -124,6 +125,7 @@ export default function ProductForm({
   currentSiteId,
   linkedStores,
   locationStock = [],
+  binOptions = [],
   linkedLines,
   sharesCost: defaultSharesCost,
   sharesSelling: defaultSharesSelling,
@@ -209,6 +211,8 @@ export default function ProductForm({
    * so the new-product form, which has no piles yet, need not pass it.
    */
   locationStock?: LocationStockRow[]
+  /** This store's shelves and bins, per location (254). Empty until any exist. */
+  binOptions?: LocationBinOptions
   /** Editable lines for those stores, keyed to this store's price structures. */
   linkedLines: StoreLine[]
   sharesCost: boolean
@@ -890,6 +894,7 @@ export default function ProductForm({
                  so offering the button would promise something it cannot do.
                  The action refuses it too — this just stops the offer. */
               canAdjust={canQuickAdjust && productType !== 'serial'}
+              binOptions={binOptions}
               stores={[
                 {
                   siteId: currentSiteId,

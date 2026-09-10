@@ -63,6 +63,13 @@ import { dirname, join } from 'node:path'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const ROLES = ['backoffice', 'pos', 'database']
 
+const AWS_FALLBACKS = [
+  'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe',
+  'C:\\Program Files (x86)\\Amazon\\AWSCLIV2\\aws.exe',
+]
+
+let awsCommand = null
+
 const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
 const force = args.includes('--force')
@@ -351,6 +358,57 @@ function remoteExists(key) {
   return r.status === 0
 }
 
+/**
+ * How to invoke the AWS CLI on this machine.
+ *
+ * ── PATH IS NOT ENOUGH, AND THE REASON IS ANNOYING ──────────────────────────
+ *
+ * Windows hands a process its environment when it STARTS. Install the CLI and
+ * every terminal, editor and shell already open keeps the PATH it was born
+ * with — so `aws` is installed, on the machine PATH, and still "not recognized
+ * as an internal or external command" in the window you are typing in. The fix
+ * is to open a new terminal, which is unguessable from the error and has to be
+ * rediscovered by whoever hits it next.
+ *
+ * It bites exactly once per machine, on the first release after setup, which is
+ * the worst possible moment: the first time anybody publishes is the time they
+ * are least sure whether the thing is broken or they are.
+ *
+ * So the PATH is tried first — right on macOS, Linux, and any shell opened
+ * after the install — and the default Windows location is checked before
+ * giving up.
+ */
+function awsBin() {
+  if (awsCommand) return awsCommand
+
+  /* `--version` rather than a lighter probe because there is no lighter probe:
+     the question is whether the shell can RESOLVE the name, and only running it
+     answers that. Once per publish, and it costs a fraction of a second against
+     an upload measured in minutes. */
+  const onPath = spawnSync('aws', ['--version'], { stdio: 'ignore', shell: true })
+  if (!onPath.error && onPath.status === 0) {
+    awsCommand = 'aws'
+    return awsCommand
+  }
+
+  for (const candidate of AWS_FALLBACKS) {
+    if (!existsSync(candidate)) continue
+    awsCommand = candidate
+    /* Said out loud. The publish works either way, but a machine relying on the
+       fallback has a stale environment somewhere, and a person who knows that
+       can open a new terminal and stop paying for it. */
+    console.log(`  (using ${candidate} — 'aws' is not on this shell's PATH)`)
+    return awsCommand
+  }
+
+  fail(
+    'the AWS CLI is not installed, or this shell cannot see it. R2 speaks S3, so `aws` is what ' +
+      'uploads here — `winget install Amazon.AWSCLI`, then open a NEW terminal, because an ' +
+      'already-running one keeps the PATH it started with. See docs/updates.md.',
+  )
+  return null
+}
+
 function aws(argv, { allowFailure = false } = {}) {
   /* R2 has no regions, but the AWS CLI refuses to run without one and will
      otherwise take whatever is in the caller's AWS config — which on a machine
@@ -358,9 +416,14 @@ function aws(argv, { allowFailure = false } = {}) {
      what Cloudflare asks for. Passed here rather than documented as a setup
      step, because a step that can be forgotten will be. */
   const quoted = [...argv, '--region', 'auto'].map((a) => (/[\s"]/.test(a) ? `"${a}"` : a))
-  const r = spawnSync('aws', quoted, { stdio: allowFailure ? 'pipe' : 'inherit', shell: true })
+  const bin = awsBin()
+  /* shell:true concatenates rather than escaping, so a resolved path with a
+     space in it — which "C:\Program Files\…" always has — has to be quoted
+     here, or cmd runs "C:\Program" and reports something unrelated. */
+  const command = /\s/.test(bin) ? `"${bin}"` : bin
+  const r = spawnSync(command, quoted, { stdio: allowFailure ? 'pipe' : 'inherit', shell: true })
   if (r.error && r.error.code === 'ENOENT') {
-    fail('the AWS CLI is not installed. R2 speaks S3, so `aws` is what uploads here — see docs/updates.md.')
+    fail(`the AWS CLI could not be run (${bin}). See docs/updates.md.`)
   }
   if (!allowFailure && r.status !== 0) fail(`aws ${argv[0]} ${argv[1]} failed (exit ${r.status}).`)
   return r

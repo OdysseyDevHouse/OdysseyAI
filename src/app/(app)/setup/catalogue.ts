@@ -450,6 +450,21 @@ const DECLARED: DeclaredGroup<SetupHref>[] = [
         capability: 'setup.edit',
       },
       {
+        /* Beside Reconciliation rather than under a heading of its own: both
+           answer "is this machine in the state I think it is", and a technician
+           standing at a counter reaches for them in the same breath.
+
+           Desktop-only in practice — the screen says so plainly in a browser
+           rather than being hidden, because "where is the version number" is a
+           question worth answering wherever it is asked. */
+        href: '/setup/updates',
+        description: 'What version this machine runs, and install a new one now.',
+        keywords: 'update version upgrade release beta channel install restart patch',
+        icon: 'Download',
+        tone: 'sky',
+        capability: 'setup.edit',
+      },
+      {
         href: '/setup/training',
         description: 'Let someone practise on the real system, then remove everything they did.',
         keywords: 'training practice demo test sandbox learn staff dummy trial reset clear',

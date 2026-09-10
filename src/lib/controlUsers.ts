@@ -26,7 +26,7 @@ import * as portal from './control/usersPortal'
  *
  * A desktop build has no control-database socket to open — `pool()` refuses,
  * loudly, so a missing route shows up in testing rather than as a silent
- * degradation at a counter. This file had no route, so Users and permissions
+ * degradation at a counter. This file had no route, so Staff and permissions
  * did not degrade on such a machine: it threw, and the screen died.
  *
  * So each function below asks control/usersPortal.ts first and keeps its query
