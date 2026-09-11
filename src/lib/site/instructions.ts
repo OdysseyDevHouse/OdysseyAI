@@ -514,8 +514,49 @@ export async function validateReveals(
     return names.get(id) ?? `#${id}`
   }
 
+  /*
+   * How many questions already sit ABOVE this one.
+   *
+   * ── WHY THE WALK ALONE WAS NOT ENOUGH ───────────────────────────────────
+   *
+   * `walk` starts at the group being edited and only ever goes forward, so it
+   * measured the chain BELOW the edit and nothing above it. Editing the ROOT of
+   * a→b→c to add a fourth level was caught; editing the LEAF `c` to reveal `d`
+   * was not, because from c the walk sees a chain of two and stops happily —
+   * even though the shop now has a→b→c→d.
+   *
+   * The result was a four-deep menu that saved without complaint and was then
+   * silently truncated by `readInstructionLibrary`'s own cap, so the fourth
+   * question — possibly a REQUIRED one — simply never appeared at the till and
+   * nothing anywhere said why. This measures the deepest path leading INTO the
+   * group so the cap applies wherever in the chain somebody happens to edit.
+   */
+  const depthAbove = (() => {
+    const into = new Map<number, number[]>()
+    for (const [from, tos] of edges) {
+      for (const to of tos) {
+        const list = into.get(to)
+        if (list) list.push(from)
+        else into.set(to, [from])
+      }
+    }
+    let best = 0
+    const climb = (id: number, seen: Set<number>, height: number) => {
+      if (height > best) best = height
+      for (const parent of into.get(id) ?? []) {
+        // A cycle above is somebody else's error; stop rather than hang.
+        if (seen.has(parent)) continue
+        climb(parent, new Set([...seen, parent]), height + 1)
+      }
+    }
+    climb(groupId, new Set([groupId]), 0)
+    return best
+  })()
+
   // Walk forward from this group. `path` is the chain that got us here, so a
-  // repeat in it is a loop and its length is the depth.
+  // repeat in it is a loop and its length is the depth. `path` opens carrying
+  // the ancestors counted above, so the cap measures the WHOLE chain rather
+  // than only the part below the edit.
   const walk = async (
     from: number,
     path: number[],
@@ -524,11 +565,22 @@ export async function validateReveals(
       if (path.includes(next)) {
         return `“${await nameOf(next)}” would end up asking itself. Questions cannot loop back on themselves.`
       }
-      if (path.length + 1 >= MAX_REVEAL_DEPTH) {
-        const deeper = edges.get(next) ?? []
-        if (deeper.length) {
-          return `That would ask ${path.length + 2} questions in a row. A till can follow ${MAX_REVEAL_DEPTH}; ask the rest on the product instead.`
-        }
+      /*
+       * ⚠ THE DEPTH IS THE CHAIN ITSELF, not whether anything follows it.
+       *
+       * This used to fire only when `next` had children of its own — it asked
+       * "is there more after this?" rather than "is this already too deep?". A
+       * fourth question that happened to be a LEAF therefore saved cleanly,
+       * which is the ordinary shape of the mistake: somebody adds one more
+       * follow-up to the end of a chain, and the end of a chain has nothing
+       * after it by definition.
+       *
+       * `path` already carries the ancestors (see `depthAbove`), so
+       * `path.length + 1` is the whole chain including `next`, wherever in it
+       * the edit was made.
+       */
+      if (path.length + 1 > MAX_REVEAL_DEPTH) {
+        return `That would ask ${path.length + 1} questions in a row. A till can follow ${MAX_REVEAL_DEPTH}; ask the rest on the product instead.`
       }
       const found = await walk(next, [...path, next])
       if (found) return found
@@ -536,7 +588,14 @@ export async function validateReveals(
     return null
   }
 
-  return walk(groupId, [groupId])
+  /*
+   * The path opens with the ancestors already counted, so `path.length` means
+   * "questions in the chain so far" wherever the edit happens to be. The filler
+   * ids are negative and therefore cannot collide with a real group id, which
+   * matters because `path.includes(next)` is what detects a loop.
+   */
+  const ancestors = Array.from({ length: depthAbove }, (_, i) => -(i + 1))
+  return walk(groupId, [...ancestors, groupId])
 }
 
 /**

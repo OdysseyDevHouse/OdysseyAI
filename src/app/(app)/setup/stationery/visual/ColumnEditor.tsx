@@ -79,7 +79,8 @@ function ColumnRow({
        */}
       <div className="flex items-center gap-2">
         {/* Spread first so our own label wins — dnd-kit's says "draggable item". */}
-        <Tooltip label="Drag to reorder" layout="inline">
+        {/* Columns of a printed document, not rows of a grid. */}
+        <Tooltip label="Reorder the columns" layout="inline">
           <span
             {...attributes}
             {...listeners}

@@ -28,12 +28,13 @@ import type { InstructionGroup } from '@/lib/site/instructions'
  * product's whole set, so anything moved back to "available" is detached.
  */
 
+/* The bounds count ITEMS, not distinct answers — see InstructionsTable. */
 function choiceRule(min: number, max: number): string {
   if (max === 1) return min > 0 ? 'Pick one' : 'Pick one (optional)'
-  if (max === 0) return min > 0 ? `Choose at least ${min}` : 'Choose any number'
-  if (min > 0 && min !== max) return `Choose ${min} to ${max}`
-  if (min > 0 && min === max) return `Choose exactly ${min}`
-  return `Choose up to ${max}`
+  if (max === 0) return min > 0 ? `Choose at least ${min} items` : 'Choose any number'
+  if (min > 0 && min !== max) return `Choose ${min} to ${max} items`
+  if (min > 0 && min === max) return `Choose exactly ${min} items`
+  return `Choose up to ${max} items`
 }
 
 function summary(g: InstructionGroup): string {
@@ -195,7 +196,7 @@ export default function InstructionsPanel({
                 {/* Only the handle starts the drag — see the note in
                     InstructionForm's answer rows. */}
                 <Tooltip
-                  label={selected.length > 1 ? 'Drag to reorder' : 'Add another to reorder'}
+                  label={selected.length > 1 ? 'Reorder the questions' : 'Add another to reorder'}
                   layout="inline"
                   className="mt-0.5"
                 >

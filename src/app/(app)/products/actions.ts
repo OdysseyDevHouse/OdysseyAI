@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { toProductTab, DEFAULT_PRODUCT_TAB } from '@/lib/productTabs'
+import { toProductTab, DEFAULT_PRODUCT_TAB, type ProductTab } from '@/lib/productTabs'
 import {
   requireSiteId,
   requireCapability,
@@ -518,9 +518,38 @@ export async function saveProductAction(
   // worse than a save that says why it stopped.
   const productType = input.productType ?? 'normal'
 
+  /*
+   * Setup this product type needs and has not got yet.
+   *
+   * NOT an error, and that distinction is the whole point of this variable. The
+   * product row is written well above this line, so anything returned as
+   * `{ error }` from here on renders "Could not save" over a product that HAS
+   * saved — which is exactly what a new recipe product used to do. The user was
+   * then sent back to re-enter a product already sitting in the catalogue, and
+   * the second attempt refused the duplicate code.
+   *
+   * So an unfinished type rides out through the redirect as a warning instead,
+   * landing on the tab that finishes the job. The till is what enforces the
+   * invariant — resolveComponents() refuses to sell either kind — so recording
+   * an incomplete setup costs nothing and losing the save costs the user their
+   * typing.
+   */
+  let setupNeeded: { tab: ProductTab; message: string } | null = null
+
   if (productType === 'recipe') {
-    const recipe = await saveRecipe(siteId, result.id, readRecipe(form))
+    const lines = readRecipe(form)
+    const recipe = await saveRecipe(siteId, result.id, lines)
     if (!recipe.ok) return { error: recipe.error }
+
+    /* Empty is a legitimate save (see saveRecipe) and still not sellable, so
+       say so where it can be fixed rather than failing the save. */
+    if (lines.length === 0) {
+      setupNeeded = {
+        tab: 'recipe',
+        message:
+          'This is a recipe product, but no ingredients have been linked to it yet, so it cannot be sold. Add them on the Recipe tab below.',
+      }
+    }
 
     /*
      * The stored cost of a recipe is DERIVED, never accepted from the post.
@@ -537,7 +566,7 @@ export async function saveProductAction(
      * rather than writing a zero over it.
      */
     const cost = await compositionCost(siteId, result.id, 'recipe').catch(() => null)
-    if (cost !== null) await setDerivedCost(siteId, result.id, cost)
+    if (cost !== null) await setDerivedCost(siteId, result.id, cost, { userName: ctx.actor.userName })
   }
 
   /*
@@ -569,6 +598,28 @@ export async function saveProductAction(
    * would skip the one rung people actually reprice. A product with nothing
    * above it costs one cheap query and writes nothing.
    */
+  /*
+   * A BRAND-NEW REFER PRODUCT WAS SAVED AS NORMAL — say so.
+   *
+   * createProduct demotes it, because on the new-product screen there is no id
+   * to hang a link off and a refer with no target is refused on every sale (see
+   * the note at products.ts createProduct). That demotion was silent: the user
+   * picked "Refer", pressed Save, and got back an ordinary product with the
+   * dropdown quietly reading Normal and nothing saying why.
+   *
+   * Known by construction rather than by re-reading the row: the rule is
+   * unconditional on the create path, so a create that asked for 'refer' always
+   * came back as 'normal'. An UPDATE is left alone — the type stands there, and
+   * the Refer tab is reachable for exactly that reason.
+   */
+  if (!idRaw && input.productType === 'refer') {
+    setupNeeded = {
+      tab: 'refer',
+      message:
+        'A new product cannot be a refer product yet, because there is nothing for it to point at — it has been saved as a normal product. Set up the pack sizes it links to on the Refer tab, below.',
+    }
+  }
+
   const { cascadeReferCosts } = await import('@/lib/site/referRange')
   const recosted = await cascadeReferCosts(siteId, result.id).catch(() => [])
 
@@ -676,10 +727,17 @@ export async function saveProductAction(
      Correcting a serial number or a supplier line meant clicking back to the
      tab each time. General is the default, so it needs no parameter — the form
      validates whatever comes back anyway. */
-  const savedTab = toProductTab(String(form.get('tab') ?? ''))
+  /* An unfinished type overrides the tab: the warning names a tab, and landing
+     anywhere else would leave the reader hunting for the thing it asked them to
+     do. Otherwise the tab saved from wins, as before. */
+  const savedTab = setupNeeded?.tab ?? toProductTab(String(form.get('tab') ?? ''))
   const tab = savedTab === DEFAULT_PRODUCT_TAB ? '' : `&tab=${savedTab}`
 
-  redirect(`/products/${result.id}?saved=1${from}${tab}`)
+  /* The product saved either way — `saved=1` still goes out, so the success
+     banner is not replaced by the warning but joined by it. */
+  const setup = setupNeeded ? `&setup=${encodeURIComponent(setupNeeded.message)}` : ''
+
+  redirect(`/products/${result.id}?saved=1${from}${tab}${setup}`)
 }
 
 export async function archiveProductAction(form: FormData): Promise<void> {

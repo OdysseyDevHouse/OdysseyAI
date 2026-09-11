@@ -97,6 +97,18 @@ export function stockForOption(chosen: ChosenOption, lineQty: number): number {
 }
 
 /**
+ * How many ITEMS a set of answers puts on the plate.
+ *
+ * The group's `minChoices`/`maxChoices` are measured against this — chips ×2
+ * and salad ×2 is four, not two. One definition, used by the till modal to
+ * decide what a tap may do and by `validateSelection` to refuse a line, so the
+ * screen and the rule cannot drift apart.
+ */
+export function totalUnits(chosen: readonly ChosenOption[]): number {
+  return chosen.reduce((sum, c) => sum + Math.max(0, c.qty), 0)
+}
+
+/**
  * Whether a set of answers satisfies the questions, or the first reason it does
  * not.
  *
@@ -114,21 +126,30 @@ export function validateSelection(
 ): string | null {
   for (const group of asked) {
     const picked = chosen.filter((c) => c.groupId === group.id)
-    const distinct = picked.length
+    const units = totalUnits(picked)
     const label = group.prompt || group.name
 
-    // ── The group's own bounds: how many DISTINCT answers ──────────────────
+    // ── The group's own bounds: how many ITEMS ─────────────────────────────
     //
-    // Distinct answers, NOT units. "Up to 2 toppings" with bacon ×3 and cheese
-    // ×1 is two choices against that ceiling, not four. Summing the counts here
-    // would refuse an order the shop plainly meant to allow.
-    if ((group.isRequired || group.minChoices > 0) && distinct === 0) {
+    // ⚠ UNITS, NOT DISTINCT ANSWERS. "Choose up to 3" with chips ×2 and salad
+    // ×2 is FOUR against this ceiling and is refused.
+    //
+    // This reverses what migration 080 originally specified, deliberately and
+    // on the shop's instruction. The old reading counted distinct answers, so a
+    // question capped at 3 would accept chips ×2, salad ×2, veg ×3 — three
+    // answers, seven things on the plate — and the cashier had no way to tell
+    // from the screen that the cap had stopped meaning anything. A ceiling a
+    // shop sets on a side order is a ceiling on what leaves the kitchen.
+    //
+    // `minChoices` is read the same way, so the two bounds describe one scale
+    // rather than each counting something different.
+    if ((group.isRequired || group.minChoices > 0) && units === 0) {
       return `${label}: please choose an answer.`
     }
-    if (group.minChoices > 0 && distinct < group.minChoices) {
+    if (group.minChoices > 0 && units < group.minChoices) {
       return `${label}: choose at least ${group.minChoices}.`
     }
-    if (group.maxChoices > 0 && distinct > group.maxChoices) {
+    if (group.maxChoices > 0 && units > group.maxChoices) {
       return `${label}: choose no more than ${group.maxChoices}.`
     }
 

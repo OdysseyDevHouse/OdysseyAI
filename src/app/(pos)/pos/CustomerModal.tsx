@@ -23,6 +23,7 @@ import {
   searchOfflineCustomers,
   type CustomerFileState,
 } from '@/lib/posOffline/customers'
+import { CustomerEditorModal } from '@/app/(app)/customers/CustomerEditorModal'
 
 /**
  * Who is buying.
@@ -67,10 +68,12 @@ export function CustomerModal({
   online,
   customer,
   walkInName,
+  operatorName,
   onClose,
   onAttach,
   onClear,
   onWalkInName,
+  onAttachById,
 }: {
   open: boolean
   /** Which shop's stored customer file to read when the line is down. */
@@ -78,10 +81,21 @@ export function CustomerModal({
   online: boolean
   customer: TillCustomer | null
   walkInName: string
+  /** Named in the audit row when a manager authorises an account edit. */
+  operatorName: string
   onClose: () => void
   onAttach: (customer: TillCustomer) => void
   onClear: () => void
   onWalkInName: (name: string) => void
+  /**
+   * Attach an account by id, re-reading it as a full `TillCustomer`.
+   *
+   * The editor hands back only `{ id, name }` — it saves through the customer
+   * file and knows nothing of credit positions or resolved price structures.
+   * Those have to come from `getTillCustomer`, which is what makes an account
+   * created here behave identically to one picked off the list.
+   */
+  onAttachById: (customerId: number) => void
 }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<TillCustomer[]>([])
@@ -96,6 +110,16 @@ export function CustomerModal({
    * every keystroke would be the same answer twenty times.
    */
   const [fileState, setFileState] = useState<CustomerFileState | null>(null)
+  /**
+   * The add/edit dialog, and which account it is on.
+   *
+   * A sibling of this dialog rather than a child of its body: <Modal> is a
+   * native <dialog>, and the second one has to reach the top layer in its own
+   * right. Nested, it would also unmount the moment this one closes behind it.
+   */
+  const [editing, setEditing] = useState<{ mode: 'create' | 'edit'; id: number | null } | null>(
+    null,
+  )
 
   // Seeded each time it opens rather than held: a name typed and abandoned should
   // not reappear on the next customer's sale.
@@ -165,6 +189,7 @@ export function CustomerModal({
   }, [open, online, siteId])
 
   return (
+    <>
     <Modal
       open={open}
       onClose={onClose}
@@ -206,7 +231,14 @@ export function CustomerModal({
         {/* ── The attached account, when there is one ─────────────────────
             Shown first and shown fully: this is the state the cashier is
             checking, and its credit line is the reason they opened this. */}
-        {customer && <AttachedAccount customer={customer} onClear={onClear} />}
+        {customer && (
+          <AttachedAccount
+            customer={customer}
+            online={online}
+            onClear={onClear}
+            onEdit={() => setEditing({ mode: 'edit', id: customer.id })}
+          />
+        )}
 
         {/* ── A walk-in's name ────────────────────────────────────────────
             Hidden while an account is attached, because the account's own name
@@ -239,6 +271,29 @@ export function CustomerModal({
             spellCheck={false}
           />
         </Field>
+
+        {/* ── Opening a new account ───────────────────────────────────────────
+            Above the results rather than below them: the moment a cashier needs
+            this is the moment the search came back empty, and a button under a
+            list of a hundred names is a button nobody scrolls to.
+
+            DISABLED rather than hidden when the line is down, and it says why.
+            A customer code comes from a server-side sequence, so this genuinely
+            cannot work offline — but a vanished button reads as "this shop
+            cannot open accounts" and sends someone to the back office to solve
+            a problem that fixes itself when the line returns. */}
+        <TouchRow
+          icon={<CategoryTile icon={<Icons.UserPlus size={20} />} tone="emerald" size="lg" />}
+          title="New customer"
+          subtitle={
+            online
+              ? 'Open an account for someone who is not on file'
+              : 'Needs a connection — an account cannot be numbered offline'
+          }
+          tone="bare"
+          disabled={!online}
+          onClick={() => setEditing({ mode: 'create', id: null })}
+        />
 
         {searching && results.length === 0 && (
           <div className="flex flex-col gap-2">
@@ -304,6 +359,29 @@ export function CustomerModal({
         )}
       </div>
     </Modal>
+
+    {/* A SIBLING of the picker, not a child of its body. Both are native
+        <dialog> elements, so the editor has to reach the top layer in its own
+        right; nested, it would also unmount the instant the picker closes
+        behind it. */}
+    <CustomerEditorModal
+      open={editing !== null}
+      mode={editing?.mode ?? 'create'}
+      customerId={editing?.id ?? null}
+      siteId={siteId}
+      operatorName={operatorName}
+      size="touch"
+      onClose={() => setEditing(null)}
+      onSaved={(saved) => {
+        setEditing(null)
+        /* Re-read as a full TillCustomer before attaching: the editor knows the
+           id and the name, and the till needs the credit position and the
+           resolved price structure that go with them. */
+        onAttachById(saved.id)
+        onClose()
+      }}
+    />
+    </>
   )
 }
 
@@ -350,10 +428,14 @@ function CustomerRow({
 
 function AttachedAccount({
   customer,
+  online,
   onClear,
+  onEdit,
 }: {
   customer: TillCustomer
+  online: boolean
   onClear: () => void
+  onEdit: () => void
 }) {
   return (
     <div className="rounded-card border border-brand/40 bg-brand-soft p-3.5">
@@ -365,6 +447,21 @@ function AttachedAccount({
             {customer.code} · {customer.paymentTermsDays} day terms
           </p>
         </div>
+        {/* Icon-only: three full buttons across a card this narrow would wrap,
+            and "Edit" beside "Remove" reads as a pair of equal weights when one
+            of them is destructive. Disabled offline for the same reason the
+            New customer row is — the save needs the line. */}
+        <Button
+          variant="ghost"
+          size="touch"
+          iconOnly
+          aria-label={`Edit ${customer.name}`}
+          title={online ? 'Edit this account' : 'Needs a connection'}
+          disabled={!online}
+          onClick={onEdit}
+        >
+          <Icons.Pencil size={18} />
+        </Button>
         <Button variant="ghost" size="touch" onClick={onClear}>
           <Icons.Close size={18} />
           Remove

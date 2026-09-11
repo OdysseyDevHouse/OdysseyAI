@@ -161,6 +161,31 @@ async function main() {
 
     // The whole reason costs are forced on for this render: the supplier
     // quoted these prices and cannot check an order that hides them.
+    /* ── the attachment ──────────────────────────────────────────────────
+     *
+     * Asserted on the BYTES, not merely on the array being non-empty. The
+     * builder returns null on any failure so that a bad logo or an undrawable
+     * design costs the attachment rather than the email — which means a broken
+     * renderer would look exactly like a successful send. Only opening the file
+     * tells the two apart.
+     */
+    const attachments = msg?.attachments ?? []
+    ok('*** the order is attached as a PDF ***', attachments.length === 1, `${attachments.length} attachment(s)`)
+
+    const file = attachments[0]
+    ok('  named for the order number', file?.filename === `${number}.pdf`, file?.filename)
+    ok('  and typed as a PDF', file?.contentType === 'application/pdf', file?.contentType)
+    ok(
+      '*** and it really is a PDF, not an empty buffer ***',
+      !!file && Buffer.isBuffer(file.content) && file.content.subarray(0, 4).toString() === '%PDF',
+      file ? `${file.content?.length ?? 0} bytes, starts "${file.content?.subarray(0, 4).toString()}"` : 'no file',
+    )
+    ok(
+      '  with a real page in it',
+      !!file && file.content.length > 1000,
+      file ? `${file.content.length} bytes` : '',
+    )
+
     ok('*** the supplier can see the prices they quoted ***',
       /25\.00/.test(html), /25\.00/.test(html) ? '' : 'no unit price in the body')
 

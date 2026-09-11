@@ -9,6 +9,7 @@ import {
   saveOrder,
   issueOrder,
   cancelOrder,
+  deleteDraftOrder,
   closeOrderShort,
   getPurchaseDocument,
   productPositions,
@@ -94,6 +95,26 @@ export async function issueOrderAction(id: number): Promise<PurchaseResult> {
   revalidatePath('/purchasing')
   revalidatePath(`/purchasing/${id}`)
   return { ok: true, id, message: 'Order issued to the supplier.' }
+}
+
+/**
+ * Throws away a draft order.
+ *
+ * Deliberately takes no reason, unlike `cancelOrderAction`: a reason is what
+ * makes a cancellation readable later, and there is no later here — the row is
+ * gone. Asking for one would imply a record nobody will ever read.
+ */
+export async function deleteDraftOrderAction(
+  id: number,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const ctx = await actorFor('purchasing.edit')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor } = ctx
+  const result = await deleteDraftOrder(siteId, actor, id)
+  if (!result.ok) return result
+
+  revalidatePath('/purchasing')
+  return { ok: true }
 }
 
 export async function cancelOrderAction(id: number, reason: string): Promise<PurchaseResult> {
@@ -273,8 +294,8 @@ export async function deleteDraftReceiptAction(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const ctx = await actorFor('purchasing.edit')
   if ('ok' in ctx) return ctx
-  const { siteId } = ctx
-  const result = await deleteDraftReceipt(siteId, id)
+  const { siteId, actor } = ctx
+  const result = await deleteDraftReceipt(siteId, actor, id)
   if (!result.ok) return result
 
   revalidatePath('/purchasing')

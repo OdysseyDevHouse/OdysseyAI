@@ -20,6 +20,7 @@ import {
   DeepPanel,
   QuoteCard,
   Tooltip,
+  REORDER_HINT,
   SettingsHint,
   Card,
   CardBody,
@@ -27,6 +28,7 @@ import {
   ChartGlow,
   ChartTooltip,
   Checkbox,
+  CheckList,
   ColourInput,
   Combobox,
   ConfirmModal,
@@ -178,6 +180,7 @@ import { BillPreview } from './BillPreview'
 import { GatePreview, FloorPreview, OpenTillPreview, PosGatePreview } from './GatePreview'
 import { ModuleMenuPreview } from './ModuleMenuPreview'
 import { TenderPreview } from './TenderPreview'
+import { CustomerPreview } from './CustomerPreview'
 import type { TillInstructionGroup } from '@/lib/site/instructions'
 import type { TillProduct } from '@/lib/site/tillSearch'
 import type { BasketLine } from '@/lib/basket'
@@ -213,6 +216,7 @@ export default function StyleGuidePage() {
         <ButtonsSection />
         <FormSection />
         <FieldGroupSection />
+        <CheckListSection />
         <BadgeSection />
         <StatIconSection />
         <SectionTitleSection />
@@ -270,6 +274,7 @@ export default function StyleGuidePage() {
         <SplitBillSection />
         <BillSection />
         <TableGateSection />
+        <CustomerSection />
         <ModuleMenuSection />
         <PaginationSection />
         <EmptyStateSection />
@@ -457,6 +462,25 @@ function FormSection() {
         </Field>
         <Field label="Error state" error="Enter a valid email address.">
           <Input defaultValue="bad@" invalid />
+        </Field>
+        <Field
+          label="Select, at till size"
+          hint='size="touch" — the same skin at 56px, for a dropdown on a POS dialog'
+        >
+          {/* Every single-line control now takes `size`, so a form rendered on a
+              till sizes as one. NumberInput and CurrencyInput get it for free —
+              both render through Input. */}
+          <Select size="touch" defaultValue="">
+            <option value="">Choose an account type...</option>
+            <option value="balance_fwd">Balance forward</option>
+            <option value="open_item">Open item</option>
+          </Select>
+        </Field>
+        <Field
+          label="Textarea, at till size"
+          hint="size=&quot;touch&quot; steps the TYPE up only — height comes from rows, never from h-touch"
+        >
+          <Textarea size="touch" rows={2} placeholder="Notes..." aria-label="Notes at till size" />
         </Field>
         <Field
           label="Quiet focus, at till size"
@@ -1470,7 +1494,7 @@ function TooltipSection() {
             The default block wrapper would take the row's spare width and shove
             the fields along. This is what every drag handle in the app uses. */}
         <div className="flex max-w-sm items-center gap-2 rounded-card border border-border bg-surface p-2">
-          <Tooltip label="Drag to reorder" layout="inline">
+          <Tooltip label={REORDER_HINT} layout="inline">
             <span
               data-kit-ok
               className="flex size-7 shrink-0 cursor-grab items-center justify-center rounded-control text-faint hover:bg-surface-2 hover:text-muted"
@@ -1482,7 +1506,11 @@ function TooltipSection() {
         </div>
         <p className="-mt-2 text-xs text-faint">
           layout=&quot;inline&quot; — shrinks to what it wraps, for a handle or icon button on a
-          flex row. Every drag handle in the app carries this.
+          flex row. Every drag handle in the app carries this, with the wording from{' '}
+          <code className="text-ink-2">REORDER_HINT</code> so a handle reads the same on the till
+          as in the back office. Name what the drag CHANGES (&ldquo;Reorder the columns&rdquo;,
+          &ldquo;Reorder the answers&rdquo;), not the gesture — the grab cursor already says it
+          is draggable.
         </p>
       </CardBody>
     </Card>
@@ -1681,7 +1709,7 @@ function FieldGroupSection() {
     <Card>
       <CardHeader
         title="Field groups"
-        description="<FieldGroup title hint> — a titled cluster of related fields inside one card, for forms whose sections are too small to each deserve their own Card."
+        description="<FieldGroup title hint step> — a titled cluster of related fields inside one card, for forms whose sections are too small to each deserve their own Card. Add `step` only when the groups must be read in order."
       />
       <CardBody className="grid max-w-2xl gap-4 sm:grid-cols-2">
         <FieldGroup title="What it applies to" hint="Leave both off to apply storewide.">
@@ -1697,6 +1725,65 @@ function FieldGroupSection() {
             <NumberInput defaultValue={2.5} />
           </Field>
         </FieldGroup>
+        <FieldGroup step={1} title="What to set" hint="Numbered: this form is a sequence.">
+          <Field label="Price type">
+            <Select defaultValue="">
+              <option>Retail (default)</option>
+            </Select>
+          </Field>
+        </FieldGroup>
+        <FieldGroup step={2} title="How to work it out" hint="The step after the one before it.">
+          <Field label="Markup %" className="max-w-32">
+            <NumberInput defaultValue={40} />
+          </Field>
+        </FieldGroup>
+      </CardBody>
+    </Card>
+  )
+}
+
+function CheckListSection() {
+  const [departments, setDepartments] = useState<number[]>([2])
+  const [brands, setBrands] = useState<number[]>([])
+
+  /* Long enough on the left to show the search box, short on the right to show
+     that it only appears once the list earns it. */
+  const departmentItems = [
+    'Sweets',
+    'Yoghurt',
+    'Boerewors & Sausage',
+    'Breakfast Cereals',
+    'Eggs & Butter',
+    'Footwear',
+    'Frozen Foods',
+    'Grills & Mains',
+    'Milkshakes',
+    'Baking',
+  ].map((name, i) => ({ id: i + 1, name }))
+
+  const brandItems = ['BeefMaker', 'ChickenMaker', 'Coca Cola', 'Heineken'].map((name, i) => ({
+    id: i + 1,
+    name,
+  }))
+
+  return (
+    <Card>
+      <CardHeader
+        title="Check list"
+        description="<CheckList items selected onChange> — a bordered, scrolling tick-list with its own search, for “which of these?” asked of a list too long to eyeball but too short for a modal picker. Nothing ticked conventionally means all; say so in the Field's hint. The search appears once the list reaches `searchFrom` (8 by default)."
+      />
+      <CardBody className="grid max-w-2xl gap-4 sm:grid-cols-2">
+        <Field label="Departments" hint="Optional. Nothing ticked means all.">
+          <CheckList
+            items={departmentItems}
+            selected={departments}
+            onChange={setDepartments}
+            searchPlaceholder="Search departments…"
+          />
+        </Field>
+        <Field label="Brands" hint="Too short for a search box.">
+          <CheckList items={brandItems} selected={brands} onChange={setBrands} />
+        </Field>
       </CardBody>
     </Card>
   )
@@ -1917,6 +2004,10 @@ function BarcodeShapeSection() {
      redraws as the lengths change, so the demo has to let that be tried. */
   const [pluLength, setPluLength] = useState(4)
   const [valueLength, setValueLength] = useState(5)
+  /* Togglable, because the two readings of the middle digit are the whole
+     reason the diagram exists: ticked it is skipped, unticked it is money. A
+     demo fixed at `true` shows only half of what the component says. */
+  const [hasCheckDigit, setHasCheckDigit] = useState(true)
   return (
     <Card>
       <CardHeader
@@ -1926,7 +2017,7 @@ function BarcodeShapeSection() {
       <CardBody className="flex flex-col gap-4">
         <div className="rounded-card border border-border bg-surface-2 p-4">
           <BarcodeShapeDiagram
-            shape={{ prefix: '60', pluLength, hasCheckDigit: true, valueLength, decimals: 2 }}
+            shape={{ prefix: '60', pluLength, hasCheckDigit, valueLength, decimals: 2 }}
           />
         </div>
         <div className="flex flex-wrap gap-4">
@@ -1946,10 +2037,19 @@ function BarcodeShapeSection() {
               onChange={(e) => setValueLength(Number(e.target.value))}
             />
           </Field>
+          <Field>
+            <Checkbox
+              checked={hasCheckDigit}
+              label="Check digit before the price"
+              onChange={(e) => setHasCheckDigit(e.target.checked)}
+            />
+          </Field>
         </div>
         <p className="text-sm text-muted">
-          Set the value length to 0 and the &ldquo;Ignored&rdquo; segment disappears — with no fixed
-          width the till takes every digit left over, so nothing is skipped.
+          The last segment is always there: every scale label ends in a check digit, and no setting
+          removes it. The tick controls the <em>middle</em> digit — the one guarding the stock code.
+          Untick it and the &ldquo;Ignored&rdquo; segment disappears, because the till counts that
+          digit as part of the price instead.
         </p>
       </CardBody>
     </Card>
@@ -2955,6 +3055,7 @@ function ModalSection() {
   const [filling, setFilling] = useState(false)
   const [board, setBoard] = useState(false)
   const [growing, setGrowing] = useState(false)
+  const [sealed, setSealed] = useState(false)
   const toast = useToast()
 
   return (
@@ -3006,6 +3107,15 @@ function ModalSection() {
       </Row>
       <Row>
         <Spec
+          name="<Modal dismissible={false}>"
+          note="A dialog with NO way out — no × in the header. For work that is part-way through and would be misreported if abandoned: the import wizard's progress dialog, which closes itself when the run finishes or halts. Pair it with closeOnBackdrop={false} and an onClose that does nothing, or Escape still gets out."
+        />
+        <Button variant="secondary" onClick={() => setSealed(true)}>
+          Open sealed modal
+        </Button>
+      </Row>
+      <Row>
+        <Spec
           name={'<Modal size="full">'}
           note="A dialog that is a WORKSPACE rather than a question — the till's cash-up, where a denomination grid, a numpad and a dozen totals must all be readable at once. Capped at 1600px so the columns do not stretch into unreadable bands on a widescreen. Reach for it rarely: most dialogs ask one thing."
         />
@@ -3044,6 +3154,31 @@ function ModalSection() {
           <Field label="Credit limit">
             <CurrencyInput defaultValue={10000} />
           </Field>
+        </div>
+      </Modal>
+
+      {/* Sealed: no ×, no backdrop click, and an onClose that does nothing.
+          The only way out is the button in the body, standing in for the
+          import wizard closing its own dialog when the run finishes. */}
+      <Modal
+        open={sealed}
+        onClose={() => {}}
+        dismissible={false}
+        closeOnBackdrop={false}
+        title="Importing"
+        description="No × in the header, and the backdrop ignores clicks."
+        size="sm"
+      >
+        <div className="flex flex-col gap-4">
+          <p>
+            A dialog like this one is closed by whatever it is waiting on, not by the person
+            waiting. Here, that is the button below.
+          </p>
+          <div>
+            <Button variant="secondary" onClick={() => setSealed(false)}>
+              Finish, and let it close
+            </Button>
+          </div>
         </div>
       </Modal>
 
@@ -4187,9 +4322,10 @@ function InstructionsSection() {
       prompt: 'What Side-dish would you like with your meal?',
       isRequired: false,
       minChoices: 0,
-      // Capped on purpose, so the guide shows what a ceiling does: the fourth
-      // side dims and refuses, while a third helping of one already chosen does
-      // not — maxChoices counts distinct answers, not units.
+      // Capped on purpose, so the guide shows what a ceiling does: the ceiling
+      // counts ITEMS, so two of one side and two of another is four and the
+      // fourth is refused — whether it is a new side or another helping of one
+      // already chosen.
       maxChoices: 3,
       imageId: null,
       options: [
@@ -4470,6 +4606,39 @@ function TenderTileSection() {
             can be looked at too — the POS itself is behind a clerk PIN. */}
         <TenderPreview />
       </div>
+    </Card>
+  )
+}
+
+/* Rendered by CustomerSection below — the till's customer dialog, which is
+   otherwise only reachable from behind a clerk PIN. */
+
+function CustomerSection() {
+  return (
+    <Card>
+      <CardHeader
+        title="Who is buying"
+        description="<CustomerModal /> — the till's customer dialog, and the two ways an account is opened or corrected without leaving the sale. The POS is behind a clerk PIN and a device licence, so this is where it can be looked at."
+      />
+      <Row>
+        <Spec
+          name="New customer, above the results"
+          note="The moment this is wanted is the moment a search came back empty, and a button under a hundred names is a button nobody scrolls to. It opens the REAL customer form — all six cards, at till size — not a trimmed copy that would drift from it."
+        />
+        <Spec
+          name="a pencil on the attached account"
+          note="Icon-only beside Remove: three full buttons across that card would wrap, and “Edit” next to “Remove” reads as two equal weights when one of them is destructive."
+        />
+        <Spec
+          name="both refused offline, and they say why"
+          note="A customer code comes from a server-side sequence, so an account genuinely cannot be opened with the line down. Disabled rather than hidden — a vanished button reads as “this shop cannot open accounts” and sends somebody to the back office to solve a problem that fixes itself when the line returns."
+        />
+        <Spec
+          name="a cashier without customers.edit is asked for a manager"
+          note="Not refused. The PIN pad mints a two-minute, single-capability token that rides the next save and is verified server-side — a name typed by a client never authorises anything."
+        />
+      </Row>
+      <CustomerPreview />
     </Card>
   )
 }

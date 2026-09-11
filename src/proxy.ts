@@ -235,6 +235,23 @@ const PUBLIC_PREFIXES = [
   // never renew, and the shop would lock on the seventh day with a working
   // internet connection and no explanation.
   '/api/licence/refresh',
+  // The desktop shell asking which build it should be on, and reporting that it
+  // has taken a scheduled one. Both run on the updater's four-hourly timer in
+  // electron/updater.js, and like the licence lease above they have no cookie:
+  // nobody is signed in on a machine left on overnight, which is exactly when a
+  // booked 02:00 window comes round.
+  //
+  // They refuse on the same two grounds /api/licence/refresh does — APP_MODE
+  // must be 'desktop' and the request must arrive on loopback — and each is a
+  // relay that signs a call the machine was going to make anyway.
+  //
+  // WITHOUT THIS the gate answers 401 and updateChannel.js reads that as "no
+  // answer, keep what I had", which is indistinguishable from an offline
+  // machine. Every device would sit on its cached channel for ever and no
+  // scheduled window would ever be seen as due — a feature that appears to work
+  // in the control panel and does nothing at all on the machine.
+  '/api/updates/channel',
+  '/api/updates/ran',
   // Recurring jobs' heartbeat. Same reasoning and the same protection as the
   // ticks above: JOB_SERIES_CRON_SECRET, compared in constant time, refusing
   // every request when it is not set.

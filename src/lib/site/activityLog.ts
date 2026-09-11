@@ -51,6 +51,18 @@ export type ActivityEntity =
      audit trail on its own: a deleted attachment is a deleted piece of
      evidence. */
   | 'attachment'
+  /* A purchase order or a goods receipt. One entity for both because they are
+     one table, and the action says which — `purchase_order.delete` against
+     `grv.delete`.
+
+     It earns a place here for a reason the other purchasing states do not: an
+     issued order is CANCELLED and a posted receipt is VOIDED, and both leave
+     the row behind with a status and a reason on it. A DRAFT is deleted
+     outright, so the row itself is the only record there was. Without a line
+     here, "who threw away that order" has no answer anywhere — and
+     purchase_document_audit cannot answer it either, because it cascades away
+     with the document it describes. */
+  | 'purchase_document'
   /* The loyalty programme: its rates, tiers, punch cards, and every manual
      movement of points or wallet money. entityId is the CUSTOMER for anything
      touching a member's balance, and null for programme-level settings.

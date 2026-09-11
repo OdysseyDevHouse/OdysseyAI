@@ -46,6 +46,24 @@ export const CAPABILITY_GROUPS = [
       { key: 'sales.edit_finalised', label: 'Correct a finalised invoice', hint: 'Reverses and re-posts it. Leave off until the correction path is proven.' },
       { key: 'sales.discount_override', label: 'Discount beyond the product limit', hint: 'Exceed a product’s maximum discount percentage.' },
       { key: 'sales.price_override', label: 'Change a price at the till', hint: 'Sell at something other than the price structure figure.' },
+      // Separate from sales.price_override deliberately. That one is about the
+      // money; this one is about the count, and they are different exposures.
+      //
+      // Typing a quantity is the cheapest way to give stock away. The customer
+      // is charged for one and carries out three, and nothing on any report
+      // looks wrong afterwards — the money and the stock still agree with each
+      // other, because both were told the same lie at capture. A price override
+      // at least leaves a figure that disagrees with the price list.
+      //
+      // A scanned line lands at one of whatever was scanned, so a shop that
+      // scans each item individually can withhold this and have the counter ask
+      // for a supervisor on anything else. A shop that sells by the box grants
+      // it and never sees the prompt.
+      //
+      // Withholding it does NOT grey the box out — see the note beside the
+      // quantity cell in InvoiceEditor for why a rule somebody is meant to be
+      // able to get past is the wrong shape for a disabled attribute.
+      { key: 'sales.qty_override', label: 'Change a line quantity', hint: 'Sell other than one of whatever was scanned. Without it, a supervisor approves each change.' },
       { key: 'sales.cashup', label: 'Cash up', hint: 'Close a shift and record the drawer count.' },
       // Separate from sales.cashup deliberately, and OFF for a cashier.
       //

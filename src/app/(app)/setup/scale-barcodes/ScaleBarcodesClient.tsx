@@ -124,10 +124,13 @@ export default function ScaleBarcodesClient({ rules }: { rules: ScaleRule[] }) {
     },
     {
       key: 'hasCheckDigit',
-      header: 'Check digit',
+      /* "Middle", because the trailing check digit is on every label and so
+         says nothing about a rule. This column is about the one that differs:
+         the digit before the price, which the till either skips or spends. */
+      header: 'Middle check digit',
       cell: (r) => (
         <Badge tone={r.hasCheckDigit ? 'success' : 'neutral'}>
-          {r.hasCheckDigit ? 'Yes' : 'No'}
+          {r.hasCheckDigit ? 'Skipped' : 'In the price'}
         </Badge>
       ),
       sortValue: (r) => (r.hasCheckDigit ? 1 : 0),
@@ -341,10 +344,15 @@ export default function ScaleBarcodesClient({ rules }: { rules: ScaleRule[] }) {
             {/* Checkbox carries a label and nothing else — a `hint` prop would
                 spread onto the void input and 500 the route. Field is what
                 holds an explanation. */}
-            <Field hint="Tick when the barcode ends in a check digit, so it is not counted as part of the value.">
+            {/* NOT "the last digit is a check digit". Every scale label ends in
+                one — the symbology requires it — so that was a question with
+                only one answer, and unticking it drew a label with a hole at
+                the end. What a shop actually has to decide is what the digit
+                BETWEEN the stock code and the price is. */}
+            <Field hint="Scales often print a check digit guarding the stock code, before the price. Tick to step over it. Untick and the till counts it as part of the price — the diagram above shows which.">
               <Checkbox
                 checked={draft.hasCheckDigit}
-                label="Last digit is a check digit"
+                label="There is a check digit before the price"
                 onChange={(e) => setDraft({ ...draft, hasCheckDigit: e.target.checked })}
               />
             </Field>

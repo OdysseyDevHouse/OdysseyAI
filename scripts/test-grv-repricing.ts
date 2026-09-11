@@ -51,11 +51,31 @@ const priceOf = async (productId: number, structureId: number) =>
     )?.selling_price_incl,
   )
 
+/**
+ * The newest PRICE row for a product.
+ *
+ * kind='price' is load-bearing since 256: cost changes share this table, and a
+ * GRV writes one for every line it receives. Without the filter the "no history
+ * row was invented" assertions below read the delivery's own cost row and fail,
+ * and the ones that assert source='grv' would pass on a cost row — proving
+ * nothing about the price they are about to check.
+ */
 const historyFor = async (productId: number) =>
   await siteQueryOne<any>(
     SITE,
     `SELECT old_price_incl, new_price_incl, source, source_doc_id
-       FROM product_price_history WHERE product_id=? ORDER BY id DESC LIMIT 1`,
+       FROM product_price_history WHERE product_id=? AND kind='price'
+      ORDER BY id DESC LIMIT 1`,
+    [productId],
+  )
+
+/** The newest COST row — what 256 put on the record beside the price. */
+const costHistoryFor = async (productId: number) =>
+  await siteQueryOne<any>(
+    SITE,
+    `SELECT old_price_incl, new_price_incl, cost_column, source, source_doc_id
+       FROM product_price_history WHERE product_id=? AND kind='cost'
+      ORDER BY id DESC LIMIT 1`,
     [productId],
   )
 

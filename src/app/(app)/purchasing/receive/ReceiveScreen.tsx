@@ -10,6 +10,7 @@ import {
   CardHeader,
   ColumnPicker,
   Combobox,
+  ConfirmModal,
   CurrencyInput,
   EmptyState,
   Field,
@@ -49,6 +50,7 @@ import {
   searchProductsForPurchaseAction,
   receiveGoodsAction,
   saveDraftReceiptAction,
+  deleteDraftReceiptAction,
   loadOrderAction,
   productPositionsAction,
 } from '../actions'
@@ -187,6 +189,9 @@ export default function ReceiveScreen({
   const [lines, setLines] = useState<ReceiveLine[]>(draft?.lines ?? [])
   /** Set once saved, so a second save updates rather than making another. */
   const [draftId, setDraftId] = useState<number | null>(draft?.id ?? null)
+  /* The "discard this draft?" confirm. Nothing is destroyed until it is
+     answered — the button only opens the question. */
+  const [discarding, setDiscarding] = useState(false)
   const [query, setQuery] = useState('')
   const [options, setOptions] = useState<TillProduct[]>([])
   const [searching, setSearching] = useState(false)
@@ -798,6 +803,24 @@ export default function ReceiveScreen({
                     ? 'Saved automatically.'
                     : 'Choose a supplier and this saves itself.'}
             </span>
+            {/* Only once there IS a draft to discard. The screen saves itself
+                as soon as a supplier is chosen, so before that there is no row
+                — and a discard button for nothing reads as broken.
+
+                Here as well as on the document screen because THIS is where a
+                draft receipt actually opens from the purchasing list (see
+                hrefFor): a receiver abandoning a half-keyed delivery is looking
+                at this screen, not at the read-only one. */}
+            {draftId && (
+              <Button
+                variant="danger-ghost"
+                disabled={pending}
+                onClick={() => setDiscarding(true)}
+              >
+                <Icons.Trash size={15} />
+                Discard
+              </Button>
+            )}
             <Button variant="primary" disabled={!ready || pending} onClick={submit}>
               <Icons.PackageOpen size={15} />
               {pending ? 'Receiving…' : 'Receive the goods'}
@@ -1198,6 +1221,34 @@ export default function ReceiveScreen({
         onClose={() => setImportOpen(false)}
         onLines={addImportedLines}
         noun="delivery lines"
+      />
+
+      {/* Discarded rather than marked cancelled: a half-keyed delivery that was
+          never posted is an unfinished form, not history. Nothing has moved, so
+          nothing is reversed. */}
+      <ConfirmModal
+        open={discarding}
+        onClose={() => setDiscarding(false)}
+        onConfirm={async () => {
+          if (!draftId) return
+          const result = await deleteDraftReceiptAction(draftId)
+          if (!result.ok) {
+            toast.error(result.error)
+            return
+          }
+          toast.success('Draft discarded.')
+          router.push('/purchasing')
+        }}
+        title="Discard this draft?"
+        confirmLabel="Discard it"
+        cancelLabel="Keep it"
+        busy={pending}
+        message={
+          <p>
+            Nothing has been posted, so nothing is reversed — the part-keyed lines are simply
+            thrown away. This cannot be undone.
+          </p>
+        }
       />
 
       <DocumentScanDialog

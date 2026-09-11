@@ -13,7 +13,7 @@ import {
   type ResolvedComponent,
 } from './productComposition'
 import { mainLocationIdTx } from './stockLocations'
-import { writePriceRows, type PriceRow } from './reprice'
+import { writePriceRows, writeCostHistory, type PriceRow } from './reprice'
 import { repricedForCostChange } from '../pricing'
 import { getCostBasis } from './lookups'
 import { receiveSerialsTx, removeReceivedSerialsTx } from './serials'
@@ -21,7 +21,7 @@ import { getSetting } from './settings'
 import { guardPosting } from './periodLocks'
 import { postSupplierTransaction } from './supplierLedger'
 import { dueDateFor } from './ledger'
-import type { Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 import type { ProductTypeId } from '../productTypes'
 
 /**
@@ -565,11 +565,15 @@ export async function saveDraftReceipt(
  */
 export async function deleteDraftReceipt(
   siteId: number,
+  actor: Actor,
   documentId: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  /* Enough to DESCRIBE it, not merely to check it — see the same note on
+     deleteDraftOrder. The row is about to stop existing. */
   const doc = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
     siteId,
-    'SELECT id, status, doc_type FROM purchase_documents WHERE id = ? LIMIT 1',
+    `SELECT id, status, doc_type, document_number, supplier_name, supplier_invoice_no, total_incl
+       FROM purchase_documents WHERE id = ? LIMIT 1`,
     [documentId],
   )
   if (!doc) return { ok: false, error: 'That receipt no longer exists.' }
@@ -580,6 +584,24 @@ export async function deleteDraftReceipt(
 
   // Lines and charges cascade from the document — see 017 and 088.
   await siteExecute(siteId, 'DELETE FROM purchase_documents WHERE id = ?', [documentId])
+
+  /*
+   * The supplier's own invoice number is worth carrying into the log here, in a
+   * way it is not for an order: a discarded delivery is most often re-keyed
+   * from the same piece of paper, so "was this one already captured and thrown
+   * away?" is a real question somebody asks afterwards.
+   */
+  const total = Number(doc.total_incl ?? 0)
+  await logActivity(siteId, actor, {
+    entity: 'purchase_document',
+    entityId: documentId,
+    action: 'grv.delete',
+    detail: `${doc.document_number ? String(doc.document_number) : `Draft #${documentId}`} · ${
+      doc.supplier_name ? String(doc.supplier_name) : 'no supplier'
+    }${doc.supplier_invoice_no ? ` · their ${String(doc.supplier_invoice_no)}` : ''} · ${
+      Number.isFinite(total) ? total.toFixed(2) : '0.00'
+    }`,
+  })
   return { ok: true }
 }
 
@@ -1145,6 +1167,18 @@ export async function receiveGoods(
               receivedCostExcl: unitCost,
             })
 
+            // The single's own cost history (256). A case arriving moves the
+            // single it breaks into, and that is precisely the change a shop
+            // sees on the shelf later without knowing where it came from.
+            await writeCostHistory(
+              tx,
+              [
+                { productId: component.productId, column: 'average', costExcl: componentAverage },
+                { productId: component.productId, column: 'last', costExcl: unitCost },
+              ],
+              { source: 'grv', sourceDocId: documentId, userName: actor.userName },
+            )
+
             await tx.execute(
               'UPDATE products SET average_cost = ?, last_cost = ?, last_purchase_date = NOW() WHERE id = ?',
               [componentAverage.toFixed(4), unitCost.toFixed(4), component.productId] as never,
@@ -1240,6 +1274,27 @@ export async function receiveGoods(
           receivedQty: c.qtyArriving,
           receivedCostExcl: c.landedUnitCost,
         })
+
+        /*
+         * THE COST, on the record (256) — the case this whole table exists for.
+         *
+         * A supplier putting a price up is the commonest reason a margin moves,
+         * and until now it was the one change that left no trace on the product:
+         * the shelf price it triggered was recorded beside it (193, above), and
+         * the cost that caused it was not. `sourceDocId` is this receipt, so the
+         * row on the screen points at the delivery that decided it.
+         *
+         * Both columns, because a receipt moves both and a site reads whichever
+         * its cost_basis names.
+         */
+        await writeCostHistory(
+          tx,
+          [
+            { productId: line.productId, column: 'average', costExcl: newAverage },
+            { productId: line.productId, column: 'last', costExcl: c.landedUnitCost },
+          ],
+          { source: 'grv', sourceDocId: documentId, userName: actor.userName },
+        )
 
         await tx.execute(
           'UPDATE products SET average_cost = ?, last_cost = ?, last_purchase_date = NOW() WHERE id = ?',

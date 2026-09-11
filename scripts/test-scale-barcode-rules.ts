@@ -88,15 +88,20 @@ function main() {
       `${JSON.stringify(good)} vs ${JSON.stringify(bad)}`)
   }
   {
-    // hasCheckDigit false: the LAST digit is part of the value, so the price is
-    // ten times bigger. Getting this backwards is a 10x pricing error.
-    const withCd = parseVariableBarcode('2012340125007', LEGACY)
-    const noCd = parseVariableBarcode('2012340125007', { ...LEGACY, hasCheckDigit: false })
-    check(
-      'without a check digit the last digit joins the value',
-      !!withCd && !!noCd && Math.abs(noCd.value - (withCd.value * 10 + 0.07)) < 1e-6,
-      `${withCd?.value} -> ${noCd?.value}`,
-    )
+    /* The TRAILING digit is never part of the value, whatever the flag says.
+       EAN-13 ends in a check digit by construction, so a rule cannot hand it
+       to the price — and a parser that let it slice across that digit read
+       `59994` out of …15999|4 and charged 599.94 for a R159.99 item.
+
+       This assertion used to run the other way ("without a check digit the last
+       digit joins the value"), which is what licensed that off-by-one. */
+    const label = '2112349159994' // 21 | 1234 | 9 | 15999 | 4
+    const sized = { prefix: '21', pluLength: 4, hasCheckDigit: true, valueLength: 5, decimals: 2 }
+    const on = parseVariableBarcode(label, sized)
+    const off = parseVariableBarcode(label, { ...sized, hasCheckDigit: false })
+    check('*** the trailing check digit is never priced ***',
+      on?.value === 159.99 && off?.value === 159.99,
+      `${on?.value} / ${off?.value}`)
   }
 
   /* ── VALUE LENGTH IS THE VALUE'S OWN WIDTH, TAKEN FROM THE END ─────────
@@ -123,12 +128,24 @@ function main() {
     check('the stock code is read from the front', r?.plu === '12345', JSON.stringify(r))
     check('*** a middle check digit is NOT priced ***', r?.value === 15.99, JSON.stringify(r))
 
-    /* The same digits with valueLength 0 are the old reading, kept for a rule
-       that never named a width. Asserted so the difference between the two is
-       a stated fact rather than something a future change can blur. */
+    /* The same digits with valueLength 0 — "everything left over" — must STILL
+       skip the middle check digit, because the rule says there is one.
+
+       This used to assert 6015.99, which is the exact mis-price the block
+       comment above exists to warn about: the shopkeeper ticked the box saying
+       "skip the digit guarding the stock code" and the parser spent it anyway.
+       A leftover width says nothing about that digit; only the flag does. */
     const leftover = parseVariableBarcode('2123456015996', { ...avery, valueLength: 0 })
-    check('valueLength 0 still takes everything after the stock code',
-      leftover?.value === 6015.99, JSON.stringify(leftover))
+    check('valueLength 0 skips the middle check digit too',
+      leftover?.value === 15.99, JSON.stringify(leftover))
+
+    /* Untick the flag and the same digits become money, which is the whole
+       consequence of the setting and so is asserted rather than implied. */
+    const spent = parseVariableBarcode('2123456015996', {
+      ...avery, valueLength: 0, hasCheckDigit: false,
+    })
+    check('without the flag the middle digit IS priced',
+      spent?.value === 6015.99, JSON.stringify(spent))
   }
   {
     /* A width that would reach back into the stock code is refused rather than
@@ -138,9 +155,21 @@ function main() {
       parseVariableBarcode('2012340125007', wide) === null)
 
     /* And a shorter barcode than the shape describes fails the same way, which
-       is what stops a rule claiming a code it cannot actually read. */
+       is what stops a rule claiming a code it cannot actually read.
+
+       LEGACY carries hasCheckDigit, so a 6-digit value needs prefix 2 + stock 4
+       + middle 1 + value 6 + trailing 1 = 14 digits. A 13-digit code no longer
+       fits it — this used to assert that it did, back when the trailing digit
+       was the only one counted. */
     const sized = { ...LEGACY, valueLength: 6 }
-    check('a 13-digit code fits a 6-digit value', parseVariableBarcode('2012340125007', sized) !== null)
+    check('a 13-digit code cannot hold a 6-digit value AND both check digits',
+      parseVariableBarcode('2012340125007', sized) === null)
+
+    /* Drop the middle check digit and the same 13 digits fit exactly. */
+    const noMiddle = { ...sized, hasCheckDigit: false }
+    check('a 13-digit code fits a 6-digit value without the middle digit',
+      parseVariableBarcode('2012340125007', noMiddle) !== null)
+
     check('an 11-digit code cannot hold prefix + stock + 6 + check',
       parseVariableBarcode('20123401250', sized) === null)
   }
@@ -230,15 +259,37 @@ function main() {
     )
   }
   {
-    /* valueLength 0 takes everything left over, so by definition NOTHING is
-       skipped — drawing an "Ignored" segment there would be a lie. */
+    /* A flexible value still draws the skipped digit when the rule says there
+       is one. "Everything left over" describes where the value STOPS, not
+       whether a check digit guards the stock code — and the parser skips it at
+       any width, so a diagram that omitted it here drew a label the till would
+       have priced differently. It used to assert exactly that. */
     const drawn = segmentScaleBarcode({
       prefix: '20', pluLength: 4, hasCheckDigit: true, valueLength: 0, decimals: 2,
     })
     check(
-      'a flexible value draws no skipped segment',
-      drawn.ok && !drawn.segments.some((s) => s.key === 'skipped'),
+      'a flexible value still draws the skipped digit',
+      drawn.ok && drawn.segments.some((s) => s.key === 'skipped'),
       drawn.ok ? JSON.stringify(drawn.segments.map((s) => s.key)) : drawn.reason,
+    )
+
+    /* And drops it when the rule says the digit is money. */
+    const spent = segmentScaleBarcode({
+      prefix: '20', pluLength: 4, hasCheckDigit: false, valueLength: 0, decimals: 2,
+    })
+    check(
+      'no flag, no skipped segment',
+      spent.ok && !spent.segments.some((s) => s.key === 'skipped'),
+      spent.ok ? JSON.stringify(spent.segments.map((s) => s.key)) : spent.reason,
+    )
+
+    /* The trailing check digit is on BOTH, because no setting removes it. */
+    check(
+      '*** every shape draws a trailing check digit ***',
+      drawn.ok && spent.ok &&
+        drawn.segments[drawn.segments.length - 1].key === 'check' &&
+        spent.segments[spent.segments.length - 1].key === 'check',
+      `${drawn.ok ? drawn.segments.map((s) => s.key).join(',') : '-'} / ${spent.ok ? spent.segments.map((s) => s.key).join(',') : '-'}`,
     )
   }
   {

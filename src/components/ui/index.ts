@@ -132,7 +132,7 @@ export { TransientCallout } from './TransientCallout'
    EmptyState already run their text through it, so reach for it directly only
    where a refusal is rendered somewhere other than those two. */
 export { SetupText } from './SetupText'
-export { Tooltip } from './Tooltip'
+export { Tooltip, REORDER_HINT } from './Tooltip'
 export { SettingsHint } from './SettingsHint'
 export {
   CategoryTile,
@@ -167,6 +167,7 @@ export {
 export { TextLink, TextLinkButton } from './TextLink'
 export { CopyLink } from './CopyLink'
 export { FieldGroup } from './FieldGroup'
+export { CheckList, type CheckListItem } from './CheckList'
 
 export { DataTable, SortGlyph, type Column, type SortState, type SortDirection } from './DataTable'
 export {

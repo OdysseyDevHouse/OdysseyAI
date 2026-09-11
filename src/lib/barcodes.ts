@@ -29,7 +29,20 @@ export type VariableBarcode = { plu: string; value: number }
 export type ScaleBarcodeRule = {
   prefix: string
   pluLength: number
-  /** The last digit is a check digit, so it is not part of the value. */
+  /**
+   * A SECOND check digit sits between the stock code and the value, and is
+   * stepped over rather than priced.
+   *
+   * NOT "the last digit is a check digit" — that one is unconditional, because
+   * EAN-13 ends in a check digit by construction and no shop setting removes
+   * it. Reading this flag as the trailing digit made a rule with the box
+   * unticked slice ACROSS that digit: 21 1234 9 15999 4 at a 5-digit width
+   * charged 599.94 instead of 159.99, with nothing on screen to say so.
+   *
+   * The column is still `has_check_digit`; only its meaning is pinned down.
+   * Every saved rule keeps reading as it did — see the note in
+   * `parseVariableBarcode`.
+   */
   hasCheckDigit: boolean
   /**
    * How many digits hold the price or weight, counted back from the END of the
@@ -120,18 +133,28 @@ export function parseVariableBarcode(
   const plu = digits.slice(start, start + pluLength)
   if (plu.length !== pluLength) return null
 
-  /* `hasCheckDigit` false means the barcode ends at the value, which is a real
-     shape — some in-store label printers emit one — and slicing a digit off it
-     would divide the price by ten without a word. */
-  const end = rule.hasCheckDigit ? digits.length - 1 : digits.length
+  /* The label's own trailing check digit, which is ALWAYS there — EAN-13 ends
+     in one by construction and no setting can remove it. This used to be
+     `rule.hasCheckDigit ? length - 1 : length`, which straddled the check digit
+     on any rule with the box unticked: on 21 1234 9 15999 4 with a 5-digit
+     value it sliced `59994` and charged 599.94 for a R159.99 item. */
+  const end = digits.length - 1
+
+  /* The digit BETWEEN the stock code and the value — a second check digit
+     guarding the stock code, as on a real Avery label: 2 12345 6 01599 6. This
+     is what `hasCheckDigit` names. It only bites on a leftover-width value:
+     with a named width the value is already counted back from the end and the
+     middle digit falls outside the slice either way. */
+  const skipped = rule.hasCheckDigit ? 1 : 0
   const valueLength = Number.isFinite(rule.valueLength) ? rule.valueLength : 0
 
   /* A named width is taken from the END, so digits the scale prints between the
      stock code and the value are skipped rather than priced. The slice must not
      reach back into the stock code, or a barcode shorter than the shape claims
      would quietly read part of the PLU as money. */
-  const from = valueLength > 0 ? end - valueLength : start + pluLength
-  if (from < start + pluLength) return null
+  const floor = start + pluLength + skipped
+  const from = valueLength > 0 ? end - valueLength : floor
+  if (from < floor) return null
 
   const raw = digits.slice(from, end)
   if (!raw) return null

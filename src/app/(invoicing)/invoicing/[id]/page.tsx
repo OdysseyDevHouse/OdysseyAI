@@ -84,7 +84,10 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
        rather than read in the editor: this window has no offline settings store
        the way the till does, and a prop that arrives with the page cannot show
        the list for a moment before deciding not to. */
-    getSettings(siteId, ['serial_capture_mode']),
+    /* Plus where the cursor lands after a scan — the shop's choice, applied by
+       the editor. Batched here with the capture mode for the same reason: a
+       prop that arrives with the page cannot move focus a moment late. */
+    getSettings(siteId, ['serial_capture_mode', 'invoicing_scan_focus']),
   ])
   if (!document) notFound()
 
@@ -139,6 +142,14 @@ export default async function InvoicingPage({ params }: { params: Promise<{ id: 
         editable={isEditable(document.status)}
         canOverrideDiscount={can(capabilities, 'sales.discount_override')}
         canOverridePrice={can(capabilities, 'sales.price_override')}
+        /* Whether this clerk may sell other than one of what was scanned. The
+           editor does not grey the cell out without it — a supervisor's PIN is
+           what makes the figure stick. */
+        canOverrideQty={can(capabilities, 'sales.qty_override')}
+        scanFocus={stockSettings.invoicing_scan_focus === 'qty' ? 'qty' : 'scan'}
+        /* The PIN operator, named on the audit row a supervisor override
+           writes. It says who was APPROVED, never who approved. */
+        operatorName={actor.userName}
         specials={specials}
         showCost={can(capabilities, 'products.cost')}
         /* What the counter may do with the invoice the moment it posts —

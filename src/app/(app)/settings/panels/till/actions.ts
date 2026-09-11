@@ -118,6 +118,44 @@ export async function setForceClockInAction(on: boolean): Promise<TerminalAction
  * Shop-wide, like the rules around it. The till applies the retail-and-
  * hospitality-only half itself, from its own mode — see `pos_scan_sounds`.
  */
+/**
+ * Where the invoicing counter leaves the cursor once a line has been added.
+ *
+ * ── WHY IT SITS WITH THE TILL RULES RATHER THAN ON ITS OWN TAB ────────────
+ *
+ * Because it is the same KIND of fact as the seven around it: a shop-wide rule
+ * about what a machine does once somebody is signed in, set by whoever
+ * configures the shop rather than by whoever is standing at it. That it happens
+ * to apply to the invoicing window rather than the POS makes it no less a till
+ * rule — the counter is a till that prints invoices — and a tab of its own for
+ * one radio pair would be a worse place to look for it than beside the scan
+ * sound it shares a moment with.
+ *
+ * `setup.edit`, like its neighbours. A clerk who could set this could aim their
+ * own cursor, which is harmless; but the panel lives on a screen that is
+ * already gated, and carving an exception for one setting would be surprising.
+ */
+export async function setScanFocusAction(
+  focus: 'scan' | 'qty',
+): Promise<TerminalActionResult> {
+  const ctx = await actorFor('setup.edit')
+  if ('ok' in ctx) return ctx
+
+  const saved = await setSetting(ctx.siteId, 'invoicing_scan_focus', focus)
+  if (!saved.ok) return { ok: false, error: saved.error }
+
+  revalidatePath('/settings')
+  /* The invoicing window, not /pos — this setting does not reach the till. */
+  revalidatePath('/invoicing')
+  return {
+    ok: true,
+    message:
+      focus === 'qty'
+        ? 'A scanned line will open with the cursor in its quantity.'
+        : 'The cursor will stay in the scan box after each line.',
+  }
+}
+
 export async function setScanSoundsAction(on: boolean): Promise<TerminalActionResult> {
   const ctx = await actorFor('setup.edit')
   if ('ok' in ctx) return ctx
@@ -300,6 +338,8 @@ export type TillPanelState =
       returnToLogin: boolean
       idleLogoutSeconds: number
       scanSounds: boolean
+      /** Where the invoicing counter puts the cursor after a scan. */
+      scanFocus: 'scan' | 'qty'
       signInBackdrop: string
       signInStock: string
     }
@@ -339,6 +379,10 @@ export async function loadTillSettingsAction(): Promise<TillPanelState> {
     'pos_return_to_login',
     'pos_idle_logout_seconds',
     'pos_scan_sounds',
+    /* Absent means 'scan' — the mode that cannot corrupt a line, since a
+       mistyped destination there puts a barcode where a barcode belongs. See
+       invoicing_scan_focus in settings.ts. */
+    'invoicing_scan_focus',
   ])
 
   return {
@@ -353,6 +397,9 @@ export async function loadTillSettingsAction(): Promise<TillPanelState> {
        than as a blank control with no option selected. */
     idleLogoutSeconds: Math.max(0, Math.trunc(Number(flags.pos_idle_logout_seconds)) || 0),
     scanSounds: flags.pos_scan_sounds === '1',
+    /* Anything unrecognised reads as 'scan', which is both the default and the
+       safe half — see the note on the key in settings.ts. */
+    scanFocus: flags.invoicing_scan_focus === 'qty' ? 'qty' : 'scan',
     /* '' where the shop has uploaded nothing, which is the common case and the
        panel's designed state rather than an empty one. */
     signInBackdrop: await backdropUrl(siteId),

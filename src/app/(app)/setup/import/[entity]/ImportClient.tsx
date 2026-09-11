@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Badge, Button, ButtonLink, Callout, Card, CardBody, CardFooter, CardHeader,
-  DataTable, EmptyState, Field, FileInput, Icons, MiniStat, SegmentedControl,
-  Select, TableSkeleton, useToast, type Column,
+  DataTable, EmptyState, Field, FileInput, Icons, LoadingBar, MiniStat, Modal,
+  SegmentedControl, Select, TableSkeleton, useToast, type Column,
 } from '@/components/ui'
 import { readFile, aliasSet } from '@/lib/import/sheet'
 import { autoMap, missingRequired, unmappedColumns, type Mapping } from '@/lib/import/map'
@@ -69,6 +69,14 @@ export default function ImportClient({ entity, title, singular, listHref }: Impo
   const [tab, setTab] = useState<'problems' | 'ready'>('problems')
 
   const fileRef = useRef<HTMLInputElement>(null)
+  /**
+   * The review card, so a check can bring its own answer into view.
+   *
+   * Checking a 2,000-row file leaves the verdict two screens below the button
+   * that produced it, which reads as the button having done nothing at all —
+   * especially when the answer is "everything was skipped" and no count moved.
+   */
+  const reviewRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let live = true
@@ -115,10 +123,22 @@ export default function ImportClient({ entity, title, singular, listHref }: Impo
     }
   }
 
-  async function review() {
+  /**
+   * Checks the file and takes the user TO the answer.
+   *
+   * `next` overrides the mode for this one check, so "update them instead" can
+   * change the choice and re-check in a single press rather than asking the
+   * user to scroll back up, change a dropdown and find the button again.
+   */
+  async function review(next?: ExistingMode) {
+    const runMode = next ?? mode
+    if (next && next !== mode) setMode(next)
+
     setBusy(true)
     try {
-      const result = await planImportAction({ entity, headers, rows, mapping, mode, headerLine })
+      const result = await planImportAction({
+        entity, headers, rows, mapping, mode: runMode, headerLine,
+      })
       if (!result.ok) {
         toast.error(result.error)
         return
@@ -126,6 +146,10 @@ export default function ImportClient({ entity, title, singular, listHref }: Impo
       setPlan(result.plan)
       setTab(result.plan.problems.length > 0 ? 'problems' : 'ready')
       setStage('review')
+      // After paint, or the card being scrolled to has not been laid out yet.
+      requestAnimationFrame(() => {
+        reviewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
     } finally {
       setBusy(false)
     }
@@ -319,7 +343,9 @@ export default function ImportClient({ entity, title, singular, listHref }: Impo
             <Button
               variant={plan ? 'secondary' : 'primary'}
               disabled={busy || missing.length > 0 || stage === 'applying'}
-              onClick={review}
+              /* Wrapped, not passed: review() takes an optional mode, and a
+                 bare handler would hand it the click event as one. */
+              onClick={() => review()}
             >
               <Icons.Search size={15} /> {plan ? 'Check again' : 'Check the file'}
             </Button>
@@ -329,36 +355,62 @@ export default function ImportClient({ entity, title, singular, listHref }: Impo
 
       {/* ── 3. What will happen ────────────────────────────────────── */}
       {plan && stage !== 'done' && (
-        <ReviewCard
-          plan={plan}
-          mode={mode}
-          title={title}
-          busy={busy || stage === 'applying'}
-          halted={halted}
-          tab={tab}
-          onTab={setTab}
-          onApply={() => apply(halted ? cursor : 0)}
-        />
+        <div ref={reviewRef} className="scroll-mt-4">
+          <ReviewCard
+            plan={plan}
+            mode={mode}
+            title={title}
+            busy={busy || stage === 'applying'}
+            halted={halted}
+            tab={tab}
+            onTab={setTab}
+            onApply={() => apply(halted ? cursor : 0)}
+            onUpdateInstead={() => review('update')}
+          />
+        </div>
       )}
 
       {/* ── 4. Writing ─────────────────────────────────────────────── */}
-      {stage === 'applying' && plan && (
-        <Card aria-busy="true">
-          <CardHeader
-            title="Importing"
-            description="Leaving this page stops the import. Everything already written stays written."
-          />
-          <CardBody>
-            <Progress done={progress} total={plan.ready.length} />
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <MiniStat label="Created" value={String(totals.created)} />
-              <MiniStat label="Updated" value={String(totals.updated)} />
-              <MiniStat label="Incomplete" value={String(totals.partial)} tone={totals.partial > 0 ? 'warning' : 'default'} />
-              <MiniStat label="Refused" value={String(totals.failed)} tone={totals.failed > 0 ? 'danger' : 'default'} />
-            </div>
-          </CardBody>
-        </Card>
-      )}
+      {/*
+        A DIALOG rather than a fourth card, and one with no way out.
+
+        The card version sat below the review table, which on a file of two
+        thousand rows is a screen the user has already scrolled past — so the
+        one moment the screen must hold their attention was the one they could
+        not see. The dialog also stops the file being re-chosen or the mapping
+        edited while batches are still going up, which the inline version only
+        prevented by disabling each control one at a time.
+
+        No onClose, no footer: Escape is swallowed, the backdrop ignores
+        clicks, and it closes itself when apply() leaves the 'applying' stage —
+        on success, or on a halt that puts the review card back with a Resume.
+      */}
+      <Modal
+        open={stage === 'applying' && plan !== null}
+        onClose={() => {}}
+        closeOnBackdrop={false}
+        dismissible={false}
+        title="Importing"
+        description="This takes a moment on a large file. Everything written stays written."
+        size="sm"
+      >
+        <div aria-busy="true">
+          {/* The indeterminate sweep says "this is running"; the meter below
+              says how far. Label suppressed on the sweep so a reader is not
+              told twice — the meter carries the count. */}
+          <LoadingBar label={null} className="mb-4" />
+          <Progress done={progress} total={plan?.ready.length ?? 0} />
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <MiniStat label="Created" value={String(totals.created)} />
+            <MiniStat label="Updated" value={String(totals.updated)} />
+            <MiniStat label="Incomplete" value={String(totals.partial)} tone={totals.partial > 0 ? 'warning' : 'default'} />
+            <MiniStat label="Refused" value={String(totals.failed)} tone={totals.failed > 0 ? 'danger' : 'default'} />
+          </div>
+          <p className="mt-4 text-sm text-muted">
+            Leaving this page stops the import — anything not yet written can be imported again.
+          </p>
+        </div>
+      </Modal>
 
       {/* ── The finish line ────────────────────────────────────────── */}
       {stage === 'done' && plan && (
@@ -425,7 +477,7 @@ function refusedTotal(totals: RunTotals, plan: WirePlan): number {
 /* ── Review ──────────────────────────────────────────────────────────── */
 
 function ReviewCard({
-  plan, mode, title, busy, halted, tab, onTab, onApply,
+  plan, mode, title, busy, halted, tab, onTab, onApply, onUpdateInstead,
 }: {
   plan: WirePlan
   mode: ExistingMode
@@ -435,16 +487,76 @@ function ReviewCard({
   tab: 'problems' | 'ready'
   onTab: (next: 'problems' | 'ready') => void
   onApply: () => void
+  /** Switches to update mode and re-checks, for the all-skipped case. */
+  onUpdateInstead: () => void
 }) {
   const { counts } = plan
+
+  /*
+   * Nothing would be written, and WHY differs.
+   *
+   * A check that produces no work looks identical to a check that did not run:
+   * the same card, the same four figures, a disabled button. So the card says
+   * so in words, and names the cause — every row already on file and being
+   * skipped is a different situation from every row having been refused, and
+   * only the first one has a one-press answer.
+   */
+  const nothingToDo = plan.ready.length === 0 && !halted
+  const allSkipped = nothingToDo && counts.skip > 0 && counts.problem === 0
+  const allRefused = nothingToDo && counts.problem > 0 && counts.skip === 0
+
+  const importButton = (
+    <Button variant="primary" disabled={busy || plan.ready.length === 0} onClick={onApply}>
+      <Icons.Upload size={15} />
+      {halted
+        ? 'Resume the import'
+        : `Import ${plan.ready.length.toLocaleString('en-ZA')} ${plan.ready.length === 1 ? 'row' : 'rows'}`}
+    </Button>
+  )
 
   return (
     <Card>
       <CardHeader
         title="What will happen"
         description="Checked against what is already on file. Nothing has been written yet."
+        /* The same button as the footer's, up here as well. The footer sits
+           below a table of up to 200 rows, and on a two-thousand-row file that
+           is a long scroll between deciding to import and being able to. */
+        action={importButton}
       />
       <CardBody>
+        {allSkipped && (
+          <Callout
+            tone="warning"
+            title="Nothing would be imported"
+            className="mb-4"
+          >
+            <p>
+              All {counts.skip.toLocaleString('en-ZA')} rows in this file match{' '}
+              {counts.skip === 1 ? 'a record' : 'records'} already on file, and existing records are
+              being skipped.
+            </p>
+            <div className="mt-3">
+              <Button variant="secondary" size="sm" disabled={busy} onClick={onUpdateInstead}>
+                <Icons.Refresh size={15} /> Update them from the file instead
+              </Button>
+            </div>
+          </Callout>
+        )}
+
+        {allRefused && (
+          <Callout tone="danger" title="Nothing would be imported" className="mb-4">
+            Every row was refused. Fix the reasons listed below in your file, then check it again.
+          </Callout>
+        )}
+
+        {nothingToDo && !allSkipped && !allRefused && (
+          <Callout tone="warning" title="Nothing would be imported" className="mb-4">
+            {counts.skip.toLocaleString('en-ZA')} rows are already on file and are being skipped, and{' '}
+            {counts.problem.toLocaleString('en-ZA')} were refused. Nothing is left to write.
+          </Callout>
+        )}
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <MiniStat label="To create" value={counts.create.toLocaleString('en-ZA')} tone={counts.create > 0 ? 'success' : 'default'} />
           <MiniStat label="To update" value={counts.update.toLocaleString('en-ZA')} tone={counts.update > 0 ? 'warning' : 'default'} />
@@ -517,14 +629,9 @@ function ReviewCard({
         </>
       )}
 
-      <CardFooter>
-        <Button variant="primary" disabled={busy || plan.ready.length === 0} onClick={onApply}>
-          <Icons.Upload size={15} />
-          {halted
-            ? 'Resume the import'
-            : `Import ${plan.ready.length.toLocaleString('en-ZA')} ${plan.ready.length === 1 ? 'row' : 'rows'}`}
-        </Button>
-      </CardFooter>
+      {/* The same button as the header's — built once, so the two can never
+          disagree about whether there is anything to import. */}
+      <CardFooter>{importButton}</CardFooter>
     </Card>
   )
 }

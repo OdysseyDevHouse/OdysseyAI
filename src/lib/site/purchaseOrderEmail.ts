@@ -9,10 +9,13 @@ import { formatMoney } from '../decimals'
 import { send, isConfigured } from '../mail'
 import { getPurchaseDocument } from './purchaseDocuments'
 import { getSupplier } from './suppliers'
-import { activeTemplateBody } from './stationeryTemplates'
+import { activeTemplate, activeTemplateBody } from './stationeryTemplates'
 import { logoImgTag, readLogo, LOGO_URL } from './documentLogo'
 import { purchaseOrderTokens } from '../stationery/adapters/purchaseOrder'
-import { renderTemplate } from '../stationery/render'
+import { renderTemplate, type RenderInput } from '../stationery/render'
+import { parseSpec } from '../stationery/blocks'
+import { PURCHASE_ORDER_BLOCKS } from '../stationery/defaults/purchaseOrderBlocks'
+import { renderSpecPdf } from '../stationery/pdf'
 import { resolveTemplate } from '../stationery/resolve'
 import type { Actor } from './activityLog'
 
@@ -158,6 +161,13 @@ export async function emailPurchaseOrder(
   const number = doc.documentNumber ?? `#${documentId}`
   const note = opts.message?.trim()
 
+  /*
+   * The same order, as a file the supplier can keep.
+   *
+   * Null whenever it cannot be drawn — see orderPdf. The email goes either way.
+   */
+  const pdf = await orderPdf(siteId, input).catch(() => null)
+
   const result = await deps.send({
     to,
     subject: `Purchase order ${number} from ${site.name}`,
@@ -165,6 +175,26 @@ export async function emailPurchaseOrder(
     // The covering note sits ABOVE the document rather than inside it: the
     // template is the order, and a one-off "please deliver Friday" is not.
     html: note ? `${notePanel(note)}${html}` : html,
+    /*
+     * ── WHY THE ORDER IS NOW BOTH ────────────────────────────────────────
+     *
+     * The body stays the document — see the note at the top of this file, all
+     * of which still holds. This adds a copy the supplier can file, print or
+     * forward, because that is what a supplier does with an order, and an HTML
+     * email is not a thing you can put in a folder.
+     *
+     * The objection that block said no to was a SECOND LAYOUT: pdfkit drawing
+     * its own idea of a purchase order, drifting from the designed one. That
+     * objection no longer applies. This renders the SAME stationery spec the
+     * body does, through renderSpecPdf, so the attachment is the design the
+     * shop drew rather than a parallel invention. compile.ts says the same
+     * thing from the other side: the HTML table's column arithmetic was moved
+     * to match the PDF's "so the two agree by construction rather than by
+     * luck".
+     */
+    attachments: pdf
+      ? [{ filename: `${number}.pdf`, content: pdf, contentType: 'application/pdf' }]
+      : undefined,
   })
   if (!result.ok) return { ok: false, error: result.error }
 
@@ -196,6 +226,78 @@ export async function emailPurchaseOrder(
  * without a letterhead, which the supplier can still act on; an order that did
  * not go out because a PNG could not be read is a worse outcome by far.
  */
+/**
+ * The order as a PDF, drawn from the SAME stationery spec as the email body.
+ *
+ * ── NULL RATHER THAN A THROW ──────────────────────────────────────────────
+ *
+ * Every failure here returns null and the email goes without an attachment,
+ * which is exactly what renderDesignedInvoice does and for the same reason: the
+ * caller is sending an order to a supplier, and the one thing that must not
+ * happen is no order at all. A missing attachment is a smaller problem than a
+ * send that fails.
+ *
+ * ── ONLY A BLOCK DESIGN CAN BE DRAWN ──────────────────────────────────────
+ *
+ * A site that chose the HTML editor has markup pdfkit cannot render — there is
+ * no honest way to draw arbitrary HTML with it. Those sites keep the emailed
+ * order they have today: the body is still their design, and no attachment is
+ * better than an attachment that looks like someone else's document.
+ *
+ * `activeTemplate` rather than `activeTemplateBody` above, because only the
+ * former carries `format`, which is what that decision turns on.
+ */
+async function orderPdf(siteId: number, input: RenderInput): Promise<Buffer | null> {
+  const custom = await activeTemplate(siteId, 'purchase_order').catch(() => null)
+
+  const spec =
+    custom?.format === 'blocks' && custom.body
+      ? parseSpec(custom.body, 'purchase_order')
+      : custom
+        ? null // a markup design: not drawable, so no attachment
+        : PURCHASE_ORDER_BLOCKS // nothing designed: the shipped block layout
+
+  if (!spec || spec.blocks.length === 0) return null
+
+  /*
+   * ── THE LOGO RULE IS THE INVOICE'S, AND IT IS NOT FUSSINESS ──────────────
+   *
+   * FORMAT: pdfkit reads PNG and JPEG only — a GIF or WebP throws mid-draw and
+   * would lose the whole document.
+   *
+   * SIZE: a PDF EMBEDS its images without re-compressing them, so a 2MB logo
+   * becomes 2MB on every order sent. The HTML body gets away with the same file
+   * because a browser fetches it once; a mailbox does not work that way.
+   */
+  const MAX_LOGO_BYTES = 512 * 1024
+  const found = await readLogo(siteId).catch(() => null)
+  const logo =
+    found &&
+    (found.format === 'png' || found.format === 'jpeg') &&
+    found.bytes.length <= MAX_LOGO_BYTES
+      ? found.bytes
+      : null
+
+  /* Only the pictures this design actually places, read as bytes. */
+  const used = spec.blocks
+    .filter((b) => b.kind === 'image' && b.imageId)
+    .map((b) => b.imageId as number)
+
+  return renderSpecPdf(
+    spec,
+    'purchase_order',
+    {
+      ...input,
+      /* The logo token is never DRAWN as text in a PDF — the bytes go in
+         separately above — so it is cleared here. Leaving the <img> tag in
+         would print markup across the letterhead. */
+      values: { ...input.values, 'site.logo': null },
+    },
+    logo,
+    used.length ? await pictureBytes(siteId, used) : undefined,
+  )
+}
+
 async function inlineLogo(siteId: number, html: string): Promise<string> {
   if (!html.includes(LOGO_URL)) return html
   try {

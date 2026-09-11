@@ -280,6 +280,32 @@ export const SETTING_DEFAULTS = {
      a serial item has always needed a unit before the line exists. */
   serial_capture_mode: 'list',
 
+  /* Where the cursor lands at the invoicing counter after a line is added.
+
+     'scan'  back in the entry box, ready for the next barcode.
+     'qty'   in the new line's quantity cell, ready for a number.
+
+     ── WHY BOTH, RATHER THAN ONE RIGHT ANSWER ──────────────────────────────
+
+     Because the two describe genuinely different trades, and each is wrong for
+     the other. A counter working a trolley scans continuously: every hop into a
+     quantity cell is a hop back out again, and a clerk who does not notice the
+     move types the next barcode into the quantity box, where it becomes a
+     quantity of 8901234. A counter selling by the box types a figure on nearly
+     every line, and under 'scan' reaches for the mouse each time.
+
+     'scan' is the default because it is the mode that cannot corrupt a line.
+     Under it a mistyped destination puts a barcode where a barcode belongs;
+     under 'qty' it puts one where a number belongs, and 8901234 of something
+     is a line that will be noticed at the total rather than at the moment.
+
+     ── INVOICING ONLY ──────────────────────────────────────────────────────
+
+     Not the POS, which has no editable grid to land in — a till line is opened
+     through the line editor, and that dialog already chooses its own field (see
+     `openOn` in LineEditModal). There is no cursor there for this to move. */
+  invoicing_scan_focus: 'scan',
+
   /** How far a drawer may be out before an explanation is required at cash-up. */
   cashup_variance_tolerance: '5.00',
 
@@ -1906,6 +1932,11 @@ export function validateSetting(key: SettingKey, value: string): string | null {
       return value === 'list' || value === 'scan'
         ? null
         : 'Choose whether the clerk may pick from the list, or must scan or type the number.'
+
+    case 'invoicing_scan_focus':
+      return value === 'scan' || value === 'qty'
+        ? null
+        : 'Choose whether the cursor returns to the scan box or moves to the quantity.'
 
     case 'cashup_variance_tolerance': {
       const tolerance = Number(value)

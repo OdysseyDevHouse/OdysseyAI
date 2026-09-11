@@ -7,7 +7,13 @@
  *
  *   npm run test:repricing
  */
-import { applyRule, applyEnding, applyRounding } from '../src/lib/repricing'
+import {
+  applyRule,
+  applyEnding,
+  applyRounding,
+  applyBulkChange,
+  type RepriceRounding,
+} from '../src/lib/repricing'
 import { removeVat, addVat, markupPercent, gpPercent } from '../src/lib/pricing'
 import { round } from '../src/lib/decimals'
 
@@ -238,6 +244,58 @@ const zeroVat = applyRule(
 )
 ok('a zero-rated product prices at the exclusive figure', zeroVat.ok && near(zeroVat.priceIncl, 140), zeroVat.ok ? String(zeroVat.priceIncl) : zeroVat.reason)
 ok('and incl equals excl there', zeroVat.ok && near(zeroVat.priceIncl, zeroVat.priceExcl))
+
+/* ── Moving prices that already exist ────────────────────────────────────── */
+
+/*
+ * applyBulkChange is what the price-change editor's "update these together"
+ * runs. It moves a price that is already on a list, rather than deriving one
+ * from cost — so unlike applyRule above it works in INCLUSIVE money throughout.
+ *
+ * The case that matters most is the refusal: a change that would take a price
+ * to zero or less must return null and leave the line alone. Clamping it to
+ * zero would hand the stock away, and it would look completely plausible in a
+ * list of four hundred rows.
+ */
+
+const NONE: RepriceRounding = { kind: 'none' }
+
+ok('up 10% of 100', applyBulkChange(100, { kind: 'increase-percent', percent: 10 }, NONE) === 110)
+ok('down 10% of 100', applyBulkChange(100, { kind: 'decrease-percent', percent: 10 }, NONE) === 90)
+ok('up R2.50 on 100', applyBulkChange(100, { kind: 'increase-amount', amount: 2.5 }, NONE) === 102.5)
+ok('down R2.50 on 100', applyBulkChange(100, { kind: 'decrease-amount', amount: 2.5 }, NONE) === 97.5)
+ok('set replaces whatever was there', applyBulkChange(100, { kind: 'set', amount: 19.99 }, NONE) === 19.99)
+
+// An awkward price, which is what a shop actually has.
+ok('up 10% of 13.49 is exact', applyBulkChange(13.49, { kind: 'increase-percent', percent: 10 }, NONE) === 14.839)
+
+// Rounding runs AFTER the change, on the inclusive figure — the shelf edge.
+ok(
+  'up 10% then forced to .99',
+  applyBulkChange(13.49, { kind: 'increase-percent', percent: 10 }, { kind: 'ending', cents: 99, direction: 'up' }) === 14.99,
+)
+ok(
+  'a set price is tidied too, not exempted',
+  applyBulkChange(100, { kind: 'set', amount: 20 }, { kind: 'ending', cents: 99, direction: 'up' }) === 20.99,
+)
+ok(
+  'nearest 0.50 applies to the changed figure',
+  applyBulkChange(13.49, { kind: 'increase-percent', percent: 10 }, { kind: 'nearest', step: 0.5 }) === 15,
+)
+
+// The refusals. Each of these would otherwise write a price nobody could sell at.
+ok('R5 off a R3 item is refused', applyBulkChange(3, { kind: 'decrease-amount', amount: 5 }, NONE) === null)
+ok('landing exactly on zero is refused', applyBulkChange(5, { kind: 'decrease-amount', amount: 5 }, NONE) === null)
+ok('down 100% is refused', applyBulkChange(50, { kind: 'decrease-percent', percent: 100 }, NONE) === null)
+ok('setting to zero is refused', applyBulkChange(50, { kind: 'set', amount: 0 }, NONE) === null)
+
+// Two runs in a row build on each other: the second sees what the first wrote,
+// which is what the owner is looking at when they press the button again.
+{
+  const once = applyBulkChange(100, { kind: 'increase-percent', percent: 10 }, NONE)
+  const twice = once === null ? null : applyBulkChange(once, { kind: 'increase-percent', percent: 10 }, NONE)
+  ok('+10% twice compounds to 121', twice === 121, String(twice))
+}
 
 console.log(fails === 0 ? '\nAll passed.' : `\n${fails} FAILED.`)
 process.exit(fails === 0 ? 0 : 1)

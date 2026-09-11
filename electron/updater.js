@@ -112,6 +112,21 @@ const state = {
 let instance = null
 
 /**
+ * Is the check in flight one that a booked window asked for?
+ *
+ * Module state rather than a parameter, because the thing that has to read it
+ * — the 'update-downloaded' handler — is an event listener registered once at
+ * load, long before any particular check. It is set immediately before
+ * checkForUpdates() and read when that check bears fruit.
+ *
+ * The window is honoured at most once per check, and a check that finds
+ * nothing to download simply leaves it set until the next one overwrites it —
+ * harmless, because the flag only ever gates an install that has already been
+ * found and the server clears the booking either way.
+ */
+let scheduledRun = false
+
+/**
  * How to reach the app's own server, remembered from start().
  *
  * checkNow() is called by the timer AND by an IPC handler that has no idea what
@@ -131,10 +146,20 @@ let originOf = null
  */
 function snapshot() {
   const url = feedUrl()
+  const policy = updateChannel.current()
   return {
     ...state,
     currentVersion: app.getVersion(),
-    channel: updateChannel.current(),
+    channel: policy.channel,
+    /* ── THE SCREEN MUST BE ABLE TO EXPLAIN A QUIET MACHINE ──────────────
+     *
+     * A held-back device does nothing at all: it does not check, download or
+     * install. Without these two fields the Updates screen would show "Not
+     * checked yet" for ever and the technician standing at it would have no
+     * way to tell that from a broken updater. That is the support call this
+     * whole feature would otherwise generate. */
+    autoUpdate: policy.autoUpdate,
+    scheduledAt: policy.scheduledAt,
     feedUrl: url || null,
     /* The screen disables its buttons on this rather than inferring it from the
        other fields — "there is no update server" and "nothing has happened yet"
@@ -196,6 +221,24 @@ function loadUpdater({ onStatus } = {}) {
     say('checking', 'Checking for updates…', { error: null })
   })
   autoUpdater.on('update-not-available', () => {
+    /* ── A WINDOW IS SPENT EVEN WHEN THERE IS NOTHING TO INSTALL ──────────
+     *
+     * A machine booked for 02:00 that is ALREADY on the newest build downloads
+     * nothing, so the install path — the only other place the booking is
+     * reported as taken — never runs.
+     *
+     * Left alone, that booking stays live for ever: every check four hours
+     * later still reads as due, finds nothing again, and the control panel shows
+     * a window that never clears. The customer sees a scheduled update that
+     * apparently never happened, on a machine that is perfectly up to date.
+     *
+     * So the window is spent here too. Nothing restarts — there is nothing to
+     * restart into — it is simply marked as honoured, which it was: the machine
+     * checked at the time it was asked to and had nothing to do. */
+    if (scheduledRun) {
+      scheduledRun = false
+      void reportScheduledRun()
+    }
     say('up-to-date', 'Odyssey is up to date.', {
       availableVersion: null,
       lastCheckedAt: new Date().toISOString(),
@@ -213,6 +256,29 @@ function loadUpdater({ onStatus } = {}) {
     say('downloading', `Downloading update… ${percent}%`, { percent })
   })
   autoUpdater.on('update-downloaded', (info) => {
+    /* ── A BOOKED WINDOW RESTARTS THE MACHINE; AN ORDINARY ONE WAITS ──────
+     *
+     * The ordinary path never interrupts a shop: the build sits staged until
+     * somebody closes the app, which on a counter machine is the end of a day.
+     *
+     * A scheduled window is the opposite promise. Somebody chose 02:00 BECAUSE
+     * nobody is trading then, and a build that merely staged itself would wait
+     * for a close that may not come for weeks on a machine that is never shut
+     * down — which is exactly the estate this feature is for. Waiting would
+     * quietly turn "scheduled for Tuesday" into "some Tuesday, eventually".
+     *
+     * So the window is the second thing allowed to restart the app, alongside
+     * the technician pressing Install in installNow(). Both are deliberate acts
+     * by a person; neither is the updater deciding on its own. */
+    if (scheduledRun) {
+      scheduledRun = false
+      say('downloaded', `Installing Odyssey ${info?.version ?? ''} now.`, {
+        availableVersion: info?.version ?? null,
+        percent: 100,
+      })
+      void runScheduledInstall()
+      return
+    }
     say('downloaded', `Odyssey ${info?.version ?? ''} will be installed when you close the app.`, {
       availableVersion: info?.version ?? null,
       percent: 100,
@@ -254,7 +320,7 @@ function loadUpdater({ onStatus } = {}) {
  * to land on.
  */
 function applyChannel(autoUpdater) {
-  const channel = updateChannel.feedChannel(updateChannel.current())
+  const channel = updateChannel.feedChannel(updateChannel.current().channel)
   if (channel) autoUpdater.channel = channel
   autoUpdater.allowDowngrade = false
 }
@@ -319,8 +385,41 @@ async function checkNow() {
      is moved between channels while it is RUNNING — a till left on all week
      would otherwise never hear about it. The fetch fails safe to whatever this
      machine already knew, so a check never waits on the portal to happen. */
-  await updateChannel.refresh(originOf?.() ?? null)
+  const policy = await updateChannel.refresh(originOf?.() ?? null)
   applyChannel(autoUpdater)
+
+  /* ── A HELD-BACK MACHINE DOES NOTHING, UNTIL THE DAY IT DOES ─────────────
+   *
+   * Not "download quietly and hold the install back". A machine held back is
+   * genuinely dormant: no check, no download, no install. The alternative would
+   * have it pulling a hundred megabytes down a shop's line every four hours for
+   * a build nobody has agreed to take, and then installing whatever the last
+   * successful download happened to be rather than what is current on the day.
+   *
+   * The cost is that the booked window includes DOWNLOAD time, so an 02:00
+   * booking on a slow line restarts at 02:10. Every screen calls it a start
+   * time for exactly that reason.
+   *
+   * `updateDue` is the SERVER'S verdict and is never cached — see policy() in
+   * updateChannel.js. A machine that could not reach the portal has
+   * updateDue: false and waits, which is right: a device somebody deliberately
+   * held back should not act on a clock that might be years out.
+   *
+   * A machine that was switched off at 02:00 is NOT skipped. The booking stays
+   * live on the server until this machine reports having taken it, so it acts
+   * on the next check after being switched on. "Scheduled for 02:00" means "at
+   * 02:00, or the next time this machine is running". */
+  if (!policy.autoUpdate && !policy.updateDue) {
+    state.status = 'held'
+    state.lastCheckedAt = new Date().toISOString()
+    state.error = null
+    return snapshot()
+  }
+
+  /* A due window is a one-off act, so the moment it is honoured the machine
+     goes back to being dormant. Recorded before the install rather than after
+     for the obvious reason: after, this process no longer exists. */
+  scheduledRun = !policy.autoUpdate && policy.updateDue
 
   try {
     await autoUpdater.checkForUpdates()
@@ -334,6 +433,67 @@ async function checkNow() {
     state.error = message
   }
   return snapshot()
+}
+
+/**
+ * Tell the portal this machine has taken its booked window.
+ *
+ * Called from BOTH ends of a scheduled check: after a download, immediately
+ * before restarting, and also when the check found nothing to install because
+ * the machine was already current. A window is spent either way — the machine
+ * did what it was asked at the time it was asked.
+ *
+ * ── IT IS ALLOWED TO FAIL, AND SAYS SO QUIETLY ─────────────────────────────
+ *
+ * On the install path this is a claim about something that has not quite
+ * happened, because there is no 'after': the process is about to be replaced.
+ * That is safe because both halves of a partial failure self-correct. A machine
+ * that reports and then fails to install finds the update again on its next
+ * check. One that installs without reporting keeps a live booking, comes back
+ * up to date, and clears it on the next check having installed nothing — which
+ * is exactly the already-current path above.
+ *
+ * So the install proceeds whether or not this lands. A shop waiting for a
+ * booked window must not miss it because the portal was briefly unreachable at
+ * two in the morning: a duplicate booking is a nuisance, a missed window is the
+ * thing somebody complained about.
+ */
+async function reportScheduledRun() {
+  const origin = originOf?.() ?? null
+  if (!origin) return
+  try {
+    await fetch(`${origin}/api/updates/ran`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      /* The relay cannot read Electron's userData, so the serial travels in
+         the body exactly as it does for the channel check next door. */
+      body: JSON.stringify({ serial: updateChannel.deviceSerial() }),
+      signal: AbortSignal.timeout(20_000),
+    })
+  } catch (err) {
+    /* Logged rather than swallowed: "the shop says it updated and the panel
+       still shows a booking" is a real support question, and this line is the
+       answer to it. */
+    console.warn('[updater] could not report the scheduled update:', err?.message || err)
+  }
+}
+
+/**
+ * Report the window as taken, then restart into the new build.
+ *
+ * See reportScheduledRun above for why the report goes first and is allowed to
+ * fail: this process is about to be replaced, so there is no "after", and both
+ * halves of a partial failure are self-correcting on the next check.
+ */
+async function runScheduledInstall() {
+  await reportScheduledRun()
+
+  const autoUpdater = loadUpdater()
+  if (!autoUpdater) return
+  console.log('[updater] installing on schedule, restarting')
+  /* Same shape as installNow(): a beat for anything in flight to settle, not
+     silent so a technician watching sees the installer, and relaunched after. */
+  setTimeout(() => autoUpdater.quitAndInstall(false, true), 250)
 }
 
 /**

@@ -76,7 +76,13 @@ export async function POST(req: NextRequest) {
   /* Imported lazily so a cloud build never pulls the portal client in for a
      route it refuses at the first line. */
   const { send } = await import('@/lib/control/portalApi')
-  const result = await send<{ channel?: string; matched?: boolean }>(
+  const result = await send<{
+    channel?: string
+    matched?: boolean
+    autoUpdate?: boolean
+    updateDue?: boolean
+    scheduledAt?: string | null
+  }>(
     'GET',
     '/update-channel',
     undefined,
@@ -105,5 +111,22 @@ export async function POST(req: NextRequest) {
     ok: true,
     channel: channel || DEFAULT_CHANNEL,
     matched: Boolean(result.data?.matched),
+    /* ── RELAYED, NOT DECIDED ────────────────────────────────────────────
+     *
+     * Read as "anything but an explicit false means update yourself", which is
+     * the same rule the shell applies to its cache and the portal applies to a
+     * device it cannot find. Three copies of one decision, each able to answer
+     * without the other two — exactly as DEFAULT_CHANNEL is, and for the same
+     * reason: a machine that wrongly holds back installs no security fix and
+     * says nothing about it.
+     *
+     * A portal that answered nothing at all never reaches here; the 502 above
+     * leaves the shell on its cached policy. */
+    autoUpdate: result.data?.autoUpdate !== false,
+    /* Never defaulted true. "Install right now" is the one answer that must be
+       explicit, because the cost of inventing it is a trading machine
+       restarting in the middle of a shift. */
+    updateDue: result.data?.updateDue === true,
+    scheduledAt: typeof result.data?.scheduledAt === 'string' ? result.data.scheduledAt : null,
   })
 }

@@ -80,7 +80,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
     // An order is priced like an invoice, so it sees the same promotions.
     liveSpecials(siteId),
     // And it names its units the same way (235).
-    getSettings(siteId, ['serial_capture_mode']),
+    getSettings(siteId, ['serial_capture_mode', 'invoicing_scan_focus']),
   ])
 
   const canDeliver = status === 'open' || status === 'part_delivered'
@@ -180,6 +180,9 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           extraStatus={<Badge tone={TONE[status]}>{FULFILMENT_LABELS[status]}</Badge>}
           canOverrideDiscount={can(capabilities, 'sales.discount_override')}
           canOverridePrice={can(capabilities, 'sales.price_override')}
+          canOverrideQty={can(capabilities, 'sales.qty_override')}
+          scanFocus={stockSettings.invoicing_scan_focus === 'qty' ? 'qty' : 'scan'}
+          operatorName={actor.userName}
           showCost={can(capabilities, 'products.cost')}
           /* The delivery panel and callouts follow below, so the editor must
              not close the page with its own pb-10. */

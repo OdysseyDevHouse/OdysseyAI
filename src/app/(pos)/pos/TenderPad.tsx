@@ -1103,24 +1103,11 @@ export function TenderPad({
                   full width they left a gap under the tender keys the moment a
                   settled sale had no notes left to offer. */}
               <div className="flex flex-col gap-2">
-                {/* The same heading treatment the tender keys carry, so the two
-                    columns start on the same line rather than one sitting a
-                    heading's height above the other. */}
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Quick amounts
-                </p>
-                <AmountRow
-                  owed={owed}
-                  entry={entry}
-                  paid={taken.length > 0}
-                  disabled={pending}
-                  onEntry={setEntry}
-                />
                 {/* The digits, where they are being typed. The strip above now
                     reports the payment as a whole, so without this box the pad
-                    would show a cashier nothing back as they key — and Exact
-                    and the notes fill this same figure, so it is the one place
-                    that answers "what will the next tender key take?". */}
+                    would show a cashier nothing back as they key — and it is the
+                    one place that answers "what will the next tender key
+                    take?". */}
                 {/* `inline`, so the label sits INSIDE the box beside the
                     figure rather than as a caption above it — one control
                     rather than a heading and a box, which is what leaves the
@@ -1162,94 +1149,9 @@ export function TenderPad({
   )
 }
 
-/* ── What is left, and the notes a customer hands over ───────────────────── */
-
-/**
- * The row above the keypad: what is still owed in one tap, then the notes.
- *
- * ── THE FIRST KEY CHANGES ITS NAME ────────────────────────────────────────
- *
- * On an untouched sale it is `Exact` — the whole bill, so the next tap is the
- * tender and no digits are typed at all. Once ANY payment has been taken it
- * becomes `What's left`, showing the balance rather than the total: on an R80
- * bill with R50 cash already down, the key reads "What's left R30.00" and a
- * split is finished in one tap instead of being worked out at the counter.
- *
- * Same key, same position, same figure underneath — `owed` is already net of
- * everything taken. Only the wording moves, and only because "Exact" is a
- * misleading name for a part-paid sale.
- *
- * ── THE NOTES ARE THE NOTES ───────────────────────────────────────────────
- *
- * A FIXED list of the denominations in a South African till: 10, 20, 50, 100,
- * 200. Not `quickAmounts`, which rounds the owed figure UP to the next note and
- * so offered "R500" — a note that has not existed since 1994 and that no
- * customer can hand over. What a cashier is holding is a note, so the keys are
- * notes.
- *
- * Amounts at or below what is owed stay on the row rather than being hidden:
- * R50 against an R80 balance is a part payment, which is exactly the split this
- * pad exists to make easy.
- */
-const NOTES = [10, 20, 50, 100, 200]
-
-function AmountRow({
-  owed,
-  entry,
-  paid,
-  disabled,
-  onEntry,
-}: {
-  owed: number
-  entry: string
-  /** Whether any payment has been taken — what renames the first key. */
-  paid: boolean
-  disabled: boolean
-  onEntry: (value: string) => void
-}) {
-  const exact = round(Math.max(owed, 0), 2)
-  /* Highlighted when the pad is holding exactly the outstanding balance — the
-     cashier's confirmation that the key landed, without reading the figure. */
-  const isExact = exact > 0 && numPadValue(entry) === exact
-
-  return (
-    /* Two rows of three normally; ONE row of six on a till. The keys keep
-       their 56px height either way — a short screen loses a row, never a
-       touch target. That row is 64px, which is most of what a 768px panel is
-       short by. */
-    <div className="grid grid-cols-3 gap-2 short:grid-cols-6">
-      <Button
-        variant={isExact ? 'primary' : 'secondary'}
-        size="touch"
-        /* Two lines inside one 56px key: the name, then the figure it will
-           load. flex-col because Button lays its content out in a row, and
-           leading-tight so both lines fit without the key growing and
-           dragging the notes beside it out of line. */
-        className="flex-col justify-center gap-0 leading-tight"
-        disabled={disabled || exact <= 0}
-        onClick={() => onEntry(exact.toFixed(2))}
-      >
-        <span className="text-xs font-semibold">{paid ? "What's left" : 'Exact'}</span>
-        <span className="numeric text-sm font-bold">{formatMoney(exact)}</span>
-      </Button>
-      {/* The notes. No Clear key on this row: the pad's backspace clears a
-          mis-keyed digit, and a destructive key sitting among the notes is one
-          a cashier tapping quickly eventually hits by accident. */}
-      {NOTES.map((value) => (
-        <Button
-          key={value}
-          variant="ghost"
-          size="touch"
-          className="numeric justify-center"
-          disabled={disabled}
-          onClick={() => onEntry(value.toFixed(2))}
-        >
-          {value}
-        </Button>
-      ))}
-    </div>
-  )
-}
+/* The Exact / What's-left key and the note keys (10/20/50/100/200) used to sit
+   above the keypad under a "Quick amounts" heading. Removed to give the pad back
+   the vertical room — every amount is now keyed on the pad itself. */
 
 /* ── Declaring a tip ─────────────────────────────────────────────────────── */
 

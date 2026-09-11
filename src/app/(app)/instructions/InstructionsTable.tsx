@@ -7,6 +7,7 @@ import {
   Badge,
   EmptyState,
   PrimaryLink,
+  REORDER_HINT,
   TextLink,
   TABLE,
   TABLE_HEAD_ROW,
@@ -33,12 +34,14 @@ import { reorderInstructionsAction } from './actions'
  */
 
 /** "Pick one", "Choose up to 3", "Choose 2 to 4" — the rule in plain words. */
+/* The bounds count ITEMS, not distinct answers — two of one and two of another
+   is four against a ceiling of three. The noun is what makes that readable. */
 function choiceRule(min: number, max: number): string {
   if (max === 1) return min > 0 ? 'Pick one' : 'Pick one (optional)'
-  if (max === 0) return min > 0 ? `Choose at least ${min}` : 'Choose any number'
-  if (min > 0 && min !== max) return `Choose ${min} to ${max}`
-  if (min > 0 && min === max) return `Choose exactly ${min}`
-  return `Choose up to ${max}`
+  if (max === 0) return min > 0 ? `Choose at least ${min} items` : 'Choose any number'
+  if (min > 0 && min !== max) return `Choose ${min} to ${max} items`
+  if (min > 0 && min === max) return `Choose exactly ${min} items`
+  return `Choose up to ${max} items`
 }
 
 type GroupRow = Awaited<ReturnType<typeof listGroups>>[number]
@@ -166,7 +169,7 @@ export function InstructionsTable({
                 <td className={`${TABLE_TD} cursor-grab text-faint`}>
                   {/* Leftmost cell of a table that scrolls sideways — see the
                       note in DepartmentsClient. */}
-                  <Tooltip label="Drag to reorder" layout="inline" align="start" side="bottom">
+                  <Tooltip label={REORDER_HINT} layout="inline" align="start" side="bottom">
                     <DragHandle size={15} aria-hidden />
                   </Tooltip>
                 </td>

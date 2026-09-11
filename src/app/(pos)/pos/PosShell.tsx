@@ -95,6 +95,9 @@ import {
   saveForLaterAction,
   discardSaleAction,
   recordPrintAction,
+  /* Re-reads one account as a full TillCustomer. Used when the customer dialog
+     hands back an id — see `onAttachById` below. */
+  refreshCustomerAction,
 } from '@/app/(app)/sales/actions'
 import {
   listOpenTabsAction,
@@ -7326,7 +7329,20 @@ export default function PosShell({
         online={till.online}
         customer={state.customer}
         walkInName={state.customerName}
+        operatorName={operatorName}
         onClose={() => setPickingCustomer(false)}
+        /* An account just created or edited in the dialog, re-read as a full
+           TillCustomer. The editor returns an id and a name; the credit
+           position and the resolved price structure have to come from the
+           server, and going through the same action the picker uses is what
+           stops a new account behaving differently from a chosen one. */
+        onAttachById={(customerId) => {
+          void refreshCustomerAction(customerId)
+            .then((fresh) => {
+              if (fresh) dispatch({ type: 'SET_CUSTOMER', customer: fresh })
+            })
+            .catch(() => {})
+        }}
         onAttach={(customer) => {
           // Attach the account immediately — the cashier asked for it and must
           // not wait on a loyalty lookup to see it land.

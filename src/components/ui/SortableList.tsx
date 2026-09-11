@@ -20,7 +20,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { DragHandle } from './icons'
-import { Tooltip } from './Tooltip'
+import { REORDER_HINT, Tooltip } from './Tooltip'
 
 /**
  * A list whose rows are reordered by dragging.
@@ -136,7 +136,7 @@ function SortableRow({
     /* The label is the tooltip AND the accessible name, so the two can never
        drift apart. Tooltip renders the panel aria-hidden and leaves naming to
        the trigger, which is why the aria-label stays on the button. */
-    <Tooltip label={disabled ? 'Reordering is off' : 'Drag to reorder'} layout="inline">
+    <Tooltip label={disabled ? 'Reordering is off' : REORDER_HINT} layout="inline">
       {/* Not a kit Button: a drag handle is an activator that must carry dnd-kit's
           own listeners and ref, and Button's own onClick/type would fight them.
           It is still a real <button>, so it takes focus and the keyboard sensor
@@ -146,7 +146,7 @@ function SortableRow({
         type="button"
         data-kit-ok
         disabled={disabled}
-        aria-label={disabled ? 'Reordering is off' : 'Drag to reorder'}
+        aria-label={disabled ? 'Reordering is off' : REORDER_HINT}
         className={`flex size-7 shrink-0 items-center justify-center rounded-control text-faint transition ${
           disabled
             ? 'cursor-not-allowed opacity-40'

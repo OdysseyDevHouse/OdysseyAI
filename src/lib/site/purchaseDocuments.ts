@@ -6,7 +6,7 @@ import { formatMoney, round, toNum } from '../decimals'
 import { nextDocumentNumber } from './sequences'
 import { getNumericSetting } from './settings'
 import { can, type CapabilitySet } from './permissions'
-import type { Actor } from './activityLog'
+import { logActivity, type Actor } from './activityLog'
 
 /**
  * Purchase orders, before anything is received.
@@ -827,6 +827,86 @@ export async function approvalGate(
 }
 
 export type DeleteResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Throws away a draft order.
+ *
+ * ── WHY DELETE RATHER THAN CANCEL ─────────────────────────────────────────
+ *
+ * `cancelOrder` exists and is the right answer for an ISSUED order: the
+ * supplier has it, it carries a number they can quote back, and abandoning it
+ * is a fact about the relationship worth keeping. None of that is true of a
+ * draft. A draft has been sent to nobody and has no number — the number is
+ * claimed at issue — so cancelling one leaves a numberless shell in the
+ * purchasing list that records only that somebody started typing and stopped.
+ *
+ * That is the same reasoning `deleteDraftReceipt` gives for receipts, and the
+ * two now behave alike: an unfinished form is discarded, a real document is
+ * cancelled.
+ *
+ * ── WHY IT IS SAFE TO HARD DELETE ─────────────────────────────────────────
+ *
+ * Everything hanging off the document goes with it by cascade — lines (017),
+ * order details (017), charges (088) and the audit trail (139). The two
+ * columns that point AT a document, `ordered_from_id` and `reverses_id`, are
+ * ON DELETE SET NULL rather than CASCADE, so nothing is destroyed sideways.
+ *
+ * And nothing can be pointing at a draft in the first place: `openOrders`
+ * offers only issued orders to receive against, so a GRV cannot have been
+ * raised from one. Verified on the live data — every order-linked receipt
+ * names an issued order.
+ */
+export async function deleteDraftOrder(
+  siteId: number,
+  actor: Actor,
+  id: number,
+): Promise<DeleteResult> {
+  /* Enough to DESCRIBE it, not merely to check it. The row is about to stop
+     existing, so anything the audit line wants to say has to be read now —
+     afterwards there is nothing left to look up. */
+  const doc = await siteQueryOne<RowDataPacket & Record<string, unknown>>(
+    siteId,
+    `SELECT id, status, doc_type, document_number, supplier_name, total_incl
+       FROM purchase_documents WHERE id = ? LIMIT 1`,
+    [id],
+  )
+  if (!doc) return { ok: false, error: 'That order no longer exists.' }
+  if (String(doc.doc_type) !== 'purchase_order') {
+    return { ok: false, error: 'That is not a purchase order.' }
+  }
+  if (String(doc.status) !== 'draft') {
+    return {
+      ok: false,
+      error: 'Only a draft can be deleted. An order the supplier has is cancelled instead.',
+    }
+  }
+
+  await siteExecute(siteId, 'DELETE FROM purchase_documents WHERE id = ?', [id])
+
+  /* Logged AFTER the delete, matching every other caller: the log describes
+     something that happened, and a line written before a failed delete would
+     describe something that did not. */
+  await logActivity(siteId, actor, {
+    entity: 'purchase_document',
+    entityId: id,
+    action: 'purchase_order.delete',
+    detail: `${doc.document_number ? String(doc.document_number) : `Draft #${id}`} · ${
+      doc.supplier_name ? String(doc.supplier_name) : 'no supplier'
+    } · ${formatLogMoney(doc.total_incl)}`,
+  })
+  return { ok: true }
+}
+
+/**
+ * A money figure for an audit line.
+ *
+ * Plain and local: the log is read as text, and pulling the money formatter in
+ * here would tie an audit string to whatever the shop's display settings do.
+ */
+function formatLogMoney(value: unknown): string {
+  const n = Number(value ?? 0)
+  return Number.isFinite(n) ? n.toFixed(2) : '0.00'
+}
 
 /** Cancels an order. Only ever a draft or an issued one — nothing was received. */
 export async function cancelOrder(

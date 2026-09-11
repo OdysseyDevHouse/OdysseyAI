@@ -5,6 +5,7 @@ import { round, toNum } from '../decimals'
 import { weightedAverageCost } from '../documentMath'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
+import { writeCostHistory } from './reprice'
 import { resolveComponents, type ResolvedComponent } from './productComposition'
 import { guardPosting } from './periodLocks'
 import type { Actor } from './activityLog'
@@ -567,6 +568,17 @@ export async function postBuild(
         receivedQty: buildQty,
         receivedCostExcl: madeUnitCost,
       })
+      // What the build cost, on the record (256). A made item's cost moves
+      // when its ingredients do, and the build is the document that decided it.
+      await writeCostHistory(
+        tx,
+        [
+          { productId: input.productId, column: 'average', costExcl: newAverage },
+          { productId: input.productId, column: 'last', costExcl: madeUnitCost },
+        ],
+        { source: 'build', sourceDocId: orderId, userName: actor.userName },
+      )
+
       await tx.execute(
         'UPDATE products SET average_cost = ?, last_cost = ? WHERE id = ?',
         [newAverage.toFixed(4), madeUnitCost.toFixed(4), input.productId] as never,

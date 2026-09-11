@@ -12,6 +12,7 @@ import {
   Icons,
   Modal,
   PrimaryLink,
+  REORDER_HINT,
   RowGlyph,
   Switch,
   SwatchPicker,
@@ -564,7 +565,7 @@ function DepartmentRow({
                — long enough that a reader wondering why the row will not move
                has usually given up. The kit tooltip shows at once. */
             <Tooltip
-              label={draggable ? 'Drag to reorder' : 'Clear the search to reorder'}
+              label={draggable ? REORDER_HINT : 'Clear the search to reorder'}
               layout="inline"
               /* The handle is the leftmost thing in a table that scrolls
                  sideways, so a centred panel is half cut off by the scroll box.

@@ -23,8 +23,10 @@ export type UpdateState = {
    * downloading
    * downloaded staged, waiting for a restart
    * error      the last check or download failed; `error` says why
+   * held       automatic updates are off for this device and no booked window
+   *            has come round, so the machine deliberately did nothing
    */
-  status: 'idle' | 'checking' | 'up-to-date' | 'downloading' | 'downloaded' | 'error'
+  status: 'idle' | 'checking' | 'up-to-date' | 'downloading' | 'downloaded' | 'error' | 'held'
   message: string | null
   availableVersion: string | null
   percent: number
@@ -41,6 +43,23 @@ export type UpdateState = {
    * for itself.
    */
   configured: boolean
+  /**
+   * Whether this device updates itself.
+   *
+   * Set in Control Panel v2 → Releases, never on the machine — the whole point
+   * is that a large customer's estate is governed centrally. The screen shows it
+   * read-only so somebody standing at a quiet machine can see that it is quiet
+   * ON PURPOSE, which is the difference between this and a broken updater.
+   */
+  autoUpdate: boolean
+  /**
+   * The booked window, as the wall clock somebody typed, or null.
+   *
+   * A START time, not a deadline: a held-back machine does not pre-download, so
+   * the window covers the download too and a slow line can put the restart some
+   * minutes past it. Worded that way wherever it is shown.
+   */
+  scheduledAt: string | null
 }
 
 type UpdatesBridge = {
@@ -94,6 +113,10 @@ export function statusLabel(state: UpdateState): string {
       return 'Up to date'
     case 'error':
       return 'Last check failed'
+    case 'held':
+      /* Deliberately not "Up to date" — a held-back machine usually is NOT, and
+         saying so would hide exactly the fact somebody is looking for. */
+      return state.scheduledAt ? 'Waiting for its scheduled update' : 'Updates are managed for you'
     default:
       return 'Not checked yet'
   }

@@ -220,6 +220,40 @@ export default function UpdatesClient() {
             </Callout>
           )}
 
+          {/* ── A QUIET MACHINE HAS TO SAY WHY IT IS QUIET ─────────────────
+
+              A held-back device never checks, downloads or installs, so every
+              other signal on this screen reads exactly as it would on a broken
+              updater: "Not checked yet", no version, nothing happening. Without
+              this the technician standing at it has no way to tell a machine
+              that is behaving as instructed from one that is failing, and the
+              support call that follows is the one this feature would otherwise
+              create rather than prevent. */}
+          {!state.autoUpdate && (
+            <Callout
+              tone={state.scheduledAt ? 'brand' : 'warning'}
+              title={
+                state.scheduledAt
+                  ? `Scheduled to update from ${formatScheduled(state.scheduledAt)}`
+                  : 'Automatic updates are off for this machine'
+              }
+            >
+              {state.scheduledAt ? (
+                <>
+                  This machine downloads and installs the newest version from that time,
+                  then restarts on its own. It is a start time rather than a deadline — the
+                  download happens then too, so a slow connection can push the restart a
+                  few minutes later.
+                </>
+              ) : (
+                <>
+                  Nothing is scheduled, so this machine stays on the version it has —
+                  including for security fixes. Ask support to book a time that suits you.
+                </>
+              )}
+            </Callout>
+          )}
+
           {!state.configured && (
             <Callout tone="warning" title="No update server is configured for this build">
               It was built without ODYSSEY_UPDATE_URL, so it cannot fetch new versions. Nothing on
@@ -240,7 +274,19 @@ export default function UpdatesClient() {
                 {installing ? 'Restarting…' : `Install ${state.availableVersion} and restart`}
               </Button>
             ) : (
-              <Button variant="primary" onClick={check} disabled={busy || !state.configured}>
+              /* ── DISABLED, NOT HIDDEN, ON A HELD MACHINE ─────────────────
+
+                 Pressing it would run the same gated check the timer runs and
+                 return "held" without doing anything, which reads as a broken
+                 button. Hiding it instead would remove the thing somebody came
+                 to this screen to look for, leaving them to conclude the screen
+                 itself is broken. Present and inert, with the callout above
+                 saying why, is the only version that answers the question. */
+              <Button
+                variant="primary"
+                onClick={check}
+                disabled={busy || !state.configured || !state.autoUpdate}
+              >
                 <Icons.Refresh />
                 {busy ? 'Checking…' : 'Check for updates'}
               </Button>
@@ -270,6 +316,21 @@ export default function UpdatesClient() {
                  answer to "why is this machine on a version nobody else has". */
               tone={state.channel === 'stable' ? 'default' : 'warning'}
             />
+            <SummaryRow
+              label="Automatic updates"
+              value={state.autoUpdate ? 'On' : 'Off — managed by support'}
+              /* Off is the exception worth seeing at a glance, for the same
+                 reason beta is on the row above: it is the answer to "why has
+                 this machine not taken the fix everybody else has". */
+              tone={state.autoUpdate ? 'default' : 'warning'}
+            />
+            {!state.autoUpdate && (
+              <SummaryRow
+                label="Scheduled update"
+                value={state.scheduledAt ? formatScheduled(state.scheduledAt) : 'Nothing booked'}
+                tone={state.scheduledAt ? 'default' : 'warning'}
+              />
+            )}
             <SummaryRow label="Last checked" value={formatChecked(state.lastCheckedAt)} />
             <SummaryRow label="Update server" value={state.feedUrl ?? 'Not configured'} />
           </SummaryList>
@@ -305,8 +366,40 @@ function StatusBadge({ state }: { state: UpdateState }) {
   if (state.status === 'downloading') return <Badge tone="brand">Downloading</Badge>
   if (state.status === 'checking') return <Badge tone="brand">Checking</Badge>
   if (state.status === 'error') return <Badge tone="warning">Check failed</Badge>
+  /* Before the up-to-date and idle answers below, because a held machine is
+     usually NEITHER — it is sitting on an old version on purpose, and both of
+     those badges would state the opposite. */
+  if (state.status === 'held') {
+    return <Badge tone={state.scheduledAt ? 'brand' : 'warning'}>
+      {state.scheduledAt ? 'Scheduled' : 'Held back'}
+    </Badge>
+  }
   if (state.status === 'up-to-date') return <Badge tone="success">Current</Badge>
   return <Badge tone="neutral">Not checked</Badge>
+}
+
+/**
+ * A booked window, as the person who booked it wrote it down.
+ *
+ * ── PARSED BY HAND, BECAUSE new Date() WOULD BE WRONG HERE ─────────────────
+ *
+ * The value is "2026-09-11 02:00:00" — a wall clock with no zone, which is
+ * exactly what it should be: somebody chose two in the morning at the shop.
+ * Passing that to new Date() gets an implementation-defined reading of a
+ * non-ISO string, and appending a Z would declare it UTC and redraw a 02:00
+ * window as 04:00 to the reader.
+ *
+ * Splitting the parts and building a LOCAL date keeps the number somebody
+ * typed on the screen of the person reading it.
+ */
+function formatScheduled(value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(value)
+  if (!m) return value
+  const at = new Date(
+    Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]),
+  )
+  if (Number.isNaN(at.getTime())) return value
+  return at.toLocaleString()
 }
 
 /**

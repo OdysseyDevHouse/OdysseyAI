@@ -15,9 +15,12 @@ import {
   CurrencyInput,
   EmptyState,
   Field,
+  FieldGroup,
   Icons,
   Input,
   Modal,
+  NumberInput,
+  Select,
   ToolbarSearch,
   TreeSelect,
   departmentTreeOptions,
@@ -33,8 +36,14 @@ import {
 import { formatMoney } from '@/lib/decimals'
 import type { FieldProblems } from '@/lib/fieldErrors'
 import {
+  applyBulkChange,
+  type BulkPriceChange,
+  type RepriceRounding,
+} from '@/lib/repricing'
+import {
   saveScheduleAction,
   setLinesAction,
+  bulkAdjustLinesAction,
   removeLineAction,
   clearLinesAction,
   seedFromCurrentAction,
@@ -203,6 +212,7 @@ export default function ScheduleEditor({
   const [onlyChanging, setOnlyChanging] = useState(false)
   const [shown, setShown] = useState(PAGE_SIZE)
   const [seeding, setSeeding] = useState(false)
+  const [bulking, setBulking] = useState(false)
   const [confirmRevert, setConfirmRevert] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -426,6 +436,56 @@ export default function ScheduleEditor({
     )
   }
 
+  /**
+   * What the bulk update is about to touch, in words.
+   *
+   * Built from the same three narrowings the table is using, because the dialog
+   * covers the filters while it is open — somebody who set a department filter
+   * a minute ago needs to be told it is still on before they move four hundred
+   * prices they cannot see.
+   */
+  const scopeLabel = (() => {
+    const parts: string[] = []
+    if (search.trim()) parts.push(`matching “${search.trim()}”`)
+    if (departmentFilter.length > 0) {
+      const named =
+        departmentFilter.length === 1
+          ? (departments.find((d) => d.id === departmentFilter[0])?.name ?? '1 department')
+          : `${departmentFilter.length} departments`
+      parts.push(`in ${named}`)
+    }
+    if (onlyChanging) parts.push('that already change a price')
+    return parts.length === 0 ? 'everything on this change' : parts.join(', ')
+  })()
+
+  /**
+   * Move every price the filters match.
+   *
+   * The FILTER goes to the server, never the rows — the table only holds fifty
+   * of them at a time, so a posted list would silently move a fraction of what
+   * the button promised. See `bulkAdjustLinesAction`.
+   */
+  function applyBulk(
+    change: BulkPriceChange,
+    rounding: RepriceRounding,
+    structureIds: number[],
+  ) {
+    setBulking(false)
+    run(() =>
+      bulkAdjustLinesAction(
+        schedule.id,
+        {
+          search: search.trim() || undefined,
+          departmentIds: departmentFilter.length > 0 ? departmentFilter : undefined,
+          onlyChanging,
+          priceStructureIds: structureIds.length > 0 ? structureIds : undefined,
+        },
+        change,
+        rounding,
+      ),
+    )
+  }
+
   /* ── Render ─────────────────────────────────────────────────────────── */
 
   return (
@@ -589,6 +649,18 @@ export default function ScheduleEditor({
                   <Icons.Filter size={15} />
                   Only what is changing
                 </Button>
+
+                {/* Beside the filters rather than up with "Start from my current
+                    prices", because what it does is decided by them: the three
+                    controls to its left choose the rows, and this says what
+                    happens to those rows. Put with the seeding buttons it would
+                    read as another way to BUILD the list. */}
+                {editable && (
+                  <Button variant="secondary" size="sm" onClick={() => setBulking(true)} disabled={busy}>
+                    <Icons.Calculator size={15} />
+                    Update these together
+                  </Button>
+                )}
 
                 {/* The same picker the products list uses, so a department is
                     found the same way in both places: one level at a time with
@@ -841,6 +913,16 @@ export default function ScheduleEditor({
         </CardFooter>
       </Card>
 
+      <BulkUpdateModal
+        open={bulking}
+        onClose={() => setBulking(false)}
+        structures={usedStructures}
+        matched={filtered.length}
+        scopeLabel={scopeLabel}
+        busy={busy}
+        onApply={applyBulk}
+      />
+
       <SeedModal
         open={seeding}
         onClose={() => setSeeding(false)}
@@ -893,11 +975,279 @@ export default function ScheduleEditor({
 }
 
 /**
+ * Move every price on screen at once.
+ *
+ * The alternative to typing four hundred numbers by hand, and the reason the
+ * filters above the table matter: the owner narrows the list to what they mean
+ * — a search, a department, one price type — and then says what happens to all
+ * of it. "Everything in Bakery up 10%, rounded to .99."
+ *
+ * ── IT APPLIES TO THE FILTER, NOT TO THE PAGE ────────────────────────────
+ *
+ * The table shows fifty rows at a time out of a list that can run to tens of
+ * thousands, so "what is displayed" has two possible meanings and only one of
+ * them is any use. This takes the whole FILTERED set — every row the search and
+ * the department picker match, whether or not "Show more" has been pressed —
+ * and the button says the count so there is no guessing which it meant.
+ *
+ * The server re-derives that set from the same filter rather than trusting a
+ * list of prices from the browser; see `bulkAdjustLinesAction`.
+ */
+function BulkUpdateModal({
+  open,
+  onClose,
+  structures,
+  matched,
+  scopeLabel,
+  busy,
+  onApply,
+}: {
+  open: boolean
+  onClose: () => void
+  /** The price types this change touches — what the table has columns for. */
+  structures: Structure[]
+  /** How many rows the current filters match, for the button. */
+  matched: number
+  /** What those filters are, in words, so the dialog can say what it will hit. */
+  scopeLabel: string
+  busy: boolean
+  onApply: (change: BulkPriceChange, rounding: RepriceRounding, structureIds: number[]) => void
+}) {
+  type Operation = BulkPriceChange['kind']
+
+  const [operation, setOperation] = useState<Operation>('increase-percent')
+  const [percent, setPercent] = useState(10)
+  const [amount, setAmount] = useState(0)
+  const [structureIds, setStructureIds] = useState<number[]>([])
+  const [roundingKind, setRoundingKind] = useState<RepriceRounding['kind']>('none')
+  const [endingCents, setEndingCents] = useState(99)
+  const [nearestStep, setNearestStep] = useState(0.5)
+
+  /* Which box the operation needs. A percentage and a rand amount are different
+     questions with different sensible defaults, so they keep separate state —
+     switching from "up 10%" to "up by R2" must not offer to add R10. */
+  const usesPercent = operation === 'increase-percent' || operation === 'decrease-percent'
+
+  function buildChange(): BulkPriceChange {
+    switch (operation) {
+      case 'increase-percent':
+        return { kind: 'increase-percent', percent }
+      case 'decrease-percent':
+        return { kind: 'decrease-percent', percent }
+      case 'increase-amount':
+        return { kind: 'increase-amount', amount }
+      case 'decrease-amount':
+        return { kind: 'decrease-amount', amount }
+      case 'set':
+        return { kind: 'set', amount }
+    }
+  }
+
+  function buildRounding(): RepriceRounding {
+    if (roundingKind === 'ending') return { kind: 'ending', cents: endingCents, direction: 'up' }
+    if (roundingKind === 'nearest') return { kind: 'nearest', step: nearestStep }
+    return { kind: 'none' }
+  }
+
+  /**
+   * The rule in one sentence, on a real price.
+   *
+   * A worked example rather than a restatement of the form: "up 10%" and "R100
+   * becomes R109.99" are the same rule, but only the second one shows what the
+   * rounding did to it — which is the part that surprises people.
+   */
+  const example = (() => {
+    const from = 100
+    const to = applyBulkChange(from, buildChange(), buildRounding())
+    if (to === null) return 'That would take a R100.00 price to zero or less.'
+    return `A R100.00 price becomes ${formatMoney(to)}.`
+  })()
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Update these prices together"
+      titleMedia={
+        <span className="flex size-12 items-center justify-center rounded-card border border-brand/25 bg-brand-soft text-brand">
+          <Icons.Calculator size={22} />
+        </span>
+      }
+      description="Moves every price the filters are showing, so you don't have to type them one by one."
+      bodyGrows
+      closeOnBackdrop={false}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onApply(buildChange(), buildRounding(), structureIds)}
+            disabled={busy || matched === 0}
+          >
+            {busy
+              ? 'Working…'
+              : `Update ${matched.toLocaleString('en-ZA')} price${matched === 1 ? '' : 's'}`}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-5">
+        <FieldGroup
+          step={1}
+          title="What to update"
+          hint="Only the price types you tick. Nothing ticked means every type on this change."
+        >
+          {structures.length === 1 ? (
+            <p className="text-sm text-muted">
+              This change only touches <span className="font-medium text-ink">{structures[0].name}</span>.
+            </p>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {structures.map((s) => {
+                const on = structureIds.includes(s.id)
+                return (
+                  <Checkbox
+                    key={s.id}
+                    checked={on}
+                    onChange={() =>
+                      setStructureIds(
+                        on ? structureIds.filter((x) => x !== s.id) : [...structureIds, s.id],
+                      )
+                    }
+                    label={<span className="font-medium">{s.name}</span>}
+                    className={`h-control rounded-control border px-3 transition ${
+                      on
+                        ? 'border-brand bg-brand-soft'
+                        : 'border-border bg-surface hover:border-border-strong'
+                    }`}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </FieldGroup>
+
+        <FieldGroup step={2} title="What to do" hint={example}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Change">
+              <Select
+                value={operation}
+                onChange={(e) => setOperation(e.target.value as Operation)}
+              >
+                <option value="increase-percent">Increase by a percentage</option>
+                <option value="decrease-percent">Decrease by a percentage</option>
+                <option value="increase-amount">Increase by an amount</option>
+                <option value="decrease-amount">Decrease by an amount</option>
+                <option value="set">Set them all to one price</option>
+              </Select>
+            </Field>
+
+            {usesPercent ? (
+              <Field label="Percentage" hint="Of each price as it stands now.">
+                <NumberInput
+                  value={percent}
+                  onChange={(e) =>
+                    setPercent(Number(String(e.target.value).replace(',', '.')) || 0)
+                  }
+                  step="0.01"
+                  min="0"
+                />
+              </Field>
+            ) : (
+              <Field
+                label={operation === 'set' ? 'New price' : 'Amount'}
+                hint="Including VAT — the figure on the shelf edge."
+              >
+                <CurrencyInput
+                  value={amount}
+                  onChange={(e) =>
+                    setAmount(Number(String(e.target.value).replace(',', '.')) || 0)
+                  }
+                />
+              </Field>
+            )}
+          </div>
+        </FieldGroup>
+
+        <FieldGroup step={3} title="Tidy the result" hint="Applied after the change, to the shelf price.">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Rounding">
+              <Select
+                value={roundingKind}
+                onChange={(e) => setRoundingKind(e.target.value as RepriceRounding['kind'])}
+              >
+                <option value="none">None — exact</option>
+                <option value="ending">Force an ending (.99, .95)</option>
+                <option value="nearest">Nearest step</option>
+              </Select>
+            </Field>
+
+            {roundingKind === 'ending' && (
+              <Field label="Ending" hint="Every price is forced up to this ending.">
+                <Select
+                  value={String(endingCents)}
+                  onChange={(e) => setEndingCents(Number(e.target.value))}
+                >
+                  <option value="99">.99</option>
+                  <option value="95">.95</option>
+                  <option value="90">.90</option>
+                  <option value="50">.50</option>
+                  <option value="0">.00 — whole rand</option>
+                </Select>
+              </Field>
+            )}
+
+            {roundingKind === 'nearest' && (
+              <Field label="Step" hint="0.05 for cash-friendly, 1 for whole rand.">
+                <NumberInput
+                  value={nearestStep}
+                  onChange={(e) =>
+                    setNearestStep(Number(String(e.target.value).replace(',', '.')) || 0)
+                  }
+                  step="0.05"
+                  min="0"
+                />
+              </Field>
+            )}
+          </div>
+        </FieldGroup>
+
+        {/* What it is about to touch, stated in the dialog rather than only on
+            the button — somebody who opened this with a department filter still
+            on needs to see that before they press anything. */}
+        <Callout tone={matched === 0 ? 'warning' : 'brand'} title="What this will change">
+          {matched === 0
+            ? 'Nothing matches the filters on the table behind this dialog.'
+            : `${matched.toLocaleString('en-ZA')} price${matched === 1 ? '' : 's'} — ${scopeLabel}.`}{' '}
+          The before-prices are left alone, so you can still see what moved.
+        </Callout>
+      </div>
+    </Modal>
+  )
+}
+
+/**
  * One editable price, with what it was and how far it moves.
  *
  * The difference is coloured because it is the thing being judged: a column of
  * plain numbers makes a 40% rise look exactly like a 2% one. Held locally while
  * typing and committed on blur, so every keystroke is not a round trip.
+ *
+ * ── THE BUFFER LASTS ONLY AS LONG AS THE FOCUS ───────────────────────────
+ *
+ * `useState(line.newPriceIncl)` seeds once, at mount, and these cells do not
+ * remount: the rows are keyed by product and line id, which a price change does
+ * not alter. So anything that rewrote the price from OUTSIDE — the bulk update,
+ * above all, which moves every row at once — re-rendered with the new figure in
+ * the prop while the box went on showing the old one. It looked like the update
+ * had not run; leaving the screen and coming back "fixed" it, because that is
+ * what finally remounted the cell.
+ *
+ * Keeping the buffer only while the field has focus is what fixes it. Typing
+ * still never round-trips, and a value written by anything else appears the
+ * moment the server re-renders. Same arbitration NumberInput documents for the
+ * recipe panel's quantity cell, one level up: whoever is not typing defers.
  */
 function PriceCell({
   line,
@@ -910,7 +1260,10 @@ function PriceCell({
   busy: boolean
   onCommit: (value: number) => void
 }) {
-  const [value, setValue] = useState(line.newPriceIncl)
+  /* null means "not being typed in" — the prop is the truth. A number means
+     this cell has focus and that is what the person has typed so far. */
+  const [typed, setTyped] = useState<number | null>(null)
+  const value = typed ?? line.newPriceIncl
   const old = line.oldPriceIncl
   const moved = old !== null && old !== 0 ? ((line.newPriceIncl - old) / old) * 100 : null
 
@@ -945,8 +1298,19 @@ function PriceCell({
       <span className="w-28 shrink-0">
         <CurrencyInput
           value={value}
-          onChange={(e) => setValue(Number(e.target.value.replace(',', '.')) || 0)}
-          onBlur={() => onCommit(value)}
+          /* Focus opens the buffer at whatever the price is right now, so the
+             first keystroke edits the figure on screen rather than a number
+             this cell remembered from before the last refresh. */
+          onFocus={() => setTyped(line.newPriceIncl)}
+          onChange={(e) => setTyped(Number(e.target.value.replace(',', '.')) || 0)}
+          /* Cleared on the way out — the prop is the truth again the moment
+             this cell is no longer the one being typed in. Without this the
+             next bulk update would render behind a stale buffer, which is the
+             bug this whole arrangement exists to prevent. */
+          onBlur={() => {
+            setTyped(null)
+            onCommit(value)
+          }}
           disabled={busy}
         />
       </span>

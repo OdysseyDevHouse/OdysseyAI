@@ -44,6 +44,58 @@ function axisProps(colors: ReturnType<typeof useChartColors>) {
 }
 
 /**
+ * Tick thinning for every x-axis on the dashboard: let Recharts MEASURE the
+ * labels rather than guessing how many will fit.
+ *
+ * It has to be a string mode, not a number. Recharts bails out of its collision
+ * check the moment `interval` is numeric — `getTicks` returns
+ * `getNumberIntervalTicks(...)` before `minTickGap` is ever read — so a chart
+ * passing `interval={n}` renders every nth label at whatever width it happens
+ * to have, and the `minTickGap` sitting beside it does nothing whatsoever. Every
+ * axis here used to pass a number, which made all three gaps dead props.
+ *
+ * That is what overlapped on the per-day charts. They thinned with
+ * `ceil(rows.length / 12) - 1`, which is a PIXEL budget written as a count: on
+ * an eleven-day range it evaluates to 0 — keep every tick — and eleven "01 Sep"
+ * labels want about 420px of a card that has roughly 300. Such a constant is
+ * only ever right at one card width and one label length, and these widgets are
+ * user-resizable, so no number could have been correct.
+ *
+ * `preserveStartEnd` measures each rendered label, anchors the first and last
+ * date, and drops only the individual ones in between that would collide.
+ *
+ * NOT `equidistantPreserveEnd`, which was tried first and has a cliff. That
+ * mode insists on a perfectly even stride: it tests stride 1, then 2, then 3,
+ * and REJECTS THE WHOLE STRIDE if any single label in it fails the fit test
+ * (getEquidistantTicks.js, the `ok = false` break). When no stride satisfies
+ * every label — easily reached, because the end-anchored last label's box has
+ * to fit inside the plot as well as clear its neighbour — the loop runs on to
+ * `stepsize === len`, where the sequence is one index long and passes
+ * trivially. The axis then renders A SINGLE LABEL: the last date, alone.
+ *
+ * Which is exactly what it did. On a 30-day range the count chart showed
+ * "11 Sept" and nothing else, while the bar chart beside it labelled six dates
+ * off the same data — the two differ only in label width and how much room the
+ * y-axis leaves, and the count chart's happened to fall the wrong side of the
+ * boundary check. A lone label is a worse axis than the overlap it replaced:
+ * the reader cannot tell where the range starts.
+ *
+ * `preserveStartEnd` filters candidates individually (`candidates.filter(isShow)`
+ * in getTicks) instead of accepting or rejecting a whole stride, so it degrades
+ * to fewer labels rather than to one.
+ *
+ * The hour axis shares this even though its labels ("9am", "12pm") are short
+ * enough to fit today. Nothing about that is guaranteed — a 24-hour format or
+ * half-hour buckets would crowd it — and an axis that measures cannot acquire
+ * the bug the per-day ones had.
+ *
+ * The gap is 12px rather than Recharts' default 5 because these labels sit
+ * under bars and filled areas: two of them 5px apart read as one smudged string
+ * even when they are not technically touching.
+ */
+const MEASURED_TICKS = { interval: 'preserveStartEnd', minTickGap: 12 } as const
+
+/**
  * One line chart, used for both the per-day and per-hour series.
  *
  * They differ only in their labels and tick density, and having written them
@@ -66,7 +118,6 @@ function axisProps(colors: ReturnType<typeof useChartColors>) {
 function TurnoverLine({
   rows,
   glowId,
-  tickInterval,
   seriesName = 'Turnover',
   color,
   format,
@@ -74,7 +125,6 @@ function TurnoverLine({
 }: {
   rows: { label: string; turnover: number }[]
   glowId: string
-  tickInterval?: number
   /** What the tooltip calls the series. */
   seriesName?: string
   /** Defaults to brand. Pass one from useChartColors, never a literal. */
@@ -102,7 +152,7 @@ function TurnoverLine({
         {/* Horizontal rules only. Vertical gridlines on a time series add ink
             without adding an answer — the x labels already mark the columns. */}
         <CartesianGrid vertical={false} stroke={colors.grid} />
-        <XAxis dataKey="label" {...axis} interval={tickInterval} minTickGap={8} />
+        <XAxis dataKey="label" {...axis} {...MEASURED_TICKS} />
         <YAxis {...axis} width={64} tickFormatter={(v) => yFormat(Number(v))} />
         <Tooltip
           cursor={{ stroke: colors.grid }}
@@ -175,9 +225,6 @@ export function TurnoverPerDayChart({ data }: { data: DayBucket[] }) {
     turnover: d.turnover,
     weekend: isWeekend(d.date),
   }))
-  // Thin the labels on a long range so they never overlap: about 12 ticks is
-  // what fits a half-width card without rotating the text.
-  const tickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
   const average = dailyAverage(data)
 
   /* Weekday is the deep first ramp entry; the weekend takes the sixth, a
@@ -215,7 +262,7 @@ export function TurnoverPerDayChart({ data }: { data: DayBucket[] }) {
         <ResponsiveContainer width="100%" height="100%" minHeight={180}>
           <BarChart data={rows} margin={{ top: 8, right: 14, bottom: 4, left: 4 }}>
             <CartesianGrid vertical={false} stroke={colors.grid} />
-            <XAxis dataKey="label" {...axis} interval={tickInterval} minTickGap={8} />
+            <XAxis dataKey="label" {...axis} {...MEASURED_TICKS} />
             <YAxis {...axis} width={64} tickFormatter={(v) => moneyShort(Number(v))} />
             <Tooltip
               /* A soft column behind the hovered bar, not a vertical line: the
@@ -302,13 +349,11 @@ export function SalesCountPerDayChart({ data }: { data: DayBucket[] }) {
   // `turnover` is the chart's field name, not a claim about the units — see
   // TurnoverLine. The count rides in it so the two charts stay one component.
   const rows = data.map((d) => ({ label: dayLabel(d.date), turnover: d.saleCount }))
-  const tickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1)
 
   return (
     <TurnoverLine
       rows={rows}
       glowId="countPerDayGlow"
-      tickInterval={tickInterval}
       seriesName="Sales"
       /* The fourth ramp colour, matching the `saleCount` KPI tile, so the two
          readings of the same figure are recognisably the same thing. */
@@ -382,10 +427,6 @@ export function SalesPerHourChart({
   const peaks = peakHours(data)
   const peakHourSet = new Set(peaks.map((p) => p.hour))
 
-  // Every second hour when the window is long enough to crowd; all of them on a
-  // short one, where thinning would leave three labels under a whole chart.
-  const tickInterval = rows.length > 14 ? 1 : 0
-
   return (
     <ResponsiveContainer width="100%" height="100%" minHeight={180}>
       {/* Room at the top for the peak callouts, which sit above their markers
@@ -404,7 +445,7 @@ export function SalesPerHourChart({
           </linearGradient>
         </defs>
         <CartesianGrid vertical={false} stroke={colors.grid} />
-        <XAxis dataKey="label" {...axis} interval={tickInterval} minTickGap={8} />
+        <XAxis dataKey="label" {...axis} {...MEASURED_TICKS} />
         <YAxis {...axis} width={64} tickFormatter={(v) => moneyShort(Number(v))} />
         <Tooltip
           cursor={{ stroke: colors.grid }}

@@ -13,6 +13,7 @@ import {
   clearScheduleLines,
   seedFromCurrent,
   addRuleLines,
+  bulkAdjustScheduleLines,
   refreshOldPrices,
   armSchedule,
   disarmSchedule,
@@ -21,10 +22,11 @@ import {
   type ScheduleInput,
   type LineInput,
   type SeedScope,
+  type BulkLineFilter,
 } from '@/lib/site/priceSchedules'
 import { listDepartments, departmentFilterIds } from '@/lib/site/departments'
 import type { RepriceScope } from '@/lib/site/reprice'
-import type { RepriceRule } from '@/lib/repricing'
+import type { BulkPriceChange, RepriceRounding, RepriceRule } from '@/lib/repricing'
 
 /**
  * Scheduled price changes.
@@ -208,6 +210,58 @@ export async function addRuleLinesAction(
       result.added === 0
         ? `The rule changed nothing${skipped}.`
         : `${result.added} price${result.added === 1 ? '' : 's'} added${skipped}.`,
+  }
+}
+
+/**
+ * Move every price the editor's filters are showing, in one go.
+ *
+ * The browser sends the FILTER and the RULE — never a list of prices. Same
+ * stance as `addRuleLinesAction` above, and for the same reason: a posted set
+ * of figures is an invitation to write any price onto any product, and this
+ * endpoint is reachable by anyone who can open the screen. It also keeps the
+ * count honest, since the table only ever has fifty of its rows in the browser.
+ */
+export async function bulkAdjustLinesAction(
+  scheduleId: number,
+  filter: BulkLineFilter,
+  change: BulkPriceChange,
+  rounding?: RepriceRounding,
+): Promise<ScheduleActionResult> {
+  const ctx = await actorFor('products.edit')
+  if ('ok' in ctx) return ctx
+
+  /* A ticked department means that branch, expanded here against the tree —
+     exactly as seedFromCurrentAction does it, so the two ways of choosing a
+     department on this screen cannot come to different answers. */
+  const departments = await listDepartments(ctx.siteId)
+  const departmentIds = filter.departmentIds?.length
+    ? (departmentFilterIds(departments, filter.departmentIds) ?? undefined)
+    : undefined
+
+  const result = await bulkAdjustScheduleLines(
+    ctx.siteId,
+    scheduleId,
+    { ...filter, departmentIds },
+    change,
+    rounding,
+  )
+  if (!result.ok) return result
+  revalidate()
+
+  if (result.matched === 0) {
+    return { ok: true, message: 'Nothing matched those filters — no prices were changed.' }
+  }
+  /* The skipped ones are named rather than folded into the total. They are the
+     prices a change could not sanely make — R5 off a R3 item — and somebody who
+     is told "412 updated" when 11 of them stayed put will not find those 11. */
+  const skipped =
+    result.skipped > 0
+      ? ` ${result.skipped} left alone — the change would have taken them to zero or less.`
+      : ''
+  return {
+    ok: true,
+    message: `${result.updated} price${result.updated === 1 ? '' : 's'} updated.${skipped}`,
   }
 }
 

@@ -71,7 +71,7 @@ export default async function QuoteEditorPage({
     // invoice when it converts — see convertToInvoice.
     depositSummary(site.id, documentId),
     // And it names its units the same way (235).
-    getSettings(site.id, ['serial_capture_mode']),
+    getSettings(site.id, ['serial_capture_mode', 'invoicing_scan_focus']),
   ])
 
   if (!document) notFound()
@@ -124,6 +124,9 @@ export default async function QuoteEditorPage({
         }
         canOverrideDiscount={can(capabilities, 'sales.discount_override')}
         canOverridePrice={can(capabilities, 'sales.price_override')}
+        canOverrideQty={can(capabilities, 'sales.qty_override')}
+        scanFocus={stockSettings.invoicing_scan_focus === 'qty' ? 'qty' : 'scan'}
+        operatorName={actor.userName}
         showCost={can(capabilities, 'products.cost')}
         /* The outcome and deposit panels follow below, so the editor must not
            close the page with its own pb-10. */

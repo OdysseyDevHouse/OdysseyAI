@@ -7,7 +7,12 @@ import type { PendingSchedule } from '../priceSchedules'
 import { failedField, type FieldProblems } from '../fieldErrors'
 import { logActivity, logActivityTx, type Actor } from './activityLog'
 import { planReprice, writePriceRows, recordPriceRemoval, type RepriceScope } from './reprice'
-import type { RepriceRule } from '../repricing'
+import {
+  applyBulkChange,
+  type BulkPriceChange,
+  type RepriceRounding,
+  type RepriceRule,
+} from '../repricing'
 
 /**
  * Scheduled price changes — the database half.
@@ -575,6 +580,150 @@ export async function addRuleLines(
   if (!written.ok) return written
 
   return { ok: true, added: changing.length, skipped: plan.skips.length }
+}
+
+/**
+ * Which of a change's lines a bulk edit should move.
+ *
+ * The SAME three narrowings the editor puts above the table, sent as what they
+ * are rather than as the row ids they happen to select. The screen shows fifty
+ * rows at a time out of a list that can run to forty thousand, so a browser
+ * that posted "the rows I have" would move fifty lines while the button it was
+ * pressed on said four hundred. Sending the filter instead lets this re-derive
+ * the full set server-side, and makes the count on the button true.
+ *
+ * It is also the safer half of the same decision. A posted list of prices is an
+ * invitation to set any price on any product — the note on `addRuleLinesAction`
+ * says this about rules, and it is just as true here: the client sends what to
+ * MATCH and what to DO, never the figures.
+ */
+export type BulkLineFilter = {
+  /** Matches code or description, case-insensitively. Empty means no search. */
+  search?: string
+  /** EXACT department ids — branches are expanded by the caller, as with SeedScope. */
+  departmentIds?: number[]
+  /** Only lines that already move a price, mirroring the table's own toggle. */
+  onlyChanging?: boolean
+  /** Only these price types. Empty or absent means every type on the change. */
+  priceStructureIds?: number[]
+}
+
+/**
+ * Move every price a filter matches, in one go.
+ *
+ * The alternative to typing four hundred numbers by hand. The owner narrows the
+ * table to what they mean — a search, a department, a price type — and says
+ * what should happen to all of it: up 10%, down R2, everything to R19.99.
+ *
+ * ── COMPUTED HERE, FROM THE STORED PRICE ─────────────────────────────────
+ *
+ * The new figure is worked out from `new_price_incl` as it currently stands on
+ * the line, not from `old_price_incl` and not from anything the browser sent.
+ * That makes the operation compose the way somebody expects when they run two
+ * in a row: +10% then +10% lands on the price the first one produced, which is
+ * what they are looking at while they press the button the second time.
+ *
+ * Lines the change cannot sanely move — a R3 item less R5 — are counted and
+ * left exactly as they were rather than clamped to zero. A shop that gave its
+ * stock away because an arithmetic edge case wrote 0.00 would have a very bad
+ * morning, and the count is what tells somebody it happened.
+ */
+export async function bulkAdjustScheduleLines(
+  siteId: number,
+  scheduleId: number,
+  filter: BulkLineFilter,
+  change: BulkPriceChange,
+  rounding: RepriceRounding = { kind: 'none' },
+): Promise<
+  { ok: true; updated: number; skipped: number; matched: number } | { ok: false; error: string }
+> {
+  const guard = await requireDraft(siteId, scheduleId)
+  if (!guard.ok) return guard
+
+  const where: string[] = ['l.schedule_id = ?']
+  const params: unknown[] = [scheduleId]
+
+  if (filter.priceStructureIds?.length) {
+    where.push(`l.price_structure_id IN (${filter.priceStructureIds.map(() => '?').join(',')})`)
+    params.push(...filter.priceStructureIds)
+  }
+  if (filter.departmentIds?.length) {
+    where.push(`p.department_id IN (${filter.departmentIds.map(() => '?').join(',')})`)
+    params.push(...filter.departmentIds)
+  }
+  if (filter.onlyChanging) {
+    where.push('(l.old_price_incl IS NULL OR l.old_price_incl <> l.new_price_incl)')
+  }
+  const term = String(filter.search ?? '').trim()
+  if (term) {
+    /* The editor matches description OR code, so this does too — a filter that
+       meant something different on the server to what it means on the screen
+       would move a set nobody was looking at. LIKE with the wildcards escaped,
+       since a product code containing % is a code, not a pattern. */
+    const needle = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+    where.push('(p.description LIKE ? ESCAPE ? OR p.code LIKE ? ESCAPE ?)')
+    params.push(needle, '\\', needle, '\\')
+  }
+
+  const rows = await siteQuery<Row>(
+    siteId,
+    `SELECT l.id, l.new_price_incl
+       FROM price_schedule_lines l
+       JOIN products p ON p.id = l.product_id
+      WHERE ${where.join(' AND ')}`,
+    params,
+  )
+  if (rows.length === 0) return { ok: true, updated: 0, skipped: 0, matched: 0 }
+
+  const moves: { id: number; priceIncl: number }[] = []
+  let skipped = 0
+  for (const r of rows) {
+    const next = applyBulkChange(toNum(r.new_price_incl), change, rounding)
+    if (next === null) {
+      skipped++
+      continue
+    }
+    moves.push({ id: Number(r.id), priceIncl: next })
+  }
+
+  if (moves.length === 0) return { ok: true, updated: 0, skipped, matched: rows.length }
+
+  /*
+   * Updated by id, in batches, through a CASE. These lines already exist — this
+   * is not an upsert — and writing them one statement at a time would be forty
+   * thousand round trips behind a button that should feel like one action.
+   *
+   * `old_price_incl` is deliberately untouched: it is what the shop charges
+   * today, and a bulk edit changes what the price WILL BE, never the record of
+   * what it was. Moving it would make every difference on the screen read as
+   * zero and hide the very change that was just made.
+   */
+  const BATCH = 500
+  await siteTransaction(siteId, async (tx) => {
+    for (let i = 0; i < moves.length; i += BATCH) {
+      const slice = moves.slice(i, i + BATCH)
+      /* Built in the order the statement reads them — every CASE pair, then the
+         schedule, then the id list — rather than assembled and re-sliced. The
+         note on `setScheduleLines` above is about exactly this: when the
+         parameters are not written in the order the placeholders appear, the
+         two drift apart on the next edit and every price goes to the wrong row. */
+      const args: unknown[] = []
+      for (const m of slice) args.push(m.id, m.priceIncl.toFixed(4))
+      args.push(scheduleId)
+      for (const m of slice) args.push(m.id)
+
+      await tx.execute(
+        `UPDATE price_schedule_lines
+            SET new_price_incl = CASE id ${slice.map(() => 'WHEN ? THEN ?').join(' ')} END,
+                origin = 'typed'
+          WHERE schedule_id = ?
+            AND id IN (${slice.map(() => '?').join(',')})`,
+        args as never,
+      )
+    }
+  })
+
+  return { ok: true, updated: moves.length, skipped, matched: rows.length }
 }
 
 /**

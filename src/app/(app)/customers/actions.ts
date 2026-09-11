@@ -6,7 +6,14 @@ import { toStatementCycle } from '@/lib/statementCycles'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { safeReturnTo } from '@/lib/returnTo'
-import { requireActor, actorForModule, actorForModuleOrThrow } from '@/lib/auth'
+import {
+  requireActor,
+  actorForModule,
+  actorForModuleOrThrow,
+  actorForOrThrow,
+} from '@/lib/auth'
+import { can } from '@/lib/site/permissions'
+import { verifyOverrideToken } from '@/lib/overrideToken'
 import { setValues } from '@/lib/site/customFields'
 import type { CustomFieldEntity } from '@/lib/customFieldModel'
 import {
@@ -18,10 +25,23 @@ import {
   toCustomerStatus,
   possibleDuplicates,
   duplicateWarning,
+  getCustomer,
   type BulkChange,
   type BulkResult,
+  type Customer,
   type CustomerInput,
 } from '@/lib/site/customers'
+/* The dropdowns the dialog form renders. Same sources `/customers/new` reads
+   server-side — one action so a Client Component can have them too. */
+import {
+  listCustomerGroups,
+  listSalesReps,
+  listCustomerCategories,
+  type CustomerGroup,
+  type SalesRep,
+} from '@/lib/site/customerLookups'
+import { listPriceStructures } from '@/lib/site/lookups'
+import { suggestedMasterCode } from '@/lib/site/masterCodes'
 import {
   saveCustomerAddress,
   deleteCustomerAddress,
@@ -238,6 +258,153 @@ export async function bulkUpdateCustomersAction(
   const result = await bulkUpdateCustomers(siteId, actor, ids, change)
   revalidatePath('/customers')
   return result
+}
+
+/* ── The same form, opened from a till or an invoice ─────────────────────── */
+
+/**
+ * Everything the customer form needs to render, fetched in one call.
+ *
+ * The dialog versions of this form are Client Components, so they cannot do
+ * what `/customers/new` does and read these server-side. One action rather than
+ * five keeps it to a single round trip when the dialog opens — a cashier with a
+ * customer at the counter should not watch five spinners resolve.
+ *
+ * `sales.till` rather than `customers.edit`: this only lists groups and reps to
+ * put in a dropdown, and the person opening the dialog may well be about to
+ * fetch a manager to authorise the save. Refusing them the FORM would mean the
+ * manager has to sign in twice — once to see the fields, once to save them.
+ */
+export type CustomerFormLookups = {
+  groups: CustomerGroup[]
+  reps: SalesRep[]
+  categories: string[]
+  structures: { id: number; name: string }[]
+  /** Null when auto-numbering is off — the code field is then typed by hand. */
+  suggestedCode: string | null
+}
+
+export async function customerFormLookupsAction(): Promise<CustomerFormLookups> {
+  const { siteId } = await actorForOrThrow('sales.till')
+
+  const [groups, reps, categories, structures, suggestedCode] = await Promise.all([
+    listCustomerGroups(siteId),
+    listSalesReps(siteId),
+    listCustomerCategories(siteId),
+    listPriceStructures(siteId),
+    suggestedMasterCode(siteId, 'customer'),
+  ])
+
+  return {
+    groups,
+    reps,
+    categories,
+    structures: structures.map((s) => ({ id: s.id, name: s.name })),
+    suggestedCode,
+  }
+}
+
+/**
+ * One customer, for the edit dialog to open on.
+ *
+ * `getTillCustomer` is not enough: `TillCustomer` is deliberately lean — no
+ * email, no address, no notes (see tillCustomers.ts) — and a form seeded from
+ * it would render those fields blank and then SAVE the blanks over what was
+ * there. The full record or nothing.
+ */
+export async function getCustomerForDialogAction(id: number): Promise<Customer | null> {
+  const { siteId } = await actorForOrThrow('sales.till')
+  return getCustomer(siteId, id)
+}
+
+/**
+ * Saving the customer form when it is a dialog rather than a page.
+ *
+ * ── WHY NOT `saveCustomerAction` ──────────────────────────────────────────
+ *
+ * That one ends in `redirect()`. In a dialog a redirect either navigates the
+ * whole till away from a half-rung-up sale or, in an iframe, silently lands on
+ * a page the opener cannot read — and either way the caller never learns the id
+ * of the customer just created, which is the entire point of creating one here:
+ * to attach it to the sale in front of you.
+ *
+ * So this returns the outcome. Everything else is deliberately the SAME
+ * function: `readInput` maps the identical 30 fields, `createCustomer` and
+ * `updateCustomer` are the same write path, and `possibleDuplicates` is the
+ * same check. A second form that drifts from the real one is the failure this
+ * is written to avoid.
+ *
+ * ── THE OVERRIDE ──────────────────────────────────────────────────────────
+ *
+ * A cashier without `customers.edit` gets a manager's PIN pad instead of a
+ * refusal, and the token it mints widens THIS call only — two minutes, one
+ * capability, verified server-side rather than trusted from the client. The
+ * pattern and the reasoning are `withOverride` in (app)/sales/actions.ts.
+ *
+ * The module is still checked first and is NOT overridable: a shop that has not
+ * licensed Customers cannot be PIN'd into it.
+ */
+export type CustomerDialogResult =
+  | { ok: true; id: number; name: string }
+  | { ok: false; error: string }
+  /** Paused, not refused — the same two-press confirm the page form uses. */
+  | { ok: false; duplicateWarning: string }
+
+export async function saveCustomerFromDialogAction(
+  form: FormData,
+  overrideToken?: string,
+): Promise<CustomerDialogResult> {
+  const ctx = await actorForModule('customers', 'customers.view')
+  if ('ok' in ctx) return ctx
+  const { siteId, actor, capabilities } = ctx
+
+  /*
+   * The gate is `customers.edit`, widened by a verified manager token.
+   *
+   * Checked here rather than by asking `actorForModule` for it, because a
+   * refusal must be distinguishable from a module problem: the client turns
+   * THIS into a PIN pad, and turning "Customers is not licensed" into a PIN pad
+   * would ask a manager to authorise something no PIN can fix.
+   */
+  let allowed = can(capabilities, 'customers.edit')
+  if (!allowed && overrideToken) {
+    allowed = (await verifyOverrideToken(siteId, overrideToken, 'customers.edit')) !== null
+  }
+  if (!allowed) {
+    return {
+      ok: false,
+      error: 'You do not have permission to add or edit customers. Ask a manager to authorise it.',
+    }
+  }
+
+  const idRaw = String(form.get('id') ?? '').trim()
+  const input = readInput(form)
+
+  // The same pause the page form applies, and skipped the same way once the
+  // person has seen it and pressed Save again.
+  if (form.get('confirmedDuplicate') === null) {
+    const matches = await possibleDuplicates(
+      siteId,
+      { phone: input.phone, email: input.email },
+      idRaw ? Number(idRaw) : undefined,
+    )
+    if (matches.length > 0) {
+      return { ok: false, duplicateWarning: duplicateWarning(matches) }
+    }
+  }
+
+  const result = idRaw
+    ? await updateCustomer(siteId, actor, Number(idRaw), input)
+    : await createCustomer(siteId, actor, input)
+
+  if (!result.ok) return { ok: false, error: result.error }
+
+  /* The back office is a different window that may be sitting on the list. It
+     costs nothing here and means a clerk who adds an account at the counter
+     sees it in Customers without a hard refresh. */
+  revalidatePath('/customers')
+
+  return { ok: true, id: result.id, name: input.name.trim() }
 }
 
 /* ── The address book (132) ──────────────────────────────────────────────── */

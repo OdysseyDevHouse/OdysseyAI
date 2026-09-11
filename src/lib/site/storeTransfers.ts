@@ -6,6 +6,7 @@ import { weightedAverageCost } from '../documentMath'
 import { linkedStores } from '../storeGroups'
 import { nextDocumentNumber } from './sequences'
 import { recordMovement } from './stockMovements'
+import { writeCostHistory } from './reprice'
 import { transitLocationIdTx } from './stockLocations'
 import { guardPosting } from './periodLocks'
 import type { Actor } from './activityLog'
@@ -729,6 +730,18 @@ export async function receiveFromStore(
           receivedQty: line.qtyReceived,
           receivedCostExcl: line.unitCostExcl,
         })
+
+        // What arrived from the other store, on the record (256). The receiving
+        // store's cost moves on a transfer it did not buy, which is exactly the
+        // change that otherwise looks like it came from nowhere.
+        await writeCostHistory(
+          tx,
+          [
+            { productId: line.localProductId, column: 'average', costExcl: newAverage },
+            { productId: line.localProductId, column: 'last', costExcl: line.unitCostExcl },
+          ],
+          { source: 'transfer', sourceDocId: id, userName: actor.userName },
+        )
 
         await tx.execute(
           'UPDATE products SET average_cost = ?, last_cost = ? WHERE id = ?',

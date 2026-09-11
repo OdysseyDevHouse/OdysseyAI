@@ -282,7 +282,7 @@ async function main() {
   )
   ok(
     '*** nor discarded ***',
-    !(await deleteDraftReceipt(SITE, draft.id)).ok,
+    !(await deleteDraftReceipt(SITE, actor, draft.id)).ok,
   )
 
   console.log('\n── Discarding ──')
@@ -297,7 +297,7 @@ async function main() {
   ok('a throwaway draft saves', throwaway.ok)
   if (!throwaway.ok) process.exit(1)
 
-  const discarded = await deleteDraftReceipt(SITE, throwaway.id)
+  const discarded = await deleteDraftReceipt(SITE, actor, throwaway.id)
   ok('*** a draft can be discarded ***', discarded.ok, discarded.ok ? '' : (discarded as any).error)
   ok('  and is GONE, not left as a cancelled shell', (await getPurchaseDocument(SITE, throwaway.id)) === null)
 
@@ -309,7 +309,7 @@ async function main() {
   ok('  its lines cascaded away', orphanLines.length === 0, String(orphanLines.length))
   ok('  and its charges', (await documentCharges(SITE, throwaway.id)).length === 0)
 
-  ok('discarding twice is refused', !(await deleteDraftReceipt(SITE, throwaway.id)).ok)
+  ok('discarding twice is refused', !(await deleteDraftReceipt(SITE, actor, throwaway.id)).ok)
 
   console.log('\n── Invariants ──')
 

@@ -3,7 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { siteQuery, siteQueryOne, siteTransaction } from '../siteDb'
 import { toNum } from '../decimals'
 import { effectiveCost, type CostBasis } from '../pricing'
-import { writePriceRows } from './reprice'
+import { writePriceRows, writeCostHistory } from './reprice'
 import { getCostBasis } from './lookups'
 import { toPriceCalc, type PriceCalcId } from '../productProperties'
 import { logActivityTx } from './activityLog'
@@ -368,6 +368,28 @@ export async function saveBulkPrices(
       }
 
       if (sets.length === 0) continue
+
+      /*
+       * THE COST, on the product's own history (256).
+       *
+       * This used to be recorded ONLY in the activity log below, which is the
+       * gap that prompted this: a cost typed here left a trail on the audit
+       * screen and nothing at all on the product's Reporting tab, where the
+       * shelf price it was moved alongside was already showing. Both now land
+       * beside each other.
+       *
+       * The activity row stays. It carries the VAT-rate changes this loop also
+       * makes, which are not costs and have no business on a price history.
+       *
+       * Before the UPDATE, while the old figure is still readable.
+       */
+      if (changes.lastCost) {
+        await writeCostHistory(
+          tx,
+          [{ productId: w.id, column: 'last', costExcl: w.edit.lastCost as number }],
+          { source: 'grid', userName: actor.userName },
+        )
+      }
 
       // last_edit_date, like the product form: this IS an edit a person made,
       // as distinct from updated_at which a stock movement also touches.

@@ -35,7 +35,14 @@ import {
   TABLE_TD_INPUT,
   TABLE_TH,
 } from '@/components/ui'
-import { formatMoney, round, roundQty, qtyDecimalsOf, DEFAULT_QTY_DECIMALS } from '@/lib/decimals'
+import {
+  formatMoney,
+  formatQty,
+  round,
+  roundQty,
+  qtyDecimalsOf,
+  DEFAULT_QTY_DECIMALS,
+} from '@/lib/decimals'
 import { deviceId } from '@/lib/deviceId'
 import { documentTotals, lineTotals } from '@/lib/documentMath'
 import {
@@ -65,6 +72,12 @@ import { AskDetailsModal } from '@/app/(pos)/pos/AskDetailsModal'
    same question at a counter as at a till, and two copies of it would be two
    places for the scan box to drift. */
 import { SerialModal } from '@/app/(pos)/pos/SerialModal'
+/* The till's supervisor pad, borrowed whole for the same reason the two modals
+   above are. "Fetch a manager" is one interaction, and `tillOverrideAction`
+   behind it needs only the till cookie — which this window mints itself (see
+   (invoicing)/pinActions.ts), so a counter clerk reaches it exactly as a
+   cashier does, audit row and all. */
+import OverrideModal from '@/app/(pos)/pos/OverrideModal'
 import type { SerialCaptureMode } from '@/lib/serialStatus'
 import {
   finaliseInvoiceAction,
@@ -254,6 +267,9 @@ export default function InvoiceEditor({
   editable,
   canOverrideDiscount,
   canOverridePrice,
+  canOverrideQty,
+  scanFocus = 'scan',
+  operatorName,
   showCost,
   specials,
   extraStatus = null,
@@ -282,6 +298,24 @@ export default function InvoiceEditor({
   editable: boolean
   canOverrideDiscount: boolean
   canOverridePrice: boolean
+  /**
+   * Whether this person may sell other than one of whatever was scanned.
+   *
+   * Without it the quantity cell still TAKES a number — see the note beside it
+   * — and a supervisor's PIN is what lets the number stick.
+   */
+  canOverrideQty: boolean
+  /**
+   * Where the cursor goes once a line has been added: back to the entry box, or
+   * into the new line's quantity. The shop's `invoicing_scan_focus`.
+   */
+  scanFocus?: 'scan' | 'qty'
+  /**
+   * Whoever is at the counter, for the audit row a supervisor override writes.
+   * The server never trusts it for identity — it names the CASHIER being
+   * approved, while the manager comes from the PIN.
+   */
+  operatorName?: string
   /** The shop's live promotions. See the note on lineSpecials below. */
   specials: Special[]
   /** Whether this person may see cost and margin. */
@@ -436,6 +470,120 @@ export default function InvoiceEditor({
 
   const [entry, setEntry] = useState('')
   const entryRef = useRef<HTMLInputElement>(null)
+
+  /*
+   * The quantity cells, by line key, so a new line can be focused on arrival
+   * under `invoicing_scan_focus: 'qty'`.
+   *
+   * A Map in a ref rather than state: registering a cell must not re-render the
+   * grid, and the ref is read one tick later by the effect below, by which time
+   * every row has mounted and populated it.
+   */
+  const qtyRefs = useRef(new Map<string, HTMLInputElement | null>())
+
+  /*
+   * The key of the line most recently appended.
+   *
+   * A ref rather than state because `addProduct` reads it in the same tick it
+   * appended — inside the transition, before any re-render — and state would
+   * still hold the previous line's key there. `appendLine` mints the key, so
+   * this is the only way the caller can learn it without `appendLine` changing
+   * shape for the several other callers that do not care.
+   */
+  const lastKeyRef = useRef<string | null>(null)
+
+  /*
+   * The line whose quantity should take focus, or null.
+   *
+   * Set by `appendLine` and consumed by an effect rather than focused inline,
+   * because at the moment the line is appended its input does not exist yet —
+   * React has not rendered the row. The effect runs after it has.
+   */
+  const [focusQtyKey, setFocusQtyKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!focusQtyKey) return
+    const input = qtyRefs.current.get(focusQtyKey)
+    /* Selected, not merely focused. The cell already holds 1, and a clerk who
+       lands there is about to replace it — leaving the caret after the digit
+       turns a typed 3 into 13. */
+    input?.focus()
+    input?.select()
+    setFocusQtyKey(null)
+  }, [focusQtyKey])
+
+  /*
+   * A quantity a supervisor is being asked about.
+   *
+   * Held until the PIN lands: the cell shows the typed figure meanwhile, and
+   * `onAuthorised` is what writes it into the line. Cancelling puts the old
+   * figure back, so a refused approval leaves the document as it was rather
+   * than as it was mid-keystroke.
+   */
+  const [qtyApproval, setQtyApproval] = useState<{
+    key: string
+    description: string
+    from: number
+    to: number
+  } | null>(null)
+
+  /*
+   * The lines a supervisor has already approved a quantity on.
+   *
+   * Without this the pad reappears every time the cell is left — tabbing
+   * through the grid to check a figure would ask for a PIN again on a line the
+   * manager stood there and approved thirty seconds ago. The approval is for
+   * THIS line on THIS document, and it dies with the page.
+   *
+   * Keyed by line key rather than by quantity, so nudging an approved 12 to 13
+   * does not re-ask. That is deliberate: the manager approved "this clerk may
+   * set a quantity on this line", and re-prompting on each adjustment of an
+   * already-authorised line is the kind of friction that gets a supervisor to
+   * hand out their PIN.
+   */
+  const [approvedQtyKeys, setApprovedQtyKeys] = useState<ReadonlySet<string>>(new Set())
+
+  /**
+   * A quantity leaving its cell: rounded, and approved if it needs approving.
+   *
+   * ── WHY ONE IS THE LINE THAT NEEDS NO PERMISSION ─────────────────────────
+   *
+   * Because one is what a scan PUTS there. `appendLine` opens every line at 1,
+   * so a counter that scans each item individually never touches this at all,
+   * and the only way to reach any other figure is to have typed it. That makes
+   * "not 1" a precise description of the act the shop is withholding, and it
+   * needs no memory of what the line started as — which matters, because a
+   * remembered starting figure is a claim the client would be making about
+   * itself.
+   *
+   * Typing a line back DOWN to 1 is therefore always free: it is the undo of
+   * the act, and refusing it would trap a clerk who fat-fingered a 2 with no
+   * way back that does not involve a manager.
+   */
+  function commitQty(line: EditorLine) {
+    const rounded = roundQty(line.qty, line)
+
+    /* Rounded BEFORE the comparison. A 3-decimal product holding 0.9999 from a
+       float is a 1, and asking a manager to approve it would be the app
+       apologising for its own arithmetic. */
+    if (rounded !== line.qty) patch(line.key, { qty: rounded })
+
+    if (canOverrideQty) return
+    if (rounded === 1) return
+    if (approvedQtyKeys.has(line.key)) return
+
+    /* Zero is not sent for approval. It is refused outright at save by the
+       existing line validation, and a manager approving "nothing of this
+       product" would be approving a line that cannot be saved either way. */
+    if (rounded === 0) return
+
+    setQtyApproval({
+      key: line.key,
+      description: line.description,
+      from: 1,
+      to: rounded,
+    })
+  }
 
   /*
    * The product search dialog.
@@ -986,10 +1134,18 @@ export default function InvoiceEditor({
        state a render later would be built from a cleared one. */
     unit?: { id: number; serial: string } | null,
   ) {
+    /* Minted here rather than inside the updater, so the caller can learn which
+       line it just added — `addProduct` focuses its quantity under
+       `invoicing_scan_focus: 'qty'`. An updater runs later and may run twice
+       under StrictMode, which would leave the ref naming a key that never
+       reached the grid. */
+    const key = nextKey()
+    lastKeyRef.current = key
+
     setLines((current) => [
       ...current,
       {
-        key: nextKey(),
+        key,
         productId: found.id,
         productCode: found.code,
         description: answers?.description ?? found.description,
@@ -1146,7 +1302,19 @@ export default function InvoiceEditor({
 
       addWithPrompts(found)
       setEntry('')
-      entryRef.current?.focus()
+      /*
+       * Where the cursor goes next is the shop's choice — `invoicing_scan_focus`.
+       *
+       * Under 'qty' the entry box is deliberately NOT refocused first: two focus
+       * calls in one tick race, and the loser is whichever the browser applies
+       * second. The effect that consumes `focusQtyKey` is the only mover in that
+       * mode.
+       *
+       * The key is read off the lines AFTER the append rather than captured
+       * before it, because `appendLine` mints it — see `nextKey`.
+       */
+      if (scanFocus === 'qty') setFocusQtyKey(lastKeyRef.current)
+      else entryRef.current?.focus()
     })
   }
 
@@ -1602,6 +1770,7 @@ export default function InvoiceEditor({
               customerId={customerId}
               customerName={customerName}
               editable={editable}
+              operatorName={operatorName ?? ''}
               onPick={(picked) => {
                 setCustomerId(picked?.id ?? null)
                 setCustomerName(picked?.name ?? '')
@@ -1835,20 +2004,46 @@ export default function InvoiceEditor({
 
                       <td className={TABLE_TD_INPUT}>
                         <NumberInput
+                          /* Registered so a freshly scanned line can be focused
+                             here under `invoicing_scan_focus: 'qty'`. Cleared on
+                             unmount so a removed line does not hold its node. */
+                          ref={(node) => {
+                            if (node) qtyRefs.current.set(line.key, node)
+                            else qtyRefs.current.delete(line.key)
+                          }}
                           /* Names the rule, so a typist who watches 1.5 become 2
                              knows why. The till's line editor labels it the same
-                             way. */
+                             way. The quantity right is named too when it is
+                             missing — somebody about to be asked for a PIN should
+                             know that before they type, not after. */
                           aria-label={`Quantity for ${line.description}${
                             qtyDecimalsOf(line) === 0
                               ? ' — whole units only'
                               : ` — up to ${qtyDecimalsOf(line)} decimals`
-                          }`}
+                          }${canOverrideQty ? '' : ' — a supervisor approves anything but 1'}`}
                           value={line.qty}
                           /* The product's own places, not a hardcoded 2. At 2 a
                              legitimate 1.125kg line displayed as 1.13 while
                              state still held 1.125 — the box lied about the
                              number it was holding. */
                           precision={qtyDecimalsOf(line)}
+                          /*
+                           * ── NOT DISABLED WITHOUT THE RIGHT ──────────────
+                           *
+                           * Deliberately, and it is the whole shape of this
+                           * permission. A greyed box tells a clerk "no" and
+                           * stops there; the shop's actual rule is "not on your
+                           * own", and a supervisor standing right there must be
+                           * able to make it happen without the clerk first
+                           * having to guess that the cell would be typeable for
+                           * somebody else.
+                           *
+                           * So the number goes in as it always did, and the
+                           * PIN pad is what decides whether it stays. Same
+                           * reasoning as the discount cell above, which was
+                           * once disabled for exactly the people the ceiling
+                           * was written for.
+                           */
                           disabled={!editable}
                           onChange={(e) =>
                             patch(line.key, { qty: Number(String(e.target.value).replace(',', '.')) || 0 })
@@ -1864,8 +2059,12 @@ export default function InvoiceEditor({
                            * Not per keystroke because that would fight the
                            * caret: "1.2" on a two-decimal product would settle
                            * to 1.2 and the next digit could never reach 1.25.
+                           *
+                           * The approval is asked for HERE, on the way out, for
+                           * the same reason: a pad thrown up per keystroke would
+                           * fire on the 1 of 12 and be unusable.
                            */
-                          onBlur={() => patch(line.key, { qty: roundQty(line.qty, line) })}
+                          onBlur={() => commitQty(line)}
                         />
                       </td>
 
@@ -2184,6 +2383,46 @@ export default function InvoiceEditor({
           description="Search, filter and sort the catalogue. Click a name to add one, or tick several and add them together."
           confirmLabel="Add"
         />
+
+        {/*
+          The supervisor pad for a quantity this clerk may not set alone.
+
+          Mounted only while one is pending, so its state starts fresh each time
+          — the till mounts its own the same way, and for the same reason a kept
+          pad would carry the last refusal's error onto the next line.
+        */}
+        {qtyApproval && (
+          <OverrideModal
+            open
+            /* Never read: `online` is true, so the offline branch — the only
+               thing that consults siteId — cannot run. The counter has no
+               offline store of its own (see the note on `serialCapture` in
+               page.tsx), which is exactly why it is hard-coded rather than
+               threaded through three pages to be ignored. */
+            siteId={0}
+            online
+            capability="sales.qty_override"
+            actionLabel={`Quantity ${formatQty(qtyApproval.to)} on ${qtyApproval.description}`}
+            documentId={document.id}
+            cashierName={operatorName ?? ''}
+            onClose={() => {
+              /* Declined, or dismissed. The quantity goes back to the one the
+                 clerk is entitled to rather than staying as typed — leaving the
+                 figure on screen after a refused approval would read as though
+                 it had been allowed, and it is the figure that would be saved. */
+              patch(qtyApproval.key, { qty: qtyApproval.from })
+              setQtyApproval(null)
+            }}
+            onAuthorised={() => {
+              /* The typed figure is already in the line — the cell wrote it on
+                 the way out. What the approval adds is permission for it to
+                 STAY, and for this line to be adjusted again without fetching
+                 the manager back. */
+              setApprovedQtyKeys((current) => new Set(current).add(qtyApproval.key))
+              setQtyApproval(null)
+            }}
+          />
+        )}
 
         {/*
           WHAT NOW — answered HERE, not in the back office.

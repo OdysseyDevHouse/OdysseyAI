@@ -105,6 +105,23 @@ export function Tooltip({
   )
 }
 
+/**
+ * What a drag handle says when you point at it — one wording, everywhere.
+ *
+ * Written here rather than at each call site because a drag handle looks the
+ * same on every screen and must therefore READ the same on every screen: nine
+ * call sites typing their own string is nine chances to drift, and a handle
+ * that says something slightly different on the till than in the back office is
+ * the kind of difference a user notices without being able to name it. The POS
+ * imports this kit too, so anything it grows later inherits the same words.
+ *
+ * It names the RESULT ("reorder the grid") rather than the gesture ("drag to
+ * reorder"): the grab cursor and the handle itself already say it is draggable,
+ * so spending the tooltip on the mechanism tells the reader what they can
+ * already see. What they cannot see is what the drag will change.
+ */
+export const REORDER_HINT = 'Reorder the grid'
+
 /* Full class strings, never interpolated — Tailwind scans source text, so a
    computed `mb-${n}` is not emitted and the panel would sit on top of its own
    trigger. Same reason the kit writes out EDGE_RING. */

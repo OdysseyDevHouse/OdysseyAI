@@ -1,7 +1,7 @@
 import { requireCapability } from '@/lib/auth'
 import { can } from '@/lib/site/permissions'
 import { listProductsForPricing } from '@/lib/site/bulkPricing'
-import { listPriceStructures, listVatRates } from '@/lib/site/lookups'
+import { listBrands, listPriceStructures, listVatRates } from '@/lib/site/lookups'
 import { listSuppliers } from '@/lib/site/suppliers'
 import { getSetting } from '@/lib/site/settings'
 import { toEndingDirection } from '@/lib/repricing'
@@ -28,6 +28,7 @@ import {
   Icons,
 } from '@/components/ui'
 import BulkPricingGrid from './BulkPricingGrid'
+import RepriceButton from './RepriceButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,10 +62,14 @@ export default async function BulkPricingPage({
   // A hidden menu entry is not a boundary — this URL is typeable.
   const { siteId, capabilities } = await requireCapability('products.edit')
   const showCost = can(capabilities, 'products.cost')
+  /* The reprice actions are gated on setup.edit, which is a narrower group than
+     the products.edit that opens this screen. Hiding the button from someone
+     who cannot use it beats showing one that answers "not allowed". */
+  const canReprice = can(capabilities, 'setup.edit')
   const params = await searchParams
   const { q, department, archived } = params
 
-  const [departments, structures, vatRates, suppliers, endingDirection] =
+  const [departments, structures, vatRates, suppliers, brands, endingDirection] =
     await Promise.all([
     listDepartments(siteId, true),
     listPriceStructures(siteId),
@@ -77,6 +82,8 @@ export default async function BulkPricingPage({
       sort: 'name',
       limit: 500,
     }),
+    // Only to scope a bulk reprice, same as Setup → Pricing loads them.
+    listBrands(siteId),
     getSetting(siteId, 'price_ending_direction'),
   ])
 
@@ -185,7 +192,22 @@ export default async function BulkPricingPage({
       />
       <PageBody>
         <Card>
-          <TableToolbar inCard>
+          <TableToolbar
+            inCard
+            /* In `actions`, not the selection bar: this sweeps a whole price
+               type across the catalogue and ignores both the ticked rows and
+               the page you are on. See the note in RepriceButton. */
+            actions={
+              canReprice ? (
+                <RepriceButton
+                  structures={structures}
+                  departments={departments.map((d) => ({ id: d.id, name: d.name }))}
+                  brands={brands.map((b) => ({ id: b.id, name: b.name }))}
+                  defaultEndingDirection={toEndingDirection(endingDirection)}
+                />
+              ) : undefined
+            }
+          >
             <div className="w-72 max-w-full">
               <SearchBar
                 action="/products/bulk-pricing"

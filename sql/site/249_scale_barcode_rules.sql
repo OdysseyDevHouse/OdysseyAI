@@ -22,11 +22,22 @@
 --   · `plu_length` is the legacy STOCK CODE column. It is the number of digits
 --     that identify the product, and it is matched against the product's own
 --     code, barcode or alias — the "PLU link".
---   · `has_check_digit` says the last digit is a check digit and so is not part
---     of the value. It does NOT verify it: a scale that prints a non-standard
---     check digit would then stop scanning altogether, and the till refusing a
---     real product at a queue is worse than accepting a mis-keyed one that will
---     fail to find a product anyway.
+--   · `has_check_digit` says a SECOND check digit sits between the stock code
+--     and the price, guarding the stock code — the middle 6 on a real Avery
+--     label, 2 12345 6 01599 6 — and so is stepped over rather than priced.
+--
+--     It does NOT mean "the last digit is a check digit". That one is on every
+--     label, because EAN-13 ends in a check digit by construction and no shop
+--     setting removes it; a flag for it would be a question with one answer.
+--     The parser originally read this column that way, which made a rule with
+--     the box OFF slice across the trailing digit and charge 599.94 for a
+--     R159.99 item. The column keeps its name and its rows; only the meaning is
+--     pinned down. See the note in src/lib/barcodes.ts.
+--
+--     Neither check digit is VERIFIED, only skipped: a scale that prints a
+--     non-standard check digit would then stop scanning altogether, and the
+--     till refusing a real product at a queue is worse than accepting a
+--     mis-keyed one that will fail to find a product anyway.
 --   · `value_length` is how many digits hold the price or weight, counted back
 --     from the END of the barcode — past the trailing check digit, if any.
 --     Counted from the end because a scale prints digits BETWEEN the stock code

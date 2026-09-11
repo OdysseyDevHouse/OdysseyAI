@@ -284,6 +284,8 @@
     "test:tickets": "tsx --conditions=react-server --env-file=.env scripts/test-tickets.ts",
     "test:master-codes": "tsx --conditions=react-server --env-file=.env scripts/test-master-codes.ts",
     "test:instructions": "tsx --conditions=react-server --env-file=.env scripts/test-instructions.ts",
+    "test:instructions-deep": "tsx --conditions=react-server --env-file=.env scripts/test-instructions-deep.ts",
+    "test:instructions-invoicing": "tsx --conditions=react-server --env-file=.env scripts/test-instructions-invoicing.ts",
     "test:tip-math": "tsx scripts/test-tip-math.ts",
     "test:tips": "tsx --conditions=react-server --env-file=.env scripts/test-tips.ts",
     "test:pos-floor": "tsx --conditions=react-server --env-file=.env scripts/test-pos-floor.ts",

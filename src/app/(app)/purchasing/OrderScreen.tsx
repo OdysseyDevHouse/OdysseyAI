@@ -9,8 +9,10 @@ import {
   CardHeader,
   ColumnPicker,
   Combobox,
+  ConfirmModal,
   EmptyState,
   Field,
+  HeaderActions,
   Icons,
   Input,
   PageBody,
@@ -43,6 +45,7 @@ import { searchProductsForPurchasePickerAction } from '@/components/products/pro
 import {
   searchProductsForPurchaseAction,
   agreedPricesAction,
+  deleteDraftOrderAction,
   saveOrderAction,
   saveOrderDraftAction,
   issueOrderAction,
@@ -186,6 +189,9 @@ export default function OrderScreen({
 
   const toast = useToast()
   const router = useRouter()
+  /* The "delete this draft?" confirm. Nothing here is destructive until it is
+     answered — the button only opens the question. */
+  const [deleting, setDeleting] = useState(false)
 
   const supplier = suppliers.find((s) => s.id === Number(supplierId))
 
@@ -608,6 +614,40 @@ export default function OrderScreen({
 
   return (
     <PageBody>
+      {/*
+       * The order's two acts, in the page header beside the draft number.
+       *
+       * ── WHY A PORTAL AND NOT <PageHeader action={...}> ────────────────────
+       *
+       * The header is rendered by the SERVER pages that own this screen — the
+       * new-order route and the edit-draft route — and both buttons depend on
+       * client state this component holds: `pending` (the button reads
+       * "Issuing…" mid-flight), `ready`, and `documentId`, which decides
+       * whether there is a draft to delete at all. A server page cannot render
+       * any of that without lifting this component's state out of it.
+       *
+       * So the buttons stay where the state is and only their rendered result
+       * moves, which is precisely what HeaderActions exists for. One per
+       * screen, and this is the one — it serves both routes, because both
+       * render this component.
+       */}
+      <HeaderActions>
+        <Button variant="primary" disabled={!ready || pending} onClick={issue}>
+          <Icons.Send size={16} />
+          {pending ? 'Issuing…' : 'Issue to supplier'}
+        </Button>
+
+        {/* Only once there IS a draft to delete. This screen saves itself as
+            soon as a supplier is chosen, so before that there is no row — and a
+            delete button for nothing reads as broken. */}
+        {documentId && (
+          <Button variant="danger-ghost" disabled={pending} onClick={() => setDeleting(true)}>
+            <Icons.Trash size={16} />
+            Delete this draft
+          </Button>
+        )}
+      </HeaderActions>
+
       {/* The header card across the top and the LINE GRID FULL WIDTH below it,
           which is receiving's shape and for receiving's reason: the grid
           carries up to twenty columns — cost, markup, GP, selling price — and
@@ -820,10 +860,11 @@ export default function OrderScreen({
             </Card>
           )}
 
-          <Button variant="primary" disabled={!ready || pending} onClick={issue}>
-            <Icons.Send size={16} />
-            {pending ? 'Issuing…' : 'Issue to supplier'}
-          </Button>
+          {/* Issue and Delete used to sit here. They live in the page header
+              now — see the <HeaderActions> block at the top of this component.
+              The autosave note stays: it is a statement of where the draft
+              stands, not an action, and it belongs beside the totals it
+              describes rather than in a bar of buttons. */}
 
           {/* No "Save as draft" button any more: the order saves itself as it
               is worked on, and a button that repeats what already happened
@@ -885,6 +926,35 @@ export default function OrderScreen({
 
       {/* No onHeader: an order has nowhere to put their invoice number or
           total, and the supplier's own reference is the buyer's to type. */}
+      {/* Deleted rather than cancelled, and only while it is a draft — see
+          deleteDraftOrder for why the two are different acts. Back to the list
+          afterwards, because the screen it was opened from no longer has
+          anything to show. */}
+      <ConfirmModal
+        open={deleting}
+        onClose={() => setDeleting(false)}
+        onConfirm={async () => {
+          if (!documentId) return
+          const result = await deleteDraftOrderAction(documentId)
+          if (!result.ok) {
+            toast.error(result.error)
+            return
+          }
+          toast.success('Draft order deleted.')
+          router.push('/purchasing')
+        }}
+        title="Delete this draft order?"
+        confirmLabel="Delete it"
+        cancelLabel="Keep it"
+        busy={pending}
+        message={
+          <p>
+            It has not been sent to anyone and has no order number yet, so there is nothing to
+            withdraw — the lines are simply thrown away. This cannot be undone.
+          </p>
+        }
+      />
+
       <DocumentScanDialog
         open={scanOpen}
         onClose={() => setScanOpen(false)}

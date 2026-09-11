@@ -12,6 +12,7 @@ import {
   closeOrderShortAction,
   voidReceiptAction,
   deleteDraftReceiptAction,
+  deleteDraftOrderAction,
 } from '../actions'
 
 /**
@@ -92,6 +93,10 @@ export default function PurchaseActions({
   const [matching, setMatching] = useState(false)
   const [voiding, setVoiding] = useState(false)
   const [discarding, setDiscarding] = useState(false)
+  /* Separate from `discarding`, which is the GRV's. The two never show at once
+     — a document is one type or the other — but sharing one flag would make the
+     confirm text depend on `docType` in a second place. */
+  const [deletingOrder, setDeletingOrder] = useState(false)
   const [reason, setReason] = useState('')
   const [pending, startTransition] = useTransition()
   const toast = useToast()
@@ -158,6 +163,16 @@ export default function PurchaseActions({
         <Button variant="danger-ghost" onClick={() => setDiscarding(true)} disabled={pending}>
           <Icons.Trash size={15} />
           Discard
+        </Button>
+      )}
+
+      {/* Deleted rather than cancelled, and only while it is a draft. Once the
+          order has been issued the supplier has it and Cancel is the honest
+          act — see deleteDraftOrder for why the two differ. */}
+      {isOrder && status === 'draft' && (
+        <Button variant="danger-ghost" onClick={() => setDeletingOrder(true)} disabled={pending}>
+          <Icons.Trash size={15} />
+          Delete
         </Button>
       )}
 
@@ -320,6 +335,28 @@ export default function PurchaseActions({
           <p>
             Nothing has been posted, so nothing is reversed — the part-keyed lines are simply
             thrown away. This cannot be undone.
+          </p>
+        }
+      />
+
+      <ConfirmModal
+        open={deletingOrder}
+        onClose={() => setDeletingOrder(false)}
+        onConfirm={() =>
+          run(async () => {
+            const result = await deleteDraftOrderAction(documentId)
+            if (result.ok) router.push('/purchasing')
+            return result
+          })
+        }
+        title="Delete this draft order?"
+        confirmLabel="Delete it"
+        cancelLabel="Keep it"
+        busy={pending}
+        message={
+          <p>
+            It has not been sent to anyone and has no order number yet, so there is nothing to
+            withdraw — the lines are simply thrown away. This cannot be undone.
           </p>
         }
       />

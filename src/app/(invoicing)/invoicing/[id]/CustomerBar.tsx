@@ -12,6 +12,7 @@ import { formatMoney } from '@/lib/decimals'
 import { searchCustomersAction } from '@/app/(app)/sales/actions'
 import { listCustomersAction } from '../actions'
 import type { TillCustomer } from '@/lib/site/tillCustomers'
+import { CustomerEditorModal } from '@/app/(app)/customers/CustomerEditorModal'
 
 /**
  * Who the invoice is for.
@@ -28,11 +29,14 @@ export default function CustomerBar({
   customerId,
   customerName,
   editable,
+  operatorName = '',
   onPick,
 }: {
   customerId: number | null
   customerName: string
   editable: boolean
+  /** Named in the audit row when a manager authorises an account edit. */
+  operatorName?: string
   onPick: (customer: { id: number; name: string } | null) => void
 }) {
   const toast = useToast()
@@ -41,6 +45,16 @@ export default function CustomerBar({
   const [results, setResults] = useState<TillCustomer[]>([])
   const [searching, setSearching] = useState(false)
   const defaultList = useRef<TillCustomer[] | null>(null)
+  /**
+   * The add/edit dialog, and which account it is on.
+   *
+   * Held here rather than inside the picker Modal because the two are siblings:
+   * the editor opens FROM the picker and the picker closes behind it, so a
+   * dialog nested in the other's body would unmount mid-flight.
+   */
+  const [editing, setEditing] = useState<{ mode: 'create' | 'edit'; id: number | null } | null>(
+    null,
+  )
 
   /*
    * Two sources feed one list: the opening hundred, and the search.
@@ -147,6 +161,19 @@ export default function CustomerBar({
               Clear
             </Button>
           )}
+          {/* Only for a real ACCOUNT. A once-off name typed on the document is
+              not a customer record, so there is nothing to open — offering Edit
+              beside it would promise a form that cannot be filled in. */}
+          {customerId && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditing({ mode: 'edit', id: customerId })}
+            >
+              <Icons.Pencil size={15} />
+              Edit
+            </Button>
+          )}
           <Button variant="secondary" size="sm" onClick={() => setPicking(true)}>
             <Icons.Users size={15} />
             Select customer
@@ -168,13 +195,26 @@ export default function CustomerBar({
         {/* `min-h-0` so the list below can shrink rather than pushing this
             column past the panel — the flex default is `min-height:auto`. */}
         <div className="flex min-h-0 flex-col gap-3">
-          <Input
-            autoFocus
-            value={query}
-            placeholder="Search by code, name or phone…"
-            aria-label="Search customers"
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              autoFocus
+              value={query}
+              placeholder="Search by code, name or phone…"
+              aria-label="Search customers"
+              className="flex-1"
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {/* Beside the search rather than under the list: the moment this is
+                wanted is the moment a search came back empty, and a button below
+                a hundred names is a button nobody scrolls to. */}
+            <Button
+              variant="secondary"
+              onClick={() => setEditing({ mode: 'create', id: null })}
+            >
+              <Icons.UserPlus size={15} />
+              New
+            </Button>
+          </div>
 
           {searching && <p className="text-sm text-muted">Loading…</p>}
 
@@ -227,6 +267,30 @@ export default function CustomerBar({
           </ul>
         </div>
       </Modal>
+
+      {/* A SIBLING of the picker. Both are native <dialog> elements, so the
+          editor has to reach the top layer in its own right — and nested, it
+          would unmount the moment the picker closes behind it. */}
+      <CustomerEditorModal
+        open={editing !== null}
+        mode={editing?.mode ?? 'create'}
+        customerId={editing?.id ?? null}
+        /* Never read: the offline branch is the only thing that consults it,
+           and this window has no offline store — see the same reasoning on
+           OverrideModal in InvoiceEditor. */
+        siteId={0}
+        operatorName={operatorName}
+        onClose={() => setEditing(null)}
+        onSaved={(saved) => {
+          setEditing(null)
+          /* Attach what was just saved. The editor returns the id and the name,
+             which is exactly what this bar carries — the credit position is
+             re-read by the editor's own caller when it needs one. */
+          onPick({ id: saved.id, name: saved.name })
+          setPicking(false)
+          setQuery('')
+        }}
+      />
     </>
   )
 }

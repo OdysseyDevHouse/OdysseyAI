@@ -21,7 +21,7 @@ import {
 } from '../productProperties'
 import { listVatRates, defaultVat, getCostBasis, type VatRate } from './lookups'
 import { logActivityTx, type Actor } from './activityLog'
-import { writePriceRows } from './reprice'
+import { writePriceRows, writeCostHistory, recordCostChange } from './reprice'
 import { resolveMasterCode } from './masterCodes'
 import { whyTaxRateRefused, vatRatePercent } from './taxIdentity'
 
@@ -1038,8 +1038,15 @@ export async function applyTypedCostTx(
   productId: number,
   costExcl: number | null | undefined,
   prices: Record<number, number> | undefined,
+  /** Who typed it, for the cost history (256). */
+  audit?: { userName: string },
 ): Promise<void> {
   if (costExcl && costExcl > 0) {
+    // BEFORE the update, so the old figure is still there to read (256).
+    await writeCostHistory(tx, [{ productId, column: 'last', costExcl }], {
+      source: 'editor',
+      userName: audit?.userName ?? '',
+    })
     // last_cost only. average_cost is a consequence of purchases, and the edit
     // form refuses to set it here for the same reason.
     await tx.execute('UPDATE products SET last_cost = ?, last_edit_date = NOW() WHERE id = ?', [
@@ -1414,6 +1421,24 @@ export async function updateProduct(
      */
     const savedType = toProductType(input.productType)
 
+    /*
+     * THE COST, on the record BEFORE the UPDATE below overwrites it (256).
+     *
+     * Ordered deliberately: writeCostHistory reads products.last_cost to find
+     * the old figure, so running it after the write would read the new cost as
+     * the old one, record a change from a value to itself, and -- being no
+     * change at all -- silently write nothing.
+     *
+     * Only last_cost, matching what this statement actually sets. average_cost
+     * is not settable here (see the note below the UPDATE), so claiming it
+     * moved would be recording an edit the form cannot make.
+     */
+    await writeCostHistory(
+      tx,
+      [{ productId: id, column: 'last', costExcl: input.lastCost ?? 0 }],
+      { source: audit?.source === 'import' ? 'import' : 'editor', userName: audit?.userName ?? '' },
+    )
+
     const [res] = await tx.execute(
       `UPDATE products SET
          code = ?, barcode = ?, description = ?, extra_description = ?,
@@ -1507,7 +1532,21 @@ export async function setDerivedCost(
   siteId: number,
   id: number,
   costExcl: number,
+  /** Who caused it, for the cost history (256). */
+  audit?: { userName: string },
 ): Promise<void> {
+  // BOTH columns, because both are written below. A recipe is the one case
+  // where average_cost is authored rather than blended from purchases, so a
+  // history that recorded only last_cost would stay silent on exactly the
+  // sites that price off the average. See the note above.
+  await recordCostChange(
+    siteId,
+    [
+      { productId: id, column: 'last', costExcl },
+      { productId: id, column: 'average', costExcl },
+    ],
+    { source: 'derived', userName: audit?.userName ?? '' },
+  )
   await siteExecute(
     siteId,
     'UPDATE products SET last_cost = ?, average_cost = ? WHERE id = ?',
@@ -2470,6 +2509,15 @@ export async function quickUpdateProduct(
 
   return siteTransaction(siteId, async (tx) => {
     if (sets.length > 0) {
+      // BEFORE the write, while the old cost is still readable (256). Guarded
+      // on the patch naming a cost: this panel also edits descriptions and
+      // barcodes, and those move no figure worth recording here.
+      if (patch.lastCost !== undefined) {
+        await writeCostHistory(tx, [{ productId: id, column: 'last', costExcl: patch.lastCost }], {
+          source: 'editor',
+          userName: audit?.userName ?? '',
+        })
+      }
       sets.push('last_edit_date = NOW()')
       await tx.execute(`UPDATE products SET ${sets.join(', ')} WHERE id = ?`, [
         ...args,

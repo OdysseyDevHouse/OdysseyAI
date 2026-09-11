@@ -3,6 +3,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import { round, toNum } from '../decimals'
 import { weightedAverageCost } from '../documentMath'
 import { recordMovement } from './stockMovements'
+import { writeCostHistory } from './reprice'
 import type { Actor } from './activityLog'
 
 /**
@@ -250,6 +251,15 @@ export async function ensureStock(
     existingCostExcl: here.averageCost,
     receivedQty: unitsGained,
     receivedCostExcl: unitCost,
+  })
+
+  // The blend, on the record (256). Only average_cost, matching what this
+  // writes: breaking a case open does not change what was last PAID for a
+  // single, it changes what the singles on the shelf are now worth.
+  await writeCostHistory(tx, [{ productId, column: 'average', costExcl: blended }], {
+    source: 'unpack',
+    sourceDocId: ctx.sourceDocId ?? null,
+    userName: actor.userName,
   })
 
   await tx.execute('UPDATE products SET average_cost = ? WHERE id = ?', [

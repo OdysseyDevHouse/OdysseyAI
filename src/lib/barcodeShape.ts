@@ -20,11 +20,36 @@
  * as digits to skip. This file must segment the same way round. Deriving the
  * skipped run by subtraction, rather than by walking forward from the stock
  * code, is what keeps the two in step.
+ *
+ * ── THE TRAILING DIGIT IS NOT OPTIONAL ─────────────────────────────────────
+ *
+ * It used to be drawn only when `hasCheckDigit` was set, which produced a
+ * 12-digit label with a hole at the end — a barcode that cannot be printed.
+ * EAN-13 ends in a check digit by construction; no setting on this screen can
+ * remove it. So the last segment is UNCONDITIONAL, and the flag means the thing
+ * a shop actually has to decide: whether the digit between the stock code and
+ * the value is a second check digit to skip, or the first digit of the money.
+ *
+ * That is a real fork with real consequences. On 21 1234 9 15999 4 read with a
+ * leftover-width value, the till either charges 159.99 or 9159.99 — and the two
+ * shapes are indistinguishable from the four numbers on the form, which is the
+ * entire reason this diagram exists.
+ *
+ * The skipped run is DERIVED, never invented. It is drawn only when the widths
+ * leave a gap on a 13-digit label; padding the picture with a digit that is not
+ * there was the other half of the same bug.
  */
 
 export type ScaleShape = {
   prefix: string
   pluLength: number
+  /**
+   * A SECOND check digit sits between the stock code and the value.
+   *
+   * NOT "this label has a check digit". Every scale label ends in one — the
+   * symbology requires it, and a shop cannot turn it off — so a flag for that
+   * would be a question with one answer. See THE TRAILING DIGIT below.
+   */
   hasCheckDigit: boolean
   /** The value's own width. 0 means "whatever is left over". */
   valueLength: number
@@ -78,11 +103,16 @@ function valueSample(width: number, decimals: number): string {
 }
 
 /**
- * The digits a scale would print between the stock code and the value.
+ * The digit a scale prints between the stock code and the value.
  *
- * A single `9` where one digit is skipped, because that is overwhelmingly what
- * it is in the wild — a check digit guarding the stock code. Wider runs repeat
- * it rather than counting up, so the segment never looks like data.
+ * A single `9`, because that is overwhelmingly what it is in the wild — a check
+ * digit guarding the stock code, as on a real Avery label: 2 12345 6 01599 6.
+ *
+ * Deliberately NOT a digit that could pass for part of the price. On a value
+ * width of 0 — where the till takes everything left over — unticking the box
+ * hands this 9 to the value, and the price visibly jumps. On a FIXED width the
+ * shopkeeper has named the value's size, so the label simply gets a digit
+ * shorter instead; both are honest, and both are what the till would do.
  */
 const SKIPPED_SAMPLE = '9'
 
@@ -95,7 +125,9 @@ const SKIPPED_SAMPLE = '9'
  */
 export function segmentScaleBarcode(shape: ScaleShape): ShapeBreakdown {
   const prefix = shape.prefix.trim()
-  const check = shape.hasCheckDigit ? 1 : 0
+
+  /* The label's own last digit, always. Not a setting — see the header. */
+  const CHECK = 1
 
   if (!/^\d+$/.test(prefix)) {
     return { ok: false, reason: 'Enter a prefix to see how a label is read.' }
@@ -118,11 +150,18 @@ export function segmentScaleBarcode(shape: ScaleShape): ShapeBreakdown {
      what a typical label would give. Floored at 1 so a short prefix and a long
      stock code cannot produce a negative slice. */
   const flexible = !Number.isInteger(shape.valueLength) || shape.valueLength <= 0
+
+  /* The middle digit the till steps over, when the shape says there is one.
+     A single digit because that is what a second check digit is; a shop with a
+     wider filler run leaves the value width at 0 and lets the till take
+     whatever is left. */
+  const skipped = shape.hasCheckDigit ? SKIPPED_SAMPLE.length : 0
+
   const valueLength = flexible
-    ? Math.max(1, 13 - prefix.length - shape.pluLength - check)
+    ? Math.max(1, 13 - prefix.length - shape.pluLength - skipped - CHECK)
     : shape.valueLength
 
-  const total = prefix.length + shape.pluLength + valueLength + check
+  const total = prefix.length + shape.pluLength + skipped + valueLength + CHECK
   if (total > 18) {
     return {
       ok: false,
@@ -142,11 +181,10 @@ export function segmentScaleBarcode(shape: ScaleShape): ShapeBreakdown {
     { key: 'stock', label: 'Stock code', digits: stock, tone: 'identity' },
   ]
 
-  /* The skipped run only EXISTS on a label longer than the shape accounts for,
-     so the sample is drawn one digit wider whenever a fixed value width leaves
-     room for one. Shown for a fixed width only: with `valueLength` 0 the till
-     takes everything left over, so by definition nothing is skipped. */
-  if (!flexible) {
+  /* The middle digit, drawn only when the shape says the till steps over one.
+     Untick the box and it does not vanish from the label — it joins the value,
+     which is what `valueSample` above has already widened to show. */
+  if (skipped) {
     segments.push({
       key: 'skipped',
       label: 'Ignored',
@@ -162,18 +200,18 @@ export function segmentScaleBarcode(shape: ScaleShape): ShapeBreakdown {
     tone: 'value',
   })
 
-  if (check) {
-    segments.push({ key: 'check', label: 'Check digit', digits: '4', tone: 'skipped' })
-  }
+  /* Always. A label does not end without one. */
+  segments.push({ key: 'check', label: 'Check digit', digits: '4', tone: 'skipped' })
 
   const amount = Number(valueDigits) / 10 ** decimals
 
   return {
     ok: true,
     segments,
-    /* The skipped digit is part of the label the shape describes, so it counts
-       towards the length quoted to the user. */
-    total: total + (flexible ? 0 : SKIPPED_SAMPLE.length),
+    /* Already counts the skipped digit and the trailing check digit — both are
+       part of the label the shape describes. It used to add the skipped run a
+       second time here, which is why a fixed shape quoted one digit too many. */
+    total,
     value: amount.toFixed(decimals),
   }
 }

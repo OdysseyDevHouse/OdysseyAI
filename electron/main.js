@@ -18,6 +18,9 @@ const log = require('./log')
 const updater = require('./updater')
 const printing = require('./printing')
 const licenceRefresh = require('./licenceRefresh')
+/* The app reopens the way the shop left it — maximised or not. See the file for
+   why this is remembered rather than being a setting somebody ticks. */
+const windowState = require('./windowState')
 const { appRequire } = require('./appModules')
 
 /* ── THE SHOP'S DATA DIRECTORY IS NAMED HERE, NOT INHERITED ─────────────────
@@ -552,8 +555,10 @@ function windowOpenHandler({ url }) {
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    /* Size and position the shop last left it at, or 1400x900 on a machine that
+       has never said. The maximised half cannot come through the constructor —
+       windowState.apply() below does that once the window exists. */
+    ...windowState.bounds(),
     minWidth: 1024,
     minHeight: 640,
     show: false,
@@ -594,6 +599,18 @@ async function createWindow() {
   })
 
   hideApplicationMenu(mainWindow)
+
+  /* ── MAXIMISE BEFORE ANYTHING SHOWS IT ────────────────────────────────────
+   *
+   * Above the show() calls below, deliberately. Maximising a window that is
+   * already on screen is visible as a jump — the app opens at 1400x900 and
+   * snaps to full screen a moment later, every single morning. Doing it while
+   * the window is still `show: false` means it is only ever painted once, at
+   * the size it is going to stay.
+   *
+   * This also starts recording what the customer does to the window, which is
+   * what makes the next start remember it. */
+  windowState.apply(mainWindow)
 
   /* Belt and braces. createWindow() shows the window itself as soon as the
      splash is loaded, because a first-run database init takes long enough that

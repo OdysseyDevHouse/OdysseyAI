@@ -8,6 +8,7 @@ import OfflineAccountPanel from './OfflineAccountPanel'
 import ForceClockInPanel from './ForceClockInPanel'
 import SignOutPanel from './SignOutPanel'
 import ScanSoundPanel from './ScanSoundPanel'
+import ScanFocusPanel from './ScanFocusPanel'
 import SignInArtPanel from './SignInArtPanel'
 
 /**
@@ -50,6 +51,12 @@ export default function TillPanel() {
           one a manager can judge by pressing a button rather than by reading a
           paragraph. */}
       <ScanSoundPanel scanSounds={data.scanSounds} />
+      {/* Directly after the scan sound, because both are about the MOMENT of a
+          scan: one is what the counter hears, this is where the cursor goes.
+          It is the only panel here that is invoicing-only, which its own copy
+          says rather than leaving somebody to wonder why their till ignores
+          it. */}
+      <ScanFocusPanel scanFocus={data.scanFocus} />
       {/* What the tills LOOK like before anybody signs in, under what they DO
           once somebody has. */}
       <SignInArtPanel backdropUrl={data.signInBackdrop} stockUrl={data.signInStock} />

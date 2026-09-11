@@ -5,9 +5,10 @@ import {
   Badge,
   Button,
   Callout,
-  Checkbox,
+  CheckList,
   Field,
   FieldGroup,
+  Icons,
   Modal,
   NumberInput,
   Select,
@@ -18,7 +19,6 @@ import {
   TABLE_TH,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
-import type { PriceStructureRow } from '@/lib/site/pricingSetup'
 import { applyEnding, type RepriceRule, type RepriceRounding, type EndingDirection } from '@/lib/repricing'
 import type { RepriceScope } from '@/lib/site/reprice'
 import {
@@ -42,6 +42,25 @@ import {
 
 type Named = { id: number; name: string }
 
+/**
+ * The price types this can write to — only what the rule needs, so both callers
+ * can pass what they already have.
+ *
+ * Deliberately NOT `PriceStructureRow`: that carries Setup's usage counts,
+ * which cost a query per structure and mean nothing here. Bulk edit pricing
+ * loads the light `listPriceStructures` and would otherwise have to run Setup's
+ * counting query to satisfy a type it never reads.
+ *
+ * `isActive` is optional because the light list is already filtered to active
+ * rows; absent is read as active.
+ */
+export type RepriceTarget = {
+  id: number
+  name: string
+  isDefault: boolean
+  isActive?: boolean
+}
+
 export default function RepriceModal({
   open,
   onClose,
@@ -53,14 +72,16 @@ export default function RepriceModal({
 }: {
   open: boolean
   onClose: () => void
-  structures: PriceStructureRow[]
+  structures: RepriceTarget[]
   departments: Named[]
   brands: Named[]
   /** The site's price_ending_direction, used as this run's starting choice. */
   defaultEndingDirection: EndingDirection
   onDone: (result: PricingActionResult) => void
 }) {
-  const active = structures.filter((s) => s.isActive)
+  // `!== false`, not truthy: a caller whose list is already active-only omits
+  // the flag, and reading that as inactive would empty the dropdown entirely.
+  const active = structures.filter((s) => s.isActive !== false)
   const [targetId, setTargetId] = useState<number>(active[0]?.id ?? 0)
   const [sourceKind, setSourceKind] = useState<'cost' | 'structure'>('cost')
   const [sourceStructureId, setSourceStructureId] = useState<number>(
@@ -153,6 +174,13 @@ export default function RepriceModal({
       open={open}
       onClose={onClose}
       title="Bulk reprice"
+      /* The screen's crest, in the kit's own slot — so the title and the close
+         button keep the positions every other dialog in the app uses. */
+      titleMedia={
+        <span className="flex h-12 w-12 items-center justify-center rounded-card bg-brand-soft text-brand">
+          <Icons.Tag size={24} />
+        </span>
+      }
       description="Fill a price type across the catalogue from a rule. Nothing is written until you apply."
       size="lg"
       /* A long form: the default 60vh cap made it read through a letterbox with
@@ -179,7 +207,10 @@ export default function RepriceModal({
       }
     >
       <div className="flex flex-col gap-5">
-        <FieldGroup title="What to set" hint="The price type these new prices are written to.">
+        {/* Numbered, because this form IS a sequence: what to write, how to
+            work it out, how to tidy it, and who it applies to. Read out of
+            order the middle two make no sense. */}
+        <FieldGroup step={1} title="What to set" hint="The price type these new prices are written to.">
           <Field label="Price type">
             <div className="w-64">
               <Select
@@ -204,7 +235,7 @@ export default function RepriceModal({
           />
         </FieldGroup>
 
-        <FieldGroup title="How to work it out" hint="Markup and GP price off cost; an adjustment moves an existing price.">
+        <FieldGroup step={2} title="How to work it out" hint="Markup and GP price off cost; an adjustment moves an existing price.">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Based on">
               <Select
@@ -272,7 +303,7 @@ export default function RepriceModal({
           </Field>
         </FieldGroup>
 
-        <FieldGroup title="Tidy the result" hint="Applied to the VAT-inclusive shelf price.">
+        <FieldGroup step={3} title="Tidy the result" hint="Applied to the VAT-inclusive shelf price.">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Rounding">
               <Select
@@ -331,17 +362,23 @@ export default function RepriceModal({
           </div>
         </FieldGroup>
 
-        <FieldGroup title="Which products" hint="Leave both empty to cover the whole catalogue.">
+        <FieldGroup step={4} title="Which products" hint="Leave both empty to cover the whole catalogue.">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Departments" hint="Optional. Nothing ticked means all.">
-              <PickList
+              <CheckList
                 items={departments}
                 selected={departmentIds}
                 onChange={touched(setDepartmentIds)}
+                searchPlaceholder="Search departments…"
               />
             </Field>
             <Field label="Brands" hint="Optional. Nothing ticked means all.">
-              <PickList items={brands} selected={brandIds} onChange={touched(setBrandIds)} />
+              <CheckList
+                items={brands}
+                selected={brandIds}
+                onChange={touched(setBrandIds)}
+                searchPlaceholder="Search brands…"
+              />
             </Field>
           </div>
 
@@ -436,42 +473,4 @@ function endingExample(cents: number, direction: EndingDirection): string {
   const sample = 14.32
   const result = applyEnding(sample, cents, direction)
   return `R${sample.toFixed(2)} becomes R${result.toFixed(2)}.`
-}
-
-/** A short scrollable tick-list. Departments and brands are both small enough. */
-function PickList({
-  items,
-  selected,
-  onChange,
-}: {
-  items: Named[]
-  selected: number[]
-  onChange: (next: number[]) => void
-}) {
-  if (items.length === 0) {
-    return <p className="text-sm text-muted">None set up.</p>
-  }
-  return (
-    /* KEPT bounded: this is a checkbox picker sitting among the rule's other
-       fields, and unbounded a long department list would push the rest of the
-       form off screen. 36 (144px) showed barely three rows, so it grows with
-       the display while still capping well short of the form around it. */
-    <div className="max-h-[26vh] min-h-36 overflow-y-auto rounded-control border border-border bg-surface p-2">
-      {items.map((item) => (
-        <label key={item.id} className="flex items-center gap-2 px-1 py-1 text-sm text-ink-2">
-          <Checkbox
-            checked={selected.includes(item.id)}
-            onChange={(e) =>
-              onChange(
-                e.target.checked
-                  ? [...selected, item.id]
-                  : selected.filter((id) => id !== item.id),
-              )
-            }
-          />
-          {item.name}
-        </label>
-      ))}
-    </div>
-  )
 }

@@ -594,11 +594,24 @@ export function CurrencyInput({
 
 export function Textarea({
   invalid,
+  size = 'md',
   className = '',
   rows = 3,
   id,
   ...rest
-}: Omit<ComponentProps<'textarea'>, 'className'> & { invalid?: boolean; className?: string }) {
+}: Omit<ComponentProps<'textarea'>, 'className'> & {
+  invalid?: boolean
+  /**
+   * `touch` steps the TYPE up, and nothing else.
+   *
+   * Deliberately not CONTROL_H_TOUCH, which is `h-touch text-base` — a fixed
+   * 56px height applied to a textarea would clamp a multi-row box down to one
+   * row and quietly undo `rows`. A textarea takes its height from `rows`, so
+   * the only part of till sizing that means anything here is the type step.
+   */
+  size?: ControlSize
+  className?: string
+}) {
   const wiring = useFieldWiring(id, invalid)
   return (
     <textarea
@@ -606,7 +619,9 @@ export function Textarea({
       rows={rows}
       aria-invalid={wiring.invalid || undefined}
       aria-describedby={wiring.describedBy}
-      className={`${skin(className)} resize-y py-2 ${wiring.invalid ? INVALID : ''} ${className}`}
+      className={`${skin(className)} resize-y py-2 ${size === 'touch' ? 'text-base' : ''} ${
+        wiring.invalid ? INVALID : ''
+      } ${className}`}
       {...rest}
     />
   )
@@ -651,20 +666,29 @@ export function CodeArea({
 export function Select({
   icon,
   invalid,
+  size = 'md',
   className = '',
   children,
   id,
   ...rest
-}: Omit<ComponentProps<'select'>, 'className'> & {
+}: Omit<ComponentProps<'select'>, 'className' | 'size'> & {
   icon?: ReactNode
   invalid?: boolean
+  /** `touch` for the till — see the note on ControlSize. */
+  size?: ControlSize
   className?: string
 }) {
   const wiring = useFieldWiring(id, invalid)
   return (
     <div className="relative">
       {icon && (
-        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-faint">
+        <span
+          /* Inset further at till size so the glyph clears the wider box
+             without crowding the text — the same step Input makes. */
+          className={`pointer-events-none absolute inset-y-0 flex items-center text-faint ${
+            size === 'touch' ? 'left-4' : 'left-3'
+          }`}
+        >
           {icon}
         </span>
       )}
@@ -674,16 +698,20 @@ export function Select({
         aria-describedby={wiring.describedBy}
         /* appearance-none so the chevron below is the only one drawn — the
            native arrow differs per OS and breaks the alignment. */
-        className={`${CONTROL} ${CONTROL_H} cursor-pointer appearance-none pr-9 ${
-          icon ? 'pl-9' : ''
-        } ${wiring.invalid ? INVALID : ''} ${className}`}
+        className={`${CONTROL} ${size === 'touch' ? CONTROL_H_TOUCH : CONTROL_H} cursor-pointer appearance-none ${
+          size === 'touch' ? 'pr-11' : 'pr-9'
+        } ${icon ? (size === 'touch' ? 'pl-11' : 'pl-9') : ''} ${
+          wiring.invalid ? INVALID : ''
+        } ${className}`}
         {...rest}
       >
         {children}
       </select>
       <ChevronDown
-        size={16}
-        className="pointer-events-none absolute inset-y-0 right-3 my-auto text-muted"
+        size={size === 'touch' ? 20 : 16}
+        className={`pointer-events-none absolute inset-y-0 my-auto text-muted ${
+          size === 'touch' ? 'right-4' : 'right-3'
+        }`}
       />
     </div>
   )

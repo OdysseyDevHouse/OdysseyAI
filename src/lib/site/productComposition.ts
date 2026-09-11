@@ -1,5 +1,6 @@
 import 'server-only'
 import { siteQuery, siteQueryOne, siteExecute, siteTransaction } from '@/lib/siteDb'
+import { recordCostChange } from './reprice'
 import { round, toNum } from '@/lib/decimals'
 import type { ProductTypeId } from '@/lib/productTypes'
 
@@ -373,6 +374,34 @@ export async function saveRecipe(
     return { ok: false, error: 'Only a recipe product carries a component list.' }
   }
 
+  /*
+   * AN EMPTY LIST IS A SAVE, NOT A REFUSAL.
+   *
+   * A recipe with no ingredients yet is half-finished, not broken: the type is
+   * picked on the General tab and the ingredients are added on the Recipe tab,
+   * so every recipe product passes through this state on its way to existing.
+   *
+   * It used to be refused, and the refusal was actively misleading. The product
+   * row is written by createProduct BEFORE this runs, so the sequence was:
+   * insert the product, come in here, find no lines, fail the integrity check
+   * below, and hand the caller an error — which the form rendered as "Could not
+   * save" over a product that had in fact saved. Pressing Save again then
+   * refused the duplicate code, so the screen claimed two contradictory things
+   * about a product that was sitting in the catalogue the whole time.
+   *
+   * Returning early also skips the resolveComponents() check below, which is
+   * the thing that produced that message: it answers "can this be sold", and
+   * for an empty recipe the honest answer is no — enforced at the till, where
+   * it belongs (see salesPosting.ts), rather than by refusing to record the
+   * setup. Every genuine structural fault — a cycle, a self-reference, a
+   * missing component — still fails, because those can only exist once there
+   * are lines to be wrong.
+   */
+  if (lines.length === 0) {
+    await siteExecute(siteId, 'DELETE FROM product_recipes WHERE parent_id = ?', [parentId])
+    return { ok: true }
+  }
+
   const seen = new Set<number>()
   for (const line of lines) {
     if (!Number.isFinite(line.componentId) || line.componentId <= 0) {
@@ -686,6 +715,18 @@ export async function pushReferCostDown(
   if (receivedDirectly?.has(baseId)) return null
   if (!(unitCost > 0)) return null
 
+  // The base rung's cost, on the record (256). A delivery of cases is what
+  // moved it, but the product that changed is the SINGLE at the bottom of the
+  // ladder — so the row lands on the single, where the figure actually moved.
+  await recordCostChange(
+    siteId,
+    [
+      { productId: baseId, column: 'last', costExcl: unitCost },
+      { productId: baseId, column: 'average', costExcl: unitCost },
+    ],
+    { source: 'refer', userName: '' },
+  )
+
   await siteExecute(
     siteId,
     'UPDATE products SET last_cost = ?, average_cost = ? WHERE id = ?',
@@ -885,6 +926,18 @@ export async function cascadeCompositionCosts(
       // to spread. Writing the zero would replace one wrong figure with
       // another while destroying whatever was there.
       if (cost === null || cost <= 0) continue
+
+      // Every rung this walk rewrites gets its own row (256). Repricing an
+      // ingredient silently moved the cost of every recipe built on it, which
+      // is exactly the change nobody could account for afterwards.
+      await recordCostChange(
+        siteId,
+        [
+          { productId: id, column: 'last', costExcl: cost },
+          { productId: id, column: 'average', costExcl: cost },
+        ],
+        { source: 'derived', userName: '' },
+      )
 
       await siteExecute(
         siteId,

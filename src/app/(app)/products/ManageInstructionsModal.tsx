@@ -157,12 +157,14 @@ function hasExtras(row: Row): boolean {
 }
 
 /** "Pick one", "Choose up to 3" — the same wording the library list uses. */
+/* The bounds count ITEMS, not distinct answers — see the same helper in
+   InstructionsTable, which this deliberately mirrors word for word. */
 function choiceRule(min: number, max: number): string {
   if (max === 1) return min > 0 ? 'Pick one' : 'Pick one (optional)'
-  if (max === 0) return min > 0 ? `Choose at least ${min}` : 'Choose any number'
-  if (min > 0 && min !== max) return `Choose ${min} to ${max}`
-  if (min > 0 && min === max) return `Choose exactly ${min}`
-  return `Choose up to ${max}`
+  if (max === 0) return min > 0 ? `Choose at least ${min} items` : 'Choose any number'
+  if (min > 0 && min !== max) return `Choose ${min} to ${max} items`
+  if (min > 0 && min === max) return `Choose exactly ${min} items`
+  return `Choose up to ${max} items`
 }
 
 export default function ManageInstructionsModal({
@@ -571,8 +573,9 @@ export default function ManageInstructionsModal({
                     single
                       ? 'One answer — the till shows radio buttons.'
                       : draft.maxChoices === 0
-                        ? 'Any number of answers — the till shows checkboxes.'
-                        : `Up to ${draft.maxChoices} answers — the till shows checkboxes.`
+                        ? 'Any number of items — the till shows checkboxes.'
+                        : /* ITEMS, not answers — see InstructionForm. */
+                          `Up to ${draft.maxChoices} items in total — two of one answer counts as two.`
                   }
                 >
                   <NumberInput
@@ -666,7 +669,9 @@ export default function ManageInstructionsModal({
                     {/* side="bottom": this list sits in an overflow-y-auto pane,
                         which would clip a panel drawn above the top row. */}
                     <Tooltip
-                      label={rows.length > 1 ? 'Drag to reorder' : 'Add another answer to reorder'}
+                      label={
+                        rows.length > 1 ? 'Reorder the answers' : 'Add another answer to reorder'
+                      }
                       layout="inline"
                       side="bottom"
                     >

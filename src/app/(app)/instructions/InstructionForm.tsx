@@ -315,8 +315,10 @@ export default function InstructionForm({
                 single
                   ? 'One answer — the till shows radio buttons.'
                   : maxChoices === 0
-                    ? 'Any number of answers — the till shows checkboxes.'
-                    : `Up to ${maxChoices} answers — the till shows checkboxes.`
+                    ? 'Any number of items — the till shows checkboxes.'
+                    : /* ITEMS, not answers: two of one side and two of another is
+                         four against this ceiling. */
+                      `Up to ${maxChoices} items in total — two of one answer counts as two.`
               }
             >
               <NumberInput
@@ -522,8 +524,9 @@ function OptionRow({
         {/* Only the handle starts a drag, not the whole row: every control on
             this line is one a user drags a cursor across to select text in, and
             a draggable parent turns that into a row move. */}
+        {/* An answer list, not a grid — so the tip says what it actually moves. */}
         {draggable && (
-          <Tooltip label="Drag to reorder" layout="inline">
+          <Tooltip label="Reorder the answers" layout="inline">
             <span
               data-kit-ok
               draggable

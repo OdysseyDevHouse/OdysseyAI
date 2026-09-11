@@ -119,8 +119,14 @@ export function validateScaleRule(input: ScaleRuleInput): string | null {
     /* The whole shape has to fit a barcode a scanner can send. Checked against
        18 — the widest `parseVariableBarcode` accepts — rather than 13, because
        a shop with a longer in-store label is not wrong, only unusual. */
+    /* +1 unconditionally for the label's own trailing check digit, which is
+       always there; `hasCheckDigit` adds the SECOND one, before the price. */
     const total =
-      input.prefix.trim().length + input.pluLength + input.valueLength + (input.hasCheckDigit ? 1 : 0)
+      input.prefix.trim().length +
+      input.pluLength +
+      (input.hasCheckDigit ? 1 : 0) +
+      input.valueLength +
+      1
     if (total > 18) {
       return `A prefix, a ${input.pluLength}-digit stock code and a ${input.valueLength}-digit value need ${total} digits, which is longer than any barcode.`
     }

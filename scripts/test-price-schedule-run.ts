@@ -29,6 +29,7 @@ import {
   duplicateSchedule,
   setScheduleLines,
   seedFromCurrent,
+  bulkAdjustScheduleLines,
   armSchedule,
   applyDueSchedules,
   applyOneSchedule,
@@ -415,6 +416,110 @@ async function main() {
 
       const missing = await duplicateSchedule(SITE, ACTOR, 0)
       ok('duplicating something that is gone fails cleanly', !missing.ok)
+    }
+
+    /* ── Moving every price on the list at once ───────────────────────── */
+
+    /*
+     * What the editor's "update these together" runs. The arithmetic itself is
+     * proven in test-repricing.ts; what is proven HERE is the half that only a
+     * database can show:
+     *
+     *   THE WRITE LANDS ON THE RIGHT ROW. The update is one CASE ... WHEN per
+     *   batch, and if its parameters are bound in the wrong order every price
+     *   goes onto somebody else's product — which type-checks perfectly and
+     *   looks like a plausible price list on the way through.
+     *
+     *   THE FILTER IS THE SCOPE. The screen shows fifty rows out of thousands,
+     *   so the server re-derives the set from the filter. A filter that matched
+     *   something different here to what the table showed would move prices
+     *   nobody was looking at.
+     */
+    {
+      const bulk = await createSchedule(SITE, ACTOR, { name: `ZZ Bulk ${stamp}`, effectiveAt: '' })
+      ok('bulk change created', bulk.ok)
+      if (bulk.ok) {
+        scheduleIds.push(bulk.id)
+
+        // Three products, three DIFFERENT prices, so a mis-bound CASE shows up
+        // as a price landing on the wrong row rather than as a right answer.
+        await setScheduleLines(SITE, bulk.id, [
+          { productId: p1, priceStructureId: structureA, newPriceIncl: 100 },
+          { productId: p2, priceStructureId: structureA, newPriceIncl: 200 },
+          { productId: p3, priceStructureId: structureA, newPriceIncl: 300 },
+        ])
+
+        const priceOnLine = async (productId: number): Promise<number | null> => {
+          const got = await getSchedule(SITE, bulk.id)
+          const line = got?.lines.find(
+            (l) => l.productId === productId && l.priceStructureId === structureA,
+          )
+          return line ? line.newPriceIncl : null
+        }
+
+        const up = await bulkAdjustScheduleLines(
+          SITE,
+          bulk.id,
+          {},
+          { kind: 'increase-percent', percent: 10 },
+        )
+        ok('a bulk increase reports what it moved', up.ok && up.updated === 3, up.ok ? `${up.updated}` : up.error)
+        /* Each price against its OWN row. This is the assertion the CASE
+           binding lives or dies by: all three moving is not enough, they have
+           to have moved to their own new figures. */
+        ok('100 went up to 110 on its own line', (await priceOnLine(p1)) === 110)
+        ok('200 went up to 220 on its own line', (await priceOnLine(p2)) === 220)
+        ok('300 went up to 330 on its own line', (await priceOnLine(p3)) === 330)
+
+        // Running it again builds on what the first run wrote.
+        await bulkAdjustScheduleLines(SITE, bulk.id, {}, { kind: 'increase-percent', percent: 10 })
+        ok('a second run compounds on the first', (await priceOnLine(p1)) === 121)
+
+        // Set-to-one-price, with the rounding the dialog offers.
+        const set = await bulkAdjustScheduleLines(
+          SITE,
+          bulk.id,
+          {},
+          { kind: 'set', amount: 20 },
+          { kind: 'ending', cents: 99, direction: 'up' },
+        )
+        ok('setting one price across the list works', set.ok && set.updated === 3)
+        ok('and the ending was applied', (await priceOnLine(p2)) === 20.99)
+
+        /* A change that cannot sanely happen leaves the line ALONE and says so.
+           Clamping to zero here would give the stock away. */
+        const tooFar = await bulkAdjustScheduleLines(
+          SITE,
+          bulk.id,
+          {},
+          { kind: 'decrease-amount', amount: 500 },
+        )
+        ok('an impossible change updates nothing', tooFar.ok && tooFar.updated === 0, tooFar.ok ? `${tooFar.updated}` : tooFar.error)
+        ok('and counts every line it refused', tooFar.ok && tooFar.skipped === 3, tooFar.ok ? `${tooFar.skipped}` : '')
+        ok('the prices are untouched after a refusal', (await priceOnLine(p2)) === 20.99)
+
+        /* The filter is the scope — a price type this change does not use must
+           match nothing, rather than quietly moving everything. */
+        const otherType = await bulkAdjustScheduleLines(
+          SITE,
+          bulk.id,
+          { priceStructureIds: [structureB] },
+          { kind: 'increase-percent', percent: 50 },
+        )
+        ok('a filter matching nothing moves nothing', otherType.ok && otherType.matched === 0)
+        ok('and leaves the other price type alone', (await priceOnLine(p1)) === 20.99)
+
+        // An armed change is not editable — the same guard every other edit uses.
+        await siteExecute(SITE, `UPDATE price_schedules SET status = 'armed' WHERE id = ?`, [bulk.id])
+        const armedEdit = await bulkAdjustScheduleLines(
+          SITE,
+          bulk.id,
+          {},
+          { kind: 'increase-percent', percent: 10 },
+        )
+        ok('a bulk update is refused on a scheduled change', !armedEdit.ok)
+        await siteExecute(SITE, `UPDATE price_schedules SET status = 'draft' WHERE id = ?`, [bulk.id])
+      }
     }
 
     /* ── The audit trail ──────────────────────────────────────────────── */

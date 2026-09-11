@@ -65,12 +65,18 @@ export default async function EditProductPage({
     reason?: string
     /** A rename that this store applied but a sibling store could not follow. */
     warn?: string
+    /**
+     * The product saved, but its type needs setup it does not have yet — a
+     * recipe with no ingredients, a refer with nothing to point at. Written by
+     * saveProductAction, which redirects to the tab that finishes the job.
+     */
+    setup?: string
     /** The tab the last save was working in, so it reopens there. */
     tab?: string
   }>
 }) {
   const { id } = await params
-  const { saved, from, error, renamed, warn, tab, filed, reason } = await searchParams
+  const { saved, from, error, renamed, warn, setup, tab, filed, reason } = await searchParams
 
   /* Where leaving this product goes. The list that sent us here when it had
      filters worth keeping, else the plain catalogue.
@@ -306,7 +312,12 @@ export default async function EditProductPage({
       />
 
       <PageBody>
-        {saved === '1' && (
+        {/* Not when `setup` is also set: that banner says the product saved AND
+            what is still missing, so showing a green tick above it puts two
+            verdicts on one act and the amber one is the more useful of the two.
+            It also fades on a timer, which would leave the warning behind
+            looking like a failure a moment later. */}
+        {saved === '1' && !setup && (
           <TransientCallout tone="success" title="Product saved." className={EDIT_COLUMN} />
         )}
         {/* Archiving leaves the screen looking exactly as it did, so say which
@@ -335,6 +346,19 @@ export default async function EditProductPage({
         {warn && (
           <Callout tone="warning" title="Not every store followed" className={EDIT_COLUMN}>
             {warn}
+          </Callout>
+        )}
+        {/* The product SAVED, and is not finished. Amber rather than red, and
+            worded that way round: this used to be a danger banner reading
+            "Could not save" over a product that had in fact been written, which
+            sent people back to re-enter a product already in the catalogue.
+
+            Not folded into `warn` above, whose title names the linked-store
+            fan-out — both can be true of one save, and a shared banner would
+            have to pick one of the two titles. */}
+        {setup && (
+          <Callout tone="warning" title="Saved, but not finished" className={EDIT_COLUMN}>
+            {setup}
           </Callout>
         )}
         {/* A rename refusal is shown inside the dialog instead, so it is not

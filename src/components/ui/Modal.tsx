@@ -32,6 +32,7 @@ export function Modal({
   bodyGrows = false,
   bodyOverflows = false,
   closeOnBackdrop = true,
+  dismissible = true,
 }: {
   open: boolean
   onClose: () => void
@@ -132,6 +133,19 @@ export function Modal({
   bodyOverflows?: boolean
   /** Off for a dialog holding half-typed work, where a stray click would lose it. */
   closeOnBackdrop?: boolean
+  /**
+   * Whether the dialog can be dismissed AT ALL — the × in the header.
+   *
+   * Off for a dialog the user must not leave: work that is part-way through and
+   * would be misreported if abandoned, above all a progress dialog. Turning it
+   * off hides the close button rather than merely ignoring it, because a × that
+   * looks pressable and silently does nothing reads as a broken dialog.
+   *
+   * It does NOT close the Escape route on its own — pair it with
+   * `closeOnBackdrop={false}` and an `onClose` that does nothing, and the dialog
+   * is genuinely sealed until its owner opens the way out.
+   */
+  dismissible?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
 
@@ -187,9 +201,15 @@ export function Modal({
             {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
           </div>
         </div>
-        <Button variant="bare" size="sm" iconOnly aria-label="Close" onClick={onClose}>
-          <Close size={16} />
-        </Button>
+        {/* Hidden outright when the dialog cannot be dismissed, rather than
+            rendered inert: a × that looks pressable and does nothing reads as
+            a broken dialog, which is the opposite of the reassurance a sealed
+            progress dialog is there to give. */}
+        {dismissible && (
+          <Button variant="bare" size="sm" iconOnly aria-label="Close" onClick={onClose}>
+            <Close size={16} />
+          </Button>
+        )}
       </div>
 
       {subheader && (

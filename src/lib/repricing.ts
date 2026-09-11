@@ -134,6 +134,83 @@ export function applyRounding(value: number, rounding: RepriceRounding): number 
   }
 }
 
+/* ── Moving prices that are already on a list ─────────────────────────────── */
+
+/**
+ * How a bulk edit moves a price that ALREADY EXISTS.
+ *
+ * Distinct from `RepriceRule` above, and deliberately so. A reprice DERIVES a
+ * price from somewhere else — cost, another price type — and answers "what
+ * should this be?". This answers "move what is already here", which is the
+ * question somebody is asking once they have a list of prices in front of them
+ * and want every one of them up by 10%.
+ *
+ * Expressed as separate kinds rather than one signed percentage because that is
+ * how it is chosen on screen: "decrease by 10" is what the owner means, and
+ * making them type -10 into a box labelled "increase" is how a price list goes
+ * the wrong way. The arithmetic folds them back together.
+ */
+export type BulkPriceChange =
+  /** Up by a percentage of the current price. */
+  | { kind: 'increase-percent'; percent: number }
+  /** Down by a percentage of the current price. */
+  | { kind: 'decrease-percent'; percent: number }
+  /** Up by a fixed amount of money. */
+  | { kind: 'increase-amount'; amount: number }
+  /** Down by a fixed amount of money. */
+  | { kind: 'decrease-amount'; amount: number }
+  /** Every price becomes this exact figure, whatever it was. */
+  | { kind: 'set'; amount: number }
+
+/**
+ * Apply one bulk change to one INCLUSIVE price.
+ *
+ * Inclusive throughout, unlike `applyRule` above — and that difference is the
+ * whole reason this is a separate function rather than another `RepriceMethod`.
+ * A price schedule stores `new_price_incl` and nothing else: there is no cost
+ * and no VAT rate on a schedule line, so there is no exclusive figure to work
+ * in and nothing to convert at the edges. "Up 10%" on a shelf price is the same
+ * number whichever side of VAT you compute it on, and "up by R2" means R2 on
+ * the shelf edge — which is what the owner typed and what the customer pays.
+ *
+ * Returns null where the change cannot produce a sane price, so the caller can
+ * count those and leave the line alone rather than writing a nonsense figure.
+ * A price of zero or less is not a price: dropping R5 off a R3 item would put
+ * the shop at -R2, and silently clamping it to zero would give the stock away.
+ */
+export function applyBulkChange(
+  currentIncl: number,
+  change: BulkPriceChange,
+  rounding: RepriceRounding = { kind: 'none' },
+): number | null {
+  let next: number
+  switch (change.kind) {
+    case 'increase-percent':
+      next = currentIncl * (1 + change.percent / 100)
+      break
+    case 'decrease-percent':
+      next = currentIncl * (1 - change.percent / 100)
+      break
+    case 'increase-amount':
+      next = currentIncl + change.amount
+      break
+    case 'decrease-amount':
+      next = currentIncl - change.amount
+      break
+    case 'set':
+      /* Rounding is deliberately still applied. "Set everything to R20, ending
+         in .99" is a coherent instruction, and skipping the tidy-up here would
+         make this the one option that quietly ignores the box above it. */
+      next = change.amount
+      break
+  }
+
+  if (!Number.isFinite(next)) return null
+  const tidied = applyRounding(round(next, 4), rounding)
+  if (!Number.isFinite(tidied) || tidied <= 0) return null
+  return round(tidied, 4)
+}
+
 /**
  * The new price for one product, or a reason it was skipped.
  *

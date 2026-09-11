@@ -17,6 +17,7 @@ import {
   Checkbox,
   Textarea,
   HeaderActions,
+  type ControlSize,
 } from '@/components/ui'
 import { formatMoney } from '@/lib/decimals'
 import {
@@ -34,10 +35,31 @@ import {
 } from '@/lib/statementCycles'
 import type { Customer, CustomerStatus } from '@/lib/site/customers'
 import type { CustomerGroup, SalesRep } from '@/lib/site/customerLookups'
-import { saveCustomerAction, type CustomerFormState } from './actions'
+import {
+  saveCustomerAction,
+  saveCustomerFromDialogAction,
+  type CustomerFormState,
+} from './actions'
 
 /** Shared by Save in the header and the form itself, so one button can sit outside. */
 const FORM_ID = 'customer-form'
+
+/**
+ * The submitted form as plain strings, so a warning can put back what was typed.
+ *
+ * A client-side twin of `formValues` in actions.ts, which cannot be imported
+ * here: that module is `'use server'`, so every export it offers a client is an
+ * async server call — and round-tripping the form to the server purely to turn
+ * it back into an object would be a network hop to do string work.
+ */
+function formValuesOf(form: FormData): Record<string, string> {
+  const values: Record<string, string> = {}
+  for (const [key, value] of form.entries()) {
+    if (key === 'confirmedDuplicate') continue
+    if (typeof value === 'string') values[key] = value
+  }
+  return values
+}
 
 /**
  * How often the account is statemented, and on what rhythm.
@@ -54,9 +76,11 @@ const FORM_ID = 'customer-form'
 function StatementCycleFields({
   customer,
   group,
+  size = 'md',
 }: {
   customer: Customer | null
   group: CustomerGroup | undefined
+  size?: ControlSize
 }) {
   const [cycle, setCycle] = useState<StatementCycle>(
     customer?.statementCycle ?? group?.defaultStatementCycle ?? 'monthly',
@@ -82,6 +106,7 @@ function StatementCycleFields({
         <Field label="Statement cycle" hint="How often this account is statemented.">
           <Select
             name="statementCycle"
+            size={size}
             value={cycle}
             onChange={(e) => setCycle(toStatementCycle(e.target.value))}
           >
@@ -101,6 +126,7 @@ function StatementCycleFields({
           >
             <NumberInput
               name="statementAnchorDay"
+              size={size}
               min={0}
               max={31}
               value={anchorDay}
@@ -115,6 +141,7 @@ function StatementCycleFields({
             <Input
               name="statementAnchorDate"
               type="date"
+              size={size}
               value={anchorDate}
               onChange={(e) => setAnchorDate(e.target.value)}
             />
@@ -146,7 +173,15 @@ function isoDate(value: Date): string {
   return `${value.getFullYear()}-${month}-${day}`
 }
 
-function SubmitButton({ isNew, confirming }: { isNew: boolean; confirming: boolean }) {
+function SubmitButton({
+  isNew,
+  confirming,
+  size = 'md',
+}: {
+  isNew: boolean
+  confirming: boolean
+  size?: ControlSize
+}) {
   const { pending } = useFormStatus()
   // The label changes while a duplicate warning stands, so the button says what
   // pressing it now means. "Create customer" twice in a row reads as though the
@@ -159,8 +194,14 @@ function SubmitButton({ isNew, confirming }: { isNew: boolean; confirming: boole
       ? 'Create customer'
       : 'Save changes'
   return (
-    <Button type="submit" form={FORM_ID} variant="primary" disabled={pending}>
-      <Icons.Save size={15} />
+    <Button
+      type="submit"
+      form={FORM_ID}
+      variant="primary"
+      size={size === 'touch' ? 'touch' : 'md'}
+      disabled={pending}
+    >
+      <Icons.Save size={size === 'touch' ? 18 : 15} />
       {pending ? 'Saving…' : label}
     </Button>
   )
@@ -175,6 +216,10 @@ export default function CustomerForm({
   suggestedCode = null,
   rowActions,
   returnTo = null,
+  onSaved,
+  size = 'md',
+  overrideToken,
+  onNeedsPermission,
 }: {
   /**
    * The list URL this account was opened from, already validated by the page.
@@ -196,10 +241,80 @@ export default function CustomerForm({
   suggestedCode?: string | null
   /** Delete lives in its own <form>, so it is rendered outside this one. */
   rowActions?: ReactNode
+  /**
+   * DIALOG MODE. Present means "do not navigate — hand me the result".
+   *
+   * The page form saves and redirects, which is right when the form IS the
+   * screen. In a dialog opened from a till or an invoice it is not: a redirect
+   * would take the whole window away from a half-rung-up sale, and the caller
+   * would never learn the id of the customer just created — which is the only
+   * reason to create one there. So this mode routes the save through
+   * `saveCustomerFromDialogAction`, which returns the outcome instead.
+   *
+   * Everything else is deliberately identical. Same fields, same seeding, same
+   * duplicate pause — a second form that drifts from this one is exactly what
+   * making it dual-mode avoids.
+   */
+  onSaved?: (customer: { id: number; name: string }) => void
+  /** `touch` renders every control at till size. Dialog mode on a POS. */
+  size?: ControlSize
+  /**
+   * A manager's authorisation for THIS save, when the operator lacks
+   * `customers.edit`. Minted by OverrideModal and verified server-side — see
+   * saveCustomerFromDialogAction.
+   */
+  overrideToken?: string
+  /**
+   * The save was refused for want of `customers.edit`. Dialog mode turns this
+   * into a PIN pad; without a handler the message is shown as an ordinary
+   * error.
+   */
+  onNeedsPermission?: () => void
 }) {
   const [state, formAction] = useActionState<CustomerFormState, FormData>(saveCustomerAction, {
     error: null,
   })
+
+  /*
+   * Dialog mode keeps a <form action>, rather than an onClick handler.
+   *
+   * `SubmitButton` reads `useFormStatus`, which only reports on a surrounding
+   * form's action — so a hand-rolled click handler would leave the button
+   * permanently reading "Create customer" with no pending state, on the one
+   * screen where the save is slowest. Routing a local async function through
+   * the same `action` prop keeps the pending state, and keeps both modes
+   * rendering the identical <form>.
+   */
+  const [dialogState, setDialogState] = useState<CustomerFormState>({ error: null })
+  const dialogAction = async (form: FormData) => {
+    const result = await saveCustomerFromDialogAction(form, overrideToken)
+
+    if (result.ok) {
+      setDialogState({ error: null })
+      onSaved?.({ id: result.id, name: result.name })
+      return
+    }
+
+    if ('duplicateWarning' in result) {
+      // The same pause as the page form, and it must carry the typed values
+      // back for the same reason — see the note on `typed()` below.
+      setDialogState({
+        error: null,
+        duplicateWarning: result.duplicateWarning,
+        values: formValuesOf(form),
+      })
+      return
+    }
+
+    /* A permission refusal is not an error to read and give up on — it is a
+       manager away from being allowed. The caller turns it into a PIN pad. */
+    if (onNeedsPermission && /permission/i.test(result.error)) {
+      onNeedsPermission()
+      setDialogState({ error: null, values: formValuesOf(form) })
+      return
+    }
+    setDialogState({ error: result.error, values: formValuesOf(form) })
+  }
 
   // Only genuinely interactive state is controlled; everything else is an
   // uncontrolled input with a defaultValue, read from FormData on submit.
@@ -246,8 +361,22 @@ export default function CustomerForm({
    * makes the already-mounted inputs actually pick them up — the same trick,
    * for the same reason, as the group seeding above.
    */
-  const returned = state.values ?? null
+  /*
+   * WHICH STATE IS LIVE, decided by the mode.
+   *
+   * The two paths keep separate state rather than sharing one: `useActionState`
+   * owns the page form's, and it is only advanced by its own server action, so
+   * a dialog save could never write into it. Selecting between them here means
+   * everything below — the warning, the error, the values put back, the remount
+   * key — reads one name and cannot accidentally read the idle one.
+   */
+  const dialogMode = Boolean(onSaved)
+  const active = dialogMode ? dialogState : state
+
+  const returned = active.values ?? null
   const typed = (name: string, fallback: string): string => returned?.[name] ?? fallback
+
+  const submit = <SubmitButton isNew={isNew} confirming={Boolean(active.duplicateWarning)} size={size} />
 
   return (
     <>
@@ -255,11 +384,19 @@ export default function CustomerForm({
           on a row of its own above the form — see <HeaderActions>. Rendered
           from in here because the label depends on state only this component
           has: whether the record is new, and whether a duplicate warning is
-          standing. `rowActions` goes with it, so the group stays together. */}
-      <HeaderActions>
-        {rowActions}
-        <SubmitButton isNew={isNew} confirming={Boolean(state.duplicateWarning)} />
-      </HeaderActions>
+          standing. `rowActions` goes with it, so the group stays together.
+
+          NOT in dialog mode: there is no page header to reach, and
+          <HeaderActions> portals into one that belongs to a different screen —
+          in a till dialog that would put the Save button on the back office
+          behind it. The dialog renders `formSubmitButton` in its own footer
+          instead. */}
+      {!dialogMode && (
+        <HeaderActions>
+          {rowActions}
+          {submit}
+        </HeaderActions>
+      )}
 
       {/*
         Keyed on whether a warning stands, so the whole form REMOUNTS when one
@@ -270,9 +407,9 @@ export default function CustomerForm({
         between "clean" and "warned".
       */}
       <form
-        key={state.duplicateWarning ? 'warned' : 'clean'}
+        key={active.duplicateWarning ? 'warned' : 'clean'}
         id={FORM_ID}
-        action={formAction}
+        action={dialogMode ? dialogAction : formAction}
         className="flex flex-col gap-5"
       >
         {customer && <input type="hidden" name="id" value={customer.id} />}
@@ -281,9 +418,9 @@ export default function CustomerForm({
             action, which sees only what the FormData brings it. */}
         {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
 
-        {state.error && (
+        {active.error && (
           <Callout tone="danger" title="Could not save">
-            {state.error}
+            {active.error}
           </Callout>
         )}
 
@@ -294,10 +431,10 @@ export default function CustomerForm({
           time goes through. Rendered only while the warning stands, so a form
           that has never seen one submits without it.
         */}
-        {state.duplicateWarning && (
+        {active.duplicateWarning && (
           <>
             <Callout tone="warning" title="This customer may already exist">
-              {state.duplicateWarning}
+              {active.duplicateWarning}
             </Callout>
             <input type="hidden" name="confirmedDuplicate" value="1" />
           </>
@@ -321,6 +458,7 @@ export default function CustomerForm({
                     a blank code has nothing to become. */}
                 <Input
                   name="code"
+                  size={size}
                   defaultValue={typed('code', customer?.code ?? suggestedCode ?? '')}
                   required={!(isNew && suggestedCode)}
                   maxLength={32}
@@ -329,6 +467,7 @@ export default function CustomerForm({
               <Field label="Name">
                 <Input
                   name="name"
+                  size={size}
                   defaultValue={typed('name', customer?.name ?? '')}
                   required
                   maxLength={160}
@@ -346,6 +485,7 @@ export default function CustomerForm({
               <Field label="Status">
                 <Select
                   name="status"
+                  size={size}
                   value={status}
                   onChange={(e) => setStatus(e.target.value as CustomerStatus)}
                 >
@@ -361,6 +501,7 @@ export default function CustomerForm({
               >
                 <Select
                   name="accountType"
+                  size={size}
                   value={accountType}
                   onChange={(e) => setAccountType(toAccountType(e.target.value))}
                 >
@@ -375,6 +516,7 @@ export default function CustomerForm({
                 <Field label="Reason" hint="Shown beside the status badge.">
                   <Input
                     name="statusReason"
+                    size={size}
                     defaultValue={customer?.statusReason ?? ''}
                     maxLength={190}
                     placeholder="e.g. Payment overdue 60 days"
@@ -402,7 +544,12 @@ export default function CustomerForm({
                     : undefined
                 }
               >
-                <Select name="groupId" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
+                <Select
+                  name="groupId"
+                  size={size}
+                  value={groupId}
+                  onChange={(e) => setGroupId(e.target.value)}
+                >
                   <option value="">— No group —</option>
                   {groups.map((g) => (
                     <option key={g.id} value={g.id}>
@@ -412,7 +559,7 @@ export default function CustomerForm({
                 </Select>
               </Field>
               <Field label="Sales rep">
-                <Select name="repId" defaultValue={String(customer?.repId ?? '')}>
+                <Select name="repId" size={size} defaultValue={String(customer?.repId ?? '')}>
                   <option value="">— No rep —</option>
                   {reps.map((r) => (
                     <option key={r.id} value={r.id}>
@@ -424,6 +571,7 @@ export default function CustomerForm({
               <Field label="Category" hint="Free text — region, industry, whatever you sort by.">
                 <Input
                   name="category"
+                  size={size}
                   defaultValue={customer?.category ?? ''}
                   list="customer-categories"
                   maxLength={60}
@@ -448,6 +596,7 @@ export default function CustomerForm({
                 <NumberInput
                   key={seedKey}
                   name="paymentTermsDays"
+                  size={size}
                   defaultValue={customer?.paymentTermsDays ?? group?.defaultTermsDays ?? 30}
                 />
               </Field>
@@ -455,6 +604,7 @@ export default function CustomerForm({
                 <CurrencyInput
                   key={seedKey}
                   name="creditLimit"
+                  size={size}
                   defaultValue={customer?.creditLimit ?? group?.defaultCreditLimit ?? 0}
                 />
               </Field>
@@ -492,6 +642,7 @@ export default function CustomerForm({
                   <CurrencyInput
                     key={seedKey}
                     name="dailyLimit"
+                    size={size}
                     defaultValue={customer?.dailyLimit ?? group?.defaultDailyLimit ?? 0}
                   />
                 </Field>
@@ -499,6 +650,7 @@ export default function CustomerForm({
                   <CurrencyInput
                     key={seedKey}
                     name="monthlyLimit"
+                    size={size}
                     defaultValue={customer?.monthlyLimit ?? group?.defaultMonthlyLimit ?? 0}
                   />
                 </Field>
@@ -533,6 +685,7 @@ export default function CustomerForm({
                 >
                   <NumberInput
                     name="interestRatePct"
+                    size={size}
                     step="0.01"
                     defaultValue={customer?.interestRatePct ?? 0}
                   />
@@ -544,6 +697,7 @@ export default function CustomerForm({
                 >
                   <NumberInput
                     name="interestGraceDays"
+                    size={size}
                     defaultValue={customer?.interestGraceDays ?? 0}
                   />
                 </Field>
@@ -557,7 +711,7 @@ export default function CustomerForm({
               {/* Same remount key as the credit fields: this component seeds its
                   own useState from the group, and useState reads its initial
                   value once for exactly the same reason defaultValue does. */}
-              <StatementCycleFields key={seedKey} customer={customer} group={group} />
+              <StatementCycleFields key={seedKey} customer={customer} group={group} size={size} />
             </div>
           </CardBody>
         </Card>
@@ -578,7 +732,11 @@ export default function CustomerForm({
                       : 'Leave on the default to follow the site.'
                   }
                 >
-                  <Select name="priceStructureId" defaultValue={String(customer?.priceStructureId ?? '')}>
+                  <Select
+                    name="priceStructureId"
+                    size={size}
+                    defaultValue={String(customer?.priceStructureId ?? '')}
+                  >
                     <option value="">
                       {group?.priceStructureId ? 'Group / site default' : 'Site default'}
                     </option>
@@ -604,6 +762,7 @@ export default function CustomerForm({
                 >
                   <NumberInput
                     name="discountPct"
+                    size={size}
                     step="0.1"
                     defaultValue={customer?.discountPct ?? ''}
                   />
@@ -620,6 +779,7 @@ export default function CustomerForm({
               <Field label="Contact name">
                 <Input
                   name="contactName"
+                  size={size}
                   defaultValue={typed('contactName', customer?.contactName ?? '')}
                   maxLength={120}
                 />
@@ -632,6 +792,7 @@ export default function CustomerForm({
                 <Input
                   name="email"
                   type="email"
+                  size={size}
                   defaultValue={typed('email', customer?.email ?? '')}
                   maxLength={190}
                 />
@@ -639,6 +800,7 @@ export default function CustomerForm({
               <Field label="Phone">
                 <Input
                   name="phone"
+                  size={size}
                   defaultValue={typed('phone', customer?.phone ?? '')}
                   maxLength={40}
                 />
@@ -662,22 +824,42 @@ export default function CustomerForm({
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Address line 1">
-                <Input name="addressLine1" defaultValue={customer?.addressLine1 ?? ''} maxLength={190} />
+                <Input
+                  name="addressLine1"
+                  size={size}
+                  defaultValue={customer?.addressLine1 ?? ''}
+                  maxLength={190}
+                />
               </Field>
               <Field label="Address line 2">
-                <Input name="addressLine2" defaultValue={customer?.addressLine2 ?? ''} maxLength={190} />
+                <Input
+                  name="addressLine2"
+                  size={size}
+                  defaultValue={customer?.addressLine2 ?? ''}
+                  maxLength={190}
+                />
               </Field>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-4">
               <Field label="City">
-                <Input name="city" defaultValue={customer?.city ?? ''} maxLength={120} />
+                <Input name="city" size={size} defaultValue={customer?.city ?? ''} maxLength={120} />
               </Field>
               <Field label="Postal code">
-                <Input name="postalCode" defaultValue={customer?.postalCode ?? ''} maxLength={20} />
+                <Input
+                  name="postalCode"
+                  size={size}
+                  defaultValue={customer?.postalCode ?? ''}
+                  maxLength={20}
+                />
               </Field>
               <Field label="VAT number" hint="Required on a tax invoice.">
-                <Input name="vatNumber" defaultValue={customer?.vatNumber ?? ''} maxLength={40} />
+                <Input
+                  name="vatNumber"
+                  size={size}
+                  defaultValue={customer?.vatNumber ?? ''}
+                  maxLength={40}
+                />
               </Field>
             </div>
           </CardBody>
@@ -686,7 +868,13 @@ export default function CustomerForm({
         <Card>
           <CardHeader title="Notes" />
           <CardBody>
-            <Textarea name="notes" defaultValue={customer?.notes ?? ''} rows={4} aria-label="Notes" />
+            <Textarea
+              name="notes"
+              size={size}
+              defaultValue={customer?.notes ?? ''}
+              rows={4}
+              aria-label="Notes"
+            />
           </CardBody>
         </Card>
       </form>

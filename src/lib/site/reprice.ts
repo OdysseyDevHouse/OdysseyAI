@@ -195,6 +195,176 @@ export type PriceAudit = {
   userName: string
 }
 
+/** One cost, going in. Exclusive, as every cost column is. */
+export type CostRow = {
+  productId: number
+  /**
+   * Which column moved. Both are recorded because they answer different
+   * questions and a site reads whichever its cost_basis names: `average` is
+   * what a delivery blends and what stock is valued at, `last` is what was
+   * last paid. A receipt moves BOTH and passes two rows.
+   */
+  column: 'last' | 'average'
+  costExcl: number
+}
+
+/** Who moved a cost, and through which door — the history row's two facts. */
+export type CostAudit = {
+  /**
+   * The doors a cost changes through, which are NOT the doors a price does:
+   *   editor   a person typed it on the product screen
+   *   import   a catalogue or supplier price file
+   *   grid     the bulk pricing grid, by hand among many
+   *   grv      a delivery -- the supplier's cost, and the one that moves an
+   *            average. `sourceDocId` is the receipt.
+   *   derived  a recipe or composed product, costed from its ingredients
+   *   refer    a pack ladder, pushed down or cascaded up from the rung that moved
+   *   build    a manufacturing build
+   *   transfer received from another store
+   *   unpack   a refer pack broken open, blending the base's average
+   *   fanout   a linked store following the primary
+   */
+  source:
+    | 'editor'
+    | 'import'
+    | 'grid'
+    | 'grv'
+    | 'derived'
+    | 'refer'
+    | 'build'
+    | 'transfer'
+    | 'unpack'
+    | 'fanout'
+  sourceDocId?: number | null
+  userName: string
+}
+
+/**
+ * How a cost is written to the record. The one definition of it (256).
+ *
+ * ── WHY THIS EXISTS, AND WHY IT LOOKS LIKE writePriceRows ────────────────────
+ *
+ * The selling-price history (144) is complete for exactly one reason: every
+ * door a price changes through passes through writePriceRows below. Cost had no
+ * such chokepoint -- sixteen places ran their own UPDATE products SET last_cost
+ * -- so the product screen's history showed a shelf price moving and said
+ * nothing about the cost change that caused it. A margin could halve and the
+ * Reporting tab recorded nothing.
+ *
+ * This does NOT write the cost columns. That is the deliberate difference from
+ * writePriceRows, and it is what made adopting it possible at all: the cost
+ * writers are spread across purchases, manufacturing, transfers, refer ladders
+ * and composition, and each computes its figure in its own way (a weighted
+ * blend, a divided pack factor, a sum of ingredients). Rewriting all of them to
+ * route their UPDATE through one helper would have meant touching every posting
+ * path in the app. So this records what moved, beside the write, inside the
+ * caller's transaction -- and stays a note about the catalogue rather than
+ * becoming a second definition of what a cost IS.
+ *
+ * The before-image is read here rather than taken from the caller, for the same
+ * reason writePriceRows reads its own: a caller that passed the figure it
+ * happened to be holding would record a change against a stale number the
+ * moment anything else moved the cost first.
+ *
+ * ── CALL IT BEFORE THE UPDATE ────────────────────────────────────────────────
+ *
+ * It reads `products` to find the old figure, so it must run while that figure
+ * is still the old one. Called after the write it would read the new cost as
+ * the old one and record a change from a value to itself -- which, being no
+ * change at all, would record nothing and silently lose the row.
+ */
+export async function writeCostHistory(
+  tx: PoolConnection,
+  rows: readonly CostRow[],
+  audit: CostAudit,
+): Promise<void> {
+  if (rows.length === 0) return
+
+  const BATCH = 500
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const slice = rows.slice(i, i + BATCH)
+
+    // The BEFORE picture, inside the caller's transaction and before its write.
+    const ids = [...new Set(slice.map((r) => r.productId))]
+    const [beforeRows] = await tx.query(
+      `SELECT id, last_cost, average_cost FROM products
+        WHERE id IN (${ids.map(() => '?').join(',')})`,
+      ids as never,
+    )
+    const before = new Map<number, { last: number; average: number }>()
+    for (const b of beforeRows as {
+      id: number
+      last_cost: unknown
+      average_cost: unknown
+    }[]) {
+      before.set(Number(b.id), { last: toNum(b.last_cost), average: toNum(b.average_cost) })
+    }
+
+    /* A GENUINE change only, on the same tolerance writePriceRows uses. A
+       delivery that re-states the cost it already had records nothing, so
+       receiving the same goods at the same price every week does not fill the
+       screen with rows saying nothing happened. */
+    const changed = slice.filter((r) => {
+      const old = before.get(r.productId)
+      if (!old) return false
+      return Math.abs(old[r.column] - r.costExcl) > 0.00005
+    })
+    if (changed.length === 0) continue
+
+    const values = changed.map(() => "(?, 'cost', ?, NULL, ?, ?, ?, ?, ?)").join(',')
+    const params: unknown[] = []
+    for (const r of changed) {
+      const old = before.get(r.productId)!
+      params.push(
+        r.productId,
+        r.column,
+        old[r.column].toFixed(4),
+        r.costExcl.toFixed(4),
+        audit.source,
+        audit.sourceDocId ?? null,
+        audit.userName.slice(0, 120),
+      )
+    }
+    await tx.execute(
+      `INSERT INTO product_price_history
+         (product_id, kind, cost_column, price_structure_id,
+          old_price_incl, new_price_incl, source, source_doc_id, user_name)
+       VALUES ${values}`,
+      params as never,
+    )
+  }
+}
+
+/**
+ * Record a cost change on a site connection, outside any transaction.
+ *
+ * The transactional sibling above is the one to reach for. This exists because
+ * three cost writers -- pushReferCostDown, cascadeCompositionCosts and the
+ * unpack blend -- walk a ladder with siteExecute per rung rather than holding a
+ * transaction, and rewriting those walks to take one is a change to how
+ * costing works, not to how it is recorded.
+ *
+ * Errors are SWALLOWED, following logActivity: outside a transaction there is
+ * nothing to roll back, so a failed history write must not un-write a cost that
+ * already landed. A cascade that recosts forty products must not abort halfway
+ * because the note about the third one could not be saved. The transactional
+ * version does the opposite and lets the throw roll the pair back together.
+ */
+export async function recordCostChange(
+  siteId: number,
+  rows: readonly CostRow[],
+  audit: CostAudit,
+): Promise<void> {
+  if (rows.length === 0) return
+  try {
+    await siteTransaction(siteId, async (tx) => {
+      await writeCostHistory(tx, rows, audit)
+    })
+  } catch (error) {
+    console.error('cost history write failed', error)
+  }
+}
+
 /**
  * How a price is written. The one definition of it.
  *
@@ -256,7 +426,7 @@ export async function writePriceRows(
       return old === undefined || Math.abs(old - r.priceIncl) > 0.00005
     })
     if (changed.length > 0) {
-      const hv = changed.map(() => '(?,?,?,?,?,?,?)').join(',')
+      const hv = changed.map(() => "(?,'price',?,?,?,?,?,?)").join(',')
       const hp: unknown[] = []
       for (const r of changed) {
         const old = before.get(`${r.productId}:${r.priceStructureId}`)
@@ -272,7 +442,7 @@ export async function writePriceRows(
       }
       await tx.execute(
         `INSERT INTO product_price_history
-           (product_id, price_structure_id, old_price_incl, new_price_incl, source, source_doc_id, user_name)
+           (product_id, kind, price_structure_id, old_price_incl, new_price_incl, source, source_doc_id, user_name)
          VALUES ${hv}`,
         hp as never,
       )
@@ -287,7 +457,7 @@ export async function recordPriceRemoval(
   audit: PriceAudit,
 ): Promise<void> {
   if (rows.length === 0) return
-  const values = rows.map(() => '(?,?,?,NULL,?,?,?)').join(',')
+  const values = rows.map(() => "(?,'price',?,?,NULL,?,?,?)").join(',')
   const params: unknown[] = []
   for (const r of rows) {
     params.push(
@@ -301,7 +471,7 @@ export async function recordPriceRemoval(
   }
   await tx.execute(
     `INSERT INTO product_price_history
-       (product_id, price_structure_id, old_price_incl, new_price_incl, source, source_doc_id, user_name)
+       (product_id, kind, price_structure_id, old_price_incl, new_price_incl, source, source_doc_id, user_name)
      VALUES ${values}`,
     params as never,
   )

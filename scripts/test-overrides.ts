@@ -144,6 +144,79 @@ async function main() {
   ok('the pad refuses during the window', lockoutRemaining(attempts, t0 + 1000) > 0)
   ok('…and relents after it', lockoutRemaining(attempts, t0 + LOCKOUT_MS + 1) === 0)
 
+  console.log('\n── A quantity needs its own right ──────────────────────────\n')
+
+  /*
+   * The capability behind the invoicing counter's quantity cell.
+   *
+   * The token machinery above is generic, and proving it again would prove
+   * nothing new. What is worth asserting is that this capability is wired like
+   * any other rather than being a client-side gesture: a token minted for it
+   * verifies, and — the half that actually protects the shop — the fixture
+   * manager, who holds only `sales.void`, cannot authorise one. A capability
+   * that anybody's PIN could approve would be indistinguishable from no
+   * capability at all.
+   */
+  const qtyToken = await createOverrideToken({
+    siteId: SITE,
+    userId,
+    userName: `Override Manager ${stamp}`,
+    capability: 'sales.qty_override',
+  })
+
+  /*
+   * Granted only for the positive case, then taken away again.
+   *
+   * `verifyOverrideToken` re-checks the role LIVE — a signed token whose holder
+   * lacks the right verifies as nothing — so a token minted against this
+   * fixture would refuse until the permission actually exists. Withdrawing it
+   * afterwards is what lets the refusals below mean something: they have to be
+   * read against a manager who genuinely does not hold it.
+   */
+  await siteExecute(
+    SITE,
+    `INSERT INTO role_permissions (role_id, capability, allowed) VALUES (?, 'sales.qty_override', 1)`,
+    [roleId],
+  )
+  ok(
+    '*** a quantity token verifies for the quantity right ***',
+    (await verifyOverrideToken(SITE, qtyToken, 'sales.qty_override')) !== null,
+  )
+  await siteExecute(
+    SITE,
+    `DELETE FROM role_permissions WHERE role_id = ? AND capability = 'sales.qty_override'`,
+    [roleId],
+  )
+  ok(
+    '…and stops the moment the right is withdrawn',
+    (await verifyOverrideToken(SITE, qtyToken, 'sales.qty_override')) === null,
+  )
+  ok(
+    '…and authorises NOTHING else — a quantity is not a price',
+    (await verifyOverrideToken(SITE, qtyToken, 'sales.price_override')) === null,
+  )
+  ok(
+    '…nor a discount',
+    (await verifyOverrideToken(SITE, qtyToken, 'sales.discount_override')) === null,
+  )
+  /* The reverse direction matters just as much: the void token this suite has
+     been using all along must not open the quantity cell. */
+  ok(
+    '…and a void token does not approve a quantity',
+    (await verifyOverrideToken(SITE, token, 'sales.qty_override')) === null,
+  )
+
+  const qtyAllowed = await siteQueryOne<{ n: unknown }>(
+    SITE,
+    `SELECT COUNT(*) AS n FROM role_permissions
+      WHERE role_id = ? AND capability = 'sales.qty_override' AND allowed = 1`,
+    [roleId],
+  )
+  ok(
+    '*** the fixture manager cannot authorise one — they were never granted it ***',
+    Number(qtyAllowed?.n) === 0,
+  )
+
   console.log('\n── Cleanup ────────────────────────────────────────────────\n')
 
   await siteExecute(SITE, `DELETE FROM activity_log WHERE entity = 'pos_override' AND detail LIKE ?`, [

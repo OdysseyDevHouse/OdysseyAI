@@ -10,6 +10,7 @@ import {
   chooseOption,
   pruneUnasked,
   startingQty,
+  totalUnits,
   validateSelection,
   type ChosenOption,
 } from '@/lib/instructionRules'
@@ -84,13 +85,18 @@ export default function InstructionsModal({
   const qtyOf = (optionId: number) => chosen.find((c) => c.optionId === optionId)?.qty ?? 0
 
   /**
-   * DISTINCT answers chosen in one question — what `maxChoices` bounds.
+   * ITEMS chosen in one question — what `maxChoices` bounds.
    *
-   * Distinct, not units: "up to 2 toppings" with bacon ×3 and cheese ×1 is two
-   * against the ceiling, not four. Same reading as `validateSelection`, which is
-   * the whole point of counting it the same way in both places.
+   * Units, not distinct answers: "choose up to 3" with chips ×2 and salad ×2 is
+   * FOUR against the ceiling and is refused. Counted through the shared
+   * `totalUnits` so this screen and `validateSelection` cannot drift — a tap the
+   * modal allows must never be a line the rule then refuses.
    */
-  const countFor = (groupId: number) => chosen.filter((c) => c.groupId === groupId).length
+  const countFor = (groupId: number) => totalUnits(chosen.filter((c) => c.groupId === groupId))
+
+  /** How many more items this question will still take. 0 when it is full. */
+  const roomIn = (group: TillInstructionGroup) =>
+    group.maxChoices === 0 ? Infinity : Math.max(0, group.maxChoices - countFor(group.id))
 
   /** Sets one answer's count, and drops any follow-up that is no longer asked. */
   const setQty = (group: TillInstructionGroup, option: TillInstructionOption, next: number) => {
@@ -98,19 +104,21 @@ export default function InstructionsModal({
 
     // ── The group's ceiling, enforced ON THE TAP ────────────────────────────
     //
-    // "Choose up to 3" has to stop the fourth answer HERE, not at "Add to sale".
+    // "Choose up to 3" has to stop the fourth ITEM here, not at "Add to sale".
     // Letting it through and refusing at the end tells a cashier the order is
     // wrong only after they have read it back to the customer, and says nothing
-    // about which of the four to drop. The count is DISTINCT answers, matching
-    // `validateSelection` — so a fourth topping is refused while a fourth rasher
-    // of an already-chosen one is not. A pick-one group is not checked here: it
-    // REPLACES below, which is a better answer than a refusal.
-    if (
-      next > 0 &&
-      group.maxChoices > 1 &&
-      qtyOf(option.id) === 0 &&
-      countFor(group.id) >= group.maxChoices
-    ) {
+    // about which of the four to drop.
+    //
+    // ⚠ THE INCREASE IS WHAT IS MEASURED, not whether this answer is new.
+    //
+    // This guard used to fire only when `qtyOf(option.id) === 0` — i.e. only
+    // when a DIFFERENT answer was being added. Counting an answer already on
+    // the line simply walked past it, so a question capped at 3 happily took
+    // chips ×2, salad ×2 and veg ×3: the fourth tile was refused while the
+    // seventh item was not. Measuring the delta closes both doors with one
+    // rule, and a pick-one group still REPLACES below rather than refusing.
+    const increase = Math.max(0, next - qtyOf(option.id))
+    if (next > 0 && group.maxChoices > 1 && increase > roomIn(group)) {
       const label = group.prompt || group.name
       setError(`${label}: choose no more than ${group.maxChoices}. Take one off first.`)
       return
@@ -251,15 +259,17 @@ export default function InstructionsModal({
                   option={option}
                   count={qtyOf(option.id)}
                   single={group.maxChoices === 1}
-                  /* Dimmed once the group is full, so the ceiling is visible
-                     before a tap rather than after one. An answer already
-                     chosen is never dimmed — it can still be counted up and
-                     taken off. */
-                  full={
-                    group.maxChoices > 1 &&
-                    qtyOf(option.id) === 0 &&
-                    countFor(group.id) >= group.maxChoices
-                  }
+                  /* Dimmed once the question has no room for what this tile's
+                     next tap would add, so the ceiling is visible before a tap
+                     rather than after one.
+                     An answer ALREADY CHOSEN dims too now, because under a
+                     units ceiling a full question cannot take another of it
+                     either — it can still be counted DOWN, which is why the
+                     tile stays tappable rather than being disabled. */
+                  full={group.maxChoices > 1 && roomIn(group) < Math.max(1, option.minQty)}
+                  /* What the question will still take, so the stepper stops at
+                     the group's ceiling and not only at this answer's own. */
+                  room={roomIn(group)}
                   onPick={(next) => setQty(group, option, next)}
                 />
               ))}
@@ -346,14 +356,20 @@ function StepRail({
   )
 }
 
-/** "Pick one", "Choose up to 3" — the same words the back office uses. */
+/**
+ * "Pick one", "Choose up to 3 items" — the same words the back office uses.
+ *
+ * The bounds count ITEMS, so the wording says so: two of one side and two of
+ * another is four against a ceiling of three. Without the noun a cashier reads
+ * "up to 3" as three tiles and the refusal looks like a fault.
+ */
 function ruleFor(group: TillInstructionGroup): string {
   const { minChoices: min, maxChoices: max, isRequired } = group
   if (max === 1) return min > 0 || isRequired ? 'Pick one' : 'Pick one, or skip'
-  if (max === 0) return min > 0 ? `Choose at least ${min}` : 'Choose as many as you like'
-  if (min > 0 && min === max) return `Choose exactly ${min}`
-  if (min > 0) return `Choose ${min} to ${max}`
-  return `Choose up to ${max}`
+  if (max === 0) return min > 0 ? `Choose at least ${min} items` : 'Choose as many as you like'
+  if (min > 0 && min === max) return `Choose exactly ${min} items`
+  if (min > 0) return `Choose ${min} to ${max} items`
+  return `Choose up to ${max} items`
 }
 
 /**
@@ -375,18 +391,30 @@ function OptionTile({
   count,
   single,
   full,
+  room,
   onPick,
 }: {
   option: TillInstructionOption
   count: number
   single: boolean
-  /** The question has as many answers as it allows, and this is not one of them. */
+  /** The question has no room for another of this answer. */
   full: boolean
+  /**
+   * How many more ITEMS the whole question will still take.
+   *
+   * The stepper used to stop only at this answer's own `maxQty`, which is why a
+   * question capped at 3 could be walked up to seven: the tile knew its own
+   * ceiling and nothing about the group's. Infinity when the group is uncapped.
+   */
+  room: number
   onPick: (next: number) => void
 }) {
   const on = count > 0
   const countable = !single && (option.maxQty === 0 || option.maxQty > 1)
-  const ceiling = option.maxQty === 0 ? Infinity : option.maxQty
+  /* The LOWER of the two ceilings — this answer's own, and whatever the
+     question has left. Either one alone lets the other be exceeded. */
+  const ownCeiling = option.maxQty === 0 ? Infinity : option.maxQty
+  const ceiling = Math.min(ownCeiling, count + room)
   const floor = Math.max(1, option.minQty)
 
   /** What the next tap on the body means. */

@@ -87,7 +87,10 @@ function SortableRow({
           scroll box, and a centred one is cut off on the left because the handle
           is the leftmost thing in the row. Down and left-aligned is the only
           corner with room. */}
-      <Tooltip label="Drag to reorder" layout="inline" side="bottom" align="start">
+      {/* Not the shared REORDER_HINT: this moves a COLUMN of the grid, not a
+          row of it, and "Reorder the grid" beside a column name would be read
+          as reordering the rows. */}
+      <Tooltip label="Reorder the columns" layout="inline" side="bottom" align="start">
         <button
           type="button"
           {...attributes}
